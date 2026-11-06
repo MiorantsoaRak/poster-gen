@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-006 (D-PV-003 rules 1–7, D-PV-005 allowance and scopes) Request admission in one `write_tx()`: idempotency (`payload_hash`), photo membership, abandoned scope, `req_one_initial` → `review_pending` / `use_revision`, allowance per (variant, cycle, run), revision and background rules (incl. a new cutout as a linked revision), budget with the reservation floor.
-  - verify: `uv run pytest tests/test_admission.py -q`: allowance counting; two processes at `used = 2` → exactly one accepted; same id + same payload returns the request, same id + other payload → `request_id_reused`; cap boundary (`spent + r == cap` allowed, one micro over refused); empty ledger sums to 0; the floor raises the reservation after a higher usage-based cost; every 409 code in rules 3–6 has a test.
+- [ ] T-PV-007 (D-PV-003 execution, D-PV-006 background flow) Request execution: call 1, one retry (call 2) only for the retryable kinds, refused-retry finalisation, success and failure transactions, candidate creation for both treatments (background + baked shadow via T-PV-004). Semaphore of 2 provider calls.
+  - verify: `uv run pytest tests/test_execution.py -q` (stub): a retry keeps its slot and makes no fourth candidate; a retry refused by the budget → request `failed` (`budget_exhausted`) and the slot is freed; non-retryable kinds never get call 2; a success stores the raw asset, the cost and a `pending_review` candidate in one transaction; a `photo_preserved` candidate stores the cutout id and `product_box_json`.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,11 +14,9 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-007 (D-PV-003 execution, D-PV-006 background flow) Request execution: call 1, one retry (call 2) only for the retryable kinds, refused-retry finalisation, success and failure transactions, candidate creation for both treatments (background + baked shadow via T-PV-004). Semaphore of 2 provider calls.
-  - verify: `uv run pytest tests/test_execution.py -q` (stub): a retry keeps its slot and makes no fourth candidate; a retry refused by the budget → request `failed` (`budget_exhausted`) and the slot is freed; non-retryable kinds never get call 2; a success stores the raw asset, the cost and a `pending_review` candidate in one transaction; a `photo_preserved` candidate stores the cutout id and `product_box_json`.
 - [ ] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-007) Review state machine (`next_status`, conditional updates, idempotent replay), approval requires `framing_checked` (both treatments), rejection reasons/note (screened), cycles, abandon, the reuse query.
   - verify: `uv run pytest tests/test_review.py -q`: all 6 transition combinations (4 refused); approve without framing → `framing_not_checked`; reject without a reason or note refused; a cycle needs an approval; abandon is refused while a request runs or after an approval, and blocks new requests after; reuse never returns another variant and makes no gateway call.
-- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot, a run's model must be in `gateway.RATES` (ADR-015), `make_cutout` errors caught per product (`CutoutUnavailable` → `cutout_unavailable`, anything else → `cutout_error`) so one photo never stops the batch (ADR-016), CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
+- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot (incl. `name`/`variant`, required by migration 0002's CHECK, in the same INSERT; ADR-018), a run's model must be in `gateway.RATES` (ADR-015), `make_cutout` errors caught per product (`CutoutUnavailable` → `cutout_unavailable`, anything else → `cutout_error`) so one photo never stops the batch (ADR-016), CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
   - verify: `uv run pytest tests/test_fixtures_generate.py -q`: every validation error is listed and nothing loads; a new label with an existing model+quality is refused; a changed CSV row for an existing product is refused; `uv run python -m affiche.visuals.evaluate generate --fixtures fixtures/products.example.csv --run stub1` (stub `DATA_DIR`) creates one scene candidate and one proposed cutout per product.
 - [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`.
   - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
@@ -35,6 +33,20 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-006 (D-PV-003 rules 1–7, D-PV-005 allowance and scopes) `backend/src/affiche/visuals/admission.py`: `request_scene`, `request_revision`, `request_background` (one `write_tx` each), `reserve` (for call 2), `Refused`, `Admitted`. Migration 0002 adds `run_products.name/variant` (user decision, ADR-018).
+  - verified 2026-11-06 (Windows 10, Python 3.12.10, SQLite 3.47.1):
+    - `uv run pytest tests/test_admission.py -q` → 36 passed; `uv run pytest -q` → 310 passed, 3 deselected.
+    - The tests cover:
+      - allowance counting;
+      - **two processes at `used = 2` → exactly one admitted, the other `attempt_limit_reached`** (5 of 5 runs);
+      - the idempotent replay vs `request_id_reused`;
+      - the cap boundary at exactly `cap` and +1 µUSD; the empty ledger; the floor;
+      - every `Refused` code;
+      - the arm-B plain re-roll;
+      - the stale-cycle `wrong_scope`.
+    - 30 mutations killed.
+    - Codex r1 APPROVE WITH FIXES (4 + 1), r2 APPROVE (docs/project/reviews/t-pv-006-code-r1.md, -r2.md).
 
 - [x] T-PV-005 (D-PV-001 asset store, process lock, crash recovery, provider mode)
   - **Code:** `backend/src/affiche/assets.py` (`put`, `path`, `record`) and `backend/src/affiche/runtime.py`:

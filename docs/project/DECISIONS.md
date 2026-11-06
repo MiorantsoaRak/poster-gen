@@ -2,6 +2,31 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-018 — 2026-11-06 — Request admission: the subject in `run_products` (schema amendment) and rule interpretations (T-PV-006)
+
+- Status:
+  - Item 1 amends the approved D-PV-001 schema: the user chose it ("Save name in run") after Codex r1 found the gap;
+  - items 2–6 are implementation interpretations of D-PV-003/005; Codex r1 judged them correct or reasonable.
+  - No further design review round, because the change is small and recorded here.
+- Decision:
+  1. **Migration 0002** adds `run_products.name` and `run_products.variant`, written at `generate` like the arm:
+     - `NOT NULL DEFAULT ''` with `CHECK (trim(x) <> '')`, so a value is required;
+     - SQLite 3.47 checks it on ADD COLUMN, and fails on a table that already has rows.
+
+     Admission reads the subject (and the arm) from `run_products` for every purpose. Why: `apply decisions.csv` runs without the fixture CSV, so a background request could not get the product's name. Alternatives were `apply --fixtures` (one more argument on every apply), or copying from the first scene request (fragile).
+  2. **`request_scene` takes `variant_photos`** (the variant's photos, from the CSV loaded by `generate`) for the membership check and the default first 3 photos. There is no variants table in phase 1.
+  3. **"The latest fallback candidate" is `ORDER BY attempt_no DESC`**, not by time, so a clock change cannot pick the wrong one.
+  4. **A stale target is checked first:** a parent or cutout from another cycle or run gives `wrong_scope` before the scope rules, so the message names the real problem.
+  5. **Design line 242 ("else 409 `review_pending`"):** `review_pending` is returned only when the latest fallback candidate is pending; an approved one gives `not_rejected`. `use_revision` cannot occur for backgrounds: a later background is always a linked revision.
+  6. **The idempotency payload** holds the caller's fields as given and excludes `owner`.
+  7. **Codes the design did not name:**
+     - 409 `wrong_scope`, `cutout_not_confirmed`;
+     - 422 `unknown_run`, `variant_not_in_run`, `unknown_target`, `unknown_asset`.
+
+     A model without `RATES` gives `ValueError` before any row is written.
+- For T-PV-007: `reserve()` only checks. Call 2 must be inserted in the same `write_tx`, with a budget refusal caught inside it to mark the request `failed` (`budget_exhausted`).
+- Revisit if: phase 2 adds a variants table (then the catalogue moves to the DB).
+
 ## ADR-017 — 2026-11-06 — Startup, lock and asset store choices (T-PV-005)
 
 - Status: Implementation decisions inside D-PV-001.

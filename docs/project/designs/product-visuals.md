@@ -72,7 +72,7 @@ CREATE TABLE run_products (                  -- snapshot at `generate`; later co
   run_label TEXT NOT NULL REFERENCES runs(label), variant_ref TEXT NOT NULL,
   arm TEXT CHECK (arm IN ('A','B')), fixture_row_sha256 TEXT NOT NULL,
   PRIMARY KEY (run_label, variant_ref)
-);
+);                                           -- amended: + name, variant (migration 0002, ADR-018, user decision)
 
 CREATE TABLE abandonments (                  -- explicit "abandoned" outcome (R-008 c.2)
   variant_ref TEXT NOT NULL, run_label TEXT NOT NULL REFERENCES runs(label), cycle_no INTEGER NOT NULL,

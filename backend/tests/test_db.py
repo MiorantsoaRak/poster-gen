@@ -31,7 +31,10 @@ def test_migrate_creates_every_table_and_both_guards(engine):
         tables = set(conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table'").scalars())
         guards = dict(conn.exec_driver_sql(
             "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE 'req_one_%'").all())
+        product_columns = {name: notnull for _cid, name, _type, notnull, *_rest in
+                           conn.exec_driver_sql("PRAGMA table_info(run_products)")}
     assert tables == DESIGN_TABLES | {"alembic_version"}
+    assert {"name": 1, "variant": 1}.items() <= product_columns.items()  # 0002: the subject snapshot
     assert set(guards) == set(GUARD_WHERE)
     for name, where in GUARD_WHERE.items():
         sql = " ".join(guards[name].split())

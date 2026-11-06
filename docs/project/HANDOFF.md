@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-005 are done and reviewed; next is T-PV-006 (request admission, the money path).
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-006 are done and reviewed; next is T-PV-007 (request execution: call 1, retry, candidates).
 
 ## State of the world
 
@@ -17,7 +17,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - `visuals/gateway.py` (T-PV-003, ADR-015): `prepare_provider_input`, `validate_image`, money (`usd_to_micros`, `cost_micros`, `parse_usage`, `RATES`), `OpenAIProvider`, `StubProvider`, `make_provider`;
   - `visuals/cutout.py` (T-PV-004, ADR-016): `make_cutout`, `place`, `bake_shadow`, `CutoutUnavailable`; rembg 2.0.87 with `birefnet-general-lite`, downloaded once to `%USERPROFILE%\.rembg\models\`;
   - `assets.py` (`put`, `path`, `record`) and `runtime.py` (`start`, `acquire_lock`, `recover`, `check_provider_mode`) (T-PV-005, ADR-017); `db.utc_now()`;
-  - 273 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
+  - `visuals/admission.py` (T-PV-006, ADR-018): `request_scene`, `request_revision`, `request_background`, `reserve`, `Refused`, `Admitted`; migration 0002 (`run_products.name`/`variant`);
+  - 310 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
 ## Done this session
@@ -46,12 +47,25 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - r2 → APPROVE;
   - reviews: docs/project/reviews/t-pv-005-code-r1.md, -r2.md;
   - verified: 273 passed; 15 of 16 mutations killed;
+  - committed at the user's request ("commit and next").
+- **T-PV-006 done** via /implement-review:
+  - Codex r1 → 4 fixes + 1 test tightening. The **user chose migration 0002** (the subject in `run_products`) for the durable-subject gap;
+  - r2 → APPROVE;
+  - reviews: docs/project/reviews/t-pv-006-code-r1.md, -r2.md;
+  - verified: 310 passed; 30 mutations killed;
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-005 is done but **not committed**; offer the commit first.
-- **Next action:** T-PV-006 (D-PV-003 rules 1–7 and D-PV-005: request admission in one `write_tx()`: idempotency, scopes, allowance, revision/background rules, budget with the reservation floor), with /implement-review. It is the money path: the cap boundary and the two-process "exactly one accepted" test are the acceptance core. One task at a time; mark `[~]` with a note when starting.
+- **Task:** none in progress. T-PV-006 is done but **not committed**; offer the commit first.
+- **Next action:** T-PV-007 (D-PV-003 execution + D-PV-006 background flow), with /implement-review:
+  - call 1 via the gateway; one retry (call 2) only for retryable kinds, after 5 s;
+  - call 2 is reserved with `admission.reserve` **inside the same `write_tx`** that inserts it; a budget refusal → request `failed` (`budget_exhausted`);
+  - success: `assets.put` + `record`, cost from usage or the estimate, a `pending_review` candidate from `request_json`, and the request `succeeded`, in one transaction;
+  - a background → `cutout.bake_shadow`, plus `product_box_json` from `cutout.place`;
+  - a semaphore of 2.
+
+  After T-PV-007, **ask the user for the T-PV-012/013 inputs** (key, cap, budget-limit check, photos, arms, thresholds).
 
 ## Landmines / gotchas discovered
 
@@ -110,26 +124,29 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, four commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), T-PV-002, T-PV-003 and T-PV-004. No remote; nothing pushed.
+Branch main, five commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-005. No remote; nothing pushed.
 
-Not committed (T-PV-005 and doc updates):
-- backend/src/affiche/assets.py, runtime.py, backend/tests/test_store_lock.py, lock_worker.py (new, intent-to-add);
-- backend/src/affiche/db.py (`utc_now`);
-- docs/project/DECISIONS.md (ADR-017), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-005-code-r1.md, -r2.md.
+Not committed (T-PV-006 and doc updates):
+- backend/src/affiche/visuals/admission.py, backend/migrations/versions/0002_run_products_subject.py, backend/tests/test_admission.py, admission_worker.py (new, intent-to-add);
+- backend/src/affiche/config.py (`min_source_short_edge`), backend/tests/test_config.py, backend/tests/test_db.py;
+- docs/project/DECISIONS.md (ADR-018), designs/product-visuals.md (a one-line schema note), TODO.md, HANDOFF.md;
+- docs/project/reviews/t-pv-006-code-r1.md, -r2.md.
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-003 (lines 222–262: admission rules 1–7, retry refused) and D-PV-005 (lines 341–380) for T-PV-006.
-2. Ask the user whether to commit T-PV-005, if that is not done yet.
-3. Implement T-PV-006 with /implement-review:
-   - reuse `write_tx`, `gateway.usd_to_micros`/`RATES`, `prompts`, `runtime.start`;
-   - a run's model must be in `RATES` before any reservation;
-   - `corrections_applied` comes from what the prompt builder actually added (ADR-014).
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-003 (lines 245–262: retry, retry refused, the provider call, success/failure) and D-PV-006 (lines 397–407: the background flow) for T-PV-007.
+2. Ask the user whether to commit T-PV-006, if that is not done yet.
+3. Implement T-PV-007 with /implement-review. Reuse:
+   - `admission.reserve`;
+   - `gateway.make_provider` / `ProviderError.retryable` / `cost_micros`;
+   - `assets.put` / `record`;
+   - `cutout.place` / `bake_shadow`;
+   - `request_json` from admission.
+
    Run its verify step; mark it done only after the review is clean.
-4. Continue T-PV-007 … T-PV-011 in order, one at a time.
+4. Then ask the user for the T-PV-012/013 inputs, and continue T-PV-008 … T-PV-011 in order.
 5. Ask the user for the T-PV-012 / T-PV-013 inputs when T-PV-007 is done (key, cap, budget-limit check, photos, arms, thresholds).
 
 ## Decisions made this session
@@ -144,3 +161,4 @@ Not committed (T-PV-005 and doc updates):
 - ADR-015: provider gateway: SDK facts (openai 3.46.0 / httpx2), model ids, error codes, usage validity, provider-input colour rules.
 - ADR-016: cutout model `birefnet-general-lite` (speed, licence status), pixels and profile kept, opt-in real-model tests.
 - ADR-017: `runtime.start` as the single startup, lock retry of up to 2 s (Windows release delay), owner-wide call recovery, asset write order, `utc_now` format.
+- ADR-018: **user decision**, migration 0002 (the subject in `run_products`); admission interpretations (latest by `attempt_no`, stale target first, `review_pending` vs `not_rejected`, the extra codes).
