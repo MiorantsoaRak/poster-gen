@@ -2,6 +2,36 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-022 — 2026-11-06 — CLI `generate` and fixtures choices (T-PV-009)
+
+- Status: Implementation decisions inside D-PV-008. Codex r1 and r2 reviewed them.
+- Decision:
+  1. **`--paid` is required whenever `IMAGE_PROVIDER=openai`, and refused with the stub.** It is checked before `runtime.start`, so a refused command creates nothing. Any CLI command that can spend must take it (`apply` in T-PV-010).
+  2. **Exit codes:**
+     - 0: done, including request outcomes recorded in the DB (refused, quota, timeout, a failed `no_product` cutout);
+     - 1: configuration or startup refused, an unexpected error in the batch, `cutout_unavailable`, or a refusal outside the four scope-state codes; the other products still finish;
+     - 2: usage or validation errors, nothing written;
+     - 3: budget exhausted (takes precedence).
+  3. **Photos** are `|`-separated names under `--photos DIR` (default `<csv dir>/photos`). The committed examples (2 made images) are in `fixtures/examples/`, because `fixtures/photos/` is git-ignored.
+  4. **The CSV** is parsed strictly (`csv.reader(strict=True)`), so a broken quote can't swallow other products. Every row is validated, and compared with the run snapshot, even with `--only`.
+  5. **The row sha** covers all 10 raw fields: any change, even to `notes`, refuses a later `generate` on that run.
+  6. **Qualities:** low/medium/high, plus xhigh/max for `gpt-image-2.5-*` only (SDK docstring). `auto` is refused, because a run must name what it measures.
+  7. **The printed `committed $X / cap $Y`** includes the reservations of calls still running.
+  8. **Cutouts** run in a thread under `Semaphore(1)` while the scene calls wait. A failed (`no_product`) cutout doesn't block a new one on a re-run.
+- Seen once, not reproduced: an onnxruntime "bad allocation" during a cutout. It was contained per product, and a re-run made the cutout. If it recurs, try `OMP_NUM_THREADS=4`.
+- Revisit if: the evaluation needs `--only` without validating the other rows, or memory becomes an issue (all photos are held in memory).
+
+## ADR-021 — 2026-11-06 — Paid probe inputs (T-PV-012)
+
+- Status: User answers (2026-11-06). The user put the key and the cap in `backend/.env` themselves.
+- Decision:
+  1. **Key:** an OpenAI project key (`sk-proj-…`; format checked without printing it), only in `backend/.env` (git-ignored).
+  2. **Cap:** `SPEND_CAP_USD=12`, `SPEND_CAP_SINCE=2026-11-06`. That covers the probe and the 5-product calibration (about USD 7.50 at the base estimates), not the full 20-product evaluation (about USD 30–46): raise the cap before T-PV-013.
+  3. **Model and quality:** `gpt-image-2`, `high`. Product fidelity (logos, camera layout) is the main risk; the probe measures the real cost of this exact pair.
+  4. **The dedicated project's OpenAI budget limit blocks requests** (user-checked). This is a second hard stop under the app's estimated-spend cap.
+  5. **Paid mode is switched on only by the probe command line** (`IMAGE_PROVIDER=openai DATA_DIR=data-openai …`). `.env` leaves `IMAGE_PROVIDER` empty (default stub), so development commands cannot spend. Paid data lives in its own `data-openai` folder (the provider-mode guard refuses mixing).
+- Revisit if: the probe shows `usage` missing (then estimates decide the cap) or a per-call cost far from the USD 0.40 estimate (adjust `ESTIMATE_SCENE_USD`).
+
 ## ADR-020 — 2026-11-06 — Review, cycle and abandon interpretations (T-PV-008)
 
 - Status: Implementation decisions inside D-PV-004/005/006/007. Codex r1 and r2 judged them acceptable.

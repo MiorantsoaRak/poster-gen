@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     image_provider: Literal["stub", "openai"] = "stub"
     openai_api_key: SecretStr | None = None
     stub_fail: ProviderErrorKind | None = None  # every stub call fails with this kind (manual runs)
+    openai_image_model: str | None = None  # the default --model of a new evaluation run
+    openai_image_quality: str | None = None  # the default --quality of a new evaluation run
     spend_cap_usd: PositiveUsd  # no default: no cap, nothing starts (ADR-010)
     spend_cap_since: date
     estimate_scene_usd: PositiveUsd = Decimal("0.40")

@@ -1,0 +1,15 @@
+**Verdict: APPROVE.** All five r1 findings are **CLOSED**. No new actionable defects found in the round 2 changes.
+
+| R1 finding | Ruling and evidence |
+|---|---|
+| **1. P1 — Paid opt-in** | **CLOSED.** The [guard](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:355>) checks both mismatches after settings load and before startup. The [regression test](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/tests/test_fixtures_generate.py:211>) uses `env_file=None`, checks exit 2, no data directory, and no key disclosure. |
+| **2. P1 — Cutout persistence boundary** | **CLOSED.** `_insert_cutout` is now inside the [per-product handler](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:280>). The [disk-full regression](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/tests/test_fixtures_generate.py:342>) asserts exit 1 while both scene requests succeed. |
+| **3. P2 — Permissive CSV** | **CLOSED.** The [reader](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/fixtures.py:62>) uses `strict=True` and translates `csv.Error` into fixture rejection. The [unterminated-quote test](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/tests/test_fixtures_generate.py:138>) checks exit 2 and no writes. |
+| **4. P2 — Snapshot bypass through `--only`** | **CLOSED.** [Snapshot comparison precedes selection](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:70>). The [regression](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/tests/test_fixtures_generate.py:200>) rejects changed P1 while selecting P2 and verifies unchanged request/snapshot counts. |
+| **5. P2 — Unexpected failures exit 0** | **CLOSED.** [Aggregation](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:84>) retains every scene/cutout outcome, counts unexpected admission refusals, and checks budget exhaustion **before** exit-1 conditions. Regression coverage includes execution exceptions, cutout failures and `request_id_reused`; recorded failures retain the requested exit-0 behavior. |
+
+For the argparse audit, `generate` is the only registered subcommand and always supplies the `paid` boolean. Help and invalid invocations terminate during parsing. Standard option abbreviations explicitly set that same boolean; I found no CLI path reaching paid generation without opt-in. Future `apply` is outside this artifact.
+
+The `committed` label and once-per-command reservation explanation are present.
+
+**Validation:** static review only—the launcher failed before execution. The three reviewed files match the supplied artifact; your reported test results were not independently rerun. No files modified, no network used, and `backend/.env` was never opened.

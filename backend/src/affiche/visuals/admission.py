@@ -139,7 +139,7 @@ def reserve(conn: Connection, settings: Settings, *, model: str, purpose: Purpos
         {"model": model, "purpose": purpose}).scalar()
     floor = 0 if highest is None else (5 * highest + 3) // 4  # ceil(1.25 x highest) in integers
     reservation = max(usd_to_micros(estimate), floor)
-    spent, cap = _spent(conn, settings), usd_to_micros(settings.spend_cap_usd)
+    spent, cap = spent_micros(conn, settings), usd_to_micros(settings.spend_cap_usd)
     if spent + reservation > cap:
         raise Refused(409, "budget_exhausted", {"spent": spent, "cap": cap, "reservation": reservation})
     return reservation
@@ -157,7 +157,7 @@ def _admit(engine: Engine, settings: Settings, request_id: str, owner: Owner, pa
             if known.payload_hash != payload_hash:
                 raise Refused(409, "request_id_reused")
             return Admitted(request_id, json.loads(known.request_json)["attempt_no"], True, 0,
-                            _spent(conn, settings), cap)
+                            spent_micros(conn, settings), cap)
         plan = resolve(conn)
         # A stale target (an earlier cycle) is refused as such, before the current scope's rules can mask it.
         for target in (plan.parent, plan.cutout):
@@ -175,7 +175,7 @@ def _admit(engine: Engine, settings: Settings, request_id: str, owner: Owner, pa
         _insert(conn, settings, plan, request_id=request_id, owner=owner, payload_hash=payload_hash,
                 attempt_no=attempt_no, prompt=prompt, corrections_applied=corrections_applied,
                 reservation=reservation)
-        return Admitted(request_id, attempt_no, False, reservation, _spent(conn, settings), cap)
+        return Admitted(request_id, attempt_no, False, reservation, spent_micros(conn, settings), cap)
 
 
 def _check_scope(conn: Connection, plan: _Plan) -> int:
@@ -288,7 +288,8 @@ def _short_edges(conn: Connection, shas: list[str]) -> dict[str, int]:
     return edges
 
 
-def _spent(conn: Connection, settings: Settings) -> int:
+def spent_micros(conn: Connection, settings: Settings) -> int:
+    """Micro-USD on the ledger since SPEND_CAP_SINCE: what the cap is checked against."""
     # ISO text comparison: utc_now() text order is time order, and the date is a prefix of its first instant.
     return conn.execute(text("SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since"),
                         {"since": settings.spend_cap_since.isoformat()}).scalar_one()

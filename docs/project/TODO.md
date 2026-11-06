@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot (incl. `name`/`variant`, required by migration 0002's CHECK, in the same INSERT; ADR-018), a run's model must be in `gateway.RATES` (ADR-015), `make_cutout` errors caught per product (`CutoutUnavailable` → `cutout_unavailable`, anything else → `cutout_error`) so one photo never stops the batch (ADR-016), cutout rows with `cutout_asset` and `bbox_json = [x, y, w, h]` and files named via `assets.extension` (ADR-019), one `Semaphore(2)` shared per `asyncio.run`, CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
-  - verify: `uv run pytest tests/test_fixtures_generate.py -q`: every validation error is listed and nothing loads; a new label with an existing model+quality is refused; a changed CSV row for an existing product is refused; `uv run python -m affiche.visuals.evaluate generate --fixtures fixtures/products.example.csv --run stub1` (stub `DATA_DIR`) creates one scene candidate and one proposed cutout per product.
+- [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`. The prevalidation must recognise matching replays before `review.next_status` (or a replayed file fails), must have its own check for cutout transitions, and must validate `kind` before calling `review.abandon` (Codex T-PV-008 r1). **`apply` spends (revise/background), so it must take `--paid` like `generate`** (ADR-022).
+  - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,27 +14,51 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`. The prevalidation must recognise matching replays before `review.next_status` (or a replayed file fails), must have its own check for cutout transitions, and must validate `kind` before calling `review.abandon` (Codex T-PV-008 r1).
-  - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
 - [ ] T-PV-011 (D-PV-008 `report`) `calls.csv`, `report.csv` (per run × variant × cycle × treatment, outcomes, reasons, estimated and allocated billed cost, `low_res`, `arm`) and `summary.md`.
   - verify: `uv run pytest tests/test_report.py -q`: outcome precedence (`approved` > `abandoned` > `pending` > `exhausted` > `failed_only` > `not_approved`); the billed allocation sums exactly to the billed total; `attempt_no` restarts per cycle.
 
 ## Blocked
 
 - [!] T-PV-012 (D-PV-003 cap section (b)) One paid probe call with the chosen model, to see whether `usage` is returned and to calibrate the estimates.
-  - note: Blocked on the user only (T-PV-003 and T-PV-007 are done):
-    - `OPENAI_API_KEY` from a dedicated OpenAI project in `backend/.env`;
-    - `SPEND_CAP_USD` and `SPEND_CAP_SINCE` set;
-    - a check of that project's budget-limit behaviour in the OpenAI settings;
-    - the model to probe (`gpt-image-2` / `gpt-image-2.5-sunburst` / `gpt-image-2.5-flare`, ADR-015) and the quality.
+  - note: **The user's inputs are in place (2026-11-06, ADR-021):**
+    - the key is in `backend/.env` (a project key; never read or printed);
+    - cap USD 12 since 2026-11-06;
+    - `gpt-image-2`, quality `high`;
+    - the project budget limit blocks requests.
 
-    Asked 2026-11-06. The probe also needs a small runner: T-PV-009's `generate --only <one SKU>`, or a one-off script.
+    T-PV-009 is done; **only the user's explicit go remains.**
+  - **Probe command (from `backend/`):**
+    `IMAGE_PROVIDER=openai DATA_DIR=data-probe uv run python -m affiche.visuals.evaluate generate --paid --fixtures fixtures/products.example.csv --photos fixtures/examples --run probe-high --model gpt-image-2 --quality high --only EX-PHONE-NOIR`
+
+    Why a separate folder (`data-probe`):
+    - a run owns its (model, quality) pair in its data folder, so the evaluation in `data-openai` can still create its gpt-image-2/high run;
+    - the evaluation report has no example product in it.
+
+    The probe's cost (expected about USD 0.40) is in the `data-probe` ledger, not the `data-openai` one. Lower the evaluation's cap by that amount, or keep it in mind. The OpenAI project limit (blocks) is global.
+
+    Paid mode is switched on only by that command line:
+    - `.env` leaves `IMAGE_PROVIDER` empty, so it defaults to stub;
+    - with `openai`, `generate` refuses to run unless `--paid` is given (Codex T-PV-009 r1).
   - verify: one `provider_calls` row with a non-zero `cost_micros`; the design or DECISIONS.md records whether `usage` was present and the observed cost.
 - [!] T-PV-013 (D-PV-008, R-008) Paid evaluation: 5 products to calibrate, then 15; report; recommendation written with the user; then design v2.
   - note: Blocked on the user: the fixture photos (~20 products, incl. poor photos and look-alike variants), the arm assignments, and the approval thresholds agreed before the run (R-008 c.6). Also needs T-PV-002 … T-PV-012.
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-009 (D-PV-008 fixtures, runs, `generate`)
+  - **Code:**
+    - `backend/src/affiche/visuals/fixtures.py` (strict CSV, every error listed, nothing loads if any row fails);
+    - `backend/src/affiche/visuals/evaluate.py` (CLI `generate`): an immutable run (model in `RATES`, unique model+quality), the `run_products` snapshot with name/variant/arm/row sha, the scene requests with re-run-safe uuid5 ids, `execute` under `Semaphore(2)`, cutouts in a thread overlapping the calls, per-product error boundaries;
+    - `--paid` required with `IMAGE_PROVIDER=openai`;
+    - exit codes 0/1/2/3;
+    - `fixtures/products.example.csv` + 2 made example photos.
+  - **Verified 2026-11-06** (Windows 10, Python 3.12.10):
+    - `uv run pytest tests/test_fixtures_generate.py -q` → 33 passed; `uv run pytest -q` → 398 passed, 3 deselected.
+    - Manual: `IMAGE_PROVIDER=stub DATA_DIR=<scratch> … generate --fixtures fixtures/products.example.csv --photos fixtures/examples --run stub1 --model gpt-image-2 --quality medium` → exit 0 in 74 s, 2 `pending_review` scene candidates + 2 `proposed` cutouts (real rembg). The re-run is idempotent (6 s, nothing new).
+    - 26 mutations killed.
+    - Codex r1 APPROVE WITH FIXES (2 P1: the paid opt-in, the cutout error boundary; 3 P2: strict CSV, `--only` vs the snapshot, exit 1 on errors), r2 APPROVE (docs/project/reviews/t-pv-009-code-r1.md, -r2.md).
+    - ADR-022.
 
 - [x] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-006 step 2, D-PV-007)
   - **Code:** `backend/src/affiche/visuals/review.py`:

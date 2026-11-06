@@ -67,8 +67,7 @@ def make_cutout(source: bytes, *, mask_fn: MaskFn | None = None, rembg_model: st
     """
     with Image.open(io.BytesIO(source)) as opened:
         oriented = ImageOps.exif_transpose(opened)
-    refuse_undeclared_colours(oriented.info)
-    icc_profile = _rgb_profile(oriented)
+    icc_profile = check_source(oriented)
     image = oriented.convert("RGB")
     alpha = _alpha(image, mask_fn or _rembg_mask(rembg_model), max_hole_ratio)
     if (failure := _check_components(alpha)) is not None:
@@ -79,6 +78,13 @@ def make_cutout(source: bytes, *, mask_fn: MaskFn | None = None, rembg_model: st
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", **({"icc_profile": icc_profile} if icc_profile else {}))
     return Cutout(png=buffer.getvalue(), bbox=(left, top, right - left, bottom - top))
+
+
+def check_source(oriented: Image.Image) -> bytes | None:
+    """The colour rules of a cutout source (EXIF-oriented), public so that a caller can list refusals before any work:
+    ValueError for colours that RGB pixels cannot keep; else the ICC profile the cutout keeps (None without one)."""
+    refuse_undeclared_colours(oriented.info)
+    return _rgb_profile(oriented)
 
 
 def _rgb_profile(image: Image.Image) -> bytes | None:

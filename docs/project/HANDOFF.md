@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-008 are done and reviewed; next is T-PV-009 (fixtures, runs, CLI `generate`). The user was asked for the T-PV-012 probe inputs.
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-009 are done and reviewed. The paid probe (T-PV-012) is ready and waits only for the user's go; T-PV-010 is next otherwise.
 
 ## State of the world
 
@@ -20,7 +20,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - `visuals/admission.py` (T-PV-006, ADR-018): `request_scene`, `request_revision`, `request_background`, `reserve`, `Refused`, `Admitted`; migration 0002 (`run_products.name`/`variant`);
   - `visuals/execution.py` (T-PV-007, ADR-019): `async execute(...)`, call 1, one retry, atomic success, failures;
   - `visuals/review.py` (T-PV-008, ADR-020): `approve`, `reject`, `confirm_cutout`, `reject_cutout`, `new_cycle`, `abandon`, `reusable`, `next_status`;
-  - 365 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
+  - `visuals/fixtures.py` + `visuals/evaluate.py` (T-PV-009, ADR-022): the CLI `python -m affiche.visuals.evaluate generate` (`--paid` required with openai);
+  - 398 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
 ## Done this session
@@ -66,19 +67,26 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - r2 → APPROVE;
   - reviews: docs/project/reviews/t-pv-008-code-r1.md, -r2.md;
   - verified: 365 passed; 7 mutations killed;
+  - committed at the user's request ("go").
+- **T-PV-009 done** via /implement-review:
+  - Codex r1 → 5 fixes (2 P1: the `--paid` opt-in, the cutout error boundary; 3 P2: strict CSV, `--only` vs the snapshot, exit 1 on errors);
+  - r2 → APPROVE;
+  - reviews: docs/project/reviews/t-pv-009-code-r1.md, -r2.md;
+  - verified: 398 passed; the manual stub+rembg example run is clean and idempotent; 26 mutations killed;
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-008 is done but **not committed**; offer the commit first.
-- **Asked the user (2026-11-06)** for the T-PV-012 probe inputs:
-  - a key from a dedicated OpenAI project, which **the user** puts in `backend/.env`;
-  - `SPEND_CAP_USD` and `SPEND_CAP_SINCE`;
-  - the project's budget-limit behaviour (blocks or alerts);
-  - the model and quality.
+- **Task:** none in progress. T-PV-009 is done but **not committed**; offer the commit first.
+- **T-PV-012 probe: ready, waiting for the user's explicit go** (ADR-021, ADR-022):
+  - the user's project key is in `backend/.env`. **Never read, print or grep that file**; list its names with values masked;
+  - cap USD 12 since 2026-11-06; `gpt-image-2`, `high`; the project budget limit blocks requests;
+  - `.env` leaves `IMAGE_PROVIDER` empty (stub). The exact probe command (with `--paid`, `DATA_DIR=data-probe`, the example product `EX-PHONE-NOIR`) is in TODO.md T-PV-012.
 
-  Also, for T-PV-013 (not urgent): the photos, the arm assignments, the thresholds.
-- **Next action:** T-PV-009 (D-PV-008 fixtures CSV, runs, the `run_products` snapshot, CLI `generate`), with /implement-review. It is the first CLI. Its TODO entry lists every constraint collected so far (ADR-015/016/018/019). After it, the probe (T-PV-012) can run as `generate --only <SKU>` once the user's inputs are in place.
+  After the probe, record whether `usage` came back and the cost, in DECISIONS.md and the T-PV-012 verify line.
+
+  Still needed for T-PV-013 (not urgent): the photos, the arm assignments, the thresholds, and a higher cap (about USD 30–46).
+- **Next action:** commit T-PV-009 if the user agrees, then either the probe (on the user's go) or T-PV-010 (`sheet`, `apply` with `--paid`, `new-cycle`).
 
 ## Landmines / gotchas discovered
 
@@ -137,28 +145,30 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, seven commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-007. No remote; nothing pushed.
+Branch main, eight commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-008. No remote; nothing pushed.
 
-Not committed (T-PV-008 and doc updates):
-- backend/src/affiche/visuals/review.py, backend/tests/test_review.py (new, intent-to-add);
-- docs/project/DECISIONS.md (ADR-020), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-008-code-r1.md, -r2.md.
+Not committed (T-PV-009 and doc updates):
+- backend/src/affiche/visuals/fixtures.py, evaluate.py, backend/tests/test_fixtures_generate.py, backend/fixtures/products.example.csv, backend/fixtures/examples/phone-noir.jpg, phone-bleu.jpg (new, intent-to-add);
+- backend/src/affiche/config.py, visuals/admission.py (`spent_micros`), visuals/cutout.py (`check_source`), backend/tests/test_config.py;
+- docs/project/DECISIONS.md (ADR-021, ADR-022), TODO.md, HANDOFF.md;
+- docs/project/reviews/t-pv-009-code-r1.md, -r2.md.
+
+`backend/.env` holds the user's key and is git-ignored: **never stage it** (stage explicit paths only).
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-008 (lines 436–464: the fixtures CSV, validation, the CLI table) and D-PV-006 step 1 (lines 384–395, cutouts) for T-PV-009.
-2. Ask the user whether to commit T-PV-008, if that is not done yet, and whether the T-PV-012 inputs are ready.
-3. Implement T-PV-009 with /implement-review. Wire together:
-   - `runtime.start`;
-   - the CSV → assets (`original`) → `run_products`;
-   - `admission.request_scene`;
-   - `execution.execute`;
-   - `cutout.make_cutout` → a `proposed` cutout row.
+1. Read this file, then TODO.md (T-PV-012 has the exact probe command).
+2. Ask the user whether to commit T-PV-009 (if not done yet) and whether to run the paid probe now.
+3. **The probe:** run the TODO command only after an explicit go. Record:
+   - the request/call status;
+   - `usage_json` present or not;
+   - `cost_micros` and `cost_is_estimate`;
+   - the call time.
 
-   Run its verify step; mark it done only after the review is clean.
-4. Continue T-PV-010, T-PV-011. Then the probe (T-PV-012) once the user's inputs are in place, then the paid evaluation (T-PV-013).
+   Update DECISIONS.md and mark T-PV-012 done.
+4. Then T-PV-010 (`sheet`, `apply` with `--paid`, `new-cycle`) and T-PV-011 (`report`) with /implement-review, then T-PV-013 with the user's photos, arms, thresholds and a higher cap.
 
 ## Decisions made this session
 
@@ -175,3 +185,5 @@ Not committed (T-PV-008 and doc updates):
 - ADR-018: **user decision**, migration 0002 (the subject in `run_products`); admission interpretations (latest by `attempt_no`, stale target first, `review_pending` vs `not_rejected`, the extra codes).
 - ADR-019: execution: the semaphore per loop, inputs prepared before spend, the billed cost kept on late failures, the `.jpeg` extension rule, the cutout row format for T-PV-009.
 - ADR-020: review: conditional updates and replays, abandon blocked by any running request in the scope, approval allowed after an abandon, `new_cycle` without a replay token, the `apply` prevalidation notes for T-PV-010.
+- ADR-021: **user inputs** for the probe (project key in `.env`, cap USD 12 since 2026-11-06, gpt-image-2/high, the OpenAI limit blocks); paid mode only from the command line.
+- ADR-022: CLI `generate`: `--paid` required with openai, exit codes 0/1/2/3, strict CSV, the snapshot checked before `--only`, the `committed` label.

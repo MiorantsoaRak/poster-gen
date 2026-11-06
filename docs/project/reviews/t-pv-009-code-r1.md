@@ -1,0 +1,17 @@
+**Verdict: APPROVE WITH FIXES.** Resolve these before the paid probe.
+
+1. **P1 — Paid-mode opt-in is not enforced.** [evaluate.py:340](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:340>) calls `load_settings()`, which accepts `IMAGE_PROVIDER` from dotenv and inherited environment. If either supplies `openai`, an unprefixed `generate` can spend. This does not establish that your protected file contains that setting. **Fix:** enforce the invocation’s paid opt-in independently of dotenv; a CLI flag is needed if inherited environment must also be insufficient.
+
+2. **P1 — Cutout persistence failures abort outstanding paid work.** [evaluate.py:276](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:276>): `_insert_cutout()` sits outside the per-product exception handler. A filesystem or DB failure escapes `gather`; `asyncio.run` then cancels unfinished scene tasks. Requests remain running until recovery, and a rerun can pay again for interrupted calls. **Fix:** include persistence in the per-product error boundary and let other jobs finish. Test a cutout write failure while a scene is awaiting its provider.
+
+3. **P2 — Malformed quoting can silently drop products.** [fixtures.py:61](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/fixtures.py:61>): `csv.reader` defaults to permissive parsing. An unclosed opening quote in P1’s final `notes` field consumes subsequent product lines into that field; P1 still has ten columns and can generate while P2 disappears. **Fix:** use `strict=True`; test an unterminated final field followed by another product, asserting rejection and no writes.
+
+4. **P2 — `--only` bypasses snapshot validation for other rows.** [evaluate.py:64](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:64>): selection happens before `_refuse_changed_rows`. After snapshotting P1, change its notes and run `--only P2`: the command accepts the changed CSV and can spend on P2. **Fix:** compare every loaded row against the snapshot before applying `--only`.
+
+5. **P2 — Unexpected execution failures report success.** [evaluate.py:251](<C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/visuals/evaluate.py:251>): an unexpected exception becomes `"invalid_request"`, but `generate` only treats budget errors as unsuccessful. A one-product probe that crashes therefore exits 0; the test explicitly endorses this. **Fix:** continue the batch, aggregate unexpected errors and replay conflicts, then return nonzero, retaining exit-3 precedence for budget exhaustion.
+
+Interpretations **1–5, 8 and 9** are reasonable; quality options match the installed SDK. **7** needs finding 4’s correction. For **10**, “spent” is misleading: rename it **“committed (including estimates/reservations)”** without changing cap accounting. **11** supplies no additional reproducible defect; its inference exception is already contained.
+
+For terseness, remove duplicated module/parser/function descriptions. When aggregating failures, return all `gather` outcomes instead of slicing away cutout results. Keep the explicit SQL and validation helpers; compressing those would reduce clarity.
+
+Static review only: the launcher failed, so tests were not run. Reviewed files match the supplied diff. No files modified, no network used, and `backend/.env` was never opened.
