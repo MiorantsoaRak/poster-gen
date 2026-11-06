@@ -2,6 +2,18 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-014 — 2026-11-06 — Prompt and screen interpretations (T-PV-002)
+
+- Status: Implementation decisions inside D-PV-002. Codex r1 agreed with them.
+- Decision:
+  1. **Background `texte` sentence:** a rejected background for the "text added outside the product" reason gets "Remove all text, numbers, logos and watermarks." The design names only `integration` and `extra` for backgrounds. Text in a background is exactly the `texte` case. `coloris, logo, cameras, boutons, forme, cadrage` add nothing to a background prompt.
+  2. **Number rule of the screen:** "any number with ≥ 4 digits (spaces, dots and commas ignored)" means ≥ 4 digits where two digits are separated by nothing, one dot or comma, or a run of spaces, but not a mix (`\d(?:(?:[.,]|\s+)?\d){3,}`). So `49,99`, `1 200 000` and `1  200  000` are blocked, but `iPhone 15, 128 Go` is not.
+  3. **Wording added to the design's blocks:** a "Rules (they override everything below)" header; instruction 1 also covers further product photos; the mood line appears only for the default or a chosen mood.
+- Because: the blocklist is best effort (ADR-011). Its false positives cost one rephrase, while its false negatives are caught by rule 2 and the review checklist.
+- Known false positives: two numbers separated only by a space (`Galaxy S24 128 Go`), a 4-digit year, `5000 mAh`.
+- Consequence for T-PV-007/008: `corrections_applied` must mean "a correction line was added to the prompt", not "the operator gave reasons". Codes that are ignored for a background leave the prompt unchanged.
+- Revisit if: the evaluation shows the screen blocks real descriptions often, or text appears in backgrounds despite the sentence.
+
 ## ADR-013 — 2026-11-06 — Backend scaffold choices (T-PV-001)
 
 - Status: Implementation decisions inside the approved design (D-PV-001, Cross-cutting).

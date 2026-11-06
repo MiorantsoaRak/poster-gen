@@ -3,18 +3,19 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 (backend scaffold) done and reviewed; next is T-PV-002.
+**Working on:** product-visuals phase 1. T-PV-001 (backend scaffold) and T-PV-002 (prompts + screen) done and reviewed; next is T-PV-003.
 
 ## State of the world
 
-Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia (branch main, unborn: no commits, no remotes).
+Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia (branch main, initial commit made 2026-11-06, no remotes).
 - PROJECT.md and the six-feature split: approved (ADR-008).
 - requirements/product-visuals.md: R-001 … R-008 approved; R-003, R-004 and R-005 amended on 2026-11-06 (ADR-011).
 - designs/product-visuals.md r4: approved for **phase 1** (ADR-012). Phase-2 HTTP/session/UI contracts are draft until design v2, after the paid evaluation.
 - `backend/` exists (T-PV-001, ADR-013):
   - Python 3.12 + uv project, package `affiche` (`src/affiche/config.py`, `src/affiche/db.py`);
   - Alembic migration 0001 with the whole D-PV-001 schema;
-  - 23 pytest tests;
+  - `src/affiche/visuals/prompts.py` (T-PV-002, ADR-014): `Direction`, `SceneSubject`, both prompt builders, the reason-code sentences, `find_commercial_terms`;
+  - 115 pytest tests;
   - commands are in AGENTS.md → Commands cheat sheet.
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
@@ -28,11 +29,19 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - Codex r2 → APPROVE;
   - reviews: docs/project/reviews/t-pv-001-code-r1.md and -r2.md;
   - verified: `cd backend; uv run pytest -q` → 23 passed; 3 mutations killed.
+- Initial commit made at the user's request (all docs + T-PV-001).
+- **T-PV-002 done** via /implement-review:
+  - Codex r1 → APPROVE WITH FIXES: decimal prices got through the screen, and the tests didn't protect the prompt wording;
+  - r2 → APPROVE WITH FIXES: the meaning checks were topic words only;
+  - r3 → APPROVE (the 3-round cap is reached; no open findings);
+  - reviews: docs/project/reviews/t-pv-002-code-r1.md … -r3.md;
+  - verified: `uv run pytest -q` → 115 passed; about 15 mutations killed;
+  - ADR-014 records the interpretations.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress.
-- **Next action:** T-PV-002 (D-PV-002 prompts and the commercial-terms screen; pure functions). The user asked for /implement-review for T-PV-001; confirm the same flow for T-PV-002. One task at a time; mark `[~]` with a note when starting.
+- **Task:** none in progress. T-PV-002 is **not committed** yet (see Uncommitted).
+- **Next action:** T-PV-003 (D-PV-003 provider adapter, error mapping, stub, money math; mocked SDK, no network), with /implement-review as for T-PV-001/002. One task at a time; mark `[~]` with a note when starting.
 
 ## Landmines / gotchas discovered
 
@@ -46,6 +55,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 - **Settings:**
   - `load_settings()` raises `ConfigError`, never pydantic's `ValidationError`, which keeps the raw API key in `.errors()`.
   - Tests must call `load_settings(env_file=None)` so they never read a real `backend/.env`.
+- **`corrections_applied` (ADR-014):** set it from what the prompt builder actually added (any correction line or note), not from "reasons were given". Reasons such as `coloris` that mean nothing for a background leave the background prompt unchanged. This applies when T-PV-006/007/008 create revision requests.
+- **Prompt tests carry the expected sentences literally** (`SCENE_MEANING`, `BACKGROUND_MEANING`, `SCENE_RULES` in tests/test_prompts.py). A deliberate wording change in prompts.py must change them too.
 - **Codex sandbox:** it cannot create temp files, so it cannot run the DB tests; it ran the 19 config tests only. Always run the full suite locally before calling a task done.
 - **Secret-guard hook false positive:** it blocked `uv run pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning` as an "org token". Don't retry that variant; use the plain command and read the warnings summary.
 - **Artifact tool paths:** the short scratchpad path `C:\Users\MRAKOT~1\...` is refused by a Read permission rule; use `C:\Users\M Rakotozafy\AppData\Local\Temp\...`.
@@ -62,26 +73,24 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 - **Behaviour the user should not be surprised by:**
   - after a rejection, a fresh request for the same product is refused (`use_revision`); the correction note can change the style;
   - a new campaign (cycle) is allowed only after an approval.
-- **Git trust:** an exact safe.directory entry is in C:/Users/M Rakotozafy/.gitconfig (ADR-007). There is no initial commit; the user has not asked for one.
+- **Git trust:** an exact safe.directory entry is in C:/Users/M Rakotozafy/.gitconfig (ADR-007). Commit only when the user asks; push only on "push".
 - BRIEF.md is a pre-bootstrap snapshot; `poster-kit.zip` does not exist (ADR-010).
 
 ## Uncommitted / dirty state
 
-Branch main, unborn; nothing staged. Everything is untracked:
+Branch main. The initial commit (all docs + the T-PV-001 backend, 35 files) was made on 2026-11-06 at the user's request. No remote; nothing pushed.
 
-- .gitignore, README.md, AGENTS.md
-- docs/project/BRIEF.md, PROJECT.md, TODO.md, HANDOFF.md, DECISIONS.md
-- docs/project/requirements/_INDEX.md, _TEMPLATE.md, product-visuals.md
-- docs/project/designs/_INDEX.md, _TEMPLATE.md, product-visuals.md
-- docs/project/reviews/product-visuals-design-r1.md, -r2.md, -r3.md, -r4.md, -devils-advocate.md, t-pv-001-code-r1.md, t-pv-001-code-r2.md
-- backend/: pyproject.toml, uv.lock, .python-version, .env.example, alembic.ini, src/affiche/{__init__,config,db}.py, migrations/{env.py,script.py.mako,versions/0001_initial.py}, tests/{test_config,test_db,tx_worker}.py
+Not committed (T-PV-002 and doc updates):
+- `backend/src/affiche/visuals/__init__.py`, `prompts.py` and `backend/tests/test_prompts.py`. These are intent-to-add (`git add -N`) for the review diff; their content is not staged.
+- `docs/project/TODO.md`, `HANDOFF.md`, `DECISIONS.md` (ADR-014).
+- `docs/project/reviews/t-pv-002-code-r1.md`, `-r2.md`, `-r3.md`.
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-002 (lines 177–220) for T-PV-002.
-2. Confirm T-PV-002 with the user and implement it with /implement-review; run its verify step; mark it done only after the review is clean.
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-003 (lines 222–312) for T-PV-003.
+2. If the user has not yet answered the commit offer for T-PV-002, ask again. Then implement T-PV-003 with /implement-review: check the installed `openai` SDK first (no invented APIs); run its verify step; mark it done only after the review is clean.
 3. Continue T-PV-003 … T-PV-011 in order, one at a time.
 4. Ask the user for the T-PV-012 / T-PV-013 inputs when T-PV-007 is done (key, cap, budget-limit check, photos, arms, thresholds).
 5. Offer an initial commit; commit only when asked.
@@ -94,3 +103,4 @@ Branch main, unborn; nothing staged. Everything is untracked:
 - ADR-011: design questions: baked shadow, wording amendments, phase 1 first, evaluation exception (limit 5, arm B), cycles after approval.
 - ADR-012: design approved for phase 1; Python 3.12 + uv + pytest.
 - ADR-013: backend scaffold choices (pydantic-settings and `ConfigError`, no ORM, `BEGIN IMMEDIATE` recipe, migrate-only Alembic).
+- ADR-014: prompt and screen interpretations (background `texte` sentence, the number rule, `corrections_applied` meaning).

@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-002 (D-PV-002) `Direction`/`SceneSubject` types, `build_scene_prompt`, `build_background_prompt`, the reason-code sentences, and `find_commercial_terms`. Pure functions.
-  - verify: `uv run pytest tests/test_prompts.py -q`: a fixture's price, warranty and promo never appear in either prompt; the screen matches and does not match the D-PV-002 lists; every reason code has a sentence or is explicitly ignored, per prompt type; arm-B mode adds no correction sentence and no note.
+- [ ] T-PV-003 (D-PV-003 provider call, error mapping, stub, money math) Check the installed `openai` SDK (images.edit/generate signatures, multipart, exception classes, error codes) and record the version. Provider adapter: `provider_input` preparation (EXIF orientation, long edge ≤ 1536, PNG without metadata), client settings (timeout 180 s, `max_retries=0`), strict 1088×1920 validation, usage → cost (Decimal, ceil, micro-USD), the error-mapping table, retryable vs not. Stub provider with `STUB_FAIL`. No network.
+  - verify: `uv run pytest tests/test_gateway.py -q` with mocked SDK responses and exceptions covers each error-mapping row, retryable classification, size validation and cost rounding; the provider input has no EXIF; the SDK version and any deviation from the design are recorded in DECISIONS.md.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,8 +14,6 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-003 (D-PV-003 provider call, error mapping, stub, money math) Check the installed `openai` SDK (images.edit/generate signatures, multipart, exception classes, error codes) and record the version. Provider adapter: `provider_input` preparation (EXIF orientation, long edge ≤ 1536, PNG without metadata), client settings (timeout 180 s, `max_retries=0`), strict 1088×1920 validation, usage → cost (Decimal, ceil, micro-USD), the error-mapping table, retryable vs not. Stub provider with `STUB_FAIL`. No network.
-  - verify: `uv run pytest tests/test_gateway.py -q` with mocked SDK responses and exceptions covers each error-mapping row, retryable classification, size validation and cost rounding; the provider input has no EXIF; the SDK version and any deviation from the design are recorded in DECISIONS.md.
 - [ ] T-PV-004 (D-PV-006 steps 1 and 3, image operations) rembg setup: pick the model from the installed version's list and document its one-time download. Mask pipeline (≤ 2048 copy, threshold 128, holes < `MAX_HOLE_RATIO`, 1 px erosion), RGBA built from source pixels, component check, placement, baked shadow.
   - verify: `uv run pytest tests/test_cutout.py -q`: pixel test on 3 committed sample images (made or freely licensed; no shop photos), an EXIF-orientation-6 sample and the downscale path (opaque pixels equal the oriented source, A ∈ {0, 255}, same size); synthetic images give `no_product` and `multiple_products`; placement stays inside the safe square for tall, wide and square boxes.
 - [ ] T-PV-005 (D-PV-001 asset store, process lock, crash recovery, provider mode) Content-addressed asset store (tmp → fsync → `os.replace`). OS lifetime lock on `data/cli.lock` / `data/api.lock`. Owner-scoped recovery after taking the lock. The `meta.provider_mode` guard.
@@ -43,6 +41,18 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-002 (D-PV-002) `Direction`/`SceneSubject` types, `build_scene_prompt`, `build_background_prompt`, reason-code sentences, `find_commercial_terms` (`backend/src/affiche/visuals/prompts.py`).
+  - verified 2026-11-06 (Windows 10, Python 3.12.10):
+    - `uv run pytest tests/test_prompts.py -q` → 92 passed; `uv run pytest -q` → 115 passed.
+    - The tests cover:
+      - fixture price, warranty and promo absent from both prompts;
+      - the D-PV-002 match and no-match lists, plus decimals, accents and no-break spaces;
+      - every reason code has an independent expected sentence or is ignored, per prompt type;
+      - `corrections=None, note=None` gives the initial prompt.
+    - About 15 mutations killed, including rule 2 removed and reversed or "price badge" sentences.
+    - Codex r1 and r2 APPROVE WITH FIXES, r3 APPROVE (docs/project/reviews/t-pv-002-code-r1.md … -r3.md).
+    - Interpretations in ADR-014 (background `texte` sentence, the number rule, `corrections_applied` meaning).
 
 - [x] T-PV-001 (D-PV-001, Cross-cutting configuration) Scaffold `backend/`: uv project (Python 3.12), package `affiche`, pytest; SQLAlchemy 2 + Alembic initial migration for the whole D-PV-001 schema incl. `req_one_revision` and `req_one_initial`; settings from `.env` with the startup validation list; `.env.example`; `.gitignore` additions; `write_tx()` with `BEGIN IMMEDIATE`.
   - verified 2026-11-06 (Windows 10, Python 3.12.10, uv 0.11.8):
