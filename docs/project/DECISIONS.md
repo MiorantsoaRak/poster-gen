@@ -2,6 +2,34 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-023 — 2026-11-06 — Probe result: gpt-image-2 returns usage; a high scene costs about USD 0.17 (T-PV-012)
+
+- Status: Measured on 2026-11-06 with one paid call (user's go), in `DATA_DIR=data-probe`.
+- **Facts:**
+  - **gpt-image-2 returns `usage`**, despite the SDK docstring "For gpt-image-1 only" (ADR-015). Each call's cost is therefore usage-based (`cost_is_estimate = 0`), and the cap counts **real** token costs, not only estimates.
+  - **One scene at `high`, 1088×1920, 1 input photo:**
+    - input 1271 tokens (text 169, image 1102), output 5300;
+    - cost = 169×5 + 1102×8 + 5300×30 µUSD = **168 661 µUSD (USD 0.169)**, recomputed exactly;
+    - the call took 55.1 s;
+    - the output is exactly 1088×1920, so the strict-size validation holds.
+  - **The result on the made example phone:**
+    - the camera layout, colour and diagonal panel are kept;
+    - no text was added;
+    - the product is about 41 % of the height and inside the safe square;
+    - the corner radius is slightly reduced.
+
+    This says nothing yet about real logos and fine markings (T-PV-013).
+  - **Billing check:** the user's OpenAI usage dashboard (screenshot, 2026-11-06) shows **November spend $0.17, 1 request**, matching the recorded 168 661 µUSD. So the app's usage-based ledger matches the bill (D-PV-003 cap, item (d)). The dashboard's "Total tokens" shows 1,271, i.e. the input tokens only; the output tokens are billed (they make up most of the $0.17) but are not counted in that tile.
+- **Consequences:**
+  1. **The estimates are conservative:** `ESTIMATE_SCENE_USD` 0.40 ≈ 2.4× the real cost. The floor would be ceil(1.25 × 168 661) = 210 827 µUSD, so the reservation stays at 0.40. They are kept: reservations only affect admission headroom, and costs are recorded from usage. Lowering the scene estimate to 0.25 is optional.
+  2. **The background cost is not measured yet:** `images.generate` has no input photo. It is expected near the scene cost (output-dominated); measure it in the first evaluation run.
+  3. **The evaluation budget is revised down:**
+     - 20 × (3 scenes × 0.17 + 1 background × ~0.16) ≈ **USD 13.4** at limit 3;
+     - about **USD 20** at limit 5 (ADR-011);
+     - add retries and extra backgrounds: **a cap of USD 25–30** is enough (down from the USD 30–46 in D-PV-008).
+  4. **The probe's spend is in the `data-probe` ledger, not `data-openai`.** The OpenAI project limit (blocks) is global.
+- Revisit if: OpenAI pricing changes, or a quality, size or multi-photo input changes the token counts materially.
+
 ## ADR-022 — 2026-11-06 — CLI `generate` and fixtures choices (T-PV-009)
 
 - Status: Implementation decisions inside D-PV-008. Codex r1 and r2 reviewed them.

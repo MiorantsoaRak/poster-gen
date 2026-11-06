@@ -19,32 +19,29 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
 
 ## Blocked
 
-- [!] T-PV-012 (D-PV-003 cap section (b)) One paid probe call with the chosen model, to see whether `usage` is returned and to calibrate the estimates.
-  - note: **The user's inputs are in place (2026-11-06, ADR-021):**
-    - the key is in `backend/.env` (a project key; never read or printed);
-    - cap USD 12 since 2026-11-06;
-    - `gpt-image-2`, quality `high`;
-    - the project budget limit blocks requests.
-
-    T-PV-009 is done; **only the user's explicit go remains.**
-  - **Probe command (from `backend/`):**
-    `IMAGE_PROVIDER=openai DATA_DIR=data-probe uv run python -m affiche.visuals.evaluate generate --paid --fixtures fixtures/products.example.csv --photos fixtures/examples --run probe-high --model gpt-image-2 --quality high --only EX-PHONE-NOIR`
-
-    Why a separate folder (`data-probe`):
-    - a run owns its (model, quality) pair in its data folder, so the evaluation in `data-openai` can still create its gpt-image-2/high run;
-    - the evaluation report has no example product in it.
-
-    The probe's cost (expected about USD 0.40) is in the `data-probe` ledger, not the `data-openai` one. Lower the evaluation's cap by that amount, or keep it in mind. The OpenAI project limit (blocks) is global.
-
-    Paid mode is switched on only by that command line:
-    - `.env` leaves `IMAGE_PROVIDER` empty, so it defaults to stub;
-    - with `openai`, `generate` refuses to run unless `--paid` is given (Codex T-PV-009 r1).
-  - verify: one `provider_calls` row with a non-zero `cost_micros`; the design or DECISIONS.md records whether `usage` was present and the observed cost.
 - [!] T-PV-013 (D-PV-008, R-008) Paid evaluation: 5 products to calibrate, then 15; report; recommendation written with the user; then design v2.
-  - note: Blocked on the user: the fixture photos (~20 products, incl. poor photos and look-alike variants), the arm assignments, and the approval thresholds agreed before the run (R-008 c.6). Also needs T-PV-002 … T-PV-012.
+  - note: Blocked on the user, and on T-PV-010/011:
+    - the fixture photos (~20 products, incl. poor photos and look-alike variants);
+    - the arm assignments;
+    - the approval thresholds agreed before the run (R-008 c.6);
+    - **a cap of about USD 25–30**. At the probe's measured USD 0.17 per scene (ADR-023): 20 × 3 scenes + 20 backgrounds ≈ USD 13.4; with limit 5 ≈ USD 20; plus retries or extra backgrounds.
+
+    Run it in `DATA_DIR=data-openai` with `--paid`.
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-012 (D-PV-003 cap section (b)) One paid probe call, with the user's go on 2026-11-06.
+  - **Command (from `backend/`):**
+    `IMAGE_PROVIDER=openai DATA_DIR=data-probe uv run python -m affiche.visuals.evaluate generate --paid --fixtures fixtures/products.example.csv --photos fixtures/examples --run probe-high --model gpt-image-2 --quality high --only EX-PHONE-NOIR`
+    → exit 0 in 60 s. The made example phone was used, not a shop photo.
+  - **Verified:**
+    - one `provider_calls` row: `succeeded`, `cost_micros = 168661` (**USD 0.168661**), `cost_is_estimate = 0`;
+    - **`usage` was returned**: input 1271 (text 169, image 1102), output 5300; the cost recomputes exactly;
+    - the call took 55.1 s; the result is a 1088×1920 PNG; the candidate is `pending_review`; the cutout is `proposed`.
+  - **The image:** the product layout and colour are kept, no text is added, the height is about 41 %, and it fits the safe square.
+  - **Billing:** the user's OpenAI dashboard shows $0.17 and 1 request for November, matching the ledger.
+  - Recorded in ADR-023.
 
 - [x] T-PV-009 (D-PV-008 fixtures, runs, `generate`)
   - **Code:**

@@ -17,6 +17,7 @@ htmlcov/
 
 # Backend data (SQLite DB, assets) and fixture photos
 /backend/data/
+/backend/data-*/
 /backend/fixtures/photos/
 
 # Frontend dependencies and build output

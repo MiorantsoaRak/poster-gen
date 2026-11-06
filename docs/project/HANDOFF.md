@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-009 are done and reviewed. The paid probe (T-PV-012) is ready and waits only for the user's go; T-PV-010 is next otherwise.
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-009 and the paid probe T-PV-012 are done (USD 0.169 per high scene, usage returned). Next is T-PV-010.
 
 ## State of the world
 
@@ -73,20 +73,27 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - r2 → APPROVE;
   - reviews: docs/project/reviews/t-pv-009-code-r1.md, -r2.md;
   - verified: 398 passed; the manual stub+rembg example run is clean and idempotent; 26 mutations killed;
+  - committed at the user's request.
+- **T-PV-012 done:** the paid probe ran on the user's go (ADR-023):
+  - gpt-image-2 **returns `usage`**;
+  - one high 1088×1920 scene = **USD 0.169** (input 1271 / output 5300 tokens), 55 s;
+  - the image is good on the made example phone;
+  - `.gitignore` now ignores `/backend/data-*/` (`data-probe`, `data-openai`);
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-009 is done but **not committed**; offer the commit first.
-- **T-PV-012 probe: ready, waiting for the user's explicit go** (ADR-021, ADR-022):
+- **Task:** none in progress. The T-PV-012 docs and the `.gitignore` change are **not committed**; offer the commit.
+- **Paid setup** (ADR-021, ADR-023):
   - the user's project key is in `backend/.env`. **Never read, print or grep that file**; list its names with values masked;
-  - cap USD 12 since 2026-11-06; `gpt-image-2`, `high`; the project budget limit blocks requests;
-  - `.env` leaves `IMAGE_PROVIDER` empty (stub). The exact probe command (with `--paid`, `DATA_DIR=data-probe`, the example product `EX-PHONE-NOIR`) is in TODO.md T-PV-012.
-
-  After the probe, record whether `usage` came back and the cost, in DECISIONS.md and the T-PV-012 verify line.
-
-  Still needed for T-PV-013 (not urgent): the photos, the arm assignments, the thresholds, and a higher cap (about USD 30–46).
-- **Next action:** commit T-PV-009 if the user agrees, then either the probe (on the user's go) or T-PV-010 (`sheet`, `apply` with `--paid`, `new-cycle`).
+  - cap USD 12 since 2026-11-06; `gpt-image-2`/`high`; the OpenAI project limit blocks;
+  - `.env` leaves `IMAGE_PROVIDER` empty (stub). Paid runs need `IMAGE_PROVIDER=openai` **and** `--paid` on the command line, and only with the user's go.
+- **Still needed for T-PV-013:**
+  - the photos (~20 products);
+  - the arm assignments;
+  - the thresholds;
+  - a cap of about **USD 25–30** (revised down after the probe).
+- **Next action:** T-PV-010 (`sheet`, `apply` **with `--paid`**, `new-cycle`) with /implement-review, then T-PV-011 (`report`).
 
 ## Landmines / gotchas discovered
 
@@ -129,7 +136,7 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
   The cap only limits *estimated* spend.
 - **Unverified, to check:**
-  - whether gpt-image-2 returns `usage` (T-PV-012);
+  - the background (`images.generate`) cost: measure it in the first evaluation run (gpt-image-2 `usage` is confirmed, ADR-023);
   - the licence of the rembg-hosted BiRefNet file: the author labels BiRefNet MIT, but whether the rembg file is that checkpoint, and the training-data terms, are unchecked (ADR-016). Confirm before production.
 - **Cutout (ADR-016):**
   - 20–36 s per photo on the user's i5 CPU, plus about 22 s for the first session;
@@ -145,13 +152,13 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, eight commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-008. No remote; nothing pushed.
+Branch main, nine commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-009. No remote; nothing pushed.
 
-Not committed (T-PV-009 and doc updates):
-- backend/src/affiche/visuals/fixtures.py, evaluate.py, backend/tests/test_fixtures_generate.py, backend/fixtures/products.example.csv, backend/fixtures/examples/phone-noir.jpg, phone-bleu.jpg (new, intent-to-add);
-- backend/src/affiche/config.py, visuals/admission.py (`spent_micros`), visuals/cutout.py (`check_source`), backend/tests/test_config.py;
-- docs/project/DECISIONS.md (ADR-021, ADR-022), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-009-code-r1.md, -r2.md.
+Not committed: `.gitignore` (`/backend/data-*/`), and docs/project/DECISIONS.md (ADR-023), TODO.md, HANDOFF.md (T-PV-012 results).
+
+Local, git-ignored data:
+- `backend/data-probe/` holds the probe's DB and images (USD 0.169 spent; keep it as evidence);
+- the scratchpad `data-stub*` folders are disposable.
 
 `backend/.env` holds the user's key and is git-ignored: **never stage it** (stage explicit paths only).
 
@@ -159,16 +166,13 @@ Not committed (T-PV-009 and doc updates):
 
 ## Next session should
 
-1. Read this file, then TODO.md (T-PV-012 has the exact probe command).
-2. Ask the user whether to commit T-PV-009 (if not done yet) and whether to run the paid probe now.
-3. **The probe:** run the TODO command only after an explicit go. Record:
-   - the request/call status;
-   - `usage_json` present or not;
-   - `cost_micros` and `cost_is_estimate`;
-   - the call time.
-
-   Update DECISIONS.md and mark T-PV-012 done.
-4. Then T-PV-010 (`sheet`, `apply` with `--paid`, `new-cycle`) and T-PV-011 (`report`) with /implement-review, then T-PV-013 with the user's photos, arms, thresholds and a higher cap.
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-008 (lines 449–463: `sheet`, `apply` steps, `new-cycle`) for T-PV-010.
+2. Offer to commit the T-PV-012 docs and `.gitignore`, if that is not done yet.
+3. Implement T-PV-010 with /implement-review. `apply` must take `--paid`. Its prevalidation must:
+   - recognise replays before `review.next_status`;
+   - check cutout transitions itself;
+   - validate `kind` before `review.abandon` (ADR-020, ADR-022).
+4. Then T-PV-011 (`report`), then T-PV-013 with the user's photos, arms, thresholds and a cap of about USD 25–30.
 
 ## Decisions made this session
 
@@ -187,3 +191,4 @@ Not committed (T-PV-009 and doc updates):
 - ADR-020: review: conditional updates and replays, abandon blocked by any running request in the scope, approval allowed after an abandon, `new_cycle` without a replay token, the `apply` prevalidation notes for T-PV-010.
 - ADR-021: **user inputs** for the probe (project key in `.env`, cap USD 12 since 2026-11-06, gpt-image-2/high, the OpenAI limit blocks); paid mode only from the command line.
 - ADR-022: CLI `generate`: `--paid` required with openai, exit codes 0/1/2/3, strict CSV, the snapshot checked before `--only`, the `committed` label.
+- ADR-023: **probe result**: gpt-image-2 returns `usage`; a high 1088×1920 scene = USD 0.169 (55 s); the evaluation cap is revised to USD 25–30.
