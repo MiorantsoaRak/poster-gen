@@ -2,6 +2,22 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-020 — 2026-11-06 — Review, cycle and abandon interpretations (T-PV-008)
+
+- Status: Implementation decisions inside D-PV-004/005/006/007. Codex r1 and r2 judged them acceptable.
+- Decision:
+  1. **Every write is a conditional update** (`WHERE status = <from>`) returning `applied`; a replay with the same canonical payload returns `already_applied`; anything else gives `invalid_transition`. Input checks run first, so a replay with an invalid payload gets its validation code.
+  2. **Rejection:** the reasons are stored deduplicated in `REASON_CODES` order; a note-only rejection stores `"[]"`; the note is stripped and screened with `find_commercial_terms`.
+  3. **Cutout confirm/reject** (D-PV-006 step 2) are in this task, because no other task owned them.
+  4. **Abandon is refused while any request of the scope runs**, whatever its purpose (design line 357; my first instruction limited it to the treatment's purpose, which Codex caught). The replay is checked first, so a replay after `new-cycle` still addresses the original scope. Cycle numbers below 1 are refused.
+  5. **Approving a candidate that was pending when its scope was abandoned is allowed** (the design is silent). Abandon only stops new generation, and the report's precedence `approved > abandoned` resolves the outcome.
+  6. **`new_cycle` has no replay token:** a second call refuses (`cycle_not_approved`), because the new cycle has no approval yet.
+- For T-PV-010 (`apply`):
+  - its whole-file validation must recognise matching replays before `next_status`;
+  - it needs its own cutout-transition check;
+  - it must validate `kind` before `abandon`, where an unknown treatment raises `KeyError`.
+- Revisit if: the operator abandons with pending candidates often, and approvals after an abandon confuse the report.
+
 ## ADR-019 — 2026-11-06 — Request execution choices (T-PV-007)
 
 - Status: Implementation decisions inside D-PV-003 and D-PV-006. Codex r1 APPROVE.

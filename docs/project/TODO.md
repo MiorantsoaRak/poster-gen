@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-007) Review state machine (`next_status`, conditional updates, idempotent replay), approval requires `framing_checked` (both treatments), rejection reasons/note (screened), cycles, abandon, the reuse query.
-  - verify: `uv run pytest tests/test_review.py -q`: all 6 transition combinations (4 refused); approve without framing → `framing_not_checked`; reject without a reason or note refused; a cycle needs an approval; abandon is refused while a request runs or after an approval, and blocks new requests after; reuse never returns another variant and makes no gateway call.
+- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot (incl. `name`/`variant`, required by migration 0002's CHECK, in the same INSERT; ADR-018), a run's model must be in `gateway.RATES` (ADR-015), `make_cutout` errors caught per product (`CutoutUnavailable` → `cutout_unavailable`, anything else → `cutout_error`) so one photo never stops the batch (ADR-016), cutout rows with `cutout_asset` and `bbox_json = [x, y, w, h]` and files named via `assets.extension` (ADR-019), one `Semaphore(2)` shared per `asyncio.run`, CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
+  - verify: `uv run pytest tests/test_fixtures_generate.py -q`: every validation error is listed and nothing loads; a new label with an existing model+quality is refused; a changed CSV row for an existing product is refused; `uv run python -m affiche.visuals.evaluate generate --fixtures fixtures/products.example.csv --run stub1` (stub `DATA_DIR`) creates one scene candidate and one proposed cutout per product.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,9 +14,7 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot (incl. `name`/`variant`, required by migration 0002's CHECK, in the same INSERT; ADR-018), a run's model must be in `gateway.RATES` (ADR-015), `make_cutout` errors caught per product (`CutoutUnavailable` → `cutout_unavailable`, anything else → `cutout_error`) so one photo never stops the batch (ADR-016), cutout rows with `cutout_asset` and `bbox_json = [x, y, w, h]` and files named via `assets.extension` (ADR-019), one `Semaphore(2)` shared per `asyncio.run`, CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
-  - verify: `uv run pytest tests/test_fixtures_generate.py -q`: every validation error is listed and nothing loads; a new label with an existing model+quality is refused; a changed CSV row for an existing product is refused; `uv run python -m affiche.visuals.evaluate generate --fixtures fixtures/products.example.csv --run stub1` (stub `DATA_DIR`) creates one scene candidate and one proposed cutout per product.
-- [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`.
+- [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`. The prevalidation must recognise matching replays before `review.next_status` (or a replayed file fails), must have its own check for cutout transitions, and must validate `kind` before calling `review.abandon` (Codex T-PV-008 r1).
   - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
 - [ ] T-PV-011 (D-PV-008 `report`) `calls.csv`, `report.csv` (per run × variant × cycle × treatment, outcomes, reasons, estimated and allocated billed cost, `low_res`, `arm`) and `summary.md`.
   - verify: `uv run pytest tests/test_report.py -q`: outcome precedence (`approved` > `abandoned` > `pending` > `exhausted` > `failed_only` > `not_approved`); the billed allocation sums exactly to the billed total; `attempt_no` restarts per cycle.
@@ -37,6 +35,27 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-006 step 2, D-PV-007)
+  - **Code:** `backend/src/affiche/visuals/review.py`:
+    - `next_status`;
+    - `approve` (framing required) and `reject` (reasons/note, note screened);
+    - `confirm_cutout` / `reject_cutout`;
+    - `new_cycle`, `abandon`, `reusable`.
+
+    Every write is a conditional update with an idempotent replay (`applied` / `already_applied`).
+  - **Verified 2026-11-06** (Windows 10, Python 3.12.10):
+    - `uv run pytest tests/test_review.py -q` → 31 passed; `uv run pytest -q` → 365 passed, 3 deselected.
+    - The tests cover:
+      - the 6 transitions (4 refused);
+      - `framing_not_checked`, `reason_or_note_required`, `unknown_reason`, `commercial_terms` on the note;
+      - cutout decisions;
+      - a cycle only after an approval, with a fresh allowance in cycle 2;
+      - abandon: the replay first, `request_running` for any request in the scope, `already_approved`, and the admission refusal after;
+      - reuse: the exact variant only (prefix trap), newest first, no gateway.
+    - 7 mutations killed.
+    - Codex r1 APPROVE WITH FIXES (the abandon guard was too narrow; my instruction, not the code), r2 APPROVE (docs/project/reviews/t-pv-008-code-r1.md, -r2.md).
+    - ADR-020.
 
 - [x] T-PV-007 (D-PV-003 execution, D-PV-006 background flow)
   - **Code:** `backend/src/affiche/visuals/execution.py`:

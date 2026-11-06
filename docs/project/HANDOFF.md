@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-007 are done and reviewed; next is T-PV-008 (the review state machine, cycles, abandon, reuse). The user was asked for the T-PV-012 probe inputs.
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-008 are done and reviewed; next is T-PV-009 (fixtures, runs, CLI `generate`). The user was asked for the T-PV-012 probe inputs.
 
 ## State of the world
 
@@ -19,7 +19,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - `assets.py` (`put`, `path`, `record`) and `runtime.py` (`start`, `acquire_lock`, `recover`, `check_provider_mode`) (T-PV-005, ADR-017); `db.utc_now()`;
   - `visuals/admission.py` (T-PV-006, ADR-018): `request_scene`, `request_revision`, `request_background`, `reserve`, `Refused`, `Admitted`; migration 0002 (`run_products.name`/`variant`);
   - `visuals/execution.py` (T-PV-007, ADR-019): `async execute(...)`, call 1, one retry, atomic success, failures;
-  - 334 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
+  - `visuals/review.py` (T-PV-008, ADR-020): `approve`, `reject`, `confirm_cutout`, `reject_cutout`, `new_cycle`, `abandon`, `reusable`, `next_status`;
+  - 365 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
 ## Done this session
@@ -59,11 +60,17 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - Codex r1 → APPROVE (no defect). Its non-blocking test gap (a positive usage-based cost vs the kept estimate) was closed and checked by mutation;
   - review: docs/project/reviews/t-pv-007-code-r1.md;
   - verified: 334 passed; 19 mutations killed;
+  - committed at the user's request ("Go").
+- **T-PV-008 done** via /implement-review:
+  - Codex r1 → 1 fix: the abandon guard had to cover any request of the scope. My instruction was wrong, not the code;
+  - r2 → APPROVE;
+  - reviews: docs/project/reviews/t-pv-008-code-r1.md, -r2.md;
+  - verified: 365 passed; 7 mutations killed;
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-007 is done but **not committed**; offer the commit first.
+- **Task:** none in progress. T-PV-008 is done but **not committed**; offer the commit first.
 - **Asked the user (2026-11-06)** for the T-PV-012 probe inputs:
   - a key from a dedicated OpenAI project, which **the user** puts in `backend/.env`;
   - `SPEND_CAP_USD` and `SPEND_CAP_SINCE`;
@@ -71,7 +78,7 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - the model and quality.
 
   Also, for T-PV-013 (not urgent): the photos, the arm assignments, the thresholds.
-- **Next action:** T-PV-008 (D-PV-004 review state machine, D-PV-005 cycles/abandon, D-PV-007 reuse), with /implement-review. The probe can only run once a runner exists (T-PV-009's `generate --only`, or a one-off script), so T-PV-008 → T-PV-009 → probe is the natural order unless the user wants the probe sooner.
+- **Next action:** T-PV-009 (D-PV-008 fixtures CSV, runs, the `run_products` snapshot, CLI `generate`), with /implement-review. It is the first CLI. Its TODO entry lists every constraint collected so far (ADR-015/016/018/019). After it, the probe (T-PV-012) can run as `generate --only <SKU>` once the user's inputs are in place.
 
 ## Landmines / gotchas discovered
 
@@ -130,22 +137,28 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, six commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-006. No remote; nothing pushed.
+Branch main, seven commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-007. No remote; nothing pushed.
 
-Not committed (T-PV-007 and doc updates):
-- backend/src/affiche/visuals/execution.py, backend/tests/test_execution.py (new, intent-to-add);
-- backend/src/affiche/assets.py (`load`, `extension`);
-- docs/project/DECISIONS.md (ADR-019), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-007-code-r1.md.
+Not committed (T-PV-008 and doc updates):
+- backend/src/affiche/visuals/review.py, backend/tests/test_review.py (new, intent-to-add);
+- docs/project/DECISIONS.md (ADR-020), TODO.md, HANDOFF.md;
+- docs/project/reviews/t-pv-008-code-r1.md, -r2.md.
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-004 (lines 316–332), D-PV-005 (lines 341–378) and D-PV-007 (lines 427–434) for T-PV-008.
-2. Ask the user whether to commit T-PV-007, if that is not done yet, and whether the T-PV-012 inputs are ready.
-3. Implement T-PV-008 with /implement-review. Rejection notes pass `prompts.find_commercial_terms`; abandon and cycles feed the admission rules (ADR-018). Run its verify step; mark it done only after the review is clean.
-4. Continue T-PV-009 … T-PV-011 in order. Then the probe (T-PV-012) once the user's inputs are in place, then the paid evaluation (T-PV-013).
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-008 (lines 436–464: the fixtures CSV, validation, the CLI table) and D-PV-006 step 1 (lines 384–395, cutouts) for T-PV-009.
+2. Ask the user whether to commit T-PV-008, if that is not done yet, and whether the T-PV-012 inputs are ready.
+3. Implement T-PV-009 with /implement-review. Wire together:
+   - `runtime.start`;
+   - the CSV → assets (`original`) → `run_products`;
+   - `admission.request_scene`;
+   - `execution.execute`;
+   - `cutout.make_cutout` → a `proposed` cutout row.
+
+   Run its verify step; mark it done only after the review is clean.
+4. Continue T-PV-010, T-PV-011. Then the probe (T-PV-012) once the user's inputs are in place, then the paid evaluation (T-PV-013).
 
 ## Decisions made this session
 
@@ -161,3 +174,4 @@ Not committed (T-PV-007 and doc updates):
 - ADR-017: `runtime.start` as the single startup, lock retry of up to 2 s (Windows release delay), owner-wide call recovery, asset write order, `utc_now` format.
 - ADR-018: **user decision**, migration 0002 (the subject in `run_products`); admission interpretations (latest by `attempt_no`, stale target first, `review_pending` vs `not_rejected`, the extra codes).
 - ADR-019: execution: the semaphore per loop, inputs prepared before spend, the billed cost kept on late failures, the `.jpeg` extension rule, the cutout row format for T-PV-009.
+- ADR-020: review: conditional updates and replays, abandon blocked by any running request in the scope, approval allowed after an abandon, `new_cycle` without a replay token, the `apply` prevalidation notes for T-PV-010.
