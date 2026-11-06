@@ -1,0 +1,32 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python local/generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Backend data (SQLite DB, assets) and fixture photos
+/backend/data/
+/backend/fixtures/photos/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Local review copies, scratch files and OS metadata
+/outputs/
+/work/
+*.log
+.DS_Store
+Thumbs.db
