@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     estimate_scene_usd: PositiveUsd = Decimal("0.40")
     estimate_background_usd: PositiveUsd = Decimal("0.30")
     attempt_limit: int = Field(3, ge=1)
+    rembg_model: str = "birefnet-general-lite"
+    max_hole_ratio: float = Field(0.05, gt=0, lt=1)
     data_dir: Path = BACKEND_DIR / "data"
 
     @field_validator("spend_cap_since")

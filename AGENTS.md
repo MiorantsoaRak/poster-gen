@@ -49,6 +49,8 @@ Backend (`backend/`, Python 3.12 with uv; verified 2026-11-06 on Windows 10):
 | Install / sync dependencies | `uv sync` |
 | Run all tests | `uv run pytest -q` |
 | New migration file (hand-written SQL) | `uv run alembic revision -m "<message>"` |
+| One-time cutout model download (224 MB, to `%USERPROFILE%\.rembg\models\`) | `uv run python -c "from rembg import new_session; new_session('birefnet-general-lite')"` |
+| Real-model cutout tests (opt-in, about 2 min on CPU) | `uv run pytest -m rembg tests/test_cutout.py -q` |
 
 - Configuration: copy `backend/.env.example` to `backend/.env` (git-ignored). `SPEND_CAP_USD` and `SPEND_CAP_SINCE` are required.
 - Migrations run only through `affiche.db.migrate(engine)`. `alembic upgrade` from the command line refuses on purpose (ADR-013).

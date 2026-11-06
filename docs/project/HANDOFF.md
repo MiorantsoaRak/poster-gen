@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-003 are done and reviewed; next is T-PV-004.
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-004 are done and reviewed; next is T-PV-005.
 
 ## State of the world
 
@@ -15,7 +15,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - `config.py` and `db.py` (T-PV-001, ADR-013); Alembic migration 0001 with the whole D-PV-001 schema;
   - `visuals/prompts.py` (T-PV-002, ADR-014): `Direction`, `SceneSubject`, both prompt builders, the reason-code sentences, `find_commercial_terms`;
   - `visuals/gateway.py` (T-PV-003, ADR-015): `prepare_provider_input`, `validate_image`, money (`usd_to_micros`, `cost_micros`, `parse_usage`, `RATES`), `OpenAIProvider`, `StubProvider`, `make_provider`;
-  - 223 pytest tests.
+  - `visuals/cutout.py` (T-PV-004, ADR-016): `make_cutout`, `place`, `bake_shadow`, `CutoutUnavailable`; rembg 2.0.87 with `birefnet-general-lite`, downloaded once to `%USERPROFILE%\.rembg\models\`;
+  - 260 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
 ## Done this session
@@ -30,12 +31,19 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - r3 → APPROVE;
   - reviews: docs/project/reviews/t-pv-003-code-r1.md … -r3.md;
   - verified: `uv run pytest -q` → 223 passed; 25 mutations killed;
+  - committed at the user's request ("go").
+- **T-PV-004 done** via /implement-review:
+  - mutation testing first closed 3 test gaps;
+  - Codex r1 → 2 fixes: rembg's import-time `sys.exit`, and colour profiles that can't travel with RGB pixels are now refused;
+  - r2 → APPROVE;
+  - reviews: docs/project/reviews/t-pv-004-code-r1.md, -r2.md;
+  - verified: 260 passed + 3 real-model passed; 21 mutations killed;
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-003 is done but **not committed** (see Uncommitted). Offer the commit to the user first.
-- **Next action:** T-PV-004 (D-PV-006 steps 1 and 3: rembg cutout, mask pipeline, placement, baked shadow), with /implement-review. Pick the rembg model from the installed version's list; never trust model names from the design. One task at a time; mark `[~]` with a note when starting.
+- **Task:** none in progress. T-PV-004 is done but **not committed**; offer the commit first.
+- **Next action:** T-PV-005 (D-PV-001 asset store, OS process lock, owner-scoped crash recovery, `meta.provider_mode` guard), with /implement-review. One task at a time; mark `[~]` with a note when starting.
 
 ## Landmines / gotchas discovered
 
@@ -73,7 +81,14 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - the user's check of that project's budget-limit behaviour.
 
   The cap only limits *estimated* spend.
-- **Unverified, to check in tasks:** whether gpt-image-2 returns `usage` (T-PV-012); rembg model names (T-PV-004).
+- **Unverified, to check:**
+  - whether gpt-image-2 returns `usage` (T-PV-012);
+  - the licence of the rembg-hosted BiRefNet file: the author labels BiRefNet MIT, but whether the rembg file is that checkpoint, and the training-data terms, are unchecked (ADR-016). Confirm before production.
+- **Cutout (ADR-016):**
+  - 20–36 s per photo on the user's i5 CPU, plus about 22 s for the first session;
+  - `make_cutout` raises `CutoutUnavailable` when the session cannot be created (rembg's import-time `sys.exit` included), `ValueError` for colours it cannot keep (CMYK, gray/CMYK ICC, non-sRGB PNG gamma/primaries without ICC), and lets inference errors propagate (the caller maps them to `cutout_error`);
+  - **T-PV-009 must catch these per product**, so one photo never stops the batch;
+  - never use rembg's default `bria-rmbg` (its licence needs a paid agreement for commercial use).
 - **Toolchain:** Python 3.13 is the system default; `backend/.python-version` pins 3.12 (3.12.10 installed). rembg 2.0.74 needs `<3.14`, hence `requires-python = ">=3.12,<3.14"`.
 - **Behaviour the user should not be surprised by:**
   - after a rejection, a fresh request for the same product is refused (`use_revision`); the correction note can change the style;
@@ -83,22 +98,22 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, two commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001) and T-PV-002. No remote; nothing pushed.
+Branch main, three commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), T-PV-002 and T-PV-003. No remote; nothing pushed.
 
-Not committed (T-PV-003 and doc updates):
-- backend/src/affiche/visuals/gateway.py, backend/tests/test_gateway.py (new, intent-to-add);
-- backend/src/affiche/config.py, backend/tests/test_config.py, backend/.env.example, backend/pyproject.toml, backend/uv.lock;
-- docs/project/DECISIONS.md (ADR-015), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-003-code-r1.md, -r2.md, -r3.md.
+Not committed (T-PV-004 and doc updates):
+- backend/src/affiche/visuals/cutout.py, backend/tests/test_cutout.py (new, intent-to-add);
+- backend/src/affiche/config.py, backend/src/affiche/visuals/gateway.py (one rename), backend/tests/test_config.py, backend/.env.example, backend/pyproject.toml, backend/uv.lock;
+- AGENTS.md (model download + opt-in test commands), docs/project/DECISIONS.md (ADR-016), TODO.md, HANDOFF.md;
+- docs/project/reviews/t-pv-004-code-r1.md, -r2.md.
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-006 (lines 382–426) for T-PV-004.
-2. Ask the user whether to commit T-PV-003, if that is not done yet.
-3. Implement T-PV-004 with /implement-review. Check the installed rembg version and its model list first; the sample images must be made or freely licensed (no shop photos). Run its verify step; mark it done only after the review is clean.
-4. Continue T-PV-005 … T-PV-011 in order, one at a time.
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-001 (lines 52–173: the asset store, the single process per owner, crash recovery) for T-PV-005.
+2. Ask the user whether to commit T-PV-004, if that is not done yet.
+3. Implement T-PV-005 with /implement-review: `msvcrt.locking` on Windows; check its real semantics (byte-range lock, released when the process dies). Run its verify step; mark it done only after the review is clean.
+4. Continue T-PV-006 … T-PV-011 in order, one at a time.
 5. Ask the user for the T-PV-012 / T-PV-013 inputs when T-PV-007 is done (key, cap, budget-limit check, photos, arms, thresholds).
 
 ## Decisions made this session
@@ -111,3 +126,4 @@ Not committed (T-PV-003 and doc updates):
 - ADR-013: backend scaffold choices (pydantic-settings and `ConfigError`, no ORM, `BEGIN IMMEDIATE` recipe, migrate-only Alembic).
 - ADR-014: prompt and screen interpretations (background `texte` sentence, the number rule, `corrections_applied` meaning).
 - ADR-015: provider gateway: SDK facts (openai 3.46.0 / httpx2), model ids, error codes, usage validity, provider-input colour rules.
+- ADR-016: cutout model `birefnet-general-lite` (speed, licence status), pixels and profile kept, opt-in real-model tests.

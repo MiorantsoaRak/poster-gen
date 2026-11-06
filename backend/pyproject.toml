@@ -1,14 +1,17 @@
 [project]
 name = "affiche"
 version = "0.1.0"
-# <3.14: rembg (added later) declares >=3.11,<3.14.
+# <3.14: set for rembg 2.0.74 (<3.14); 2.0.87 declares <4.0, but only 3.12 is tested here.
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "alembic>=1.20.1",
     "httpx2>=2.16.0",
+    "numpy>=2.5.4",
     "openai>=3.46.0",
     "pillow>=13.0.0",
     "pydantic-settings>=2.16.2",
+    "rembg[cpu]>=2.0.87",
+    "scipy>=1.18.1",
     "sqlalchemy>=2",
 ]
 
@@ -23,3 +26,5 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not rembg'"
+markers = ["rembg: runs the real rembg model on CPU (slow); opt in with -m rembg"]

@@ -2,6 +2,18 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-016 — 2026-11-06 — Cutout model and pipeline choices (T-PV-004)
+
+- Status: Implementation decisions inside D-PV-006. The model is checked against the installed rembg 2.0.87.
+- Decision:
+  1. **Model `birefnet-general-lite`** (`REMBG_MODEL` default), 224 MB, downloaded once to `%USERPROFILE%\.rembg\models\birefnet-general-lite\`. Chosen from the installed list as a general-purpose model with sharp edges, about 4× smaller than `birefnet-general`. Not `bria-rmbg` (rembg's default): its licence needs a paid agreement for commercial use. Remote models (`withoutbg`, `atlascloud`) are refused, because they send the photo out and charge outside the cap.
+  2. **Speed on the user's PC** (i5-1235U, CPU): 20–36 s per mask, plus about 22 s for the first session. `OMP_NUM_THREADS=4` measured about 35 % faster; it is not set in code.
+  3. **The cutout keeps the source pixels and their ICC profile (RGB sources only), and no EXIF.** It is not converted to sRGB, unlike provider inputs (ADR-015), because R-006 requires the product pixels unchanged.
+  4. **Hole filling and labelling use numpy + `scipy.ndimage`**, declared directly. A background region that touches the image border is never filled, even when small.
+  5. **Real-model tests are opt-in** (`-m rembg`, about 2 minutes); the default suite uses injected masks.
+- Licence (checked 2026-11-06, not a legal review): the BiRefNet code and the BiRefNet_lite weights are labelled **MIT** by the author (GitHub repository, Hugging Face card). rembg says weights carry their own licences. Two things are **unverified**: whether the rembg-hosted `BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx` is the same checkpoint, and the training-data terms. Confirm both before production use.
+- Revisit if: the evaluation shows poor masks (try `birefnet-general`, slower), the CPU time is too long for the phone flow (try `isnet-general-use`, untested), or the licence check fails.
+
 ## ADR-015 — 2026-11-06 — Provider gateway: SDK facts and deviations from the design (T-PV-003)
 
 - Status: Verified on the installed SDK and OpenAI docs (read 2026-11-06); implementation decisions inside D-PV-003.

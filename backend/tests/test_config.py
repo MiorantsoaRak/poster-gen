@@ -6,7 +6,7 @@ import pytest
 from affiche.config import BACKEND_DIR, ConfigError, load_settings
 
 NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEND_CAP_SINCE", "ESTIMATE_SCENE_USD",
-         "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "DATA_DIR")
+         "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "REMBG_MODEL", "MAX_HOLE_RATIO", "DATA_DIR")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 SECRET = "sk-test-must-never-be-printed"
@@ -34,6 +34,8 @@ def test_valid_config_with_defaults(env):
     assert settings.estimate_scene_usd == Decimal("0.40")
     assert settings.estimate_background_usd == Decimal("0.30")
     assert settings.attempt_limit == 3
+    assert settings.rembg_model == "birefnet-general-lite"
+    assert settings.max_hole_ratio == 0.05
     assert settings.data_dir == BACKEND_DIR / "data"
     assert settings.stub_fail is None
 
@@ -62,6 +64,9 @@ def test_relative_data_dir_is_resolved_from_backend(env):
     ({"ESTIMATE_BACKGROUND_USD": "0"}, "estimate_background_usd"),
     ({"ESTIMATE_BACKGROUND_USD": "-0.30"}, "estimate_background_usd"),
     ({"ATTEMPT_LIMIT": "0"}, "attempt_limit"),
+    ({"MAX_HOLE_RATIO": "0"}, "max_hole_ratio"),
+    ({"MAX_HOLE_RATIO": "1"}, "max_hole_ratio"),
+    ({"MAX_HOLE_RATIO": "nan"}, "max_hole_ratio"),
     ({"IMAGE_PROVIDER": "openai"}, "OPENAI_API_KEY is required"),
     ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": ""}, "OPENAI_API_KEY is required"),
     ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": SECRET, "STUB_FAIL": "timeout"}, "STUB_FAIL is only allowed"),

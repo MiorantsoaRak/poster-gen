@@ -96,7 +96,7 @@ def prepare_provider_input(data: bytes) -> bytes:
     with Image.open(io.BytesIO(data)) as source:
         image = ImageOps.exif_transpose(source)
     icc_profile = image.info.get("icc_profile")
-    _refuse_undeclared_colours(image.info)
+    refuse_undeclared_colours(image.info)
     if image.mode == "1":
         image = image.convert("L")
     if "transparency" in image.info and image.mode in ("L", "RGB"):  # a tRNS colour: alpha, same colour channels
@@ -117,7 +117,7 @@ def prepare_provider_input(data: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _refuse_undeclared_colours(info: Mapping[str, object]) -> None:
+def refuse_undeclared_colours(info: Mapping[str, object]) -> None:
     # Without an ICC profile the pixels are read as sRGB, so PNG gAMA/cHRM saying otherwise would shift the colours.
     # An ICC profile or an sRGB chunk is authoritative. Converting gAMA/cHRM is not worth it for phone photos.
     if info.get("icc_profile") or "srgb" in info:
