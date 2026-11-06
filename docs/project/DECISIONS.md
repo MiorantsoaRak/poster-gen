@@ -2,6 +2,18 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-017 — 2026-11-06 — Startup, lock and asset store choices (T-PV-005)
+
+- Status: Implementation decisions inside D-PV-001.
+- Decision:
+  1. **`runtime.start(settings, owner)` is the only startup entry** (CLI now, API later): OS lock → engine → migrate → provider-mode guard → owner-scoped recovery. A failure at any step after the lock disposes the engine and releases the lock.
+  2. **`acquire_lock` retries a held lock for up to 2 s.** Measured on the user's PC: Windows releases a dead process's `msvcrt.locking` lock up to about 12 ms after the process ends (6 of 30 runs). Microsoft's `LockFile` docs say the delay "depends upon available system resources". Without the retry, back-to-back CLI commands would sometimes refuse.
+  3. **`recover` marks every running call of the owner's requests** (not only those of running requests), so the two updates are order-independent. The reserved cost is kept.
+  4. **Assets:** the file is written first (temp file in the same folder → fsync → `os.replace`), and the `assets` row is recorded in the caller's transaction (`ON CONFLICT DO NOTHING`, first kind wins). There is no GC, and the folder is not fsynced (Windows cannot).
+  5. Times are stored as `db.utc_now()`: ISO 8601 UTC with microseconds, so text order is time order.
+- Known gap: on Windows, if the API and the CLI `put` identical new bytes at the same moment, `os.replace` can raise `PermissionError` (it propagates). Handle this before the API and the CLI run at the same time (phase 2).
+- Revisit if: a supervisor restarts the API within 2 s and needs a longer wait, or several API processes are needed (PostgreSQL).
+
 ## ADR-016 — 2026-11-06 — Cutout model and pipeline choices (T-PV-004)
 
 - Status: Implementation decisions inside D-PV-006. The model is checked against the installed rembg 2.0.87.

@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-005 (D-PV-001 asset store, process lock, crash recovery, provider mode) Content-addressed asset store (tmp → fsync → `os.replace`). OS lifetime lock on `data/cli.lock` / `data/api.lock`. Owner-scoped recovery after taking the lock. The `meta.provider_mode` guard.
-  - verify: `uv run pytest tests/test_store_lock.py -q`: `put` is idempotent; a second process cannot take a held lock; after killing a lock holder, the next start takes the lock and marks its running requests and calls `interrupted`; starting with the other provider mode is refused.
+- [ ] T-PV-006 (D-PV-003 rules 1–7, D-PV-005 allowance and scopes) Request admission in one `write_tx()`: idempotency (`payload_hash`), photo membership, abandoned scope, `req_one_initial` → `review_pending` / `use_revision`, allowance per (variant, cycle, run), revision and background rules (incl. a new cutout as a linked revision), budget with the reservation floor.
+  - verify: `uv run pytest tests/test_admission.py -q`: allowance counting; two processes at `used = 2` → exactly one accepted; same id + same payload returns the request, same id + other payload → `request_id_reused`; cap boundary (`spent + r == cap` allowed, one micro over refused); empty ledger sums to 0; the floor raises the reservation after a higher usage-based cost; every 409 code in rules 3–6 has a test.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,8 +14,6 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-006 (D-PV-003 rules 1–7, D-PV-005 allowance and scopes) Request admission in one `write_tx()`: idempotency (`payload_hash`), photo membership, abandoned scope, `req_one_initial` → `review_pending` / `use_revision`, allowance per (variant, cycle, run), revision and background rules (incl. a new cutout as a linked revision), budget with the reservation floor.
-  - verify: `uv run pytest tests/test_admission.py -q`: allowance counting; two processes at `used = 2` → exactly one accepted; same id + same payload returns the request, same id + other payload → `request_id_reused`; cap boundary (`spent + r == cap` allowed, one micro over refused); empty ledger sums to 0; the floor raises the reservation after a higher usage-based cost; every 409 code in rules 3–6 has a test.
 - [ ] T-PV-007 (D-PV-003 execution, D-PV-006 background flow) Request execution: call 1, one retry (call 2) only for the retryable kinds, refused-retry finalisation, success and failure transactions, candidate creation for both treatments (background + baked shadow via T-PV-004). Semaphore of 2 provider calls.
   - verify: `uv run pytest tests/test_execution.py -q` (stub): a retry keeps its slot and makes no fourth candidate; a retry refused by the budget → request `failed` (`budget_exhausted`) and the slot is freed; non-retryable kinds never get call 2; a success stores the raw asset, the cost and a `pending_review` candidate in one transaction; a `photo_preserved` candidate stores the cutout id and `product_box_json`.
 - [ ] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-007) Review state machine (`next_status`, conditional updates, idempotent replay), approval requires `framing_checked` (both treatments), rejection reasons/note (screened), cycles, abandon, the reuse query.
@@ -37,6 +35,25 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-005 (D-PV-001 asset store, process lock, crash recovery, provider mode)
+  - **Code:** `backend/src/affiche/assets.py` (`put`, `path`, `record`) and `backend/src/affiche/runtime.py`:
+    - `acquire_lock` (OS lock, retries up to 2 s);
+    - `recover` (owner-scoped);
+    - `check_provider_mode`;
+    - `start()`: lock → engine → migrate → mode guard → recovery; it releases everything on failure.
+    - `db.utc_now()`.
+  - **Verified 2026-11-06** (Windows 10, Python 3.12.10):
+    - `uv run pytest tests/test_store_lock.py -q` → 13 passed (repeated 5–10 runs green); `uv run pytest -q` → 273 passed, 3 deselected.
+    - The tests cover:
+      - `put` idempotent, no temp file left on failure;
+      - a held lock refused across processes; api and cli independent;
+      - after a kill, or a clean exit, the next process takes the lock;
+      - crash recovery marks only this owner's running request and call `interrupted`, with the cost kept;
+      - the other provider mode is refused, and the lock is released;
+      - a failing log after recovery releases the lock.
+    - 16 mutations, 15 killed; the survivor (`seek(0)`) was accepted by the review.
+    - Codex r1 APPROVE WITH FIXES (2 P2s), r2 APPROVE (docs/project/reviews/t-pv-005-code-r1.md, -r2.md). ADR-017.
 
 - [x] T-PV-004 (D-PV-006 steps 1 and 3) `backend/src/affiche/visuals/cutout.py`: `make_cutout` (mask on a ≤ 2048 copy, threshold, small-hole fill, 1 px erosion, RGBA from source pixels, component check), `place`, `bake_shadow`, `CutoutUnavailable`. rembg 2.0.87, model `birefnet-general-lite` (ADR-016).
   - verified 2026-11-06 (Windows 10, Python 3.12.10):

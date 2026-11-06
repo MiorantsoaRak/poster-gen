@@ -1,4 +1,5 @@
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SqliteConnection
 from typing import Any
@@ -45,6 +46,11 @@ def write_tx(engine: Engine) -> AbstractContextManager[Connection]:
     instead of failing when a deferred read transaction tries to upgrade. Commits on success,
     rolls back on exception."""
     return engine.execution_options(**{_WRITE_OPTION: True}).begin()
+
+
+def utc_now() -> str:
+    """The schema's TEXT time: ISO 8601 UTC with fixed-width microseconds, so text order is time order."""
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def migrate(engine: Engine) -> None:
