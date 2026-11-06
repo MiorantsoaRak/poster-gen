@@ -5,8 +5,8 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-003 (D-PV-003 provider call, error mapping, stub, money math) Check the installed `openai` SDK (images.edit/generate signatures, multipart, exception classes, error codes) and record the version. Provider adapter: `provider_input` preparation (EXIF orientation, long edge ≤ 1536, PNG without metadata), client settings (timeout 180 s, `max_retries=0`), strict 1088×1920 validation, usage → cost (Decimal, ceil, micro-USD), the error-mapping table, retryable vs not. Stub provider with `STUB_FAIL`. No network.
-  - verify: `uv run pytest tests/test_gateway.py -q` with mocked SDK responses and exceptions covers each error-mapping row, retryable classification, size validation and cost rounding; the provider input has no EXIF; the SDK version and any deviation from the design are recorded in DECISIONS.md.
+- [ ] T-PV-004 (D-PV-006 steps 1 and 3, image operations) rembg setup: pick the model from the installed version's list and document its one-time download. Mask pipeline (≤ 2048 copy, threshold 128, holes < `MAX_HOLE_RATIO`, 1 px erosion), RGBA built from source pixels, component check, placement, baked shadow.
+  - verify: `uv run pytest tests/test_cutout.py -q`: pixel test on 3 committed sample images (made or freely licensed; no shop photos), an EXIF-orientation-6 sample and the downscale path (opaque pixels equal the oriented source, A ∈ {0, 255}, same size); synthetic images give `no_product` and `multiple_products`; placement stays inside the safe square for tall, wide and square boxes.
 
 Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
 
@@ -14,8 +14,6 @@ Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implement
 
 Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
 
-- [ ] T-PV-004 (D-PV-006 steps 1 and 3, image operations) rembg setup: pick the model from the installed version's list and document its one-time download. Mask pipeline (≤ 2048 copy, threshold 128, holes < `MAX_HOLE_RATIO`, 1 px erosion), RGBA built from source pixels, component check, placement, baked shadow.
-  - verify: `uv run pytest tests/test_cutout.py -q`: pixel test on 3 committed sample images (made or freely licensed; no shop photos), an EXIF-orientation-6 sample and the downscale path (opaque pixels equal the oriented source, A ∈ {0, 255}, same size); synthetic images give `no_product` and `multiple_products`; placement stays inside the safe square for tall, wide and square boxes.
 - [ ] T-PV-005 (D-PV-001 asset store, process lock, crash recovery, provider mode) Content-addressed asset store (tmp → fsync → `os.replace`). OS lifetime lock on `data/cli.lock` / `data/api.lock`. Owner-scoped recovery after taking the lock. The `meta.provider_mode` guard.
   - verify: `uv run pytest tests/test_store_lock.py -q`: `put` is idempotent; a second process cannot take a held lock; after killing a lock holder, the next start takes the lock and marks its running requests and calls `interrupted`; starting with the other provider mode is refused.
 - [ ] T-PV-006 (D-PV-003 rules 1–7, D-PV-005 allowance and scopes) Request admission in one `write_tx()`: idempotency (`payload_hash`), photo membership, abandoned scope, `req_one_initial` → `review_pending` / `use_revision`, allowance per (variant, cycle, run), revision and background rules (incl. a new cutout as a linked revision), budget with the reservation floor.
@@ -24,7 +22,7 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `uv run pytest tests/test_execution.py -q` (stub): a retry keeps its slot and makes no fourth candidate; a retry refused by the budget → request `failed` (`budget_exhausted`) and the slot is freed; non-retryable kinds never get call 2; a success stores the raw asset, the cost and a `pending_review` candidate in one transaction; a `photo_preserved` candidate stores the cutout id and `product_box_json`.
 - [ ] T-PV-008 (D-PV-004, D-PV-005 cycles and abandon, D-PV-007) Review state machine (`next_status`, conditional updates, idempotent replay), approval requires `framing_checked` (both treatments), rejection reasons/note (screened), cycles, abandon, the reuse query.
   - verify: `uv run pytest tests/test_review.py -q`: all 6 transition combinations (4 refused); approve without framing → `framing_not_checked`; reject without a reason or note refused; a cycle needs an approval; abandon is refused while a request runs or after an approval, and blocks new requests after; reuse never returns another variant and makes no gateway call.
-- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot, CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
+- [ ] T-PV-009 (D-PV-008 fixtures, runs, `generate`) Fixture CSV loader and validation, `runs` creation (immutable; `UNIQUE (model, quality)`), the `run_products` snapshot, a run's model must be in `gateway.RATES` (ADR-015), CLI `generate` with the low-res acknowledgement, `spent / cap` printing, exit 3 on `budget_exhausted`.
   - verify: `uv run pytest tests/test_fixtures_generate.py -q`: every validation error is listed and nothing loads; a new label with an existing model+quality is refused; a changed CSV row for an existing product is refused; `uv run python -m affiche.visuals.evaluate generate --fixtures fixtures/products.example.csv --run stub1` (stub `DATA_DIR`) creates one scene candidate and one proposed cutout per product.
 - [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`.
   - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
@@ -41,6 +39,19 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-PV-003 (D-PV-003 provider call, error mapping, stub, money math) `backend/src/affiche/visuals/gateway.py`: `prepare_provider_input`, `validate_image`, `usd_to_micros`/`cost_micros`/`parse_usage`/`RATES`, `OpenAIProvider` (no retry of its own), `StubProvider`, `make_provider`; `stub_fail` setting.
+  - verified 2026-11-06 (Windows 10, Python 3.12.10, openai 3.46.0, pillow 13.0.0):
+    - `uv run pytest tests/test_gateway.py -q` → 101 passed; `uv run pytest -q` → 223 passed. The real SDK is driven through `httpx2.MockTransport` (no network).
+    - The tests cover:
+      - every error-mapping row with retryable / not;
+      - the request shape (no `input_fidelity`);
+      - strict 1088×1920 validation;
+      - cost rounding and usage validity;
+      - provider input with no EXIF or ICC, colour handling, and key hygiene.
+    - 25 mutations killed.
+    - Codex r1 and r2 APPROVE WITH FIXES (6 + 3 findings fixed), r3 APPROVE (docs/project/reviews/t-pv-003-code-r1.md … -r3.md).
+    - SDK facts and deviations in ADR-015.
 
 - [x] T-PV-002 (D-PV-002) `Direction`/`SceneSubject` types, `build_scene_prompt`, `build_background_prompt`, reason-code sentences, `find_commercial_terms` (`backend/src/affiche/visuals/prompts.py`).
   - verified 2026-11-06 (Windows 10, Python 3.12.10):

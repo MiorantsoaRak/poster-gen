@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_FILE = BACKEND_DIR / ".env"
 
 PositiveUsd = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+# The provider_calls.error_kind values the gateway can produce (D-PV-001). Defined here, not in the gateway,
+# so that loading settings does not import the provider SDK.
+ProviderErrorKind = Literal["refused", "quota", "rate_limited", "timeout", "provider_error", "invalid_request",
+                            "invalid_response", "auth"]
 
 
 class Settings(BaseSettings):
@@ -23,6 +28,7 @@ class Settings(BaseSettings):
 
     image_provider: Literal["stub", "openai"] = "stub"
     openai_api_key: SecretStr | None = None
+    stub_fail: ProviderErrorKind | None = None  # every stub call fails with this kind (manual runs)
     spend_cap_usd: PositiveUsd  # no default: no cap, nothing starts (ADR-010)
     spend_cap_since: date
     estimate_scene_usd: PositiveUsd = Decimal("0.40")
@@ -37,6 +43,15 @@ class Settings(BaseSettings):
             raise ValueError("must not be after today (UTC)")
         return value
 
+    @field_validator("openai_api_key")
+    @classmethod
+    def _printable_ascii_key(cls, value: SecretStr | None) -> SecretStr | None:
+        # A pasted invisible character (U+200B) would fail later, in header building, with an error that prints
+        # the whole key. The message is constant: it never contains the value.
+        if value is not None and not re.fullmatch(r"[!-~]+", value.get_secret_value()):
+            raise ValueError("must be printable ASCII with no whitespace")
+        return value
+
     @field_validator("data_dir")
     @classmethod
     def _relative_to_backend(cls, value: Path) -> Path:
@@ -46,6 +61,13 @@ class Settings(BaseSettings):
     def _key_for_openai(self) -> "Settings":
         if self.image_provider == "openai" and self.openai_api_key is None:
             raise ValueError("OPENAI_API_KEY is required when IMAGE_PROVIDER=openai")
+        return self
+
+    @model_validator(mode="after")
+    def _stub_fail_only_for_stub(self) -> "Settings":
+        # A paid run must never be told to fake failures.
+        if self.stub_fail is not None and self.image_provider != "stub":
+            raise ValueError("STUB_FAIL is only allowed when IMAGE_PROVIDER=stub")
         return self
 
 

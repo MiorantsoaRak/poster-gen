@@ -5,7 +5,7 @@ import pytest
 
 from affiche.config import BACKEND_DIR, ConfigError, load_settings
 
-NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "SPEND_CAP_USD", "SPEND_CAP_SINCE", "ESTIMATE_SCENE_USD",
+NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEND_CAP_SINCE", "ESTIMATE_SCENE_USD",
          "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "DATA_DIR")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
@@ -35,6 +35,12 @@ def test_valid_config_with_defaults(env):
     assert settings.estimate_background_usd == Decimal("0.30")
     assert settings.attempt_limit == 3
     assert settings.data_dir == BACKEND_DIR / "data"
+    assert settings.stub_fail is None
+
+
+def test_stub_fail_with_the_stub(env):
+    env.setenv("STUB_FAIL", "rate_limited")
+    assert load().stub_fail == "rate_limited"
 
 
 def test_relative_data_dir_is_resolved_from_backend(env):
@@ -58,6 +64,8 @@ def test_relative_data_dir_is_resolved_from_backend(env):
     ({"ATTEMPT_LIMIT": "0"}, "attempt_limit"),
     ({"IMAGE_PROVIDER": "openai"}, "OPENAI_API_KEY is required"),
     ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": ""}, "OPENAI_API_KEY is required"),
+    ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": SECRET, "STUB_FAIL": "timeout"}, "STUB_FAIL is only allowed"),
+    ({"STUB_FAIL": "budget_exhausted"}, "stub_fail"),  # not a kind the gateway produces
 ])
 def test_invalid_config_is_refused(env, overrides, match):
     for name, value in overrides.items():
@@ -88,4 +96,15 @@ def test_api_key_never_appears(env):
     with pytest.raises(ConfigError) as caught:
         load()
     assert SECRET not in str(caught.value) and SECRET not in repr(caught.value)
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize("bad_key", [f"{SECRET}​", f"{SECRET} ", f"sk-tést-{SECRET}", f"sk-\t{SECRET}"])
+def test_malformed_api_key_is_refused_without_its_value(env, bad_key):
+    env.setenv("IMAGE_PROVIDER", "openai")
+    env.setenv("OPENAI_API_KEY", bad_key)
+    with pytest.raises(ConfigError, match="printable ASCII with no whitespace") as caught:
+        load()
+    for text in (str(caught.value), repr(caught.value)):
+        assert SECRET not in text and bad_key not in text
     assert caught.value.__context__ is None and caught.value.__cause__ is None

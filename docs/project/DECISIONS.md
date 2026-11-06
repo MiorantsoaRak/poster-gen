@@ -2,6 +2,33 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-015 — 2026-11-06 — Provider gateway: SDK facts and deviations from the design (T-PV-003)
+
+- Status: Verified on the installed SDK and OpenAI docs (read 2026-11-06); implementation decisions inside D-PV-003.
+- **Versions:** openai 3.46.0 (its HTTP client is **httpx2** 2.16.0, not httpx; declared directly because the gateway and tests import it), pillow 13.0.0.
+- **SDK facts (installed source):**
+  - `images.edit` takes a list of images, sent as `image[]` multipart parts in order;
+  - `size` is a free string, and its docstring allows any WxH in multiples of 16 for gpt-image-2/2.5, so 1088×1920 is valid;
+  - the `input_fidelity` docstring says to omit it for gpt-image-2; `response_format` is unsupported for GPT image models;
+  - `APITimeoutError` subclasses `APIConnectionError`.
+- **`usage` may be missing for gpt-image-2:** the SDK docstring says "For gpt-image-1 only". Without it, every call's cost stays at the reserved estimate. T-PV-012 checks this.
+- **Deviations from the design:**
+  1. **Model ids:** there is no bare `gpt-image-2.5`. `RATES` has `gpt-image-2`, `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` at $5 / $8 / $30 per 1M text-input / image-input / image-output tokens. A model without rates is refused before any call. T-PV-006/009 must check the run's model against `RATES` before they reserve budget.
+  2. **Error codes** (OpenAI error-codes and image-generation guides):
+     - the ordinary 429 rate limit has **no code** (`rate_limit_exceeded` is undocumented), so every 429 that is not about quota is `rate_limited` and retryable;
+     - quota is `insufficient_quota` (documented as an error type; also accepted as a code) or one of the 429 codes `credit_balance_exhausted`, `project_spend_limit_exceeded`, `organization_spend_limit_exceeded`, `organization_usage_limit_exceeded`;
+     - refused is code `moderation_blocked`, or type `image_generation_user_error`, whatever the status (none is documented).
+  3. **`retryable` follows from the kind** (`rate_limited`, `provider_error`), so the stub and the real adapter cannot disagree. The adapter never retries; T-PV-007 does the one retry.
+- **Additions (Codex r1–r2):**
+  - **API key:** it must be printable ASCII with no whitespace. A pasted invisible character would otherwise make the HTTP library print the whole key.
+  - **Errors:** `error_detail` redacts `sk-…` and is truncated to 500 characters. No SDK exception travels as a cause or context.
+  - **Usage:** only allowlisted integer counts are kept. Usage is used for the cost only when it is consistent: `output_tokens > 0`, the total equals input + output, and the split is ≤ input. Otherwise the estimate stays.
+  - **Provider input:**
+    - an ICC profile is converted to sRGB, keeping gray as gray, before the profile is removed;
+    - alpha is flattened onto white after the colour conversion;
+    - a PNG declaring non-sRGB gamma or primaries with no ICC or sRGB chunk is refused ("re-export as sRGB").
+- Revisit if: T-PV-012 shows `usage` is returned (calibrate the estimates) or never returned (estimates only), or OpenAI documents new error codes.
+
 ## ADR-014 — 2026-11-06 — Prompt and screen interpretations (T-PV-002)
 
 - Status: Implementation decisions inside D-PV-002. Codex r1 agreed with them.
