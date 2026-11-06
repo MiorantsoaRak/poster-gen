@@ -3,7 +3,7 @@
 > Updated at session end. Read this before exploring the project.
 
 **Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-006 are done and reviewed; next is T-PV-007 (request execution: call 1, retry, candidates).
+**Working on:** product-visuals phase 1. T-PV-001 … T-PV-007 are done and reviewed; next is T-PV-008 (the review state machine, cycles, abandon, reuse). The user was asked for the T-PV-012 probe inputs.
 
 ## State of the world
 
@@ -18,7 +18,8 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - `visuals/cutout.py` (T-PV-004, ADR-016): `make_cutout`, `place`, `bake_shadow`, `CutoutUnavailable`; rembg 2.0.87 with `birefnet-general-lite`, downloaded once to `%USERPROFILE%\.rembg\models\`;
   - `assets.py` (`put`, `path`, `record`) and `runtime.py` (`start`, `acquire_lock`, `recover`, `check_provider_mode`) (T-PV-005, ADR-017); `db.utc_now()`;
   - `visuals/admission.py` (T-PV-006, ADR-018): `request_scene`, `request_revision`, `request_background`, `reserve`, `Refused`, `Admitted`; migration 0002 (`run_products.name`/`variant`);
-  - 310 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
+  - `visuals/execution.py` (T-PV-007, ADR-019): `async execute(...)`, call 1, one retry, atomic success, failures;
+  - 334 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
 - No `backend/.env`, no database file, no service and no paid API call exist.
 
 ## Done this session
@@ -53,19 +54,24 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
   - r2 → APPROVE;
   - reviews: docs/project/reviews/t-pv-006-code-r1.md, -r2.md;
   - verified: 310 passed; 30 mutations killed;
+  - committed at the user's request ("Go").
+- **T-PV-007 done** via /implement-review:
+  - Codex r1 → APPROVE (no defect). Its non-blocking test gap (a positive usage-based cost vs the kept estimate) was closed and checked by mutation;
+  - review: docs/project/reviews/t-pv-007-code-r1.md;
+  - verified: 334 passed; 19 mutations killed;
   - **not committed yet**.
 
 ## In progress — exact resume point
 
-- **Task:** none in progress. T-PV-006 is done but **not committed**; offer the commit first.
-- **Next action:** T-PV-007 (D-PV-003 execution + D-PV-006 background flow), with /implement-review:
-  - call 1 via the gateway; one retry (call 2) only for retryable kinds, after 5 s;
-  - call 2 is reserved with `admission.reserve` **inside the same `write_tx`** that inserts it; a budget refusal → request `failed` (`budget_exhausted`);
-  - success: `assets.put` + `record`, cost from usage or the estimate, a `pending_review` candidate from `request_json`, and the request `succeeded`, in one transaction;
-  - a background → `cutout.bake_shadow`, plus `product_box_json` from `cutout.place`;
-  - a semaphore of 2.
+- **Task:** none in progress. T-PV-007 is done but **not committed**; offer the commit first.
+- **Asked the user (2026-11-06)** for the T-PV-012 probe inputs:
+  - a key from a dedicated OpenAI project, which **the user** puts in `backend/.env`;
+  - `SPEND_CAP_USD` and `SPEND_CAP_SINCE`;
+  - the project's budget-limit behaviour (blocks or alerts);
+  - the model and quality.
 
-  After T-PV-007, **ask the user for the T-PV-012/013 inputs** (key, cap, budget-limit check, photos, arms, thresholds).
+  Also, for T-PV-013 (not urgent): the photos, the arm assignments, the thresholds.
+- **Next action:** T-PV-008 (D-PV-004 review state machine, D-PV-005 cycles/abandon, D-PV-007 reuse), with /implement-review. The probe can only run once a runner exists (T-PV-009's `generate --only`, or a one-off script), so T-PV-008 → T-PV-009 → probe is the natural order unless the user wants the probe sooner.
 
 ## Landmines / gotchas discovered
 
@@ -124,30 +130,22 @@ Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia
 
 ## Uncommitted / dirty state
 
-Branch main, five commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-005. No remote; nothing pushed.
+Branch main, six commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-006. No remote; nothing pushed.
 
-Not committed (T-PV-006 and doc updates):
-- backend/src/affiche/visuals/admission.py, backend/migrations/versions/0002_run_products_subject.py, backend/tests/test_admission.py, admission_worker.py (new, intent-to-add);
-- backend/src/affiche/config.py (`min_source_short_edge`), backend/tests/test_config.py, backend/tests/test_db.py;
-- docs/project/DECISIONS.md (ADR-018), designs/product-visuals.md (a one-line schema note), TODO.md, HANDOFF.md;
-- docs/project/reviews/t-pv-006-code-r1.md, -r2.md.
+Not committed (T-PV-007 and doc updates):
+- backend/src/affiche/visuals/execution.py, backend/tests/test_execution.py (new, intent-to-add);
+- backend/src/affiche/assets.py (`load`, `extension`);
+- docs/project/DECISIONS.md (ADR-019), TODO.md, HANDOFF.md;
+- docs/project/reviews/t-pv-007-code-r1.md.
 
 `backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
 
 ## Next session should
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-003 (lines 245–262: retry, retry refused, the provider call, success/failure) and D-PV-006 (lines 397–407: the background flow) for T-PV-007.
-2. Ask the user whether to commit T-PV-006, if that is not done yet.
-3. Implement T-PV-007 with /implement-review. Reuse:
-   - `admission.reserve`;
-   - `gateway.make_provider` / `ProviderError.retryable` / `cost_micros`;
-   - `assets.put` / `record`;
-   - `cutout.place` / `bake_shadow`;
-   - `request_json` from admission.
-
-   Run its verify step; mark it done only after the review is clean.
-4. Then ask the user for the T-PV-012/013 inputs, and continue T-PV-008 … T-PV-011 in order.
-5. Ask the user for the T-PV-012 / T-PV-013 inputs when T-PV-007 is done (key, cap, budget-limit check, photos, arms, thresholds).
+1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-004 (lines 316–332), D-PV-005 (lines 341–378) and D-PV-007 (lines 427–434) for T-PV-008.
+2. Ask the user whether to commit T-PV-007, if that is not done yet, and whether the T-PV-012 inputs are ready.
+3. Implement T-PV-008 with /implement-review. Rejection notes pass `prompts.find_commercial_terms`; abandon and cycles feed the admission rules (ADR-018). Run its verify step; mark it done only after the review is clean.
+4. Continue T-PV-009 … T-PV-011 in order. Then the probe (T-PV-012) once the user's inputs are in place, then the paid evaluation (T-PV-013).
 
 ## Decisions made this session
 
@@ -162,3 +160,4 @@ Not committed (T-PV-006 and doc updates):
 - ADR-016: cutout model `birefnet-general-lite` (speed, licence status), pixels and profile kept, opt-in real-model tests.
 - ADR-017: `runtime.start` as the single startup, lock retry of up to 2 s (Windows release delay), owner-wide call recovery, asset write order, `utc_now` format.
 - ADR-018: **user decision**, migration 0002 (the subject in `run_products`); admission interpretations (latest by `attempt_no`, stale target first, `review_pending` vs `not_rejected`, the extra codes).
+- ADR-019: execution: the semaphore per loop, inputs prepared before spend, the billed cost kept on late failures, the `.jpeg` extension rule, the cutout row format for T-PV-009.

@@ -2,6 +2,19 @@
 
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
 
+## ADR-019 — 2026-11-06 — Request execution choices (T-PV-007)
+
+- Status: Implementation decisions inside D-PV-003 and D-PV-006. Codex r1 APPROVE.
+- Decision:
+  1. **`execute` is async and takes the semaphore** (`asyncio.Semaphore(2)`), created **per event loop** by the caller and shared by all requests of that loop. DB, file and image work run synchronously on the loop. The phase-2 API should move them to a thread.
+  2. **Inputs are prepared before any spend:** the input images and, for a background, the cutout are loaded and the `provider_input` copies made before call 1. A missing file fails as `storage` with no call.
+  3. **Costs of failed calls:** a `storage` or unexpected failure **after** a successful call keeps the usage-based cost, because the call was billed. Before or without usage, the reservation stays.
+  4. **An unexpected exception** marks the call and the request `failed` with `invalid_request` (type and message in `error_detail`), then re-raises. A cancellation is not caught; owner recovery marks the request `interrupted`.
+  5. **The `SQLITE_BUSY` handling** (design line 249) covers the call-2 transaction only.
+  6. **File extensions come from `assets.extension(mime)`** (the subtype, e.g. `.jpeg`). Every writer must use it.
+  7. **The cutout row format that T-PV-009 must write:** `bbox_json = json.dumps([x, y, w, h])`, and `cutout_asset` set when the cutout is made.
+- Revisit if: the phase-2 API needs concurrency beyond one event loop, or busy errors appear outside the retry transaction.
+
 ## ADR-018 — 2026-11-06 — Request admission: the subject in `run_products` (schema amendment) and rule interpretations (T-PV-006)
 
 - Status:

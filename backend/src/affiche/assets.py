@@ -41,6 +41,17 @@ def put(data_dir: Path, data: bytes, ext: str) -> str:
     return sha
 
 
+def extension(mime: str) -> str:
+    """A file's extension is its mime subtype (png, jpeg, webp): writers pass it to `put`, and `load` relies on it."""
+    return mime.partition("/")[2]
+
+
+def load(conn: Connection, data_dir: Path, sha: str) -> bytes:
+    """The bytes of a recorded asset. NoResultFound for an unknown sha; OSError for a missing or unreadable file."""
+    mime = conn.execute(text("SELECT mime FROM assets WHERE sha256 = :sha"), {"sha": sha}).scalar_one()
+    return path(data_dir, sha, extension(mime)).read_bytes()
+
+
 def record(conn: Connection, *, sha: str, kind: str, mime: str, width: int, height: int, size: int) -> None:
     """Inserts the asset row in the caller's transaction. The same bytes are one asset: the first kind wins."""
     conn.execute(text(
