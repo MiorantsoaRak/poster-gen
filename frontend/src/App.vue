@@ -48,6 +48,16 @@ function pickLook(id: string) {
   if (chosen.direction) direction.value = chosen.direction
   if (id === 'sombre') headline.value.accent_colour = '#C8A45A'
 }
+// A reopened poster brings back what its scene was made with (brand, subtitle, accent, look), so that a new
+// scene after a price change is the same poster and not a different one.
+function restoreHeadline() {
+  const drawn = currentVisual.value?.headline as Record<string, any> | null | undefined
+  if (!drawn) return
+  if (drawn.look_id && savedLooks.value.some(item => item.id === drawn.look_id)) pickLook(drawn.look_id)
+  Object.assign(headline.value, { on: true, brand: drawn.brand ?? '', subtitle: drawn.subtitle ?? '', accent_word: drawn.accent_word ?? '',
+    price: drawn.price_ar !== undefined, signature: drawn.shop_name !== undefined || drawn.contact !== undefined })
+  if (/^#[0-9A-Fa-f]{6}$/.test(drawn.accent_colour ?? '')) headline.value.accent_colour = drawn.accent_colour.toLowerCase()
+}
 async function chooseLookReference(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (file) lookReference.value = (await upload(file, 'style')).asset
@@ -200,6 +210,7 @@ async function adopt(result: Creation) {
   saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT'), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
   window.location.hash = result.id
   await refreshVisuals(); styleReference.value = currentVisual.value?.style_reference_asset ?? null
+  restoreHeadline()
   await refreshEffects(); await nextTick()
   observer?.disconnect()
   if (canvasHost.value) { observer = new ResizeObserver(entries => { canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }

@@ -217,3 +217,5 @@ details.new-look { background: var(--surface-2); border: 1px dashed var(--line-s
   * { scroll-behavior: auto !important; transition: none !important }
   .canvas-host.generating::before, .job-state::after { animation: none }
 }
+/* The step rail floats over the scrolling controls: mask what passes behind its rounded ends. */
+.steps { box-shadow: 0 -14px 0 10px var(--bg), 0 6px 14px -6px #00000040 }
