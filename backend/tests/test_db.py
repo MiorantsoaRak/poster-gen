@@ -5,12 +5,15 @@ import threading
 from pathlib import Path
 
 import pytest
+from alembic import command
 from sqlalchemy import exc, text
 
 from affiche.db import make_engine, migrate, write_tx
 
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
-                 "generation_requests", "provider_calls", "candidates"}
+                 "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
+                 "product_inputs", "creations", "creation_versions", "mutation_keys", "sessions", "login_failures",
+                 "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks"}
 GUARD_WHERE = {
     "req_one_revision": "WHERE parent_id IS NOT NULL AND status IN ('running','succeeded')",
     "req_one_initial": "WHERE parent_id IS NULL AND status IN ('running','succeeded')",
@@ -35,6 +38,7 @@ def test_migrate_creates_every_table_and_both_guards(engine):
                            conn.exec_driver_sql("PRAGMA table_info(run_products)")}
     assert tables == DESIGN_TABLES | {"alembic_version"}
     assert {"name": 1, "variant": 1}.items() <= product_columns.items()  # 0002: the subject snapshot
+    assert product_columns["photo_assets_json"] == 0  # 0003: NULL is unverified legacy provenance
     assert set(guards) == set(GUARD_WHERE)
     for name, where in GUARD_WHERE.items():
         sql = " ".join(guards[name].split())
@@ -46,6 +50,26 @@ def test_new_connection_has_wal_and_foreign_keys(engine):
     with engine.connect() as conn:
         assert conn.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+
+
+def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path)
+    upgrade = command.upgrade
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(command, "upgrade", lambda config, _revision: upgrade(config, "0002"))
+            migrate(engine)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO runs VALUES ('old', 'model', 'high', '1088x1920', 3, 'on', 'now')")
+            conn.exec_driver_sql("INSERT INTO run_products VALUES ('old', 'P1', 'A', 'old-sha', 'JBL', 'Blue')")
+        migrate(engine)
+        migrate(engine)  # startup replay
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
+                "old", "P1", "A", "old-sha", "JBL", "Blue", None)
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0010"
+    finally:
+        engine.dispose()
 
 
 def _insert_initial_scene_request(conn, request_id):

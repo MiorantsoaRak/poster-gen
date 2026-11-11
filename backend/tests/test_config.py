@@ -7,7 +7,8 @@ from affiche.config import BACKEND_DIR, ConfigError, load_settings
 
 NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEND_CAP_SINCE", "ESTIMATE_SCENE_USD",
          "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "MIN_SOURCE_SHORT_EDGE", "REMBG_MODEL", "MAX_HOLE_RATIO",
-         "DATA_DIR", "OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY")
+         "DATA_DIR", "OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "APP_ORIGIN", "SHOP_PASSWORD_HASH",
+         "PLANNER_PROVIDER", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ESTIMATE_PLAN_USD", "ESTIMATE_TEXTURE_USD")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 SECRET = "sk-test-must-never-be-printed"
@@ -40,6 +41,14 @@ def test_valid_config_with_defaults(env):
     assert settings.max_hole_ratio == 0.05
     assert settings.data_dir == BACKEND_DIR / "data"
     assert settings.stub_fail is None
+    assert settings.planner_provider == "disabled" and settings.anthropic_api_key is None
+
+
+def test_anthropic_key_validation_does_not_echo_secrets(env):
+    env.setenv("ANTHROPIC_API_KEY", "secret\u200bvalue")
+    with pytest.raises(ConfigError) as caught:
+        load()
+    assert "secret" not in str(caught.value) and caught.value.__context__ is None
 
 
 def test_stub_fail_with_the_stub(env):

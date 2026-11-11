@@ -73,6 +73,23 @@ def test_put_of_other_bytes_makes_another_file(tmp_path):
     assert _asset_files(tmp_path) == sorted([assets.path(tmp_path, first, "png"), assets.path(tmp_path, second, "png")])
 
 
+def test_put_refuses_corrupt_existing_file(tmp_path):
+    sha = assets.put(tmp_path, b"original", "png")
+    assets.path(tmp_path, sha, "png").write_bytes(b"corrupted")
+    with pytest.raises(OSError, match="corrupt"):
+        assets.put(tmp_path, b"original", "png")
+
+
+def test_put_recovers_windows_destination_race(tmp_path, monkeypatch):
+    def racing_replace(source, destination):
+        destination.write_bytes(Path(source).read_bytes())
+        raise PermissionError("another writer's file is open")
+    monkeypatch.setattr(os, "replace", racing_replace)
+    sha = assets.put(tmp_path, b"same", "png")
+    assert _asset_files(tmp_path) == [assets.path(tmp_path, sha, "png")]
+    assert assets.path(tmp_path, sha, "png").read_bytes() == b"same"
+
+
 @pytest.mark.parametrize("failing", ["fsync", "replace"])
 def test_a_failed_put_leaves_no_file_and_propagates(tmp_path, monkeypatch, failing):
     def fail(*_args):

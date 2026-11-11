@@ -9,6 +9,7 @@ import pytest
 from PIL import Image, ImageDraw
 from sqlalchemy import text
 
+from affiche.db import write_tx
 from affiche.runtime import start
 from affiche.visuals import execution, review
 from affiche.visuals.cutout import CutoutUnavailable
@@ -200,6 +201,49 @@ def test_a_changed_csv_row_refuses_the_whole_command(rt, folder):
     code, out = _generate(rt, _csv(folder, P1.replace("look-alike", "lookalike"), P2), "--run", "r1", "--only", "P2")
     assert code == EXIT_USAGE and "the CSV rows of P1 differ" in out  # --only does not hide a changed row
     assert _count(rt, "generation_requests") == 1 and _count(rt, "run_products") == 1
+
+
+@pytest.mark.parametrize("photo_name", ["p1.jpg", "p2.jpg"])
+@pytest.mark.parametrize("only", [(), ("--only", "P2")])
+def test_replacing_photo_bytes_refuses_before_new_work_even_outside_only(rt, folder, photo_name, only):
+    csv = _csv(folder, P1.replace("p1.jpg", "p1.jpg|p2.jpg"), P2)
+    assert _generate(rt, csv, *NEW_RUN, "--only", "P1")[0] == EXIT_OK
+    review.reject_cutout(rt.engine, _all(rt, "SELECT id FROM cutouts")[0][0])
+    tables = ("assets", "run_products", "generation_requests", "provider_calls", "candidates", "cutouts")
+    before = {table: _all(rt, f"SELECT * FROM {table}") for table in tables}
+    photo = folder / "photos" / photo_name
+    original = photo.read_bytes()
+    with Image.open(photo) as source:
+        Image.new("RGB", source.size, "red").save(photo, format="JPEG")
+
+    code, out = _generate(rt, csv, "--run", "r1", *only)
+    assert code == EXIT_USAGE and "photo content of P1 differs" in out
+    assert {table: _all(rt, f"SELECT * FROM {table}") for table in tables} == before
+
+    photo.write_bytes(original)
+    assert _generate(rt, csv, "--run", "r1", "--only", "P1")[0] == EXIT_OK
+    assert _count(rt, "provider_calls") == 1  # replay, with the replacement cutout from the same source
+
+
+def test_legacy_photo_snapshot_is_not_guessed_from_current_files(rt, folder):
+    csv = _csv(folder, P1)
+    assert _generate(rt, csv, *NEW_RUN)[0] == EXIT_OK
+    with write_tx(rt.engine) as conn:
+        conn.execute(text("UPDATE run_products SET photo_assets_json = NULL"))
+    before = _all(rt, "SELECT * FROM provider_calls")
+    code, out = _generate(rt, csv, "--run", "r1")
+    assert code == EXIT_USAGE and "no original-photo snapshot for P1" in out
+    assert "sheet/apply on stored assets" in out
+    assert _all(rt, "SELECT photo_assets_json FROM run_products") == [(None,)]
+    assert _all(rt, "SELECT * FROM provider_calls") == before
+
+
+def test_photo_snapshot_preserves_reference_order(rt, folder):
+    csv = _csv(folder, P1.replace("p1.jpg", "p2.jpg|p1.jpg"))
+    assert _generate(rt, csv, *NEW_RUN)[0] == EXIT_OK
+    stored = json.loads(_all(rt, "SELECT photo_assets_json FROM run_products")[0][0])
+    assert stored == [hashlib.sha256((folder / "photos" / name).read_bytes()).hexdigest()
+                      for name in ("p2.jpg", "p1.jpg")]
 
 
 # --- The paid opt-in (through main, with no env file) -----------------------------------------------------------------

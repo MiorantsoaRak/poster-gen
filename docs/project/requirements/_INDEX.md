@@ -1,9 +1,16 @@
 # Requirements Index
 
-> One row per feature file in this directory. Keep in sync whenever a file is added or a requirement's status changes.
+> One file per feature. All 22 requirement groups are Approved: the existing eight phase-1 groups, 13 approved on 2026-11-09 (ADR-028), and the selected-layer prompt editing requirement approved in ADR-030. Requirements approval does not approve the technical designs.
 
-| Feature file | Requirements | Status summary | Design file |
-|--------------|--------------|----------------|-------------|
-| [product-visuals.md](product-visuals.md) | R-PRODUCT-VISUALS-001 … 008 | 8 Approved (2026-11-06); R-003, R-004, R-005 amended 2026-11-06 (ADR-011) | [designs/product-visuals.md](../designs/product-visuals.md) (Approved, phase 1) |
+| Feature file | Requirements | Status | Design |
+|---|---|---|---|
+| [product-visuals.md](product-visuals.md) | R-PRODUCT-VISUALS-001 … 011 | 001–008: phase-1 baseline; 009–011: approved normal-poster amendments | [product-visuals](../designs/product-visuals.md) |
+| [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001 … 002 | Approved | [catalogue-brand](../designs/catalogue-brand.md) |
+| [generation-jobs.md](generation-jobs.md) | R-GENERATION-JOBS-001 … 002 | Approved | [generation-jobs](../designs/generation-jobs.md) |
+| [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001 … 003 | Approved | [poster-editor](../designs/poster-editor.md) |
+| [format-export.md](format-export.md) | R-FORMAT-EXPORT-001 … 002 | Approved | [format-export](../designs/format-export.md) |
+| [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001 … 002 | Approved | [creation-library](../designs/creation-library.md) |
 
-The other five features in [PROJECT.md](../PROJECT.md) have no requirements file yet. See [_TEMPLATE.md](_TEMPLATE.md) for the required structure.
+Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → fidelity review → manual or prompted selected-text polish → server preview → confirm → download the same PNG. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
+
+Next gate: review the [technical designs](../designs/_INDEX.md), then approve them before implementation tasks, as required by [AGENTS.md](../../../AGENTS.md). No new feature code or paid testing was performed during design.

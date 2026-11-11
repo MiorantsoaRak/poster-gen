@@ -5,22 +5,109 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`) Static `sheet.html` + pre-filled `decisions.csv` (incl. scope rows), `apply` (validate all rows first, decisions then generation actions, uuid5 ids with `k`, `apply-result.csv`), `new-cycle`. The prevalidation must recognise matching replays before `review.next_status` (or a replayed file fails), must have its own check for cutout transitions, and must validate `kind` before calling `review.abandon` (Codex T-PV-008 r1). **`apply` spends (revise/background), so it must take `--paid` like `generate`** (ADR-022).
-  - verify: `uv run pytest tests/test_apply.py -q`: one invalid row → nothing applied; replaying a file gives `already_applied` and no new request; after a failed request a replay creates a new one; abandon replay after `new-cycle` still addresses the original scope; on the stub data from T-PV-009, `sheet` writes a page that opens in a browser.
+- [x] T-POSTER-SHOP-STYLE (ADR-042; D-PV-009/010, D-POSTER-EDITOR-001; user autonomy grant 2026-11-11) Reach the shop's own poster style: study on real products, new scene prompt, integrated headline, style looks.
+  - delivered: 10 shop posters inspected; 13 study images on 9 products; `compile_scene` rewritten; optional `headline` on scene requests (title always from the offer, price never sent); title layer may be hidden only with a matching recorded headline; editor has a thumbnail look picker, accent colour and headline fields. Real application poster: outputs/style-study-2026-11-11/app-poster-final.png (1080×1350, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37).
+  - verified: see HANDOFF "Verification". Report: reviews/style-study-2026-11-11.md.
+  - spend: application ledger 1.161964 → 1.370232; study 3.050078 outside the ledger.
+- [x] T-POSTER-PRICE-IN-IMAGE (ADR-044; user decision 2026-11-11) The price label is drawn by the image model; changing it needs a new scene.
+  - verified 2026-11-11: tests/test_plans.py::test_price_label_comes_only_from_the_integer_amount, tests/test_exports.py::test_price_drawn_by_the_scene_must_equal_the_offer_and_a_change_needs_a_new_scene; full suite and Edge smoke (see HANDOFF); live Edge run 4 with the real provider: outputs/style-study-2026-11-11/live-edge-4/.
+- [x] T-POSTER-PRICE-ATTEMPTS (ADR-045; D-GENERATION-JOBS-002) Scene limit raised from 3 to 12 per poster.
+  - verified 2026-11-11: tests/test_poster_jobs.py::test_scene_limit_and_failed_jobs_do_not_consume_slots; full suite (see HANDOFF).
+- [x] T-POSTER-REFERENCE-BRIEF (ADR-046; user go 2026-11-11) Owner uploads a poster he likes; Claude writes the style brief; it is saved as a reusable look beside the built-in ones.
+  - verified 2026-11-11: tests/test_looks.py (brief boundary, prompt only through a look, saved look styles a later scene, foreign/unknown look refused, spooled brief revalidated); full suite (see HANDOFF); stub smoke in Edge creates and selects a look; live Edge run 5 with real Claude and image providers (outputs/style-study-2026-11-11/live-edge-5/).
+  - not built: rename/delete a look; looks for the "Avec Claude" composition (it keeps its own palette).
+  - user requirement 2026-11-11: the look made from a reference is saved beside the built-in looks in the picker (with the reference as its thumbnail) and can be chosen for later posters.
+  - scope seen in the exploration: a brief job (Claude vision, about USD 0.007), a screened `headline_style` phrase in the scene prompt, a headline alignment choice (left/centre) so layout can follow the reference, stored looks (new table and migration), editor entry "Créer un style depuis une affiche".
+  - verify: reference → brief → scene on another product, compared side by side; brief refused when it carries words, prices or brand names from the reference.
+- [x] T-POSTER-SIGNATURE (ADR-043; D-PV-009/010, D-CATALOGUE-BRAND-001) Shop name and contact drawn by the image model, with the same exact-match guard as the title.
+  - verified 2026-11-11: backend 676 passed/3 deselected before the last prompt wording change, then tests/test_plans.py + test_poster_visuals.py; 26 Vitest; build; stub smoke in Edge 156; live Edge runs 2 and 3 (real provider) with digits read at full size. Spend: ledger 1.575109 → 1.993185; study +0.704928 outside the ledger.
+- [x] T-POSTER-LOOK-PILL (ADR-042 follow-up; D-POSTER-EDITOR-001) A chosen look also styles the price pill, and the shop name/contact colours.
+  - delivered: `stylePill` in App.vue (dark pill per look, white digits, half canvas width; shop name/contact centred, dark on light looks); a pill restyled by hand is left alone. The first scene keeps a styled pill's size and centres it in the plan's price band (service.py).
+  - verified 2026-11-11: tests/test_poster_visuals.py::test_first_scene_keeps_a_styled_price_pill_size_and_centres_it; smoke asserts badge, width 540, x 270; live Edge run asserts the same on real data.
+- [x] T-POSTER-ONE-TAP (ADR-042 follow-up; D-CREATION-LIBRARY-001) One "Générer la scène" action for the simple composition; the last look, accent colour and brand come back on the next poster.
+  - delivered: `createScene` reuses an unchanged plan, so a retry after a lost response replays the same scene key (smoke: one scene job). The Claude composition keeps its two steps. Style memory is localStorage `affiche.style` on this device.
+  - changed scope: "Même style que…" from a previous confirmed poster was not built. It needs the library (T-POSTER-009) and scene assets accepted as style references, and the study measured little gain from a style reference over a look.
+  - verified 2026-11-11: full backend 674 passed/3 deselected; 26 Vitest; build; smoke in bundled Chromium and in Edge 156 (`SMOKE_CHANNEL=msedge`); live Edge run (see HANDOFF).
 
-Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. No implementation task is in progress.
+- [x] T-POSTER-REFERENCE-TYPE (D-POSTER-EDITOR-001/003; R-POSTER-EDITOR-003) Match the reference's heavy italic font and price capsule while retaining manual/prompt editing.
+  - delivered: Montserrat Black Italic, grouped exact amount with smaller upright AR and editable gradient capsule. Same scene/shop layers. Revision 6 confirmed PNG: outputs/style-reference-2026-11-10/soundcore-r50i-reference-typography-final.png; SHA-256 e574e884916eb29f908d22d51f3d95fad531a98225da05a834a3da0f4870b5f9. No additional image cost; combined ledger $1.161964. Price remains dated test data.
+  - verified: 671 backend tests/3 deselected; final italic-bound correction then passed all 5 shared-renderer tests and full Chromium smoke; 26 frontend tests/build passed. New controls/undo/reopen, patterned price glyphs, schema/patch isolation, exact amount, zero/large-price bounds, legacy hashes/currency font fingerprint, unchanged historical download and exact final preview/download equality. Pixel proof confirms all pixels outside title/price boxes unchanged. See reviews/style-reference-test-2026-11-10.md.
 
-## Next (approved, ordered)
+- [x] T-POSTER-STYLE-TEST (D-PV-009/010; chore evaluation) Reproduce the style of a recent accessible Original Phone Mada poster using a real product and editable commercial layers.
+  - note: User-supplied DJI Mic Mini reference inspected and preserved. Live R50i style adaptation complete: initial GPT Image scene, framing refinement to clear the heading, manual typography/footer polish, fidelity review, authoritative PNG confirmation/download. Final outputs/style-reference-2026-11-10/soundcore-r50i-reference-style-final.png is 1080×1350; hash 2c61abbf28e52a5af380b11b7291bb9d7e49d766a2fe8b08ab747ea3045fffee equals inspected preview. Two live calls cost $0.445271; combined ledger $1.161964/$12. Previous dark poster unchanged. Price remains dated test data. Font/capsule controls were subsequently completed by T-POSTER-REFERENCE-TYPE; mixed-colour title runs remain outside scope.
+  - verified: Existing implementation checks: 662 backend tests/3 deselected; 25 focused reference/visual tests; 26 frontend tests; build and Chromium smoke passed. This follow-up: real original+style generation and base+original+style refinement, exact reference hashes/provenance, local plan validation, scene-preserving manual text polish, inspected final PNG/download equality, recorded spend. No application code changed after those regression checks.
+  - verify: reference provenance and visual comparison; reference-role/ownership checks if code changes; generated product fidelity, polished PNG preview/download equality and incremental spend recorded.
 
-Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task runs with the stub provider or mocked SDK responses: **no paid call** until T-PV-012. Verify commands run from `backend/`.
+- [x] T-POSTER-001 (D-CATALOGUE-BRAND-001/002/003; D-CREATION-LIBRARY-001/002; D-POSTER-EDITOR-001) Persist validated product inputs, shop snapshots and editable draft versions.
+  - verified: 66 focused tests passed; full backend suite 491 passed, 3 deselected (102.27 s). Migration 0003→0004 preserves legacy rows including a nonzero provider ledger; all eight identity combinations, original-byte/alpha preservation, races/replay and rollback covered. Generated references and renderer remain dependent tasks; no paid calls.
+  - scope: forward-only schema; safe concurrent asset writes/intake; strict money/document validation; atomic idempotency, profile/draft revisions, history and copies. Existing CLI callers and tests remain supported.
+  - verify: focused domain/migration/storage tests for bad images/prices/identity flags, original hashes, immutable history, stale/concurrent saves, lost-response replay and rollback; complete backend suite.
+
+- [x] T-DESIGN-POSTER (chore; ADR-028/030) Record requirements approval and write matching phase-2 designs for the complete poster workflow.
+  - verified: 22 total Approved requirement groups (14 new); five new design files plus product-visuals v2 sections, six-file approval index, 32 local links and all requirement indexes checked; all three proposed image sizes satisfy documented constraints and exact export ratios; git diff --check passes.
+  - research: installed OpenAI SDK signatures/callers; official OpenAI, Claude, Konva/Fabric and Playwright docs; Orbit discovery/integration for both providers, with incomplete OpenAI collection explicitly superseded by primary docs. No dependencies installed, API/renderer code, live model calls or test reruns; the last backend suite remains 442 passed, 3 deselected.
+  - outcome: technical designs subsequently approved (ADR-031). User chose separate text/effect layers for manual or prompt edits (ADR-030); surface-embedded text deferred. No implementation tasks added before that gate.
+  - verify: all approved requirements mapped, concrete data/API/state/error contracts, explicit provider/spend failure modes, consistent cross-feature references and local links; submit designs for approval.
+
+## Completed review work
+
+- [x] T-FIX-001 (D-PV-002 / R-PRODUCT-VISUALS-003) Screen commercial descriptions in shared admission before reserving spend.
+  - note: User authorised review fixes on 2026-11-09. Reuse the existing screen; preserve idempotent replays.
+  - verify: direct scene/background/revision regressions, no request or cost on refusal; full backend suite.
+  - verified: `uv run pytest tests/test_admission.py -q` → 39 passed. Full suite with both fixes: 442 passed, 3 deselected (149.19 s).
+- [x] T-FIX-002 (D-PV-001/008 / R-PRODUCT-VISUALS-007) Lock evaluation snapshots to ordered photo hashes; refuse changed or unverified legacy sources before new work.
+  - note: Migration 0003 preserves old rows with NULL hashes; legacy `generate` is refused, not silently backfilled (ADR-027).
+  - verify: changed bytes at the same path, secondary photos, `--only`, unchanged replay, old database migration, no writes/spend on refusal.
+  - verified: `uv run pytest tests/test_fixtures_generate.py tests/test_db.py -q` → 44 passed. Full suite: 442 passed, 3 deselected (149.19 s). Migration tested on a real temporary revision-0002 database and repeated startup; paid evidence database was not migrated or changed.
+- [x] T-REQ-POSTER (chore) Draft per-feature criteria for the accepted poster direction, GPT Image primary and cutout optional; submit the new requirements before feature design.
+  - verified: five new feature files plus product-visuals R-009–011, 13 Draft groups, 16 valid local links and matching requirement indexes. General direction approved; detailed criteria submitted for the explicit requirements gate.
+  - verify: requirements index, consistent approval/export/refinement rules, acceptance criteria and local links.
+
+## Queued evaluation tooling
 
 - [ ] T-PV-011 (D-PV-008 `report`) `calls.csv`, `report.csv` (per run × variant × cycle × treatment, outcomes, reasons, estimated and allocated billed cost, `low_res`, `arm`) and `summary.md`.
   - verify: `uv run pytest tests/test_report.py -q`: outcome precedence (`approved` > `abandoned` > `pending` > `exhausted` > `failed_only` > `not_approved`); the billed allocation sums exactly to the billed total; `attempt_no` restarts per cycle.
 
+Work in C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia. T-POSTER-001–008 are verified. T-POSTER-STYLE-TEST and T-POSTER-REFERENCE-TYPE are complete: reference-guided R50i scene/refinement, editable italic typography/price capsule and confirmed PNG delivered. The next broader approved task remains T-POSTER-009 (square/story/library). Requirements/designs are approved (ADR-028/030/031); T-PV-011 remains queued.
+
+## Poster implementation (approved, ordered)
+
+- [x] T-POSTER-002 (D-CATALOGUE-BRAND-003; D-CREATION-LIBRARY-001) Add authenticated FastAPI intake/profile/draft routes, shared error responses and protected assets.
+  - verified: full suite 513 passed, 3 deselected (106.47 s); 22 API tests include actual Uvicorn HTTP sign-in/protected access/logout, Origin/session/rate-limit/ownership errors, draft round trip, history/copy/abandon, private OpenAPI and safe storage failures. API-only settings preserve CLI startup; migrations 0004/0005 are forward-only. No real env file or paid database was read/migrated by tests; no provider calls.
+  - verify: HTTP tests for Origin/session/rate limits, ownership, strict requests, idempotent replay, revision conflicts and storage errors; local OpenAPI contract; full suite.
+- [x] T-POSTER-003 (D-PV-009/010; D-GENERATION-JOBS-001) Extend the existing image gateway sizes/reference roles and implement validated fixed/Claude scene plans.
+  - verified: full suite 579 passed, 3 deselected (112.43 s); a final compiler revalidation regression then passed with all 62 planner tests. Explicit feed/square/story/texture sizes preserve legacy callers. Fixed plans and retry-free Claude Messages transport validate geometry, selected fields, measured footprints, commercial isolation, reference roles and cost/error handling. No live calls; persistent plan routes integrate with T-004/005.
+  - verify: installed SDK transport tests, size validation, plan schema/injection failures, identity and commercial-value isolation; no live calls.
+- [x] T-POSTER-004 (D-GENERATION-JOBS-002/003) Durable jobs, combined budget, dispatch/recovery and cancellation.
+  - verified: full backend suite 607 passed, 3 deselected (124.68 s); migration 0006, both-ledger cap/concurrency, replay, cancel/claim race, two provider/one local slots, three scenes, active-job abandonment, no retry for unknown outcomes, bounded 429 retry, spool/commit/disk failure and recovery covered. Read/cancel/usage routes are authenticated. Admission endpoints and scheduler registration are T-005; render deduplication remains T-008.
+  - verify: concurrent admission, both ledger totals, crash boundaries, unknown-outcome no replay, bounded definite-429 retry and stale result tests. Add the active-image-job guard to draft abandonment when jobs become available.
+- [x] T-POSTER-005 (D-PV-009/010; D-CREATION-LIBRARY-001) Wire scene generation/refinement and fidelity decisions to drafts.
+  - verified: full suite 625 passed, 3 deselected (138.83 s). Migration 0007; actual HTTP original→fixed plan→scene→review; all eight identities; local spool recovery/scheduler; explicit stub planner, manual rebase, late results, approved-base/rejected-refinement isolation, owned generated assets/crops and no-call price edits. No real provider call. The real R50i reference is downloaded and inspected; shop/source caveats are recorded in reviews/shop-poster-sources-2026-11-10.md.
+  - verify: stub end-to-end HTTP flow, immutable references, three slots, late results, selected-base ordering and review guards. Replace the explicit generated-reference refusal in posters/store.py and extend protected asset reads to owned generated references.
+- [x] T-POSTER-006 (D-POSTER-EDITOR-001/002; D-CATALOGUE-BRAND-001/002) Build the French Vue feed workflow and shared canvas, bundled fonts, manual editing and autosave.
+  - verified: Vue/Konva editor, bundled/hashed Noto fonts, manual typography/identity/crop controls, serial autosave/history and protected capabilities/job recovery. Production build, 26 Vitest tests, full backend 625 passed/3 deselected (150.16 s) and real Chromium smoke pass. Browser: real photo upload, identity, dropped scene response replay (only one job), fidelity review, price undo, keyboard movement, reopen, two-tab conflict copy and overflow/glyph warnings at desktop/mobile viewport. No paid calls; physical phones untested (T-011).
+  - verify: browser upload → draft → scene → review, all eight identity choices, touch/keyboard controls, undo, save conflicts, measured overflow; production build.
+- [x] T-POSTER-007 (D-POSTER-EDITOR-003) Constrained Claude text proposals and explicit GPT texture jobs; manual/prompted selected-layer polish.
+  - verified: migration 0008, strict selected-layer proposals/explicit values/acknowledgement, reviewed texture jobs, reused Claude transport, API and shared Konva glyph fill. Full backend 647 passed/3 deselected (153.47 s), 26 Vitest tests and production build pass. Real Chromium verifies proposal preview/apply, separate texture generation/review/undo, glyph-mask pixel isolation, unchanged scene/other layers and free manual edits. No live Claude or real texture provider call.
+  - verify: content acknowledgement, stale proposals, reference checks, no unrelated document/pixel changes and manual edits without provider calls.
+- [x] T-POSTER-008 (D-FORMAT-EXPORT-002; D-POSTER-EDITOR-002) Shared Chromium PNG preview, exact confirmation and stored download.
+  - verified: migration 0009, offline shared Chromium render, prepared assets/fonts, model-free jobs, confirmation/hash/download API/UI. Full backend 655 passed/3 deselected (171.38 s), production build, 26 Vitest and real Chromium flows pass. Real R50i + Original Phone Mada feed poster generated, visually reviewed, manually polished, confirmed and downloaded; PNG 1080×1350 hash b1aca99e80656940fcaa378abd416c839bbae4f1ed29a82f618aa195484aae27 equals inspected preview. One image call $0.203812; final combined ledger $0.716693. Report: reviews/real-feed-poster-2026-11-10.md. Current price/stock, live Claude and physical phones unverified.
+  - verify: real renderer font/image/error tests; preview/download byte equality, stale/edited/rejected blocking, no network during rendering.
+- [ ] T-POSTER-009 (D-FORMAT-EXPORT-001; D-CREATION-LIBRARY-001/002) Square/story layouts, library/history/reuse and effective-format hashes.
+  - verify: all dimensions, unchanged-format confirmation reuse, shared-price invalidation, copy without generation, restored draft/PNG backup.
+- [ ] T-POSTER-010 (D-PV-011) Optional reviewed original-photo cutout/background route.
+  - verify: rejection leaves scene path usable, original pixel/aspect preservation, transformed shadows, Soundcore award negative case.
+- [ ] T-POSTER-011 (all phase-2 designs) Integrated regression and real-device/provider evaluation readiness.
+  - verify: full suite/build/browser flows, agreed physical phone checks; report untested paid models/sizes/textures and request only the concrete remaining test scope.
+
+## Next (approved, ordered)
+
+Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Verify commands run from `backend/`. Paid runs only with `IMAGE_PROVIDER=openai` + `--paid` and the user's go.
+
 ## Blocked
 
 - [!] T-PV-013 (D-PV-008, R-008) Paid evaluation: 5 products to calibrate, then 15; report; recommendation written with the user; then design v2.
-  - note: Blocked on the user, and on T-PV-010/011:
+  - note: Blocked on the user, and on T-PV-011 (`report`):
     - the fixture photos (~20 products, incl. poor photos and look-alike variants);
     - the arm assignments;
     - the approval thresholds agreed before the run (R-008 c.6);
@@ -30,6 +117,26 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Every task
   - verify: `report` outputs exist for every run; the user approves the recommendation.
 
 ## Done (most recent first — prune monthly)
+
+- [x] T-REVIEW-001 (chore) Review the complete implementation and requested editable branded-poster workflow; run the user's real JBL/Soundcore scene smoke test.
+  - verified 2026-11-09: `uv run pytest -q` → 432 passed, 3 deselected (116.05 s); source/migration/connected-test review; two additional gaps reproduced in temporary stub data (same-filename photo replacement, admission-screening bypass).
+  - paid test explicitly requested by the user (ADR-026): two official product images, `gpt-image-2/high`, two successful calls without retries, USD 0.344220 total, 82–86 s recorded durations; real rembg cutouts also produced. Existing `data-probe` ledger total now USD 0.512881 including the original probe.
+  - result: generated scenes look promising; Soundcore cutout retains the source's external award graphic. Candidates remain pending review. No application changes or approval decisions.
+  - evidence: `reviews/implementation-review-2026-11-09.md`, `reviews/real-product-scenes-2026-11-09.md`; deliverables in `outputs/review-2026-11-09/`. Links, file existence, sheet image references, output/source hashes, dimensions and cost total checked.
+  - next gate: proposed refinement, shadow and poster-flow changes require amended/drafted per-feature requirements and approval, then matching designs. T-PV-013 remains the separate representative shop-photo evaluation.
+
+- [x] T-PV-010 (D-PV-008 `sheet`, `apply`, `new-cycle`)
+  - **Code:** `backend/src/affiche/visuals/sheet.py` (`sheet.html` with natural-size images, the 3 crop frames, the `photo_preserved` composite and the French reasons legend; `decisions.csv` UTF-8-BOM) and `evaluate.py`:
+    - `sheet --out DIR`;
+    - `apply FILE --paid`: two-pass validation including in-file transitions and replays; decisions then generations; uuid5 ids with `k`; per-row error boundaries; strict UTF-8 → cp1252 decoding; `apply-result.csv`;
+    - `new-cycle SKU…`;
+    - `review.rejection_payload` is shared.
+  - **Verified 2026-11-06** (Windows 10, Python 3.12.10):
+    - `uv run pytest tests/test_apply.py -q` → 34 passed; `uv run pytest -q` → 432 passed, 3 deselected.
+    - Manual stub run: `generate` → `sheet` → approve/reject/revise → `apply` → replay all `already_applied` → confirm + background → `new-cycle`. The page was checked in Chrome: 6 images, the frames, the composite.
+    - About 24 mutations killed.
+    - Codex r1 APPROVE WITH FIXES (3 P2 + encoding + terseness), r2 APPROVE WITH FIXES (1 P2 regression from the terseness change), r3 APPROVE (docs/project/reviews/t-pv-010-code-r1.md … -r3.md).
+    - ADR-024.
 
 - [x] T-PV-012 (D-PV-003 cap section (b)) One paid probe call, with the user's go on 2026-11-06.
   - **Command (from `backend/`):**

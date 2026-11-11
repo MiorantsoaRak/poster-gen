@@ -38,10 +38,10 @@ def approve(engine: Engine, candidate_id: str, *, framing_checked: bool) -> Outc
                    {"framing_checked": 1})
 
 
-def reject(engine: Engine, candidate_id: str, *, reasons: Sequence[str], note: str | None) -> Outcome:
-    """At least one known reason or a non-blank note; the note is sent to the model in a revision, so it is
-    screened. Stored canonical (reasons deduplicated in REASON_CODES order, the note stripped), which is also what a
-    replay is compared with."""
+def rejection_payload(reasons: Sequence[str], note: str | None) -> tuple[list[str], str | None]:
+    """reject's input checks, and the canonical payload it stores and compares a replay with: the reasons
+    deduplicated in REASON_CODES order, the note stripped. At least one known reason or a non-blank note; the note is
+    sent to the model in a revision, so it is screened. Public for `apply`'s whole-file validation."""
     given = set(reasons)
     if unknown := sorted(given.difference(REASON_CODES)):
         raise Refused(422, "unknown_reason", {"reasons": unknown})
@@ -51,6 +51,11 @@ def reject(engine: Engine, candidate_id: str, *, reasons: Sequence[str], note: s
         raise Refused(422, "reason_or_note_required")
     if note is not None and (matches := find_commercial_terms(note)):
         raise Refused(422, "commercial_terms", {"field": "note", "matches": matches})
+    return codes, note
+
+
+def reject(engine: Engine, candidate_id: str, *, reasons: Sequence[str], note: str | None) -> Outcome:
+    codes, note = rejection_payload(reasons, note)
     return _decide(engine, "candidates", candidate_id, "pending_review", "rejected", "reviewed_at",
                    {"rejection_reasons_json": json.dumps(codes), "rejection_note": note})
 

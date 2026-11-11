@@ -1,6 +1,214 @@
 # DECISIONS
 
+## ADR-046 — 2026-11-11 — Saved looks written by Claude from a reference poster
+
+- User request after the exploration ("go"), with one requirement: the look is saved beside the others and reusable for later posters. The user's go replaced the separate requirements/design files for this feature; this entry and backend/api/README.md hold the contract.
+- Flow: the owner uploads a poster he likes (existing `style` asset role) and names it. Claude returns a `StyleBrief` (French direction and surface, lighting, camera, palette, accent colour, English headline typography, left/centre alignment). It is stored in `looks` (migration 0010) and shown in the picker with the reference as its thumbnail.
+- Trust boundary: the brief is validated and screened like any art direction (no prices, currency, long numbers, instruction wording, quotes), once when Claude answers and again before it is stored. A scene request names a look by `headline.look_id`; the server reads typography and alignment from the shop's own stored look. The client cannot send typography text. An unknown or foreign look is 404, never a silent fallback.
+- Prompt: `compile_scene` takes `headline_style` and `align`. Left alignment moves the headline and the price label to the left edge; the shop signature stays centred.
+- Queue: a brief runs as a planner job (`kind='plan'` with a `look` payload) because job kinds are fixed by applied migration 0006; `get_job` reports it as `look`, after the browser smoke showed the editor loading it as a plan. It uses the planner budget estimate and the same spend cap. At most 24 looks per shop; no delete yet.
+- Measured in the live application (Edge, real Claude and image providers): the Select 4 Go poster became the look "Vagues bleues"; a CMF Buds 2a poster made with it has the left-aligned headline, the left price pill, the blue waves and the blue accent word, with every text exact. Brief USD 0.008612; scene USD 0.210283.
+- Revisit if: owners need to rename or delete looks, or briefs start carrying words from the reference.
+
+## ADR-045 — 2026-11-11 — Twelve scenes per poster
+
+- User request: raise the scene limit so price changes are not blocked (ADR-044 made each price change a new scene).
+- Decision: `jobs.SCENE_LIMIT = 12` scene/refinement jobs per creation (was 3, hard-coded). Failed jobs still do not count. The spend cap remains the money guard; the limit only stops a runaway loop on one poster. The French message now says twelve and points to a copy.
+- The phase-1 evaluation limit (`ATTEMPT_LIMIT`, runs table, 1–5) is a different mechanism and is unchanged.
+- Revisit if: owners reach twelve in ordinary use.
+
+## ADR-044 — 2026-11-11 — Price drawn by the image model (explicit user decision)
+
+- Status: explicit user choice: "make the price part of the comp, so if the user want to change it later, he need to re-gen again". Reason given: an overlaid price is visually inconsistent with the rest of the composition.
+- Decision: `Headline.price` (default on in the editor) lets the image model draw the price label. The amount is `offer.price_ar`, an integer formatted in code as "340 000" + "AR"; no free text can carry an amount (brand/subtitle/direction screening is unchanged). The job payload records `price_ar`.
+- This supersedes, for posters that use the option: ADR-042's "the price is never sent", and the project rule "reuse approved visuals for price-only changes" (AGENTS.md updated). A price change now costs one new scene (about USD 0.21) and a new fidelity review. Turning the option off restores the exact editable pill and free price changes.
+- Guard: the drawn amount must equal the offer's amount whether or not the price layer is shown; a hidden price layer needs a drawn price. Otherwise render/confirm refuse 409 `price_stale` and refinement refuses `headline_stale`. `Document` no longer requires a visible price layer; export does that check with the scene.
+- Measured: 2 of 2 live application scenes drew "340 000 AR" exactly, and with the pill in the composition the model kept the product clear of it without help. Two images are a small sample: the fidelity review must read every digit.
+- Found by the live Edge run, not by the unit tests: the first-scene code skipped hiding a price layer that already carried pill styling, which would have doubled the price. Fixed; the regression test now styles the pill first.
+- Open: a creation still allows three scene/refinement jobs in total (`attempt_limit`), so repeated price changes on one poster will need a copy. Not changed here.
+
+## ADR-043 — 2026-11-11 — Shop name and contact drawn by the image model
+
+- Context: the user found the overlaid shop name/contact poorly integrated and asked whether the AI could compose them too. Measured first: 3 of 3 direct study images and 2 of 2 live application scenes rendered "Original Phone Mada" and "038 93 028 00 / 034 93 028 00" with every digit correct, in the poster's colours with a handset icon. One of the five wrote the shop name in capitals.
+- Decision: `Headline.signature` (default on in the editor) lets the image model draw the shop name and/or contact that the poster includes. The words come only from the poster's profile snapshot, never from the request. One line each, at most 80 characters, no quotes; otherwise they stay editable layers. The price is still never sent.
+- Guard, also tightened for the title: any word the image model drew must still equal what the poster says, whether or not the layer is shown again, and a hidden layer must be replaced by drawn words. Otherwise render/confirm refuse `title_missing` / `signature_missing` and refinement refuses `headline_stale`. Unticking a contact that the image shows is refused the same way. `Document` now allows an included shop name/contact layer to be hidden.
+- Layout: with an AI-drawn signature the editor gives the plan the real two-line footprint (48 and 56 px) instead of the default layer boxes; the prompt states the product's lowest edge as a hard limit above the price label. Live run 3 against run 2: the pill went from covering the lower ear cup to touching only its bottom rim.
+- No migration or dependency. Earlier payloads without `signature` replay unchanged.
+- Revisit if: a wrong digit is ever seen at the fidelity review (then default the option off), or the shop wants a multi-line contact.
+
+## ADR-042 — 2026-11-11 — Integrated headline, house-style scene prompt and style looks
+
+- Context: the user gave autonomy to change the process so that generated posters reach the level of Original Phone Mada's own recent posters, with a 5–10 product test. Ten shop posters were inspected (reviews/style-study-2026-11-11.md). Their common language: product filling most of the frame at a three-quarter hero angle, calm gradient with large curved bands tinted to the product, brand + heavy two-tone product name + spaced subtitle, dark price pill. Their 1254²/1086×1358 sizes suggest (hypothesis, unconfirmed) that they are AI-generated whole.
+- Measured: a text-free plate with the new prompt fixes scale and backdrop, but an overlaid single-font title still looks plain. When GPT Image 2 also sets the headline, 11 of 11 images rendered every word verbatim (French accents included; six were read on reduced contact sheets only) and matched the references' typography.
+- Decision: the image model may set **brand, product name and subtitle** in the scene ("integrated headline"), default on in the editor. The **price never enters the prompt** and stays an exact editable layer, so price-only changes still reuse the approved visual. The product name is always taken from `offer.title`, never from the plan or the planner. This partly supersedes ADR-030 (all text as separate layers) for the title only; the layer remains available by turning the option off.
+- Guards: brand/subtitle/accent word are screened (currency, promotion, instruction wording, quotes, line breaks; digits allowed because model names contain them; "réduction de bruit" is exempt from the promotion blocklist). The job payload records the exact title sent. The title layer may be hidden only when the selected scene's recorded headline title equals the current offer title: otherwise render/confirm refuse `title_missing`, and a refinement refuses `headline_stale`. The fidelity review remains the check on spelling.
+- Prompt: rewritten in the provider-recommended order (use, references, scene, subject, light, layout, constraints) with a house style that the shop's art direction can override. Subject scale is stated against the plan's product area; quiet zones are stated as full-width bands. An example of components ("both earbuds…") was removed after it made the model add earbuds to a speaker: the prompt now says to show only what the photos show.
+- Style choice: three measured looks (Studio clair, Aux couleurs du produit, Luxe sombre) plus free text, picked from thumbnails, with one accent colour. A look sets the French art direction and the plan palette; no schema change.
+- No migration, no dependency. `headline` is omitted from request/payload when absent, so earlier idempotency keys and hashes replay unchanged. Old plans recompile with the new prompt on their next scene request only.
+- Study spend was made by direct provider calls outside the application ledger (USD 3.05, outputs/style-study-2026-11-11/spend.json): treat the remaining budget as cap − ledger − 3.05.
+- Revisit if: a headline is misspelt in real use more than rarely, or the shop needs to edit a title without a new scene.
+
+## ADR-041 — 2026-11-10 — Editable reference typography and price capsule
+
+- User's “font and price format too” extends the evaluation under approved R-POSTER-EDITOR-003 and supersedes ADR-040's font/capsule limitation. Register unmodified OFL Montserrat Black Italic (900), a close match rather than an asserted identification of the reference font. Keep Noto files unchanged.
+- Add optional `price_badge` to price only: white fill, two blue border colours, thin rounded outline, exact grouped amount and smaller upright Noto Sans AR. Both runs and capsule remain one selectable/undoable layer. No arbitrary shape nodes, duplicate monetary content, font upload or rich-text engine.
+- Upstream Montserrat Black Italic lacks narrow NBSP U+202F. Its price/capsule grouping uses the supported NBSP U+00A0; Noto plain-price formatting is unchanged. Verify French glyphs, real 900/italic metadata and hashes, never synthesize a font or fall back silently. Canvas clipping checks include measured italic ink beyond the advance box.
+- Reach: model/Claude patch validation, font manifest/loader, shared geometry/material renderer, properties UI, export font fingerprints, API contract, tests and real poster. Omit null badge from canonical data to preserve old hashes/replays. Fingerprint the extra currency font. No migration/dependency; retain earlier PNGs and confirm a new revision without another image call.
+
+## ADR-040 — 2026-11-10 — Reference-guided white studio evaluation
+
+- User supplied the November 5 DJI Mic Mini poster; preserve the exact attachment and use it only as the last style reference. Reuse the exact black R50i original and dated 90,000 Ar fixture in a separate creation, existing paid ledger and cap. The DJI product, logo and 600,000 Ar price must not carry over.
+- Translate the inspected reference into a white/very-light-grey curved studio, floating product hero and soft contact shadow; use a manually revised plan with matching palette and centred editable blue title/black price. Keep Original Phone Mada and contact as separate selected text layers. Use existing composition API/renderer only; no new schema, fonts or shape nodes for this evaluation. The current font set cannot reproduce the reference's italic mixed-colour title or outlined price capsule exactly; report that limit instead of flattening commercial text into the scene.
+- Verify both references and prompt roles before paid dispatch; inspect generated product fidelity, polish the saved layout, inspect authoritative PNG and confirm/download exact bytes. Preserve the previous dark poster and its runner state. Record live cost from the same ledger.
+
+## ADR-039 — 2026-11-10 — Connect the approved style-reference path
+
+- Scene/refinement requests accept an optional owned `style_reference_asset` SHA-256 uploaded with role `style`. Validate ownership, role and bytes before reservation and again before dispatch; append it after original views (and base, for refinement). The reference supplies appearance only, never product identity, lettering, claims or prices.
+- Reuse immutable job JSON for the reference hash and return it with visual provenance; no schema migration or new provider transport. Keep original-photo comparison separate. Omitted/null style fields retain old idempotency hashes so existing uncertain requests remain replayable.
+- Scope: scene/refinement contracts and admission, worker preparation, visual provenance, editor upload/reuse, domain/HTTP/browser regressions, and the requested paid style evaluation. Existing exports, prices and confirmed PNGs are unchanged. The live evaluation requires an actual inspected poster; inaccessible mirror images are not evidence of its style.
+
 > Append-only log, newest first. Record context, decision, rationale, alternatives, and conditions for reconsideration. Reversals get a new entry. A confirmed constraint does not approve a design or library choice.
+
+## ADR-038 — 2026-11-10 — Authoritative local PNG export
+
+- Render the saved feed document with the existing PosterCanvas in a pinned headless Chromium process. Serve only trusted bundled files through intercepted virtual HTTPS routes; inject validated assets/fonts as data, block every other request and close the context on failure. No local unauthenticated asset server, model call or provider credential is involved.
+- Preserve alpha/EXIF/colour using a shared bounded sRGB preparation function for editor and server sources. Record original/prepared hashes, font manifest and renderer build. A stored successful PNG is the confirmation/download authority; new edits require a matching preview and cannot replace old confirmed bytes.
+- This completes the requested feed poster first. Square/story/library enhancements and optional cutout remain their own queued tasks; real product validation follows the feed export, not an expanded template catalogue.
+
+## ADR-037 — 2026-11-10 — Isolated prompted typography
+
+- Implement approved D-POSTER-EDITOR-003 using the existing job ledger and retry-free Claude transport; no second queue or arbitrary JSON Patch API. Store immutable proposal/effect provenance in a new migration, and apply only a selected title/price layer after checking the originating revision.
+- Exact text always comes from bundled fonts. A proposed title must occur in explicit quotes in the instruction; a price must match a single explicit literal Ariary amount. Content changes require separate acknowledgement. Reject other target roles or unrepresentable changes; manual controls remain usable.
+- The installed Konva Text renderer uses CanvasPattern directly in CanvasRenderingContext2D.fillText. Reuse this native glyph mask rather than maintaining a second custom offscreen lettering renderer; the exact font glyphs, layer outline/shadow and pixel-isolation contract remain the same. Verify changed pixels with actual Chromium renders.
+- GPT generates a text-free material swatch only after an explicit action. Clip it locally to exact font glyphs in the shared canvas. This supplies editable metallic/patterned typography without trusting generated price spelling or re-rendering the scene. Reconsider surface-embedded effects only after separate approved requirements.
+
+## ADR-036 — 2026-11-10 — Editor presentation and shared canvas
+
+- The approved French shop workflow remains the scope. Desktop: poster canvas beside a properties/layers column; mobile: canvas above contextual controls. Intake and scene review use ordinary labelled forms. The poster is the visual focus; no decorative metrics/cards, fake product handles or HTML poster templates.
+- Compact palette: workspace #F1F5F9, panel #FFFFFF, ink #17324D, action #186C80, divider #D6E2EA, error #A43139. Noto Sans for interface and default poster text; Noto Serif is the approved alternate poster font. Poster colours are editable independently of application chrome.
+- Sketch: desktop [toolbar above canvas | selected-layer controls]; mobile [toolbar / canvas / selected-layer controls]. Align forms and reading text left; use clear spacing instead of repetitive card shells. This follows the subject's image-editing task, not a marketing landing-page layout.
+- Frontend-design skill reviewed against the approved brief before code. Use one shared Vue/Konva renderer, a small serial autosave state helper and native accessible controls; no state-management/UI-kit dependency unless actual complexity requires it.
+- Node 22.14 and npm.cmd 10.9.2 are available. npm.ps1 is blocked by PowerShell policy; using the shipped .cmd entry point avoids changing system policy. Official Vite and Konva Vue/Transformer docs checked.
+- Pinned Vue 3.5.45, Konva 10.9.1/vue-konva 4.0.1, Vite 8.3.7/plugin-vue 6.0.10, TypeScript 5.9.3/vue-tsc 3.3.14 and Vitest 5.1.0 after checking engines/peers. npm install reports zero vulnerabilities. FontTools 4.68.0 builds a checked glyph/hash manifest; Playwright 1.64.1 supplies the browser verification and approved later renderer, with its pinned headless Chromium. No system execution-policy changes.
+- Four unmodified Noto static fonts are bundled from the upstream noto-fonts archive with OFL licence. Manifest generation checks French/narrow-space glyphs and 400/700 weights. Browser font loading checks SHA-256 and reports missing glyphs, avoiding silent substitution.
+- Browser testing found an upload race immediately after sign-in; inputs now stay disabled while intake/profile loading finishes. Uncertain mutations retain their key; unchanged scene plans retain their ID so retrying a lost scene response returns the admitted job instead of spending again. The Chromium smoke deliberately drops that response and proves only one scene job exists.
+- Conflict recovery explicitly offers saving local edits into a copy or discarding them and loading the current server version. It never reloads the stale object originally opened. Job polling ignores responses for a different opened creation; completed planner jobs can be recovered after reload.
+- Desktop canvas fits available height; phone controls retain page scrolling unless object movement is enabled. Native crop/position sliders and keyboard movement complement drag. The simulated browser test covers undo, reopen, conflict copy, long-text and unsupported-glyph warnings; this is not physical-device validation.
+
+## ADR-035 — 2026-11-10 — Scene integration and real-draft composition fixes
+
+- T-005 adds forward-only migration 0007 for immutable plans and reviewable visuals, uses original images directly, and keeps generated-image access scoped through owned visual records. Pending/rejected visuals remain editable drafts; final approval/export checks belong to the renderer task.
+- The fixed planner now allocates footer/title/price regions from the current layer boxes rather than hardcoded small rectangles. This fixes actual initial-draft widths and contact/logo heights; a layout that leaves insufficient product space is refused explicitly. Bundled-font measurement and layout polish remain T-006.
+- Scene completion selects only the first candidate when the originating revision is still current and has no scene. Refinements remain alternatives, retain the selected base, and identify base/original roles separately. Generic draft saves validate same-input visual ownership and a crop bounded by the image with the target format's aspect ratio.
+- Workers use admitted model/rate snapshots, immutable original hashes and a local spool. Two provider slots run inside the API owner process; scheduler errors are recorded/logged without exposing raw provider data or replaying uncertain calls.
+- The public Soundcore R50i fixture is a product set (earbuds and case), so the scene compiler explicitly preserves visible components while refusing duplicate products or invented extras. No model may invent the commercial offer.
+- Focused integration verification: 80 plan/visual tests passed, including all eight branding combinations, late-result preservation, approved-base/rejected-refinement history, manual plan rebase, ownership/crop refusal, no-call price-only edits and actual HTTP scene/review flow. Full regression subsequently passed: 625 passed, 3 deselected (138.83 s). No paid calls yet.
+
+## ADR-034 — 2026-11-10 — Scene planner implementation and durable queue boundary
+
+- T-POSTER-003 uses the installed httpx2 transport directly for retry-free Claude Messages requests; strict schema and semantic validation remain local. Only the verified Sonnet model/rate card is accepted. Unexpected model or billed cache categories retain the conservative reservation rather than assigning an invented price.
+- Fixed plans reserve measured field space without receiving commercial values. Image prompts use only validated scene fields, identity references and geometry; display summaries cannot inject image instructions. Base scene and style references have separate image roles. Compiler revalidates mutable model objects before use.
+- Verification: full backend suite 579 passed, 3 deselected; final revalidation addition then passed all 62 planner tests. No live Claude/image calls.
+- Queue implementation reuses shared mutation transactions and extends spent_micros to both ledgers. Feature-specific input/reference validation stays in the same admission transaction. Dispatch is recorded before sending, and durable local results are finalised without another paid request.
+- T-004 verified: full suite 607 passed, 3 deselected (124.68 s). Migration 0006, reservation/replay/concurrency, cancellation races, slots, terminal allowance, 429-only retry, ambiguous failure, disk/commit failures and local spool recovery are tested. No paid database migration or live call.
+- A contract check also made PNG output explicit in both existing OpenAI request paths; requested dimensions and omission of input_fidelity remain unchanged.
+
+## ADR-033 — 2026-11-10 — Usable shop-poster test and scene-planning boundary
+
+- User explicitly requested continued implementation until a JBL or Soundcore test produces a usable Facebook/Instagram poster, using Original Phone Madagascar found through their Edge session, and authorised reasonable implementation defaults. This authorises a bounded real test within the existing configured global cap; preserve the existing paid ledger and record every new call. It does not authorise posting, messaging, deployment or invented commercial facts.
+- Edge's logged-in Facebook shortcuts identify Original Phone Mada at https://www.facebook.com/MiaryAndrian10/. Navigation is currently unverified: input reported missing geometry and capture/recovery failed with "window capture timed out: timed out waiting on channel". Stop UI input; public search can supply corroborating public facts while implementation continues.
+- Scene plans use strict local validation; Claude's wire JSON schema removes unsupported numeric/string/array bounds and describes them instead. Local validation remains authoritative. Official structured-output docs document these limits: https://platform.claude.com/docs/en/build-with-claude/structured-outputs. The fixed builder is explicitly labelled and never presented as a Claude response.
+- Extend the existing image gateway with an explicit size while preserving the legacy default; original-photo identity references and a refinement's selected base have separate compiled roles.
+
+## ADR-032 — 2026-11-09 — First poster implementation slice
+
+- Domain persistence uses strict Pydantic documents and existing SQLAlchemy BEGIN IMMEDIATE transactions; canonical request+revision hashes preserve lost-response replays before stale-version guards. Migration 0004 adds only the input/profile/draft tables needed now, leaving evaluation tables and cost records intact.
+- Original uploads are decoded/colour-validated without rembg and stored unchanged. Asset writes verify existing bytes and recover only from a concurrent destination that contains the expected bytes.
+- Until the scene/effect tasks supply owned reviewable records, draft saves explicitly reject generated references. Font IDs are validated now; bundling and measured layout remain the renderer task. No silent placeholder image or font substitution.
+- Verification: full backend suite 513 passed, 3 deselected; actual local Uvicorn HTTP session smoke passed. Tests cover auth/Origin/private assets, schema/money boundaries, original-byte preservation, all eight identity choices, revision/replay/concurrency and rollback. Postman status remains unsupported by the installed WindowsApps executable; verification uses local pytest/ASGI and actual HTTP, without a cloud workspace.
+- HTTP implementation follows the approved opaque cookie session (not JWT), Argon2 via pwdlib, exact Origin checks and persisted failed-login counters. API-only settings must not break existing CLI startup. Official FastAPI guidance checked: https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/ and https://fastapi.tiangolo.com/tutorial/request-files/; installed signatures remain the implementation check.
+
+## ADR-031 — 2026-11-09 — Poster technical designs approved
+
+- User: "approve", responding to the six-file design approval packet and explicit implementation gate.
+- Decision: approve ADR-029's architecture and all six phase-2 designs, including the separate editable typography/effect approach in ADR-030. Proceed with independently verifiable implementation tasks in TODO, preserving the phase-1 evaluation tools and ledger.
+- First slice: immutable product inputs, shop snapshots, strict document/price validation and atomic versioned drafts; then the authenticated HTTP boundary. Reuse existing SQLAlchemy transactions and content-addressed files. No deployment, commit or new paid provider call is implied.
+
+## ADR-030 — 2026-11-09 — Prompt-assisted text with separate editable effects
+
+- User requested title/price typography controllable through prompts as well as manual editing, with changes confined to the selected element. In the clarification they chose "Separate text/effect layers first (Recommended)" over text embedded into scene surfaces.
+- Requirement decision: keep the clean product scene, exact title/price values and independently editable text/effect layers. Both manual controls and prompt proposals can target a selected text element; preserve other layers, version history and explicit review. No whole-poster regeneration for a text-only polish. Surface-embedded lettering is deferred.
+- Added approved R-POSTER-EDITOR-003 from this explicit request/choice. Implementation mechanics remain Draft design: Claude proposes a validated selected-layer patch; the renderer draws exact fonts/glyphs; optional GPT Image texture is clipped to that layer's glyph mask. Image-generated glyphs cannot guarantee exact spelling/font or remain ordinary editable text, so they are not the source of authoritative letters/prices in this first version.
+- Limit: changing a text layer changes its occupied pixels; underlying scene/other-layer content remains untouched. A prompt alone does not guarantee pixel preservation. Approval of this requirement does not approve the pending technical designs or extra paid tests.
+
+## ADR-029 — 2026-11-09 — Proposed phase-2 architecture (design approval pending)
+
+- Status: Proposed, not implementation approval. Covers the requirements approved in ADR-028.
+- Use one FastAPI process, the existing SQLite/asset store, a durable local job queue and a Vite/Vue editor. Add phase-2 tables with forward-only migrations; retain phase-1 evaluation data and rules. Both call ledgers count toward the same budget transaction.
+- Use Konva + vue-konva with a versioned application document, rather than serialising library nodes. One shared Vue canvas component renders interactive drafts and read-only headless Chromium previews. Store the server-rendered PNG before user confirmation; confirmation freezes its bytes and download never regenerates it. Fabric and native SVG remain evaluated alternatives, not additional implementations.
+- Reuse GPT Image edits and the existing adapter, extending its explicit size argument rather than creating another image client. Initial comparison baseline remains gpt-image-2/high; original images and selected base scene have explicit separate roles. No cutout dependency on this path.
+- Claude Messages receives image references and produces a validated ScenePlanV1. Proposed evaluation model: claude-sonnet-5-5, configurable with recorded rates/model metadata; access/quality/cost are untested. Fixed-prompt fallback is explicit. Authoritative title/price/contact/logo never come from either model.
+- Evidence checked: installed OpenAI SDK accepts image sequences and size; official OpenAI guide documents gpt-image-2 custom sizes and omission of input_fidelity; official Claude docs document structured outputs and current model ID; Konva documents Vue bindings, application-state persistence and export; Playwright documents Python Chromium support. Links and discovery limitations are recorded in the design files.
+- Orbit discovery/integration was used for both providers. Its OpenAI collection is incomplete/outdated (single-file/mask example, no concrete response); installed SDK and official provider documentation take precedence. No provider calls, credentials or product images were sent during discovery.
+- Revisit: multiple shops/processes, measured queue contention, renderer fidelity failures, or comparative product-fidelity results. These are reasons to change the design, not infrastructure to add now.
+
+## ADR-028 — 2026-11-09 — Poster requirements approved
+
+- User: "go aheadt with the requirement", responding to the explicit approval request for requirements/_INDEX.md and its six files.
+- Decision: Approve the 13 new requirements: catalogue-brand 001–002, generation-jobs 001–002, product-visuals 009–011, poster-editor 001–002, format-export 001–002, creation-library 001–002. Earlier product-visuals 001–008 remain the phase-1 baseline; the approved amendments govern normal poster drafts.
+- Next authorised work: matching technical designs, including a complete feed-format slice and extension to square/story. The representative-photo evaluation remains a release-quality gate, not a reason to delay these newly authorised designs. No new paid calls or implementation are implied by design work; design approval remains the next explicit project gate.
+
+## ADR-027 — 2026-11-09 — Accepted review direction and corrective work
+
+- User: "go ahead with the recommendations and any fix from your tests", then explicitly favoured GPT Image recreation/integration over forcing a cutout into a scene.
+- Decision: GPT Image receives original product references and generates the integrated scene as the primary product flow. Cutout is optional and must never gate that flow. Product fidelity still requires review; do not promise exact pixels from a generative model.
+- Authorised now: repair the two reproduced implementation gaps under existing R-PV-003/007 and D-PV-002/008, with regression tests. New poster/editor/planner/refinement criteria are drafted under the existing six-feature split; the explicit requirements/design gates still apply to their implementation.
+- Snapshot repair: add ordered original asset hashes with forward-only migration 0003; keep the existing CSV hash. Legacy NULL means unverified, never a hash inferred from current files. Refuse `generate` for an unverified existing product; existing stored candidates remain readable/reviewable through `sheet`/`apply`. Do not rewrite historical evidence or reset a spend ledger to bypass this guard.
+- Screening repair: the shared admission boundary checks the resolved description before spend; idempotent replay stays first. CSV validation remains for aggregate diagnostics.
+- No new paid calls, commit or push are needed for these fixes. Existing JBL/Soundcore outputs remain pending review.
+
+## ADR-026 — 2026-11-09 — User-authorised real-product scene smoke test
+
+- Status: Explicitly requested by the user during T-REVIEW-001.
+- Decision: Source one JBL and one Soundcore product image from official public pages and generate one scene for each through the existing backend, within the configured spending cap. Record source URLs and original hashes, inspect the results and report actual usage. No automatic creative revisions or model comparison.
+- Rationale: The user asked for real-product evidence instead of relying on the synthetic phone probe. These manufacturer images are a two-product smoke test, not the representative shop-photo evaluation T-PV-013.
+- Scope: This authorises the two scene requests and their existing bounded transport-retry behaviour. It does not approve a redesigned editor, Claude integration, or publishing the images as shop advertisements.
+- Result: Two first-call successes, USD 0.344220 combined usage cost; existing `data-probe` ledger reused (USD 0.512881 including prior probe). Scenes look promising; Soundcore cutout retained external award artwork. Evidence in `reviews/real-product-scenes-2026-11-09.md`; no approval decisions applied.
+
+## ADR-025 — 2026-11-09 — Review the whole poster workflow before resuming implementation
+
+- Status: Review scope requested by the user; product recommendations remain unapproved.
+- Context: The user requested a review of all implemented changes and reconsideration of photo/title/price generation, polishing, optional shop identity and Claude scene prompts, without treating existing choices as fixed.
+- Decision: Complete T-REVIEW-001 instead of automatically resuming T-PV-011. Assess committed and pending work, verify offline behaviour and existing probe evidence, and record proposals in `reviews/implementation-review-2026-11-09.md`. No application changes, paid calls, commits or design approvals are implied.
+- Rationale: The phase-1 evaluation backend is not the requested complete poster workflow. Refinement, movable shadows and poster/campaign state need explicit requirements decisions before implementation.
+- Next gate: Agree the reviewed direction, then draft/amend the relevant per-feature requirements; obtain requirements and matching design approvals before coding the new flow.
+
+## ADR-024 — 2026-11-06 — `sheet`, `apply` and `new-cycle` choices (T-PV-010)
+
+- Status: Implementation decisions inside D-PV-008. Codex r1–r3 reviewed them (r3 APPROVE).
+- Decision:
+  1. **`decisions.csv`:**
+     - UTF-8 with BOM, `;`-separated;
+     - columns `target_id;kind;action;reasons;note;framing;info`, where `info` is read-only for the operator and ignored by `apply`;
+     - `reasons` are comma-separated codes, and `framing=ok` is required to approve;
+     - `sheet` refuses to overwrite an existing `decisions.csv`.
+  2. **What the sheet lists:**
+     - **every** pending candidate and proposed cutout, whatever the scope's state (an abandoned scope's pending candidate can still be approved, ADR-020);
+     - generation suggestions (revisable rejected tips, confirmed cutouts) and abandon rows only for open scopes;
+     - rejected scenes at the attempt limit are not offered for revision.
+  3. **Reading the file in `apply`:** the whole file is decoded strictly before parsing. A BOM means UTF-8; without one, UTF-8 is tried, then cp1252 (Excel's "CSV (point-virgule)" on a French Windows). It never uses replacement characters, and a malformed file is exit 2.
+  4. **Validation:** two passes over the whole file, nothing applied on any error.
+     - In-file transitions are simulated, and a matching replay passes before `next_status`.
+     - Cutout transitions have their own check.
+     - Abandon is refused while any request runs in the scope.
+     - A column an action doesn't read is refused.
+  5. **Execution and results:**
+     - per-row error boundaries: an unexpected error gives the row `error:<Type>`, the other rows continue, admitted requests still execute, the results are written, and the exit is 1;
+     - the CSV result comes from the request's **persisted** outcome (`applied` / `request_failed:<stored kind>`), never from a printing error;
+     - the results are `applied | already_applied | refused:<code> | request_failed:<kind> | not_started | error:<exception>`, where `not_started` is a generation row skipped after `budget_exhausted`.
+  6. **Generation ids:** `uuid5(target:action:k)`, where `k` is the first id that does not exist or is not `failed`/`interrupted`. A replay never spends twice, and a failure gets a new attempt.
+  7. **Commands:** `apply` needs `--paid` with openai, like `generate`. `new-cycle` exits 1 if any SKU is refused.
+- Revisit if: Excel saves in another encoding (e.g. UTF-16 "Unicode text"), or the operator needs to edit an existing `decisions.csv` across sheet runs.
 
 ## ADR-023 — 2026-11-06 — Probe result: gpt-image-2 returns usage; a high scene costs about USD 0.17 (T-PV-012)
 

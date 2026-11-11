@@ -2,7 +2,13 @@
 
 import argparse
 import asyncio
+import codecs
+import csv
+import hashlib
+import io
+import itertools
 import json
+import re
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -11,17 +17,21 @@ from functools import partial
 from pathlib import Path
 from typing import TextIO
 
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, Engine, Row, text
 
 from affiche import assets, runtime
 from affiche.config import ENV_FILE, ConfigError, Settings, load_settings
 from affiche.db import utc_now, write_tx
 from affiche.runtime import AlreadyRunning, ProviderModeMismatch, Runtime
-from affiche.visuals.admission import LOW_RESOLUTION, Admitted, Refused, request_scene, spent_micros
+from affiche.visuals import review
+from affiche.visuals.admission import (
+    LOW_RESOLUTION, Admitted, Refused, request_background, request_revision, request_scene, spent_micros,
+)
 from affiche.visuals.cutout import Cutout, CutoutUnavailable, MaskFn, make_cutout
 from affiche.visuals.execution import execute
 from affiche.visuals.fixtures import REF, FixtureError, Product, load_products
 from affiche.visuals.gateway import RATES, OpenAIProvider, StubProvider, make_provider
+from affiche.visuals.sheet import COLUMNS, IN_SCOPE, TREATMENTS, write_sheet
 
 EXIT_OK, EXIT_ERROR, EXIT_USAGE, EXIT_BUDGET = 0, 1, 2, 3
 RUN_SIZE = "1088x1920"
@@ -30,6 +40,15 @@ REQUEST_NS = uuid.uuid5(uuid.NAMESPACE_URL, "urn:affiche:visuals:evaluate")  # t
 EXPECTED_REFUSALS = {"review_pending", "use_revision", "attempt_limit_reached", "abandoned"}  # the scope's state
 UNEXPECTED = "unexpected"  # a task's outcome when it raised: the batch goes on, the command exits 1
 Say = Callable[..., None]
+
+# apply (D-PV-008): per action, the kinds it takes and the optional columns it reads.
+CANDIDATE_DECISIONS = {"approve": "approved", "reject": "rejected"}
+CUTOUT_DECISIONS = {"confirm_cutout": "confirmed", "reject_cutout": "rejected"}
+GENERATIONS = ("revise", "background")
+KINDS = {"approve": TREATMENTS, "reject": TREATMENTS, "confirm_cutout": ("cutout",), "reject_cutout": ("cutout",),
+         "abandon": TREATMENTS, "revise": TREATMENTS, "background": ("cutout",)}
+READS = {"approve": {"framing"}, "reject": {"reasons", "note"}, "abandon": {"note"}}
+SCOPE_ID = re.compile(rf"({REF.pattern}):({REF.pattern}):([1-9][0-9]*)")  # variant_ref:run_label:cycle_no
 
 
 class _Refusal(Exception):
@@ -144,14 +163,25 @@ def _selected(products: list[Product], only: list[str] | None) -> list[Product]:
 
 
 def _refuse_changed_rows(rt: Runtime, label: str, products: list[Product]) -> None:
-    """A run's products are a snapshot (D-PV-008): a CSV row that changed since refuses the whole command."""
+    """Check the whole supplied fixture before --only, asset writes or spend (D-PV-008)."""
     with rt.engine.connect() as conn:
-        snapshot = dict(conn.execute(text("SELECT variant_ref, fixture_row_sha256 FROM run_products"
-                                          " WHERE run_label = :label"), {"label": label}).all())
+        snapshot = {row.variant_ref: row for row in conn.execute(text(
+            "SELECT variant_ref, fixture_row_sha256, photo_assets_json FROM run_products WHERE run_label = :label"),
+            {"label": label})}
     if changed := [product.variant_ref for product in products
-                   if snapshot.get(product.variant_ref, product.row_sha256) != product.row_sha256]:
+                   if product.variant_ref in snapshot
+                   and snapshot[product.variant_ref].fixture_row_sha256 != product.row_sha256]:
         raise _Refusal(f"the CSV rows of {', '.join(changed)} differ from run {label!r}'s snapshot:"
                        " restore them, or use a new --run label")
+    if legacy := [product.variant_ref for product in products
+                  if product.variant_ref in snapshot and snapshot[product.variant_ref].photo_assets_json is None]:
+        raise _Refusal(f"run {label!r} has no original-photo snapshot for {', '.join(legacy)}:"
+                       " legacy inputs cannot be verified; use sheet/apply on stored assets, not generate")
+    if changed := [product.variant_ref for product in products if product.variant_ref in snapshot
+                   and json.loads(snapshot[product.variant_ref].photo_assets_json)
+                   != [hashlib.sha256(photo.data).hexdigest() for photo in product.photos]]:
+        raise _Refusal(f"the photo content of {', '.join(changed)} differs from run {label!r}'s snapshot:"
+                       " restore the original files; no new work was started")
 
 
 def _snapshot(rt: Runtime, label: str, config: dict, new: bool, products: list[Product]) -> dict[str, list[str]]:
@@ -171,10 +201,12 @@ def _snapshot(rt: Runtime, label: str, config: dict, new: bool, products: list[P
                 assets.record(conn, sha=sha, kind="original", mime=photo.mime, width=photo.width,
                               height=photo.height, size=len(photo.data))
             conn.execute(text(  # the rows already there have the same sha (_refuse_changed_rows)
-                "INSERT INTO run_products (run_label, variant_ref, arm, fixture_row_sha256, name, variant)"
-                " VALUES (:label, :ref, :arm, :sha, :name, :variant) ON CONFLICT DO NOTHING"),
+                "INSERT INTO run_products (run_label, variant_ref, arm, fixture_row_sha256, name, variant,"
+                " photo_assets_json) VALUES (:label, :ref, :arm, :sha, :name, :variant, :photos)"
+                " ON CONFLICT DO NOTHING"),
                 {"label": label, "ref": product.variant_ref, "arm": product.arm, "sha": product.row_sha256,
-                 "name": product.name, "variant": product.variant})
+                 "name": product.name, "variant": product.variant,
+                 "photos": json.dumps(shas[product.variant_ref])})
     return shas
 
 
@@ -231,9 +263,7 @@ def _admit(rt: Runtime, label: str, jobs: list[_Job], say: Say) -> _Batch:
 def _scope(conn: Connection, label: str, ref: str) -> tuple[int, int, bool]:
     """The variant's current cycle; in that scope, the failed or interrupted initial scene requests, and whether a
     proposed or confirmed cutout exists."""
-    cycle_no = conn.execute(text(  # no row = cycle 1
-        "SELECT COALESCE((SELECT cycle_no FROM variant_cycles WHERE variant_ref = :ref), 1)"),
-        {"ref": ref}).scalar_one()
+    cycle_no = _current_cycle(conn, ref)
     scope = {"ref": ref, "cycle_no": cycle_no, "label": label}
     in_scope = "variant_ref = :ref AND cycle_no = :cycle_no AND run_label = :label"
     failed = conn.execute(text(
@@ -245,31 +275,47 @@ def _scope(conn: Connection, label: str, ref: str) -> tuple[int, int, bool]:
     return cycle_no, failed, bool(has_cutout)
 
 
+def _current_cycle(conn: Connection, ref: str) -> int:
+    return conn.execute(text(  # no row = cycle 1
+        "SELECT COALESCE((SELECT cycle_no FROM variant_cycles WHERE variant_ref = :ref), 1)"),
+        {"ref": ref}).scalar_one()
+
+
 async def _finish(rt: Runtime, label: str, provider: OpenAIProvider | StubProvider, mask_fn: MaskFn | None,
                   batch: _Batch, say: Say) -> list[str | None]:
     """The admitted requests and the cutouts, overlapped in this one event loop. Every task catches its own errors,
     so that none can cancel another (an unfinished paid call would stay running). Returns their outcomes."""
     slots = asyncio.Semaphore(2)  # ADR-019: one per event loop, shared by all its requests
     masking = asyncio.Semaphore(1)  # D-PV-006: one mask at a time, in a thread, beside the provider calls
-    return await asyncio.gather(*(_scene(rt, provider, slots, job, admitted, say) for job, admitted in batch.scenes),
-                                *(_cutout(rt, label, mask_fn, masking, job, say) for job in batch.cutouts))
+    results = await asyncio.gather(*(_scene(rt, provider, slots, f"{job.ref}: scene", admitted, say)
+                                     for job, admitted in batch.scenes),
+                                   *(_cutout(rt, label, mask_fn, masking, job, say) for job in batch.cutouts))
+    scenes = len(batch.scenes)
+    return [UNEXPECTED if raised else outcome for outcome, raised in results[:scenes]] + results[scenes:]
 
 
-async def _scene(rt: Runtime, provider: OpenAIProvider | StubProvider, slots: asyncio.Semaphore, job: _Job,
-                 admitted: Admitted, say: Say) -> str | None:
-    """The request's error kind (None when it succeeded), or UNEXPECTED."""
+async def _scene(rt: Runtime, provider: OpenAIProvider | StubProvider, slots: asyncio.Semaphore, name: str,
+                 admitted: Admitted, say: Say) -> tuple[str | None, bool]:
+    """Executes an admitted request, printed as `name`. Returns its outcome as stored (None when it succeeded, else
+    its error kind, or its status when it has none; UNEXPECTED if it cannot be read), and whether an exception was
+    raised on the way, in the execution or in the report: that makes the command exit 1."""
+    outcome, raised = UNEXPECTED, False
     try:
         await execute(rt.engine, rt.settings, provider, admitted.request_id, slots=slots)
+    except Exception as error:  # execute marks the request failed (invalid_request) before re-raising
+        say(f"{name} error: {type(error).__name__}: {error}")
+        raised = True
+    try:
         with rt.engine.connect() as conn:
             request = conn.execute(text("SELECT status, error_kind FROM generation_requests WHERE id = :id"),
                                    {"id": admitted.request_id}).one()
+            outcome = None if request.status == "succeeded" else request.error_kind or request.status
             kind = f" ({request.error_kind})" if request.error_kind else ""
-            say(f"{job.ref}: scene attempt {admitted.attempt_no} {request.status}{kind};"
-                f" {_committed_line(conn, rt.settings)}")
-    except Exception as error:  # from execute, the request is failed (invalid_request) already
-        say(f"{job.ref}: scene error: {type(error).__name__}: {error}")
-        return UNEXPECTED
-    return request.error_kind
+            say(f"{name} attempt {admitted.attempt_no} {request.status}{kind}; {_committed_line(conn, rt.settings)}")
+    except Exception as error:  # in the report: the outcome read before it stands
+        say(f"{name} error: {type(error).__name__}: {error}")
+        raised = True
+    return outcome, raised
 
 
 async def _cutout(rt: Runtime, label: str, mask_fn: MaskFn | None, masking: asyncio.Semaphore, job: _Job,
@@ -316,6 +362,350 @@ def _committed_line(conn: Connection, settings: Settings) -> str:
     return f"committed ${spent_micros(conn, settings) / 1_000_000:.2f} / cap ${settings.spend_cap_usd:.2f}"
 
 
+# --- sheet, apply, new-cycle ----------------------------------------------------------------------------------------
+
+def sheet(rt: Runtime, args: argparse.Namespace, *, out: TextIO | None = None) -> int:
+    say = partial(print, file=out or sys.stdout, flush=True)
+    decisions = args.out / "decisions.csv"
+    if decisions.exists():  # it may hold the operator's decisions
+        say(f"refused: {decisions} exists: choose another --out")
+        return EXIT_USAGE
+    with rt.engine.connect() as conn:
+        if args.run is not None and not conn.execute(text("SELECT 1 FROM runs WHERE label = :label"),
+                                                     {"label": args.run}).first():
+            say(f"refused: unknown run {args.run!r}")
+            return EXIT_USAGE
+        try:
+            candidates, cutouts, rows = write_sheet(conn, rt.settings.data_dir, args.out, args.run)
+        except OSError as error:
+            say(f"error: {type(error).__name__}: {error}")
+            return EXIT_ERROR
+    say(f"{args.out / 'sheet.html'}: {candidates} candidate(s) and {cutouts} cutout(s) to review")
+    say(f"{decisions}: {rows} row(s); fill in the action column, then run apply")
+    return EXIT_OK
+
+
+@dataclass
+class _Line:
+    """A decisions.csv row: its values as read, for apply-result.csv, and its stripped fields."""
+
+    number: int
+    values: list[str]
+    target: str
+    kind: str
+    action: str
+    reasons: list[str]
+    note: str | None
+    framing: str
+    result: str = ""
+    request_id: str | None = None  # a generation's uuid5 id, with its k
+    name: str = ""  # a generation's prefix in the output
+
+
+class _RowError(Exception):
+    """A row that fails apply's validation."""
+
+
+def apply(rt: Runtime, args: argparse.Namespace, *, provider: OpenAIProvider | StubProvider | None = None,
+          out: TextIO | None = None) -> int:
+    say = partial(print, file=out or sys.stdout, flush=True)
+    header, lines, errors = _read_decisions(args.file)
+    with rt.engine.connect() as conn:
+        errors += _validate(conn, lines)
+    if errors:
+        say(f"{args.file}: {len(errors)} error(s), nothing applied:", *errors, sep="\n  ")
+        return EXIT_USAGE
+    failures = 0
+    for line in (line for line in lines if line.action and line.action not in GENERATIONS):  # step 2, in file order
+        try:
+            line.result = _decide(rt.engine, line)
+        except Exception as error:  # this row only (ADR-022): the other rows are independent
+            line.result = _error(line, error, say)
+        say(f"row {line.number}: {line.action} {line.target}: {line.result}")
+        failures += line.result not in ("applied", "already_applied")  # the row was valid a moment ago
+    generations = [line for line in lines if line.action in GENERATIONS]
+    new, admission_errors = _admit_generations(rt, generations, say)
+    results = []
+    if new:
+        say("committed = the recorded costs plus the reservations of the calls still running")
+        results = asyncio.run(_execute_generations(rt, provider or make_provider(rt.settings), new, say))
+    for (line, _), (outcome, raised) in zip(new, results, strict=True):
+        line.result = "applied" if outcome is None else f"request_failed:{outcome}"  # what the database holds
+        failures += raised
+    with rt.engine.connect() as conn:
+        say(_committed_line(conn, rt.settings))
+    say(f"{_write_results(args.file, header, lines)}: the result of each row")
+    if not_started := [f"row {line.number}" for line in generations if line.result == "not_started"]:
+        say(f"budget_exhausted: not started: {', '.join(not_started)}")
+    if any(line.result.endswith(":budget_exhausted") for line in generations):  # refused or request_failed
+        return EXIT_BUDGET
+    return EXIT_ERROR if failures or admission_errors else EXIT_OK
+
+
+def _error(line: _Line, error: Exception, say: Say) -> str:
+    say(f"row {line.number}: {type(error).__name__}: {error}")
+    return f"error:{type(error).__name__}"
+
+
+def _read_decisions(path: Path) -> tuple[list[str], list[_Line], list[str]]:
+    """The header, the rows (blank ones dropped; a blank action is kept, then skipped) and the format errors. ';' and
+    strict quotes, so a broken quote cannot swallow the rows after it."""
+    try:
+        content = _decode(path.read_bytes())
+    except OSError as error:
+        return [], [], [f"{path}: cannot be read: {error}"]
+    except UnicodeDecodeError as error:
+        return [], [], [f"{path}: not UTF-8 (with or without a BOM) nor Windows-1252 text: {error}"]
+    reader = csv.reader(io.StringIO(content, newline=""), delimiter=";", strict=True)
+    try:
+        rows = [(reader.line_num, values) for values in reader]
+    except csv.Error as error:
+        return [], [], [f"row {reader.line_num}: {error} (check the quotes)"]
+    header = [name.strip() for name in rows[0][1]] if rows else []
+    if not set(COLUMNS) - {"info"} <= set(header) <= set(COLUMNS) or len(set(header)) < len(header):
+        return [], [], [f"row 1: the header must have the columns {';'.join(COLUMNS[:-1])}, and optionally info"]
+    lines, errors = [], []
+    for number, values in rows[1:]:
+        if not any(value.strip() for value in values):
+            continue
+        if len(values) != len(header):
+            errors.append(f"row {number}: {len(values)} fields, expected {len(header)} (quote a value holding ';')")
+            continue
+        cells = {name: value.strip() for name, value in zip(header, values)}
+        lines.append(_Line(number, values, cells["target_id"], cells["kind"], cells["action"],
+                           [code.strip() for code in cells["reasons"].split(",") if code.strip()],
+                           cells["note"] or None, cells["framing"]))
+    return header, lines, errors
+
+
+def _decode(data: bytes) -> str:
+    """UTF-8 when it starts with the BOM; else UTF-8, and failing that cp1252, which Excel saves on a French Windows.
+    Strict: a byte invalid in the chosen encoding raises UnicodeDecodeError, never a replacement character."""
+    if data.startswith(codecs.BOM_UTF8):
+        return data.removeprefix(codecs.BOM_UTF8).decode("utf-8")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1252")
+
+
+def _validate(conn: Connection, lines: list[_Line]) -> list[str]:
+    """Step 1, writing nothing: each failing row's first error. The decisions are checked in file order, then the
+    generations against the statuses the decisions leave, as steps 2 and 3 run them. A matching replay is valid."""
+    errors: list[tuple[int, str]] = []
+    first: dict[tuple[str, str, bool], int] = {}  # (target, kind, is a generation) -> its row
+    statuses: dict[str, str] = {}  # candidate or cutout id -> its status after the file's decisions
+    approved: set[tuple[str, str, int, str]] = set()  # (variant, run, cycle, treatment) approved by the file so far
+    for line in sorted((line for line in lines if line.action), key=lambda line: line.action in GENERATIONS):
+        try:
+            _check_row(line, first)
+            if line.action in GENERATIONS:
+                _check_generation(conn, line, statuses)
+            elif line.action == "abandon":
+                _check_abandon(conn, line, approved)
+            else:
+                _check_decision(conn, line, statuses, approved)
+        except _RowError as error:
+            errors.append((line.number, f"row {line.number}: {line.action} {line.target}: {error}"))
+    return [message for _, message in sorted(errors)]
+
+
+def _check_row(line: _Line, first: dict[tuple[str, str, bool], int]) -> None:
+    """The action, its kind and columns, and at most one decision and one generation per target."""
+    if line.action not in KINDS:
+        raise _RowError(f"unknown action; one of {', '.join(KINDS)}")
+    if line.kind not in KINDS[line.action]:
+        raise _RowError(f"kind {line.kind!r}: {line.action} takes {' or '.join(KINDS[line.action])}")
+    given = {"reasons": line.reasons, "note": line.note, "framing": line.framing}
+    if unread := [name for name, value in given.items() if value and name not in READS.get(line.action, ())]:
+        raise _RowError(f"{line.action} does not read {' or '.join(unread)}: leave it blank")
+    key = (line.target, line.kind, line.action in GENERATIONS)
+    if key in first:
+        raise _RowError(f"a second {'generation' if key[2] else 'decision'} for this target (row {first[key]})")
+    first[key] = line.number
+
+
+def _check_decision(conn: Connection, line: _Line, statuses: dict[str, str],
+                    approved: set[tuple[str, str, int, str]]) -> None:
+    """A matching replay passes, and is recognised before next_status, which refuses any move out of a final
+    status. Cutouts have their own transitions."""
+    row = _target(conn, line)
+    if line.kind == "cutout":  # D-PV-006 step 2: proposed -> confirmed | rejected
+        target = CUTOUT_DECISIONS[line.action]
+        if row.status not in ("proposed", target):
+            raise _RowError(f"invalid_transition: the cutout is {row.status}")
+    else:
+        target = CANDIDATE_DECISIONS[line.action]
+        payload = _payload(line)
+        if not (row.status == target and all(getattr(row, column) == value for column, value in payload.items())):
+            try:
+                review.next_status(row.status, line.action)
+            except Refused:
+                raise _RowError(f"invalid_transition: the candidate is {row.status}") from None
+        if target == "approved":
+            approved.add((row.variant_ref, row.run_label, row.cycle_no, row.treatment))
+    statuses[line.target] = target
+
+
+def _payload(line: _Line) -> dict[str, object]:
+    """review.approve's and review.reject's input checks, and the canonical payload they store."""
+    if line.action == "approve":
+        if line.framing.lower() != "ok":
+            raise _RowError("framing_not_checked: approve needs framing=ok (Produit entier dans les 3 formats)")
+        return {"framing_checked": 1}
+    try:
+        codes, note = review.rejection_payload(line.reasons, line.note)
+    except Refused as refusal:
+        details = refusal.details or {}
+        found = details.get("reasons") or details.get("matches")
+        raise _RowError(f"{refusal.code}: {', '.join(found)}" if found else refusal.code) from None
+    return {"rejection_reasons_json": json.dumps(codes), "rejection_note": note}
+
+
+def _check_abandon(conn: Connection, line: _Line, approved: set[tuple[str, str, int, str]]) -> None:
+    """review.abandon's refusals, checked here first; the replay first of all, so it holds after new-cycle."""
+    if not (match := SCOPE_ID.fullmatch(line.target)):
+        raise _RowError("not a scope id variant_ref:run_label:cycle_no")
+    ref, run, cycle = match[1], match[2], int(match[3])
+    scope = {"ref": ref, "run": run, "cycle": cycle, "treatment": line.kind}
+    if conn.execute(text(f"SELECT 1 FROM abandonments WHERE {IN_SCOPE} AND treatment = :treatment"), scope).first():
+        return
+    if not conn.execute(text("SELECT 1 FROM run_products WHERE run_label = :run AND variant_ref = :ref"),
+                        scope).first():
+        raise _RowError(f"unknown scope: {ref} is not in run {run}")
+    if cycle > (current := _current_cycle(conn, ref)):
+        raise _RowError(f"wrong_scope: {ref} is in cycle {current}")
+    # Any purpose, as review.abandon: else the file's other decisions would commit before its refusal. An API request
+    # can be running: CLI startup recovers only the CLI's.
+    if conn.execute(text(f"SELECT 1 FROM generation_requests WHERE {IN_SCOPE} AND status = 'running'"), scope).first():
+        raise _RowError("request_running: a request of this scope is running")
+    if (ref, run, cycle, line.kind) in approved or conn.execute(text(
+            f"SELECT 1 FROM candidates WHERE {IN_SCOPE} AND treatment = :treatment AND status = 'approved'"),
+            scope).first():
+        raise _RowError(f"already_approved: the scope has an approved {line.kind}")
+
+
+def _check_generation(conn: Connection, line: _Line, statuses: dict[str, str]) -> None:
+    """The target's transition, after the file's decisions. Takes the request id: a request that exists is a replay.
+    The scope's rules (abandoned, attempt limit, pending review, budget) stay admission's."""
+    row = _target(conn, line)
+    line.name = f"row {line.number}: {row.variant_ref} {line.action}"
+    line.request_id, existing = _request_id(conn, line.target, line.action)
+    if existing:
+        return
+    status = statuses.get(line.target, row.status)
+    if line.action == "background":
+        if status != "confirmed":
+            raise _RowError(f"background needs a confirmed cutout; it is {status}")
+        return
+    if status != "rejected":
+        raise _RowError(f"revise needs a rejected candidate; it is {status}")
+    if conn.execute(text("SELECT 1 FROM generation_requests WHERE parent_id = :id"
+                         " AND status IN ('running','succeeded')"), {"id": line.target}).first():
+        raise _RowError("revision_already_requested")
+
+
+def _target(conn: Connection, line: _Line) -> Row:
+    table = "cutouts" if line.kind == "cutout" else "candidates"
+    row = conn.execute(text(f"SELECT * FROM {table} WHERE id = :id"), {"id": line.target}).first()
+    if row is None:
+        raise _RowError(f"unknown {table[:-1]} id")
+    if table == "candidates" and row.treatment != line.kind:
+        raise _RowError(f"kind {line.kind}: the candidate is {row.treatment}")
+    return row
+
+
+def _request_id(conn: Connection, target: str, action: str) -> tuple[str, bool]:
+    """uuid5(target:action:k), k = the first j whose request does not exist or neither failed nor was interrupted:
+    a replay finds the same request (no new spend), and after a failure the next id is a new request. Also returns
+    whether that request exists."""
+    for k in itertools.count():
+        request_id = str(uuid.uuid5(REQUEST_NS, f"{target}:{action}:{k}"))
+        status = conn.execute(text("SELECT status FROM generation_requests WHERE id = :id"),
+                              {"id": request_id}).scalar()
+        if status not in ("failed", "interrupted"):
+            return request_id, status is not None
+
+
+def _decide(engine: Engine, line: _Line) -> str:
+    """Step 2: review's conditional write; a replay returns already_applied, and a refusal is this row's result only."""
+    try:
+        if line.action == "approve":
+            return review.approve(engine, line.target, framing_checked=True)
+        if line.action == "reject":
+            return review.reject(engine, line.target, reasons=line.reasons, note=line.note)
+        if line.action == "confirm_cutout":
+            return review.confirm_cutout(engine, line.target)
+        if line.action == "reject_cutout":
+            return review.reject_cutout(engine, line.target)
+        ref, run, cycle = SCOPE_ID.fullmatch(line.target).groups()
+        return review.abandon(engine, variant_ref=ref, run_label=run, cycle_no=int(cycle), treatment=line.kind,
+                              note=line.note)
+    except Refused as refusal:
+        return f"refused:{refusal.code}"
+
+
+def _admit_generations(rt: Runtime, lines: list[_Line], say: Say) -> tuple[list[tuple[_Line, Admitted]], int]:
+    """Step 3's admissions, in file order, until the budget refuses one. Returns the new requests, and the number of
+    rows refused for another reason than the scope's state or stopped by an unexpected error."""
+    new, errors = [], 0
+    for index, line in enumerate(lines):
+        try:
+            if line.action == "revise":
+                admitted = request_revision(rt.engine, rt.settings, id=line.request_id, parent_id=line.target,
+                                            owner="cli")
+            else:
+                admitted = request_background(rt.engine, rt.settings, id=line.request_id, cutout_id=line.target,
+                                              owner="cli")
+        except Refused as refusal:
+            line.result = f"refused:{refusal.code}"
+            say(f"{line.name}: {line.result}")
+            if refusal.code == "budget_exhausted":
+                for later in lines[index + 1:]:
+                    later.result = "not_started"
+                break
+            errors += refusal.code not in EXPECTED_REFUSALS
+            continue
+        except Exception as error:  # this row only (ADR-022): the requests admitted before it still run
+            line.result = _error(line, error, say)
+            errors += 1
+            continue
+        if admitted.existing:
+            line.result = "already_applied"
+            say(f"{line.name} attempt {admitted.attempt_no}: {line.result}")
+        else:
+            new.append((line, admitted))
+    return new, errors
+
+
+async def _execute_generations(rt: Runtime, provider: OpenAIProvider | StubProvider,
+                               new: list[tuple[_Line, Admitted]], say: Say) -> list[tuple[str | None, bool]]:
+    slots = asyncio.Semaphore(2)  # ADR-019: one per event loop, shared by all its requests
+    return await asyncio.gather(*(_scene(rt, provider, slots, line.name, admitted, say) for line, admitted in new))
+
+
+def _write_results(path: Path, header: list[str], lines: list[_Line]) -> Path:
+    """Step 4: apply-result.csv beside the file, its rows with a result column (the values: build_parser)."""
+    results = path.with_name("apply-result.csv")
+    with results.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.writer(file, delimiter=";")
+        writer.writerow([*header, "result"])
+        writer.writerows([*line.values, line.result] for line in lines)
+    return results
+
+
+def new_cycle(rt: Runtime, args: argparse.Namespace, *, out: TextIO | None = None) -> int:
+    say = partial(print, file=out or sys.stdout, flush=True)
+    refused = 0
+    for sku in args.skus:
+        try:
+            say(f"{sku}: cycle {review.new_cycle(rt.engine, sku)}")
+        except Refused as refusal:
+            refused += 1
+            say(f"{sku}: refused {refusal.code}")
+    return EXIT_ERROR if refused else EXIT_OK
+
+
 def _skus(value: str) -> list[str]:
     if not (skus := [sku.strip() for sku in value.split(",") if sku.strip()]):
         raise argparse.ArgumentTypeError("give at least one SKU")
@@ -349,6 +739,35 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--paid", action="store_true",
                                  help="required with IMAGE_PROVIDER=openai, refused with the stub")
     generate_parser.set_defaults(handler=generate)
+    sheet_parser = commands.add_parser(
+        "sheet", help="write the review page and a pre-filled decisions.csv",
+        description="Writes DIR/sheet.html (static; its images in DIR/img) with every pending candidate and proposed "
+                    "cutout, and DIR/decisions.csv (UTF-8 with BOM, ';'): a row for each of them, plus the revise, "
+                    "background and abandon rows of the open scopes, all with an empty action.")
+    sheet_parser.add_argument("--out", type=Path, required=True, metavar="DIR",
+                              help="a folder with no decisions.csv yet")
+    sheet_parser.add_argument("--run", metavar="LABEL", help="only this run")
+    sheet_parser.set_defaults(handler=sheet)
+    apply_parser = commands.add_parser(
+        "apply", help="apply a filled-in decisions.csv",
+        description="Validates every row first (one error: nothing is applied), applies the decisions in file order, "
+                    "then makes the revise and background requests. Writes apply-result.csv beside FILE, with each "
+                    "row's result: applied; already_applied; refused:<code>; request_failed:<error kind>; not_started "
+                    "(not tried once the budget refused a request); error:<exception> (unexpected, exit 1); blank "
+                    "for a blank action. Running the same file again resumes: what is done is already_applied, and a "
+                    "failed or interrupted request is made anew.")
+    apply_parser.add_argument("file", type=Path, metavar="FILE",
+                              help="columns target_id;kind;action;reasons;note;framing (info is ignored); UTF-8, or "
+                                   "Windows-1252 as Excel saves it")
+    apply_parser.add_argument("--paid", action="store_true",
+                              help="required with IMAGE_PROVIDER=openai, refused with the stub")
+    apply_parser.set_defaults(handler=apply)
+    cycle_parser = commands.add_parser(
+        "new-cycle", help="start the next cycle of approved products",
+        description="Starts cycle n+1 of each SKU whose cycle n has an approved candidate (D-PV-005). Exit 1 if one "
+                    "is refused.")
+    cycle_parser.add_argument("skus", nargs="+", metavar="SKU")
+    cycle_parser.set_defaults(handler=new_cycle)
     return parser
 
 

@@ -72,9 +72,9 @@ class FakeApi:
         return OpenAIProvider(SecretStr(KEY), http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self)))
 
 
-def generate(provider, purpose="scene", images=(PHOTO,), model="gpt-image-2", prompt="a prompt"):
+def generate(provider, purpose="scene", images=(PHOTO,), model="gpt-image-2", prompt="a prompt", size="1088x1920"):
     return asyncio.run(provider.generate(purpose=purpose, model=model, quality="medium", prompt=prompt,
-                                         images=list(images)))
+                                         images=list(images), size=size))
 
 
 def form_parts(request: httpx2.Request) -> list[tuple[str, str | None, bytes]]:
@@ -90,6 +90,25 @@ def form_parts(request: httpx2.Request) -> list[tuple[str, str | None, bytes]]:
 
 
 # --- Error mapping (design table, D-PV-003) -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("size", ["1088x1360", "1088x1088", "1152x2048", "1024x1024"])
+def test_explicit_poster_and_texture_sizes(size):
+    dimensions = gateway.image_dimensions(size)
+    api = FakeApi(image_reply(picture(size=dimensions)))
+    result = generate(api.provider(), size=size)
+    assert Image.open(io.BytesIO(result.image)).size == dimensions
+    assert ("size", None, size.encode()) in form_parts(api.requests[0])
+    stub = generate(StubProvider(), size=size)
+    assert Image.open(io.BytesIO(stub.image)).size == dimensions
+    with pytest.raises(ProviderError, match="expected " + size):
+        generate(FakeApi(image_reply()).provider(), size=size)
+
+
+def test_invalid_size_refused_before_dispatch():
+    api = FakeApi()
+    with pytest.raises(ValueError, match="unsupported image size"):
+        generate(api.provider(), size="1080x1350")
+    assert api.requests == []
 
 MAPPING = [
     (httpx2.ReadTimeout("slow"), "timeout", False),
@@ -163,7 +182,7 @@ def test_scene_request_goes_to_edit_with_images_in_order():
     parts = form_parts(request)
     fields = {name: body.decode() for name, filename, body in parts if filename is None}
     assert fields == {"prompt": "a prompt", "model": "gpt-image-2", "n": "1", "quality": "medium",
-                      "size": "1088x1920"}  # no input_fidelity
+                      "size": "1088x1920", "output_format": "png"}  # no input_fidelity
     files = [(name, body) for name, filename, body in parts if filename is not None]
     assert files == [("image[]", PHOTO), ("image[]", PHOTO_2), ("image[]", STYLE)]
 
@@ -174,7 +193,7 @@ def test_background_without_images_goes_to_generate():
     request, = api.requests
     assert request.url.path.endswith("/images/generations")
     assert json.loads(request.content) == {"prompt": "a prompt", "model": "gpt-image-2", "n": 1,
-                                           "quality": "medium", "size": "1088x1920"}
+                                           "quality": "medium", "size": "1088x1920", "output_format": "png"}
 
 
 def test_background_with_style_reference_goes_to_edit_with_one_image():

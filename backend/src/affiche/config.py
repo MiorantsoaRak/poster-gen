@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     rembg_model: str = "birefnet-general-lite"
     max_hole_ratio: float = Field(0.05, gt=0, lt=1)
     data_dir: Path = BACKEND_DIR / "data"
+    app_origin: str | None = None  # Required by the HTTP server, not the evaluation CLI.
+    shop_password_hash: SecretStr | None = None
+    planner_provider: Literal["disabled", "stub", "claude"] = "disabled"
+    anthropic_api_key: SecretStr | None = None
+    claude_model: str = "claude-sonnet-5-5"
+    estimate_plan_usd: PositiveUsd = Decimal("0.10")
+    estimate_texture_usd: PositiveUsd = Decimal("0.30")
 
     @field_validator("spend_cap_since")
     @classmethod
@@ -48,7 +55,7 @@ class Settings(BaseSettings):
             raise ValueError("must not be after today (UTC)")
         return value
 
-    @field_validator("openai_api_key")
+    @field_validator("openai_api_key", "anthropic_api_key")
     @classmethod
     def _printable_ascii_key(cls, value: SecretStr | None) -> SecretStr | None:
         # A pasted invisible character (U+200B) would fail later, in header building, with an error that prints

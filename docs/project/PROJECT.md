@@ -2,7 +2,7 @@
 
 **Status: Approved by the user on 2026-11-05 (charter and six-feature split; ADR-008). First feature: product-visuals.**  
 **Created:** 2026-11-05 · **Working name:** Affiche IA  
-**Phase:** Bootstrap / project framing. No feature requirements, designs or application code exist.
+**Phase:** Phase-1 product-visual evaluation backend implemented through T-PV-010; T-PV-011 report remains. The poster requirements, including separate manual/prompted text effects, are approved (ADR-028/030). Six matching phase-2 designs are approved (ADR-031); backend draft persistence and authenticated intake/profile/draft HTTP routes are implemented, together with durable scene generation/review and the French Vue/Konva editor. Isolated prompted typography and authoritative feed rendering/confirmation are implemented; a real R50i poster has been reviewed, polished and exported. Square/story/library enhancements, optional cutout and physical-device readiness remain queued.
 
 Affiche IA helps Original Phone Mada turn a product photo, verified information and a price into promotional posters that a shop operator can polish, export and reuse. The proposed approach combines an AI-generated product scene with editable text, prices and branding in a flexible canvas. The pilot supports full editing on phones and desktop, with a French interface and French captions.
 
@@ -25,17 +25,17 @@ Affiche IA helps Original Phone Mada turn a product photo, verified information 
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
-| Backend | **FastAPI — confirmed by user** | Python tooling, versions and supporting libraries remain unselected. |
-| Frontend | **Vite + Vue — confirmed by user** | Full phone and desktop editing; versions and UI libraries remain unselected. |
-| Canvas | Not selected | Evaluate Vue integration, touch editing, history, export fidelity, licensing and effort. |
-| Image generation | GPT Image / OpenAI Images API proposed | Select a supported model using representative fidelity/cost tests; account access is unverified. |
-| Text/composition | Not selected | The brief suggests Claude; evaluate output quality and cost. |
-| Database | Not selected | PostgreSQL is a candidate, not an approved schema/design. |
-| Background processing | Not selected | Queue/worker behaviour belongs in the later design. |
-| Asset storage | Not selected | Cover originals, generated assets, creations, versions and exports. |
+| Backend | **FastAPI — confirmed by user** | Python 3.12 + uv; CLI and authenticated draft API implemented. |
+| Frontend | **Vite + Vue — confirmed by user** | Vue 3.5.45/Vite 8.3.7; French editor tested in Chromium desktop/mobile viewports; physical phone verification pending. |
+| Canvas | Konva + vue-konva approved (ADR-031) | Shared document/component for editing and server Chromium preview; shared editor/server component and confirmed feed export verified. |
+| Image generation | GPT Image integration is the primary direction (ADR-027) | Existing `gpt-image-2/high` tests succeeded; representative shop-photo evaluation remains. Cutout is optional for the future poster workflow. |
+| Text/composition | Requirements approved; Claude planning/selected-text patches designed | Exact editable font glyphs with optional isolated textures; proposed Sonnet 5.5 evaluation model, not live-tested. |
+| Database | SQLite + SQLAlchemy/Alembic for phase 1 | Phase-2 local persistence approved; hosting remains open. |
+| Background processing | Durable SQLite queue in one FastAPI process | Approved design; implementation queued. |
+| Asset storage | Existing content-addressed local files | Immutable originals/scenes/textures/exports, with database ownership. |
 | Infra / deploy | Not selected | Define hosting, access protection, logging, backups and budget before deployment. |
 
-The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. An independent Git repository is initialised on `main`, with no commits or remotes. No application scaffold, installed project dependencies, service or deployment exists. Add commands to AGENTS.md only when implemented and verified.
+The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. The independent Git repository is on `main`, with ten commits and no remotes as of 2026-11-09. The installed backend and verified CLI commands are documented in AGENTS.md. The authenticated API and Vue editor exist; deployment remains unconfigured.
 
 ## Constraints
 
@@ -47,7 +47,7 @@ The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vi
 - French first; Malagasy after the pilot.
 - Follow IDEA → REQUIREMENTS → DESIGN → TASKS → IMPLEMENT → HANDOFF. Bootstrap stops for project approval.
 
-### Proposed for project approval
+### Approved poster requirements
 
 - Preserve original photos and confirmed commercial facts; review generated product fidelity and never invent specifications or offer conditions.
 - Keep compositions flexible: the scene can remain one image while price, text, badges and shop logo are editable objects.
@@ -59,15 +59,15 @@ The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vi
 
 ### Deferred details
 
-- Operating budget, permitted paid evaluation spend and deadlines are unspecified. This bootstrap authorises no paid API tests.
+- The original bootstrap authorised no paid calls. Later explicit approvals covered the synthetic probe and two real-product tests (ADR-023/026), now complete. Representative evaluation budget/inputs remain pending; current evidence and spending are in HANDOFF.md.
 - Specify supported phones/browsers, connectivity and persistence before editor implementation; offline operation is not promised.
 - Agree input constraints, export checks and pilot thresholds before evaluation.
-- Provider/model, canvas SDK, database, queue, storage, authentication and hosting remain open. Single-shop scope does not imply public unauthenticated access.
+- Canvas, queue, storage and shared-shop authentication designs are approved (ADR-031). Production provider validation and hosting remain open. Phase-1 choices do not approve phase-2 deployment. Single-shop scope does not imply public unauthenticated access.
 - Pricing and subscription-credit estimates in the brief are hypotheses, not guarantees or spending limits.
 
 ## Definition of done (project level)
 
-These are proposed pilot outcomes. Detailed acceptance criteria follow in feature requirements after charter approval.
+These pilot outcomes are covered by the approved per-feature requirements and designs.
 
 - [ ] An operator completes the French upload/generate/edit/review/export workflow on the agreed phone and desktop browser set.
 - [ ] The operator can change a price, enlarge a headline, reposition a logo, adjust colours/fonts, crop and undo without assistance in the pilot exercise.

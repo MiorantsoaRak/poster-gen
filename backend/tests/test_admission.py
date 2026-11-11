@@ -175,6 +175,29 @@ def _background(engine, settings, cutout_id, request_id="bg"):
 
 # --- Admitted requests ----------------------------------------------------------------------------------------------
 
+@pytest.mark.parametrize("kind", ["scene", "background", "revision"])
+def test_commercial_descriptions_are_refused_before_reserving_spend(engine, settings, kind):
+    direction = Direction(description="Prix 899000 Ar, garantie 6 mois")
+    with write_tx(engine) as conn:
+        _seed(conn)
+        if kind == "background":
+            _cutout(conn, "K1", direction=direction)
+        elif kind == "revision":
+            _generated(conn, "C1", status="rejected")
+            conn.execute(text("UPDATE candidates SET direction_json = :direction WHERE id = 'C1'"),
+                         {"direction": direction.model_dump_json()})
+    before = _counts(engine)
+    with refused(422, "commercial_terms",
+                 {"field": "description", "matches": ["Prix", "899000", "Ar", "garantie"]}):
+        if kind == "scene":
+            _scene(engine, settings, direction=direction)
+        elif kind == "background":
+            _background(engine, settings, "K1")
+        else:
+            _revise(engine, settings, "C1")
+    assert _counts(engine) == before
+
+
 def test_an_initial_scene_is_inserted_running_with_call_1_reserved(engine, settings):
     with write_tx(engine) as conn:
         _seed(conn)

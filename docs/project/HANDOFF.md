@@ -1,194 +1,121 @@
 # HANDOFF
 
-> Updated at session end. Read this before exploring the project.
+**Session date:** 2026-11-11 (Indian/Mauritius)
+**State:** T-POSTER-SHOP-STYLE, T-POSTER-LOOK-PILL, T-POSTER-ONE-TAP (ADR-042), T-POSTER-SIGNATURE (ADR-043) T-POSTER-PRICE-IN-IMAGE (ADR-044), the 12-scene limit (ADR-045) and T-POSTER-REFERENCE-BRIEF (ADR-046) complete; five live tests in Microsoft Edge passed. **Migration 0010 is applied to backend/data-probe** (backup before it: data-probe/backups/before-looks-2026-11-11.db). T-POSTER-001–008, T-POSTER-STYLE-TEST and T-POSTER-REFERENCE-TYPE remain complete. No task is in progress; no test/server process is running. Nothing committed.
 
-**Session date:** 2026-11-06 (Indian/Mauritius)  
-**Working on:** product-visuals phase 1. T-PV-001 … T-PV-009 and the paid probe T-PV-012 are done (USD 0.169 per high scene, usage returned). Next is T-PV-010.
+## Delivered result — latest user request
 
-## State of the world
+The user gave autonomy to change the process until posters match Original Phone Mada's own, tested on 5–10 products, and then asked for a style choice designed from the owner's point of view.
 
-Canonical repository: C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia (branch main, no remotes).
-- PROJECT.md and the six-feature split: approved (ADR-008).
-- requirements/product-visuals.md: R-001 … R-008 approved; R-003, R-004 and R-005 amended on 2026-11-06 (ADR-011).
-- designs/product-visuals.md r4: approved for **phase 1** (ADR-012). Phase-2 HTTP/session/UI contracts are draft until design v2, after the paid evaluation.
-- `backend/` (Python 3.12 + uv, package `affiche`; commands in AGENTS.md → Commands cheat sheet):
-  - `config.py` and `db.py` (T-PV-001, ADR-013); Alembic migration 0001 with the whole D-PV-001 schema;
-  - `visuals/prompts.py` (T-PV-002, ADR-014): `Direction`, `SceneSubject`, both prompt builders, the reason-code sentences, `find_commercial_terms`;
-  - `visuals/gateway.py` (T-PV-003, ADR-015): `prepare_provider_input`, `validate_image`, money (`usd_to_micros`, `cost_micros`, `parse_usage`, `RATES`), `OpenAIProvider`, `StubProvider`, `make_provider`;
-  - `visuals/cutout.py` (T-PV-004, ADR-016): `make_cutout`, `place`, `bake_shadow`, `CutoutUnavailable`; rembg 2.0.87 with `birefnet-general-lite`, downloaded once to `%USERPROFILE%\.rembg\models\`;
-  - `assets.py` (`put`, `path`, `record`) and `runtime.py` (`start`, `acquire_lock`, `recover`, `check_provider_mode`) (T-PV-005, ADR-017); `db.utc_now()`;
-  - `visuals/admission.py` (T-PV-006, ADR-018): `request_scene`, `request_revision`, `request_background`, `reserve`, `Refused`, `Admitted`; migration 0002 (`run_products.name`/`variant`);
-  - `visuals/execution.py` (T-PV-007, ADR-019): `async execute(...)`, call 1, one retry, atomic success, failures;
-  - `visuals/review.py` (T-PV-008, ADR-020): `approve`, `reject`, `confirm_cutout`, `reject_cutout`, `new_cycle`, `abandon`, `reusable`, `next_status`;
-  - `visuals/fixtures.py` + `visuals/evaluate.py` (T-PV-009, ADR-022): the CLI `python -m affiche.visuals.evaluate generate` (`--paid` required with openai);
-  - 398 pytest tests, plus 3 opt-in real-model tests (`-m rembg`).
-- No `backend/.env`, no database file, no service and no paid API call exist.
+- Ten shop posters inspected; 13 study images on 9 real products; the application now produces the shop's style. Report: [style-study-2026-11-11.md](reviews/style-study-2026-11-11.md).
+- Side by side (shop on top, ours below): outputs/style-study-2026-11-11/comparison-shop-top-ours-bottom.jpg.
+- Real poster through the application: outputs/style-study-2026-11-11/app-poster-final.png, **1080 × 1350**, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37. Creation/visual/keys: app-poster-run.json in the same folder. Download equals the preview; no render warnings. 340 000 Ar is the price on the shop's own poster for that model: test data.
 
-## Done this session
+## Saved looks from a reference poster (latest request, ADR-046)
 
-- Requirements drafted and approved (ADR-009, ADR-010); design reviewed through Codex r1–r4 + devil's-advocate and approved for phase 1 (ADR-011, ADR-012).
-- TODO.md: T-PV-001 … T-PV-011 buildable now (stub/mocked only); T-PV-012 (paid probe) and T-PV-013 (paid evaluation) blocked on user inputs.
-- **T-PV-001 done**: Codex r1 → 2 fixes, r2 → APPROVE. Committed (initial commit).
-- **T-PV-002 done**: Codex r1 → 2 fixes, r2 → 1 fix, r3 → APPROVE. Committed.
-- **T-PV-003 done** via /implement-review:
-  - Codex r1 → 6 fixes: a pasted invisible key character leaked the key; usage was logged and kept raw; malformed usage could under-count; decoding errors; grayscale ICC with alpha; gamma metadata;
-  - r2 → 3 fixes: a contradictory token split; grayscale tRNS; P3 `cHRM`;
-  - r3 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-003-code-r1.md … -r3.md;
-  - verified: `uv run pytest -q` → 223 passed; 25 mutations killed;
-  - committed at the user's request ("go").
-- **T-PV-004 done** via /implement-review:
-  - mutation testing first closed 3 test gaps;
-  - Codex r1 → 2 fixes: rembg's import-time `sys.exit`, and colour profiles that can't travel with RGB pixels are now refused;
-  - r2 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-004-code-r1.md, -r2.md;
-  - verified: 260 passed + 3 real-model passed; 21 mutations killed;
-  - committed at the user's request ("go").
-- **T-PV-005 done** via /implement-review:
-  - the lock retry of up to 2 s was added after a measured Windows release delay;
-  - Codex r1 → 2 fixes: clean-up kept active until return; the test reader thread is reaped;
-  - r2 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-005-code-r1.md, -r2.md;
-  - verified: 273 passed; 15 of 16 mutations killed;
-  - committed at the user's request ("commit and next").
-- **T-PV-006 done** via /implement-review:
-  - Codex r1 → 4 fixes + 1 test tightening. The **user chose migration 0002** (the subject in `run_products`) for the durable-subject gap;
-  - r2 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-006-code-r1.md, -r2.md;
-  - verified: 310 passed; 30 mutations killed;
-  - committed at the user's request ("Go").
-- **T-PV-007 done** via /implement-review:
-  - Codex r1 → APPROVE (no defect). Its non-blocking test gap (a positive usage-based cost vs the kept estimate) was closed and checked by mutation;
-  - review: docs/project/reviews/t-pv-007-code-r1.md;
-  - verified: 334 passed; 19 mutations killed;
-  - committed at the user's request ("Go").
-- **T-PV-008 done** via /implement-review:
-  - Codex r1 → 1 fix: the abandon guard had to cover any request of the scope. My instruction was wrong, not the code;
-  - r2 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-008-code-r1.md, -r2.md;
-  - verified: 365 passed; 7 mutations killed;
-  - committed at the user's request ("go").
-- **T-PV-009 done** via /implement-review:
-  - Codex r1 → 5 fixes (2 P1: the `--paid` opt-in, the cutout error boundary; 3 P2: strict CSV, `--only` vs the snapshot, exit 1 on errors);
-  - r2 → APPROVE;
-  - reviews: docs/project/reviews/t-pv-009-code-r1.md, -r2.md;
-  - verified: 398 passed; the manual stub+rembg example run is clean and idempotent; 26 mutations killed;
-  - committed at the user's request.
-- **T-PV-012 done:** the paid probe ran on the user's go (ADR-023):
-  - gpt-image-2 **returns `usage`**;
-  - one high 1088×1920 scene = **USD 0.169** (input 1271 / output 5300 tokens), 55 s;
-  - the image is good on the made example phone;
-  - `.gitignore` now ignores `/backend/data-*/` (`data-probe`, `data-openai`);
-  - **not committed yet**.
+- Built: editor "Créer un style depuis une affiche" (upload, name, "Enregistrer ce style"); Claude writes the brief; the look appears in the picker beside the built-in ones and is remembered for the next poster. Backend: posters/looks.py, migration 0010, routes POST /api/creations/{id}/looks, GET /api/looks, GET /api/looks/{id}; `headline.look_id` on scene requests; `compile_scene(headline_style=, align=)`.
+- Live Edge run 5 (real Claude + GPT Image): the shop's Select 4 Go poster → look "Vagues bleues" → CMF Buds 2a poster. Evidence: outputs/style-study-2026-11-11/live-edge-5/ (`reference.png`, `brief.json`, `scene.png`, **live-edge-5-poster.png**, report.json). All eleven UI steps passed; left-aligned headline and price pill, blue waves, accent word, title, price, shop name and both numbers exact.
+- The look "Vagues bleues" now exists in data-probe. The reference was a 495 px screenshot upscaled to 1000 px for the upload.
+- The browser smoke found one defect before the live run: a finished look job was reloaded as a plan (404). Fixed by reporting the job kind as `look`.
+- Needs a Claude credential and `PLANNER_PROVIDER=claude`; with the planner disabled the editor hides the action and the API answers `planner_unavailable`.
+- `live_edge.py` now holds this scenario (run 5).
 
-## In progress — exact resume point
+## Scene limit and reference-brief exploration (before the build)
 
-- **Task:** none in progress. The T-PV-012 docs and the `.gitignore` change are **not committed**; offer the commit.
-- **Paid setup** (ADR-021, ADR-023):
-  - the user's project key is in `backend/.env`. **Never read, print or grep that file**; list its names with values masked;
-  - cap USD 12 since 2026-11-06; `gpt-image-2`/`high`; the OpenAI project limit blocks;
-  - `.env` leaves `IMAGE_PROVIDER` empty (stub). Paid runs need `IMAGE_PROVIDER=openai` **and** `--paid` on the command line, and only with the user's go.
-- **Still needed for T-PV-013:**
-  - the photos (~20 products);
-  - the arm assignments;
-  - the thresholds;
-  - a cap of about **USD 25–30** (revised down after the probe).
-- **Next action:** T-PV-010 (`sheet`, `apply` **with `--paid`**, `new-cycle`) with /implement-review, then T-PV-011 (`report`).
+- **Scene limit:** 12 scene/refinement jobs per poster instead of 3 (ADR-045, `jobs.SCENE_LIMIT`).
+- **Exploration, not built:** Claude (the application's adapter, claude-sonnet-5-5) read two shop posters and wrote a style brief each (direction, surface, lighting, camera, palette, accent colour, headline typography); GPT Image applied each brief to a different product. Script and evidence: outputs/style-study-2026-11-11/explore_reference.py and reference-brief/ (`sheet-reference-vs-result.jpg`, briefs as JSON).
+- Result: backdrop, palette and headline typography carried over well (champagne rings and the outlined subtitle pill from the Tour One poster; blue waves from the Select 4 Go poster). Layout did not: the left-aligned headline and left price pill of the Select 4 Go poster came out centred, because the scene prompt fixes the layout. The accent colour was not applied in one of two.
+- Two findings for a build: Claude's first brief was accurate but about twice the allowed length, so limits must be in the instructions, not only the schema; the typographic style needs its own screened field in the prompt (the exploration injected it by string replacement).
+- Cost: about USD 0.007 per brief; two failed-length attempts were billed too. Next step is T-POSTER-REFERENCE-BRIEF, which needs the user's go.
 
-## Landmines / gotchas discovered
+## Price drawn by the AI (ADR-044)
 
-- **SQLite engine (ADR-013):**
-  - `make_engine()` sets pysqlite `isolation_level = None`; a `begin` event emits `BEGIN IMMEDIATE` for `write_tx()`.
-  - **Never pass `isolation_level` to this engine**: the dialect then turns pysqlite's implicit deferred BEGIN back on, and `write_tx()` stops locking.
-  - Do not use Python 3.12's `autocommit=False` either.
-- **Migrations:**
-  - They run only through `affiche.db.migrate(engine)`. `alembic upgrade` from the command line refuses on purpose.
-  - `uv run alembic revision -m "..."` creates a new file. There is no autogenerate (no ORM models; the schema is plain SQL).
-- **Settings:**
-  - `load_settings()` raises `ConfigError`, never pydantic's `ValidationError`, which keeps the raw API key in `.errors()`.
-  - Tests must call `load_settings(env_file=None)` so they never read a real `backend/.env`.
-  - The API key must be printable ASCII with no whitespace (ADR-015).
-- **Gateway (ADR-015):**
-  - openai 3.46.0 uses **httpx2**, not httpx (`httpx2.MockTransport` in tests).
-  - Model ids are `gpt-image-2`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`; there is no bare `gpt-image-2.5`. A model without `RATES` raises `ValueError` before any call, so **T-PV-006/009 must check the run's model against `RATES` before reserving budget**.
-  - The adapter never retries; `ProviderError.retryable` tells T-PV-007 whether to make call 2.
-  - **`usage` may be absent for gpt-image-2** (the SDK docstring says "gpt-image-1 only"). Then `cost_micros=None` and the reserved estimate stays as the cost. The T-PV-012 probe settles this.
-  - `ProviderErrorKind` lives in `config.py` (settings must not import the SDK).
-  - `prepare_provider_input` refuses some photos with `ValueError`: an unreadable ICC profile, or non-sRGB PNG gamma/primaries without ICC. T-PV-009 fixture validation must list these errors. HEIC needs pillow-heif (not installed); fixtures refuse HEIC per the design.
-- **Startup (ADR-017):**
-  - Every process calls `runtime.start(settings, owner)` and keeps the returned `Runtime` (its `lock_file`) alive for the whole command; closing it releases the lock.
-  - A real second process of the same owner waits up to 2 s, then gets `AlreadyRunning`.
-  - Known gap: simultaneous identical `assets.put` from the API and the CLI on Windows can raise `PermissionError` (phase 2).
-- **`corrections_applied` (ADR-014):** set it from what the prompt builder actually added (any correction line or note), not from "reasons were given". Reasons such as `coloris` that mean nothing for a background leave the background prompt unchanged. This applies when T-PV-006/007/008 create revision requests.
-- **Prompt tests carry the expected sentences literally** (`SCENE_MEANING`, `BACKGROUND_MEANING`, `SCENE_RULES` in tests/test_prompts.py). A deliberate wording change in prompts.py must change them too.
-- **Codex sandbox:**
-  - `uv` is blocked there, and it cannot create temp files;
-  - give it `.venv\Scripts\python.exe -B -m pytest <tests> -q -p no:cacheprovider --capture=sys`;
-  - it cannot run the DB tests, so always run the full suite locally before calling a task done.
-- **Review diffs:** new files are marked intent-to-add (`git add -N`) to appear in `git diff`. They then show as `A` in `git status`; their content is not staged.
-- **Secret-guard hook false positive:** it blocked `uv run pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning` as an "org token". Don't retry that variant; use the plain command and read the warnings summary.
-- **Artifact tool paths:** the short scratchpad path `C:\Users\MRAKOT~1\...` is refused by a Read permission rule; use `C:\Users\M Rakotozafy\AppData\Local\Temp\...`.
-- **Codex review command:** `codex exec --sandbox read-only -C "<repo>" -o "<review.md>" - < "<brief.md>" > "<log>" 2>&1`, run in the background (codex-cli 0.162.1). There are at most 3 rounds per artifact. The design's review cap is used up; any further design change needs the user's decision on reviewing.
-- **No paid call** before T-PV-012. It needs:
-  - `OPENAI_API_KEY` from a dedicated OpenAI project, in `backend/.env` (git-ignored);
-  - `SPEND_CAP_USD` set;
-  - the user's check of that project's budget-limit behaviour.
+- User decision: the price is part of the composition; changing it later means a new scene. Editor: "Dessiner aussi le prix dans l’image", default on. The amount is the offer's integer, formatted in code.
+- Live Edge run 4 (JBL Tune 770NC, "Aux couleurs du produit", title + price + shop name + contact all drawn): outputs/style-study-2026-11-11/live-edge-4/, **live-edge-4-poster.png** is the current best output. All ten UI steps passed, including: changing the price shows "Le prix est dessiné dans l’image" and disables the export; restoring it clears the notice. Title, "340 000 AR", shop name and both numbers exact.
+- The first attempt of run 4 failed an assertion and exposed a real defect (a pill-styled price layer was not hidden at the first scene, so the price would appear twice). Fixed in service.py with a regression test; that failed attempt still cost one scene (0.209323) and left creation with a doubled price in data-probe; it was never approved or exported.
+- With every text drawn, the editor's pill styling and footer fitting only matter when an option is switched off.
+- Open: T-POSTER-PRICE-ATTEMPTS (three scenes per creation).
 
-  The cap only limits *estimated* spend.
-- **Unverified, to check:**
-  - the background (`images.generate`) cost: measure it in the first evaluation run (gpt-image-2 `usage` is confirmed, ADR-023);
-  - the licence of the rembg-hosted BiRefNet file: the author labels BiRefNet MIT, but whether the rembg file is that checkpoint, and the training-data terms, are unchecked (ADR-016). Confirm before production.
-- **Cutout (ADR-016):**
-  - 20–36 s per photo on the user's i5 CPU, plus about 22 s for the first session;
-  - `make_cutout` raises `CutoutUnavailable` when the session cannot be created (rembg's import-time `sys.exit` included), `ValueError` for colours it cannot keep (CMYK, gray/CMYK ICC, non-sRGB PNG gamma/primaries without ICC), and lets inference errors propagate (the caller maps them to `cutout_error`);
-  - **T-PV-009 must catch these per product**, so one photo never stops the batch;
-  - never use rembg's default `bria-rmbg` (its licence needs a paid agreement for commercial use).
-- **Toolchain:** Python 3.13 is the system default; `backend/.python-version` pins 3.12 (3.12.10 installed). rembg 2.0.74 needs `<3.14`, hence `requires-python = ">=3.12,<3.14"`.
-- **Behaviour the user should not be surprised by:**
-  - after a rejection, a fresh request for the same product is refused (`use_revision`); the correction note can change the style;
-  - a new campaign (cycle) is allowed only after an approval.
-- **Git trust:** an exact safe.directory entry is in C:/Users/M Rakotozafy/.gitconfig (ADR-007). Commit only when the user asks; push only on "push".
-- BRIEF.md is a pre-bootstrap snapshot; `poster-kit.zip` does not exist (ADR-010).
+## Shop signature drawn by the AI (ADR-043)
 
-## Uncommitted / dirty state
+- The image model now also draws the shop name and contact when the poster includes them (ADR-043). Editor: "Dessiner aussi le nom de la boutique et le contact dans l’image", default on. Words come from the poster's profile snapshot only.
+- Live Edge runs 2 and 3 (JBL Tune 770NC, "Aux couleurs du produit"): outputs/style-study-2026-11-11/live-edge-2/ and live-edge-3/. Both passed every UI step, including the new notice when the contact is unticked after the image drew it. Digits exact in both; run 2 wrote the shop name in capitals.
+- Run 2 showed the pill on the lower ear cup. Fixed by giving the plan the signature's real footprint and stating a hard lower limit for the product; run 3 (**live-edge-3-poster.png**, the current best output) has the pill touching only the bottom rim.
+- After the last change (prompt wording in plans.py) only tests/test_plans.py and tests/test_poster_visuals.py were re-run, plus live run 3. The last full backend run was 676 passed, 3 deselected, just before it.
+- `live_edge.py` now holds the run-3 scenario; the run-1 (Sony, dark look) settings are no longer in the file.
 
-Branch main, nine commits made at the user's request on 2026-11-06: the initial commit (all docs + T-PV-001), and T-PV-002 to T-PV-009. No remote; nothing pushed.
+## Live test in Microsoft Edge (run 1)
 
-Not committed: `.gitignore` (`/backend/data-*/`), and docs/project/DECISIONS.md (ADR-023), TODO.md, HANDOFF.md (T-PV-012 results).
+- `outputs/style-study-2026-11-11/live_edge.py --paid`: installed Edge 156, visible window, real GPT Image 2 call, real ledger. Sony WH-1000XM6, look "Luxe sombre", one tap. Evidence in outputs/style-study-2026-11-11/live-edge/: report.json, five screenshots, scene.png, **live-edge-poster.png** (1080 × 1350).
+- Passed in the UI: sign-in, upload, draft, look, headline fields, one tap → one scene job and no plan call, pill styled and centred, title layer hidden, fidelity approval (after the scene was inspected against the photo), stale-title notice blocks then frees the export, preview, confirmation, download equals preview, phone width without horizontal overflow. No page errors, no HTTP errors.
+- Found by the live run and fixed afterwards: white shop name/contact (invisible on light looks; now set by the look and centred); the properties panel showed the hidden title layer. Both fixes are covered by the stub smoke in Edge, **not** by a second paid run.
+- Seen and not fixed: the product ran lower than its planned area, so the pill covers the bottom of the ear cup (the shop's own posters overlap too, but less). With shop name and contact included, the pill sits high and the footer looks empty. 1 900 000 Ar is the shop's printed price for this model: test data.
 
-Local, git-ignored data:
-- `backend/data-probe/` holds the probe's DB and images (USD 0.169 spent; keep it as evidence);
-- the scratchpad `data-stub*` folders are disposable.
+## What changed
 
-`backend/.env` holds the user's key and is git-ignored: **never stage it** (stage explicit paths only).
+- **Process (ADR-042):** the image model may set brand, product name and subtitle in the scene ("titre intégré", default on in the editor). The price is never sent and stays an exact layer. This supersedes ADR-030 for the title only.
+- **Prompt:** `compile_scene` in posters/plans.py rewritten: use → references → house-style scene → subject scale against the plan's product area → lighting → headline → quiet full-width bands → constraints. `Headline` model and `screen_headline` added there.
+- **Backend:** `SceneRequest.headline`; job payload and visual expose `headline` with the exact title sent; first scene hides the title layer (service.py); a hidden title needs a matching recorded headline, else `title_missing` (exports.py); refinement keeps the headline or refuses `headline_stale`; `context_for` plans a hidden title's area; `Document` now only requires the price visible.
+- **Editor:** thumbnail look picker (Studio clair, Aux couleurs du produit, Luxe sombre, Décrire moi-même), one accent colour, headline fields (brand, subtitle, accent word), notice and blocked export when the title was edited after the image drew it. Thumbnails: frontend/public/styles/.
+- Docs: ADR-042, backend/api/README.md scenes row, TODO, this file. No migration, no dependency. Old requests replay unchanged (`headline` omitted when absent).
 
-`backend/.venv/` exists locally (git-ignored). Review briefs and raw Codex outputs are in the session scratchpad only.
+## Verification
 
-## Next session should
+- Backend, last full run 2026-11-11: 689 passed, 1 failed, 3 deselected. The failure was one stale assertion in tests/test_exports.py (the headline payload gained `look_id`); it was corrected and tests/test_exports.py + tests/test_looks.py then passed (21). No full run after that one-line test fix.
+- Frontend: `npm.cmd test` → **26 passed**; `npm.cmd run build` passed, after the last frontend change.
+- Browser smoke: `uv run python ../frontend/tests/browser_smoke.py` → passed in bundled Chromium and, with `SMOKE_CHANNEL=msedge`, in Edge 156, after the last frontend change. It picks "Luxe sombre", **unticks the integrated headline** to keep testing the editable title layer, uses the one-tap button and checks the automatic pill.
+- After the pill/one-tap work: backend **674 passed, 3 deselected** (227 s); 26 Vitest; build.
+- New tests: tests/test_plans.py (headline verbatim, screening, accent word, no component example), tests/test_exports.py (hidden title needs matching headline; rename → refusals; hidden title still plans).
+- Real provider: 13 direct study calls and 1 application scene, GPT Image 2 high.
+- **Not tested:** the light looks' footer colours on a real scene; a pill restyled by hand then regenerated; Claude planner with looks; physical phones; six of the seven r3 images were checked on reduced contact sheets, not at full size.
 
-1. Read this file, then TODO.md, then designs/product-visuals.md D-PV-008 (lines 449–463: `sheet`, `apply` steps, `new-cycle`) for T-PV-010.
-2. Offer to commit the T-PV-012 docs and `.gitignore`, if that is not done yet.
-3. Implement T-PV-010 with /implement-review. `apply` must take `--paid`. Its prevalidation must:
-   - recognise replays before `review.next_status`;
-   - check cutout transitions itself;
-   - validate `kind` before `review.abandon` (ADR-020, ADR-022).
-4. Then T-PV-011 (`report`), then T-PV-013 with the user's photos, arms, thresholds and a cap of about USD 25–30.
+## Spend
 
-## Decisions made this session
+- Application ledger backend/data-probe/affiche.db, cap **$12**: 1.161964 → **2.630726** (seven scenes and one Claude brief: application run 0.208268, live Edge runs 0.204877, 0.208983, 0.209093, 0.209323 (failed attempt), 0.209323, then brief 0.008612 + scene 0.210283). Never reset it or start another paid data directory.
+- Study, direct provider calls **outside the ledger**: **4.196172** (outputs/style-study-2026-11-11/spend.json, including Claude brief calls). Real total spent so far ≈ 6.83; treat the remaining budget as 12 − 2.63 − 4.20 ≈ **5.17**. The study's own USD 5 budget in experiment.py is nearly used. The application's own cap check does not see the 3.05.
 
-- ADR-008: charter and split approved; product-visuals first.
-- ADR-009: one candidate per request; fallback cutout as a separate layer.
-- ADR-010: user's OpenAI account, 3 attempts, no prototype, user supplies photos, cap required.
-- ADR-011: design questions: baked shadow, wording amendments, phase 1 first, evaluation exception (limit 5, arm B), cycles after approval.
-- ADR-012: design approved for phase 1; Python 3.12 + uv + pytest.
-- ADR-013: backend scaffold choices (pydantic-settings and `ConfigError`, no ORM, `BEGIN IMMEDIATE` recipe, migrate-only Alembic).
-- ADR-014: prompt and screen interpretations (background `texte` sentence, the number rule, `corrections_applied` meaning).
-- ADR-015: provider gateway: SDK facts (openai 3.46.0 / httpx2), model ids, error codes, usage validity, provider-input colour rules.
-- ADR-016: cutout model `birefnet-general-lite` (speed, licence status), pixels and profile kept, opt-in real-model tests.
-- ADR-017: `runtime.start` as the single startup, lock retry of up to 2 s (Windows release delay), owner-wide call recovery, asset write order, `utc_now` format.
-- ADR-018: **user decision**, migration 0002 (the subject in `run_products`); admission interpretations (latest by `attempt_no`, stale target first, `review_pending` vs `not_rejected`, the extra codes).
-- ADR-019: execution: the semaphore per loop, inputs prepared before spend, the billed cost kept on late failures, the `.jpeg` extension rule, the cutout row format for T-PV-009.
-- ADR-020: review: conditional updates and replays, abandon blocked by any running request in the scope, approval allowed after an abandon, `new_cycle` without a replay token, the `apply` prevalidation notes for T-PV-010.
-- ADR-021: **user inputs** for the probe (project key in `.env`, cap USD 12 since 2026-11-06, gpt-image-2/high, the OpenAI limit blocks); paid mode only from the command line.
-- ADR-022: CLI `generate`: `--paid` required with openai, exit codes 0/1/2/3, strict CSV, the snapshot checked before `--only`, the `committed` label.
-- ADR-023: **probe result**: gpt-image-2 returns `usage`; a high 1088×1920 scene = USD 0.169 (55 s); the evaluation cap is revised to USD 25–30.
+## Exact next step
+
+1. Open points, none blocking: the shop name's letter case is not guaranteed (capitals in 1 of 5); a poster without the AI signature still uses the tall default footer boxes, so its pill sits high; the dark look with a signature was tested in the study only, not through the application.
+2. Then T-POSTER-009 (square/story, library): the shop's posters are mostly square, and the application still exports feed only.
+
+Ideas seen on the shop's posters and not built: feature list with icons (JBL Tune poster), coloured brand logo box. Both need verified facts or a logo asset, so they need requirements first.
+
+## Landmines added this session
+
+- An example inside the scene prompt is taken literally by the image model (it added earbuds to a speaker). Keep examples out of `compile_scene`.
+- The promotion blocklist matches "réduction"; the headline screen exempts only "réduction de bruit".
+- `outputs/style-study-2026-11-11/experiment.py` pays outside the ledger and has its own $5 budget; finished tags are skipped. Do not re-run rounds to inspect; images are in results/.
+- The product photos in products/ were fetched from manufacturer/retailer sites for testing (sources.json); they are not shop photos.
+- Facebook image URLs cannot be read out of the browser tool; references are viewer screenshots.
+
+## Previous deliveries (unchanged)
+
+- R50i reference-typography poster: outputs/style-reference-2026-11-10/soundcore-r50i-reference-typography-final.png, SHA-256 e574e884916eb29f908d22d51f3d95fad531a98225da05a834a3da0f4870b5f9; details in [style-reference-test-2026-11-10.md](reviews/style-reference-test-2026-11-10.md). Earlier dark poster: outputs/review-2026-11-10/. Shop/contact evidence: [shop-poster-sources-2026-11-10.md](reviews/shop-poster-sources-2026-11-10.md).
+
+## Architecture already in place
+
+- Strict Pydantic application document, exact integer MGA offer, immutable product/profile snapshots, owned original uploads, optimistic revisions, idempotent replay and copies/history.
+- Shared-shop Argon2/opaque sessions, Origin and ownership checks. SQLite BEGIN IMMEDIATE transactions and forward migrations 0001–0009.
+- Fixed/Claude planning with strict geometry/commercial screening; durable jobs/spend ledger; high-quality original-guided GPT integration/refinement; fidelity review separate from final poster confirmation.
+- French Vue/Vite/Konva editor with five bundled font files, independent identity fields, manual editing/undo/autosave/conflict recovery and selected-layer Claude proposals/material review.
+- Shared offline Chromium renderer, immutable PNG previews/confirmations, exact downloads, effective-format/source/font fingerprints and stale checks.
+- No server deployment or publishing integration. Backend/API README and project designs describe contracts.
+
+## Commands and landmines
+
+- Backend: from backend/, uv run pytest -q; uv run python -m affiche.api.
+- Frontend: from frontend/, npm.cmd test; npm.cmd run build; npm.cmd run dev. Use npm.cmd; npm.ps1 is blocked. Do not change execution policy.
+- Browser smoke: from backend/, uv run python ../frontend/tests/browser_smoke.py. Needs ports 8000/5173 free, current dist and downloaded R50i fixture; uses temporary stub data, no real .env.
+- Renderer needs frontend/dist and pinned Playwright Chromium. Install if missing: uv run playwright install --only-shell --no-remove chromium. Build changes never replace historical confirmed PNGs.
+- **Never read/print/grep backend/.env.** Legitimate application settings loading is allowed; keys never enter frontend or logs. Runner uses a random in-memory auth password, never persisted.
+- Never edit applied migrations 0001–0009. Migrate only through affiche.db.migrate; never set engine isolation_level. Backups: backend/data-probe/backups/before-poster-2026-11-10.db and before-style-poster-2026-11-10.db.
+- Outputs/data are Git-ignored; protect database and content-addressed assets together. No commit/push/deploy/publication was requested or done.
+- Product framing still requires visual review: geometry checks do not locate semantic product pixels. Integrated product is not independently draggable.
+- Live Claude scene planning/text polish and real generated material quality were not tested. Controlled transport/schema/queue and Chromium glyph masking were tested. No physical phone/Safari or backup restoration test.
+- Computer-use skill permits native UI only through node_repl @oai/sky. Prior Edge observations are stale; no need for desktop access to finish this task.
+- No subagents used. Previous feed goal was completed; no new goal was created for this follow-up.
+
+## Uncommitted files
+
+None after the 2026-11-11 commit on main (no remote). outputs/ and backend/data-*/ are Git-ignored: protect them yourself.

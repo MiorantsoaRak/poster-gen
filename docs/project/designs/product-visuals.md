@@ -4,7 +4,9 @@
 
 **Status:** Draft r4 (after Codex r1 + r2 + r3 and the devil's-advocate pass; see `../reviews/`). User decisions UQ-1 … UQ-5 applied 2026-11-06 (ADR-011). Codex r3 fixes applied; final narrow r4 (authorised by the user) → APPROVE WITH FIXES; its 3 fixes applied 2026-11-06. No further review rounds.
 **Requirements file:** [../requirements/product-visuals.md](../requirements/product-visuals.md) (R-PRODUCT-VISUALS-001 … 008, approved 2026-11-06; R-003 c.1–2, R-004 c.2 and R-005 amended 2026-11-06, ADR-011)
-**Approval record:** **Approved for phase 1 by the user on 2026-11-06** ("go ahead"; ADR-012). Phase-2 contracts in this file stay draft until design v2.
+**Approval record:** **Approved for phase 1 by the user on 2026-11-06** ("go ahead"; ADR-012). Phase-2 normal-poster sections D-009–011 are approved by ADR-031.
+
+**2026-11-09:** Requirements R-009–011 are now Approved (ADR-028). The **Approved v2** sections D-PRODUCT-VISUALS-009–011 at the end govern the proposed normal poster workflow and supersede the earlier phase-2 HTTP sketch/shared-state assumption. Phase 1 remains unchanged. Technical design approved 2026-11-09 (ADR-031); implementation tasks follow. New paid calls still require their own explicit scope.
 
 ```
  Phase 2: Vue (phone/desktop)       FastAPI process (owner = "api")                       Outside
@@ -72,7 +74,7 @@ CREATE TABLE run_products (                  -- snapshot at `generate`; later co
   run_label TEXT NOT NULL REFERENCES runs(label), variant_ref TEXT NOT NULL,
   arm TEXT CHECK (arm IN ('A','B')), fixture_row_sha256 TEXT NOT NULL,
   PRIMARY KEY (run_label, variant_ref)
-);                                           -- amended: + name, variant (migration 0002, ADR-018, user decision)
+);                                           -- amended: + name, variant (0002); + photo_assets_json (0003, ADR-027)
 
 CREATE TABLE abandonments (                  -- explicit "abandoned" outcome (R-008 c.2)
   variant_ref TEXT NOT NULL, run_label TEXT NOT NULL REFERENCES runs(label), cycle_no INTEGER NOT NULL,
@@ -198,6 +200,7 @@ def find_commercial_terms(text: str) -> list[str]
 - **Background block:** an empty product-photography scene, a surface in the lower-middle area, no product, no people, nothing written.
 - **Corrections:** reason codes map to fixed sentences. Scene: `cameras → "The camera layout must match image 1 exactly."`. Background: `integration → "Match a neutral, soft front light and an eye-level camera angle."`, `extra → "Remove all objects from the surface."`. The note is added as `"Shop's correction note (French): …"`. Codes with no background meaning (`coloris`, `logo`, …) add no sentence to a background prompt.
 - **Free-text screening** (description and correction note). This is best effort, as amended R-003 c.1 says (ADR-011):
+  - Enforcement repair (ADR-027): shared admission screens the resolved description for initial scenes, revisions and backgrounds before reserving spend. Idempotent replay remains first; the fixture parser keeps its aggregate diagnostics.
   - case- and accent-insensitive;
   - currency words `ar|ariary|mga|euros?|dollars?|€|\$`;
   - `%`;
@@ -445,6 +448,8 @@ OPM-A15-NOIR;Samsung Galaxy A15;Noir 128 Go;a15-noir-1.jpg|a15-noir-2.jpg;899000
 - `price_ar`/`facts` exist only for the leak test.
 - `arm` is set by the user, so easy and hard products are split evenly (ADR-011). With about 20 products, the evidence is weak either way.
 - At `generate`, each product's arm and the sha256 of its CSV row are stored in `run_products`. A later `generate --run L` whose CSV row differs for an existing product is refused, naming the product. Other commands read the arm only from `run_products`.
+- Snapshot repair (ADR-027): migration 0003 adds nullable `photo_assets_json`, the ordered SHA-256 hashes of the original files. New snapshots store these alongside the CSV hash. `generate` compares every supplied existing row and photo before filtering `--only`, writing assets or reserving spend. Changed bytes at an unchanged path refuse the whole command. Unchanged replay remains idempotent.
+- Legacy policy: NULL means original input content was not snapshotted. Refuse `generate` for that existing product with a distinct diagnostic; never infer its old hashes from current files or silently rewrite it. `sheet`, `apply`, review and export of already stored evidence remain available. No automatic new run, allowance reset, data-directory switch or paid call. A separately reviewed recovery/import procedure is needed if an old product must resume `generate`; this repair does not invent historical provenance.
 
 **CLI** (`python -m affiche.visuals.evaluate`; `owner='cli'`; one at a time):
 
@@ -528,3 +533,71 @@ OPM-A15-NOIR;Samsung Galaxy A15;Noir 128 Go;a15-noir-1.jpg|a15-noir-2.jpg;899000
 | UQ-3 Phasing | Phase 1 CLI evaluation, then phase 2 UI in design v2. This approval covers phase 1. |
 | UQ-4 Evaluation exception | CLI runs only: limit ≤ 5, `by_arm` corrections (D-PV-005, D-PV-008; R-005 last criterion). |
 | UQ-5 Reset | Explicit cycle after an approval (D-PV-005; R-005 c.4). |
+
+---
+
+## D-PRODUCT-VISUALS-009 — Integrated scenes for normal posters (Approved v2)
+
+**Covers:** approved R-PRODUCT-VISUALS-009 and continuing R-001/002/003/004/007. **Design approval:** ADR-031, 2026-11-09. Shared job/security contracts: [generation-jobs](generation-jobs.md) and [catalogue-brand](catalogue-brand.md). This section does not change evaluation runs/cycles or existing paid evidence.
+
+**Approach:** original product references → GPT Image edits → one integrated scene. No segmentation, cutout compatibility check or rembg installation is on this path. Title, price and shop elements are composed separately; prompted typography is handled in [poster-editor](poster-editor.md), without contaminating the clean scene.
+
+**Data:** poster_visuals(id UUID, shop_id, input_id FK product_inputs, job_id UNIQUE FK poster_jobs, base_visual_id nullable FK, treatment scene/photo_preserved, status pending_review/approved/rejected, image_asset nullable FK assets, background_asset nullable FK, cutout_asset nullable FK, placement_json nullable, source_assets_json ordered, reference_roles_json, plan_id nullable, prompt_text/hash, direction_json, model/quality/size, low_res_ack, rejection_reasons_json/note, created_at/decided_at). Source/output/prompt fields are immutable; only the pending review decision can change. For scene, image_asset is required; for photo_preserved, background_asset/cutout_asset/placement are required. Job/input/base must all belong to the shop and same immutable product input. Original hashes are retained regardless of later input replacement.
+
+**Image contract:** extend the existing provider generate interface with size and expected-size validation, defaulting to 1088x1920 for existing CLI callers. Pass the same size through live/stub adapter, validate_image and result parsing; add regression tests for both legacy and new callers. Preserve n=1 and explicit PNG output. Initial baseline gpt-image-2/high; input_fidelity remains omitted. New fixed application sizes:
+
+| Format | Provider scene | Export canvas |
+|---|---|---|
+| Feed | 1088×1360 | 1080×1350 |
+| Square | 1088×1088 | 1080×1080 |
+| Story | 1152×2048 | 1080×1920 |
+
+These are proposed supported sizes derived from the documented gpt-image-2 constraints, not measured new calls. No need to stretch/crop into an incorrect ratio. Keep exact source/output dimensions; render uses the reviewed per-format crop.
+
+Initial reference roles: image 1…N are original product views (1–3), optional final image is style only. Prompt compiler identifies roles and asks to remove external source graphics while retaining physical product markings, preserve identity/hardware, fit the planned product region, and leave overlay areas clear. It never sends shop logo/price/title for the clean-scene task. Plan free text remains screened. A new visual is not automatically considered faithful.
+
+**API:** POST /api/creations/{id}/scenes with If-Match, Idempotency-Key and {plan_id,format,acknowledged_warnings,style_reference_asset?}; 202 job. Validate plan belongs to the current input/format/field selection, rates/size allowed and low-resolution acknowledgement present; 409 plan_stale/attempt_limit/image_job_running, 422 acknowledgement_required/invalid_reference. GET /api/visuals/{id} returns original/comparison URLs, status, provenance and review reasons. No arbitrary filesystem path or URL is accepted.
+
+**Completion/selection:** insert pending visual atomically with job success. On the first scene only, if the creation is still at the job's origin revision with no selected scene, compose the editable draft and save a new revision. Otherwise keep it as an alternative and ask the operator to select it. Never clobber edits while the call was running. A pending visual can be edited in a clearly marked draft; confirmation/export still requires approval.
+
+**Review state:** pending_review → approved or rejected, terminal; same decision replay is idempotent, contrary decision is 409 review_decided. POST /api/visuals/{id}/decision {action,checks,reasons?,note?} with Idempotency-Key. Approval requires all fidelity checks (colour, markings, hardware, shape, extras/text, integration); rejection requires a reason or note. Compare zoomed original/generated image side by side on desktop or toggle on phone. Format-specific whole-product framing is recorded on each render confirmation, not guessed for all possible crops. Approval is scoped to exact input_id.
+
+| Failure / edge | Handling |
+|---|---|
+| Wrong model/colour/buttons or added award text | Reject on comparison; retain original and candidate; never claim prompt guarantees fidelity. |
+| Provider refuses/times out/returns invalid dimensions | Job error per generation-jobs; retain inputs and last selected visual; no fake candidate. |
+| New input supplied while old job runs | Save old result under old input; no auto-selection or inherited approval in new draft. |
+| Missing stored original/output | 503 asset_missing on affected operation; do not regenerate implicitly. |
+| Bad style reference | Refuse before spend; retain original intake and direction. |
+
+**Tests:** direct original references without rembg, role/order and prompt content, sizes threaded through every gateway path, pending-draft/final-export distinction, stale completion, ownership, source hashes and original-versus-generated zoom workflow. Real JPG/PNG JBL/Soundcore fixtures remain useful; representative poor shop photos are still required before claiming readiness.
+
+## D-PRODUCT-VISUALS-010 — Selected-scene refinement (Approved v2)
+
+**Covers:** approved R-PRODUCT-VISUALS-010; R-POSTER-EDITOR-002. **Data:** poster_visuals.base_visual_id plus immutable poster_jobs input snapshot; no separate mutable image history graph or changes to evaluation candidates.
+
+POST /api/creations/{id}/refinements with If-Match, Idempotency-Key, {base_visual_id, instruction_fr<=500,format,style_reference_asset?}. Accept a selected base in pending_review, approved or rejected for the same input. No requirement to reject a good base first. Reject cross-input/cross-shop references and text-only commands sent to this scene endpoint; UI directs text-only polish to the selected text-layer action.
+
+Reference order: image 1 = selected base scene; images 2…N+1 = original identity views; optional last image = style only. Compile a new role-aware prompt. Do not append the old initial prompt unmodified: its 'image 1 is the product reference' wording would be wrong. Original identity takes precedence if the base already distorted the product. State the requested change and instruct preservation of unrequested composition, with original photo authority for product details. The API receives an edit request, not a prompt-only new scene.
+
+Each success creates a new pending visual linked to the base; base pixels/status and existing confirmed PNGs remain unchanged. Full-scene edits can still change unrequested details; compare and review them, never promise pixel-local changes from prompt wording. The job stays an alternative until selected; a late result does not switch the current scene. Selecting it changes only the selected visual/crop, keeping title, offer, brand and other layers; show any resulting layout issues.
+
+Failures: unavailable base/original blocks before spend; ambiguous timeout retains charge estimate and base; duplicate UUID returns the same job; allowance exhaustion offers retain/manual edit/new draft/optional fallback, never auto-generates. Review decisions on one branch do not mutate another. Tests must show approved-base → rejected-refinement → unchanged approved-base and correct reference roles/cost/history.
+
+## D-PRODUCT-VISUALS-011 — Optional preserved-photo route (Approved v2, later slice)
+
+**Covers:** approved R-PRODUCT-VISUALS-011. This does not delay the main integrated-scene slice.
+
+Keep existing make_cutout/place inference helpers. Add poster_cutouts(id,shop_id,input_id,source_asset,cutout_asset nullable,bbox_json,status proposed/confirmed/rejected/failed,error_code,created_at/decided_at). A cutout is tied to exact source bytes. POST /api/creations/{id}/cutouts {source_asset} explicitly queues free local work; POST /api/cutouts/{id}/decision confirms/rejects; only confirmed cutouts can be sent to POST /api/creations/{id}/backgrounds {cutout_id,plan_id,format} for a paid background. All mutations use Idempotency-Key and creation-bound calls require If-Match.
+
+Fallback canvas has separate background and cutout layers. **Initial phase-2 fallback has no generated/baked contact shadow**; UI can enable a renderer shadow belonging to the product layer, following its transform. Do not reuse the evaluator's baked-shadow background as movable art. Raw generated background stays separately stored. Cutout/background composite becomes a pending photo_preserved visual and follows the same review/confirmation gates.
+
+Explicit states: proposed → confirmed/rejected; inference failure → failed. Neither successful inference nor component checks imply clean edges. Show alpha on contrasting checkerboard backgrounds, including small disconnected graphics. The actual Soundcore award artifact is a negative test; do not silently fix it by deleting every smaller component. Rejected mask spends no background call. Bad source/model unavailable/inference failure keeps integrated scene available. No manual mask painter or new segmentation model in this slice.
+
+A preserved image can move independently; an integrated product cannot. Render/document discriminated types enforce this distinction. Store transform at review; changing product crop/placement requires new format confirmation. Alpha/RGB preservation tests and pixel-equivalent previews are required before enabling the route.
+
+## Phase-2 source verification and limits
+
+[OpenAI image guide](https://developers.openai.com/api/docs/guides/image-generation) documents edits, multi-image references and gpt-image-2 resolution constraints (multiples of 16; maximum edge 3840; aspect ≤3:1; total 655,360…8,294,400 pixels), and says to omit input_fidelity for that model. Installed openai 3.46.0 AsyncImages.edit accepts an image sequence and size; the current app hardcodes/validates only 1088x1920, so changing only a prompt would not implement the new formats.
+
+The existing two real product calls establish only the old single-reference path. Multi-reference refinements, new sizes, masked text textures and phone fidelity review have not been live-tested. No new provider call was made for this design.

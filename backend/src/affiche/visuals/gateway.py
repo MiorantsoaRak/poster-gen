@@ -28,6 +28,8 @@ log = logging.getLogger(__name__)
 
 Purpose = Literal["scene", "background"]
 OUTPUT_SIZE = (1088, 1920)
+POSTER_SIZES = {"feed": "1088x1360", "square": "1088x1088", "story": "1152x2048"}
+IMAGE_SIZES = {"1088x1920", "1024x1024", *POSTER_SIZES.values()}
 PROVIDER_INPUT_LONG_EDGE = 1536
 CLIENT_TIMEOUT_S = 180
 MAX_DETAIL_CHARS = 500
@@ -140,16 +142,24 @@ def _to_srgb(image: Image.Image, icc_profile: bytes) -> Image.Image:
         raise ValueError(f"the photo's ICC colour profile cannot be read or applied: {error}") from error
 
 
-def validate_image(b64: str | None) -> tuple[bytes, str]:
-    """Bytes and mime of a provider image. Anything but a complete PNG or WebP of exactly 1088x1920 is
+def image_dimensions(size: str) -> tuple[int, int]:
+    if size not in IMAGE_SIZES:
+        raise ValueError("unsupported image size")
+    width, height = size.split("x")
+    return int(width), int(height)
+
+
+def validate_image(b64: str | None, *, size: str = "1088x1920") -> tuple[bytes, str]:
+    """Bytes and mime of a provider image. Anything but a complete PNG or WebP of the requested size is
     `invalid_response`."""
+    expected = image_dimensions(size)
     if not isinstance(b64, str):
         raise ProviderError("invalid_response", "no b64_json image in the response")
     try:
         data = base64.b64decode(b64, validate=True)
         with Image.open(io.BytesIO(data)) as image:
             image.load()  # a full decode, so that truncated data fails here
-            image_format, size = image.format, image.size
+            image_format, dimensions = image.format, image.size
     except (ValueError, OSError, SyntaxError, Image.DecompressionBombError) as error:
         undecodable = str(error)
     else:
@@ -159,8 +169,8 @@ def validate_image(b64: str | None) -> tuple[bytes, str]:
     if image_format not in ("PNG", "WEBP"):
         raise ProviderError("invalid_response", f"format {image_format}, expected PNG or WEBP")
     # ponytail: strict size; accept-and-crop larger outputs if the evaluation shows mismatches.
-    if size != OUTPUT_SIZE:
-        raise ProviderError("invalid_response", f"size {size[0]}x{size[1]}, expected 1088x1920")
+    if dimensions != expected:
+        raise ProviderError("invalid_response", f"size {dimensions[0]}x{dimensions[1]}, expected {size}")
     return data, Image.MIME[image_format]
 
 
@@ -236,25 +246,29 @@ class OpenAIProvider:
             logging.getLogger(name).setLevel(logging.WARNING)
 
     async def generate(self, *, purpose: Purpose, model: str, quality: str, prompt: str,
-                       images: list[bytes]) -> ProviderResult:
+                       images: list[bytes], size: str = "1088x1920") -> ProviderResult:
         """`images` are provider_input copies: the variant's photos then the style reference, in that order."""
         _check_request(purpose, model, images)
+        image_dimensions(size)
         try:
-            response = await self._send(model, quality, prompt, images)
+            response = await self._send(model, quality, prompt, images, size)
         except (openai.APIError, json.JSONDecodeError, UnicodeDecodeError) as error:  # the last two: a bad 200 body
             failure = _classify(error)
         else:
-            return _result(model, response)
+            return _result(model, response, size=size)
         # Raised outside the handler: the SDK error, whose message may echo a key, must not travel as __context__.
         raise failure
 
-    async def _send(self, model: str, quality: str, prompt: str, images: list[bytes]) -> object:
-        common = {"model": model, "prompt": prompt, "n": 1, "size": "1088x1920", "quality": quality}
+    async def _send(self, model: str, quality: str, prompt: str, images: list[bytes], size: str) -> object:
+        common = {"model": model, "prompt": prompt, "n": 1, "size": size, "quality": quality, "output_format": "png"}
         if not images:
             return await self._client.images.generate(**common)
         # Never input_fidelity: the docs say to omit it for gpt-image-2. A list goes as `image[]` parts, in order.
         files = [(f"image-{number}.png", data, "image/png") for number, data in enumerate(images, 1)]
         return await self._client.images.edit(image=files, **common)
+
+    async def close(self):
+        await self._client.close()
 
 
 def _classify(error: openai.APIError | ValueError) -> ProviderError:
@@ -282,11 +296,11 @@ def _status_kind(error: openai.APIStatusError) -> ProviderErrorKind:
     return "invalid_request"
 
 
-def _result(model: str, response: object) -> ProviderResult:
+def _result(model: str, response: object, *, size: str = "1088x1920") -> ProviderResult:
     items = response.data if isinstance(response, ImagesResponse) else None
     if not isinstance(items, list) or not items:
         raise ProviderError("invalid_response", f"no image in the response ({type(response).__name__})")
-    image, mime = validate_image(getattr(items[0], "b64_json", None))
+    image, mime = validate_image(getattr(items[0], "b64_json", None), size=size)
     usage = parse_usage(response.usage)
     if usage is None:  # no values logged: the raw usage is unvalidated provider data
         log.warning("%s usage from %s: the reserved estimate stays as the cost",
@@ -305,8 +319,9 @@ class StubProvider:
         self.delay = delay
 
     async def generate(self, *, purpose: Purpose, model: str, quality: str, prompt: str,
-                       images: list[bytes]) -> ProviderResult:
+                       images: list[bytes], size: str = "1088x1920") -> ProviderResult:
         _check_request(purpose, model, images)
+        dimensions = image_dimensions(size)
         if (kind := next(self._fail_kinds, None)) is not None:
             raise ProviderError(kind, "stub failure")
         await asyncio.sleep(self.delay)
@@ -314,7 +329,7 @@ class StubProvider:
         for data in images:
             digest.update(hashlib.sha256(data).digest())
         buffer = io.BytesIO()
-        Image.new("RGB", OUTPUT_SIZE, tuple(digest.digest()[:3])).save(buffer, format="PNG")
+        Image.new("RGB", dimensions, tuple(digest.digest()[:3])).save(buffer, format="PNG")
         return ProviderResult(buffer.getvalue(), "image/png", usage=None, cost_micros=0)
 
 

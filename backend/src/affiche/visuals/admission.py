@@ -16,7 +16,9 @@ from affiche.config import Settings
 from affiche.db import utc_now, write_tx
 from affiche.runtime import Owner
 from affiche.visuals.gateway import RATES, Purpose, usd_to_micros
-from affiche.visuals.prompts import Direction, SceneSubject, build_background_prompt, build_scene_prompt
+from affiche.visuals.prompts import (
+    Direction, SceneSubject, build_background_prompt, build_scene_prompt, find_commercial_terms,
+)
 
 MAX_PHOTOS = 3
 LOW_RESOLUTION = "low_resolution"
@@ -159,6 +161,8 @@ def _admit(engine: Engine, settings: Settings, request_id: str, owner: Owner, pa
             return Admitted(request_id, json.loads(known.request_json)["attempt_no"], True, 0,
                             spent_micros(conn, settings), cap)
         plan = resolve(conn)
+        if matches := find_commercial_terms(plan.direction.description or ""):
+            raise Refused(422, "commercial_terms", {"field": "description", "matches": matches})
         # A stale target (an earlier cycle) is refused as such, before the current scope's rules can mask it.
         for target in (plan.parent, plan.cutout):
             if target is not None and _Scope(target.variant_ref, target.cycle_no, target.run_label) != plan.scope:
@@ -291,5 +295,6 @@ def _short_edges(conn: Connection, shas: list[str]) -> dict[str, int]:
 def spent_micros(conn: Connection, settings: Settings) -> int:
     """Micro-USD on the ledger since SPEND_CAP_SINCE: what the cap is checked against."""
     # ISO text comparison: utc_now() text order is time order, and the date is a prefix of its first instant.
-    return conn.execute(text("SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since"),
+    return conn.execute(text("SELECT (SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since)"
+                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM poster_calls WHERE created_at >= :since)"),
                         {"since": settings.spend_cap_since.isoformat()}).scalar_one()

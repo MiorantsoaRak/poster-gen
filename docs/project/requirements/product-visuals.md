@@ -6,6 +6,8 @@
 
 **Statuses:** `Draft` → `Approved` → `Implemented` → `Verified` (or `Dropped`)
 
+**2026-11-09 approval (ADR-028):** The user approved R-009–011 after explicitly choosing GPT Image integration as primary. These amendments govern the normal poster flow. R-001–008 remain the approved phase-1 evaluator baseline; its automatic cutout comparison is not the normal product workflow. Phase-2 technical design approval is still required before implementation.
+
 ## Index
 
 | ID | Title | Priority | Status |
@@ -18,6 +20,9 @@
 | R-PRODUCT-VISUALS-006 | Photo-preserving fallback | P0 | Approved |
 | R-PRODUCT-VISUALS-007 | Visual record, provenance and reuse | P0 | Approved |
 | R-PRODUCT-VISUALS-008 | Pilot fidelity evaluation | P0 | Approved |
+| R-PRODUCT-VISUALS-009 | Integrated scene as the primary path | P0 | Approved |
+| R-PRODUCT-VISUALS-010 | Refine a selected scene without losing it | P0 | Approved |
+| R-PRODUCT-VISUALS-011 | Optional photo-preserving alternative | P1 | Approved |
 
 ---
 
@@ -161,9 +166,66 @@
 
 ---
 
+## R-PRODUCT-VISUALS-009 — Integrated scene as the primary path
+
+- **Status:** Approved (2026-11-09; ADR-028)
+- **Priority:** P0
+- **Amends for phase 2:** R-002 candidate use/cropping, R-004 review scope, R-006 fallback priority. The existing evaluator remains a separate comparison tool.
+
+As the operator, I want GPT Image to recreate/integrate my referenced product naturally into the scene, without depending on a perfect cutout.
+
+Acceptance criteria:
+
+- [ ] The default generation path sends the original product photo(s) directly as product references. A cutout is neither required nor automatically generated; an unavailable segmentation model cannot block scene generation.
+- [ ] Instructions preserve the confirmed model, colour, proportions, manufacturer markings and visible hardware details, while integrating perspective, light and contact shadows. Generative fidelity is reviewed, never guaranteed by prompt wording alone.
+- [ ] The target format and space needed for selected overlays inform the composition. The model adds no commercial text, shop logo, price, claims, watermark, external award graphic or extra product/accessory. Markings on the product itself remain subject to fidelity review.
+- [ ] A finished candidate is `pending_review` and appears within an editable poster draft, with an explicit unapproved indicator. Final confirmation/export remains blocked until fidelity review approves it.
+- [ ] Review compares original and generated product at useful zoom on phone/desktop. It checks shape, colour, branding, visible hardware, unwanted objects/text and realistic integration, plus the whole-product framing for each format being confirmed. It does not pretend an unreviewed crop is approved.
+- [ ] Refinement or a new scene creates a separate candidate; no generation overwrites an approved image or changes the original files.
+- [ ] Tests include the saved real JBL/Soundcore references and representative messy shop photos. A result that looks attractive but changes product identity fails fidelity review. The two manufacturer-image successes alone do not establish pilot readiness.
+
+Out of scope: arbitrary product dragging within the raster scene and automatic fidelity certification.
+
+## R-PRODUCT-VISUALS-010 — Refine a selected scene without losing it
+
+- **Status:** Approved (2026-11-09; ADR-028)
+- **Priority:** P0
+- **Amends for phase 2:** R-002's reject-only alternative rule and R-005's revision/campaign rule; normal draft allowances are defined in generation-jobs.
+
+As the operator, I can improve a useful scene without discarding it or restarting blindly from the source photo.
+
+Acceptance criteria:
+
+- [ ] An explicit refinement can start from a selected pending, approved or rejected scene for the same product/input version. The request includes that scene as the editing reference and the original product photo(s) as identity references, with clearly distinct roles.
+- [ ] The user specifies the desired change, such as softer lighting, less clutter or more headline space. Unrequested details should be preserved; review checks whether the model complied. The operator is not promised pixel-local editing.
+- [ ] Keep the base candidate's pixels, status and provenance unchanged. The result is a new linked `pending_review` candidate recording the base, original hashes, instructions, model and cost.
+- [ ] Failure, rejection, cancellation of selection or simply keeping the base leaves the previous draft scene available. An approved base does not lose approval merely because another version was requested.
+- [ ] Each creative attempt is explicit and budgeted. There is no automated polish-until-approved loop and no background generation triggered by ordinary text/price edits.
+- [ ] Same-request replay cannot spend twice or create duplicate alternatives. Selecting an older candidate after a late result is respected; new results never silently replace the selected scene.
+
+Out of scope: brush masks, local retouching, image-to-layer extraction. The phase-1 evaluator's revision algorithm remains unchanged until an approved phase-2 design/task replaces it for normal drafts.
+
+## R-PRODUCT-VISUALS-011 — Optional photo-preserving alternative
+
+- **Status:** Approved (2026-11-09; ADR-028)
+- **Priority:** P1; not a blocker for the integrated-scene workflow
+- **Amends for phase 2:** R-006's automatic assumptions and baked-shadow warning.
+
+As the operator, I may choose to preserve my original product pixels when a source is suitable, without being forced into this route.
+
+Acceptance criteria:
+
+- [ ] The photo-preserving route is an explicit optional action, including at a generation limit. It is never a prerequisite or automatic replacement for integrated generation.
+- [ ] Preview and confirm the cutout before spending on a background. Show edges and retained source graphics clearly; inference success is not approval. Rejecting an unsuitable mask preserves the original and offers a better source or the integrated route.
+- [ ] Opaque product pixels come from the original. No blind largest-component cleanup may silently delete legitimate detached product parts; no promise is made of a perfect mask for every photo.
+- [ ] If this route supports moving/resizing the product, any rendered contact shadow follows its transform or is explicitly disabled. A stale baked shadow must not remain behind after moving the product.
+- [ ] Keep the cutout, background and any independently required shadow available for editable composition, with their original provenance. The composed result still requires fidelity and format review.
+
+Out of scope: manual mask painting or a new segmentation model in this change. Implementation of this amended alternative follows the primary scene/editor path, with its own design and tests.
+
 ## Open questions (must be answered before approval)
 
-None.
+None. R-009–011 were approved on 2026-11-09 (ADR-028); renderer/model/job/storage choices belong to the separately approved technical designs. Earlier approvals remain scoped to R-001–008 and phase 1.
 
 ## Resolved questions
 

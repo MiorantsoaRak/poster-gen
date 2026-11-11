@@ -23,6 +23,8 @@ def put(data_dir: Path, data: bytes, ext: str) -> str:
     sha = hashlib.sha256(data).hexdigest()
     final = path(data_dir, sha, ext)
     if final.exists():
+        if final.read_bytes() != data:
+            raise OSError("content-addressed asset is corrupt")
         return sha
     final.parent.mkdir(parents=True, exist_ok=True)
     # The temp file sits in the final folder: os.replace is atomic only within one volume.
@@ -32,7 +34,13 @@ def put(data_dir: Path, data: bytes, ext: str) -> str:
             tmp.write(data)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.replace(tmp_name, final)
+        try:
+            os.replace(tmp_name, final)
+        except OSError:
+            # Windows may refuse replacement while another writer/reader holds the identical destination.
+            if not final.exists() or final.read_bytes() != data:
+                raise
+            Path(tmp_name).unlink()
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)
         raise

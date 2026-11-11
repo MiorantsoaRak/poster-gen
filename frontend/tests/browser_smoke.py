@@ -1,0 +1,319 @@
+"""Real Chromium + Vue + HTTP API smoke, isolated stub data; run from backend with uv run python ../frontend/tests/browser_smoke.py."""
+import json
+import base64
+import copy
+import io
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import threading
+import time
+
+import uvicorn
+from playwright.sync_api import sync_playwright, expect
+from PIL import Image, ImageChops, ImageDraw
+
+from affiche.api import create_app
+from affiche.config import Settings
+from affiche.posters.auth import PASSWORDS
+
+ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = ROOT / "outputs" / "editor-smoke"
+ORIGIN = "http://127.0.0.1:5173"
+PASSWORD = os.urandom(12).hex()  # a throwaway credential per run against temporary stub data
+
+
+def check_material_pixels(page, document):
+    fixture = copy.deepcopy(document)
+    target = next(layer for layer in fixture["formats"]["feed"]["layers"] if layer["role"] == "title")
+    target.update(x=64, y=64, width=950, height=140, font_size=72, fill="#FFFFFF", outline=None, shadow=None)
+    fixture["offer"]["title"] = "Écouteurs R50i"
+    fixture["formats"]["feed"]["scene"] = {"visual_id": None, "crop": None}
+    swatch = Image.new("RGB", (32, 32), "#edc45e")
+    drawing = ImageDraw.Draw(swatch)
+    for x in range(0, 32, 4):
+        drawing.line((x, 0, x, 31), fill="#84601b", width=2)
+    stream = io.BytesIO()
+    swatch.save(stream, format="PNG")
+    sources = {"effect:material": "data:image/png;base64," + base64.b64encode(stream.getvalue()).decode()}
+    def render(doc):
+        result = page.evaluate("async ([document, sources]) => (await import('/src/render.ts')).render(document, sources)", [doc, sources])
+        assert not [issue for issue in result["issues"] if issue["blocking"]], result["issues"]
+        return Image.open(io.BytesIO(base64.b64decode(result["png"].split(",", 1)[1]))).convert("RGB")
+    plain = render(fixture)
+    target["texture_effect_id"] = "material"
+    material = render(fixture)
+    box = ImageChops.difference(plain, material).getbbox()
+    assert box and box[0] >= 64 and box[1] >= 64 and box[2] <= 1014 and box[3] <= 204, box
+    # The native pattern fill cannot introduce pixels in the holes or space outside exact glyphs.
+    background = Image.new("RGB", plain.size, "#17324D")
+    def support(image):
+        r, g, b = ImageChops.difference(image, background).split()
+        return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda value: 255 if value else 0)
+    plain_glyphs, material_glyphs = support(plain), support(material)
+    # Darker colours can round a faint antialias edge to zero; they may never paint outside the glyph.
+    assert ImageChops.subtract(material_glyphs, plain_glyphs).getbbox() is None
+    fixture["offer"]["price_ar"] += 1000
+    edited = render(fixture)
+    price = next(layer for layer in fixture["formats"]["feed"]["layers"] if layer["role"] == "price")
+    box = ImageChops.difference(material, edited).getbbox()
+    assert box and box[0] >= price["x"] and box[1] >= price["y"] and box[3] <= price["y"] + price["height"], box
+    material.save(OUTPUT / "glyph-material-test.png")
+    price.update(font_id="montserrat-black-italic", weight=900, font_size=72, x=240, width=600, height=150,
+                 price_badge={"fill": "#FFFFFF", "border_start": "#009FE3", "border_end": "#1853BD"})
+    plain_price = render(fixture)
+    price["texture_effect_id"] = "material"
+    textured_price = render(fixture)
+    box = ImageChops.difference(plain_price, textured_price).getbbox()
+    assert box and box[0] > price["x"] + 6 and box[2] < price["x"] + price["width"] - 6, box
+    assert box[1] > price["y"] + 6 and box[3] < price["y"] + price["height"] - 6, box
+    textured_price.save(OUTPUT / "capsule-material-test.png")
+
+
+def run():
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
+        settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
+                            anthropic_api_key=None, stub_fail=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
+                            data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD))
+        server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        with (OUTPUT / "vite.log").open("w", encoding="utf-8") as log:
+            vite = subprocess.Popen(["node", str(ROOT / "frontend/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1"],
+                                    cwd=ROOT / "frontend", stdout=log, stderr=log,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            try:
+                with sync_playwright() as playwright:
+                    # SMOKE_CHANNEL=msedge runs the same flow in the installed Microsoft Edge.
+                    browser = playwright.chromium.launch(headless=True, channel=os.environ.get("SMOKE_CHANNEL") or None)
+                    print("Browser:", browser.browser_type.name, os.environ.get("SMOKE_CHANNEL") or "bundled", browser.version, flush=True)
+                    try:
+                        page = browser.new_page(viewport={"width": 1440, "height": 1050})
+                        errors = []
+                        page.set_default_timeout(10000)
+                        page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
+                        page.on("pageerror", lambda error: errors.append(str(error)))
+                        for attempt in range(60):
+                            if vite.poll() is not None:
+                                raise RuntimeError("Vite stopped; inspect outputs/editor-smoke/vite.log")
+                            try:
+                                page.goto(ORIGIN, timeout=2000)
+                                break
+                            except Exception:
+                                if attempt == 59:
+                                    raise
+                                time.sleep(.25)
+                        page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+                        page.get_by_role("button", name="Ouvrir l’atelier").click()
+                        expect(page.get_by_label("Photos du produit")).to_be_enabled()
+                        page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        expect(page.locator(".photo-strip img")).to_have_count(1)
+                        page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i")
+                        page.get_by_label("Variante confirmée").fill("Noir · écouteurs et boîtier")
+                        page.get_by_label("Prix en ariary", exact=True).fill("90 000")
+                        page.get_by_label("Les photos correspondent").check()
+                        page.get_by_label("Nom de la boutique", exact=True).first.fill("Original Phone Mada")
+                        page.get_by_label("Contact", exact=True).first.fill("038 93 028 00 / 034 93 028 00")
+                        page.get_by_role("checkbox", name="Nom de la boutique", exact=True).check()
+                        page.get_by_role("checkbox", name="Contact", exact=True).check()
+                        page.get_by_role("button", name="Créer mon brouillon").click()
+                        expect(page.get_by_role("heading", name="Votre affiche", exact=True)).to_be_visible()
+                        expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+                        page.get_by_text("S’inspirer d’une affiche", exact=True).click()
+                        page.get_by_label("Affiche de référence (facultative)").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_be_visible()
+                        style_src = page.get_by_alt_text("Affiche de référence pour le style").get_attribute("src")
+                        # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
+                        page.get_by_text("Créer un style depuis une affiche", exact=True).click()
+                        page.get_by_label("Affiche modèle").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        expect(page.get_by_alt_text("Affiche modèle pour le nouveau style")).to_be_visible()
+                        page.get_by_label("Nom du style").fill("Vagues bleues")
+                        page.get_by_role("button", name="Enregistrer ce style").click()
+                        expect(page.get_by_text("Style « Vagues bleues » enregistré", exact=False)).to_be_visible(timeout=15000)
+                        expect(page.get_by_role("button", name="Vagues bleues")).to_have_attribute("aria-pressed", "true")
+                        expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("vagues translucides"))
+                        looks = page.request.get(f"{ORIGIN}/api/looks").json()["items"]
+                        assert [item["name"] for item in looks] == ["Vagues bleues"] and looks[0]["brief"]["alignment"] == "left"
+                        # The look picker sets the art direction; this flow then tests the editable title layer.
+                        page.get_by_role("button", name="Luxe sombre").click()
+                        expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("Fond noir charbon"))
+                        page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
+                        # One tap: the plan is made on the way and reused by the retry below.
+                        # Lose the first paid-action response after the server accepted it; retry must reuse its key.
+                        def lose_response(route):
+                            route.fetch()
+                            route.abort("failed")
+                            page.unroute("**/api/creations/*/scenes", lose_response)
+                        page.route("**/api/creations/*/scenes", lose_response)
+                        page.get_by_role("button", name="Générer la scène").click()
+                        expect(page.get_by_role("alert")).to_contain_text("Connexion interrompue")
+                        page.get_by_role("button", name="Générer la scène").click()
+                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        for checkbox in page.locator(".review-checks input").all():
+                            checkbox.check()
+                        page.get_by_role("button", name="Approuver la fidélité").click()
+                        expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        jobs = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}/jobs").json()["items"]
+                        assert len([job for job in jobs if job["kind"] == "scene"]) == 1
+                        scene_before = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["formats"]["feed"]["scene"]
+                        page.get_by_label("Prix en ariary", exact=True).fill("95 000")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.get_by_role("button", name="Annuler", exact=True).click()
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.reload()
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        saved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert saved["document"]["formats"]["feed"]["scene"] == scene_before
+                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_have_attribute("src", style_src)
+                        visual = page.request.get(f"{ORIGIN}/api/visuals/{scene_before['visual_id']}").json()
+                        assert visual["style_reference_asset"] and len(visual["original_urls"]) == 1
+                        page.get_by_role("button", name="Retirer la référence").click()
+                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_have_count(0)
+                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        page.locator(".poster-canvas").focus()
+                        page.keyboard.press("ArrowRight")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        moved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert moved["document"]["formats"]["feed"]["layers"][0]["x"] == saved["document"]["formats"]["feed"]["layers"][0]["x"] + 1
+                        page.evaluate("scrollTo(0, 0)")
+                        page.screenshot(path=str(OUTPUT / "desktop.png"), full_page=True)
+                        page.set_viewport_size({"width": 390, "height": 844})
+                        expect(page.get_by_label("Titre", exact=True)).to_be_visible()
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                        page.screenshot(path=str(OUTPUT / "mobile.png"), full_page=True)
+                        # A second tab changes the saved version. Local work must remain available for a copy.
+                        creation_id = page.url.split("#")[1]
+                        remote = page.request.get(f"{ORIGIN}/api/creations/{creation_id}").json()
+                        remote["document"]["offer"]["title"] = "Titre modifié dans un autre onglet"
+                        from uuid import uuid4
+                        response = page.request.put(f"{ORIGIN}/api/creations/{creation_id}", data=remote["document"],
+                            headers={"Origin": ORIGIN, "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
+                        assert response.status == 200
+                        page.get_by_label("Titre", exact=True).fill("Mon titre conservé")
+                        expect(page.get_by_role("button", name="Conserver mes modifications dans une copie")).to_be_visible(timeout=10000)
+                        page.get_by_role("button", name="Conserver mes modifications dans une copie").click()
+                        expect(page.get_by_text("Vos modifications ont été conservées dans une copie.")).to_be_visible()
+                        assert page.url.split("#")[1] != creation_id
+                        expect(page.get_by_label("Titre", exact=True)).to_have_value("Mon titre conservé")
+                        # The stub proposal is explicitly labelled as a simulation and needs an apply decision.
+                        page.get_by_text("Ajuster ce texte avec une consigne", exact=True).click()
+                        page.get_by_label("Votre consigne").fill("Une couleur dorée")
+                        before_polish = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
+                        expect(page.get_by_role("button", name="Appliquer au texte")).to_be_visible(timeout=15000)
+                        unchanged = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert unchanged == before_polish
+                        page.get_by_role("button", name="Appliquer au texte").click()
+                        expect(page.get_by_role("button", name="Appliquer au texte")).to_have_count(0)
+                        after_polish = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        expected = copy.deepcopy(before_polish["document"])
+                        next(layer for layer in expected["formats"]["feed"]["layers"] if layer["role"] == "title")["fill"] = "#FFCC66"
+                        assert after_polish["document"] == expected
+                        check_material_pixels(page, expected)
+                        page.get_by_role("button", name="Générer la matière du texte", exact=True).click()
+                        expect(page.get_by_role("button", name="Appliquer la matière", exact=True)).to_be_visible(timeout=15000)
+                        still = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert still == after_polish
+                        page.get_by_role("button", name="Appliquer la matière", exact=True).click()
+                        expect(page.get_by_role("button", name="Retirer la matière du texte", exact=True)).to_be_visible()
+                        with_effect = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        effect_id = next(layer for layer in with_effect["document"]["formats"]["feed"]["layers"] if layer["role"] == "title")["texture_effect_id"]
+                        assert effect_id
+                        expected_effect = copy.deepcopy(expected)
+                        next(layer for layer in expected_effect["formats"]["feed"]["layers"] if layer["role"] == "title")["texture_effect_id"] = effect_id
+                        assert with_effect["document"] == expected_effect
+                        page.get_by_role("button", name="Annuler", exact=True).click()
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        undone = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert undone["document"] == expected
+                        # Reference typography is a manual single-layer edit, saved and undoable without generation.
+                        page.get_by_role("button", name="Prix", exact=True).click()
+                        # The chosen look already dressed the price as its dark pill, at half the canvas width.
+                        auto_pill = next(layer for layer in expected["formats"]["feed"]["layers"] if layer["role"] == "price")
+                        assert auto_pill["price_badge"] == {"fill": "#111114", "border_start": "#C8A45A", "border_end": "#C8A45A"}
+                        assert (auto_pill["width"], auto_pill["x"], auto_pill["fill"]) == (540, 270, "#FFFFFF")
+                        expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")
+                        page.get_by_label("Présentation du prix", exact=True).select_option("simple")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        expected = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]
+                        page.get_by_label("Police", exact=True).select_option("montserrat-black-italic")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.get_by_label("Présentation du prix", exact=True).select_option("capsule")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        styled = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        expected_styled = copy.deepcopy(expected)
+                        price_layer = next(layer for layer in expected_styled["formats"]["feed"]["layers"] if layer["role"] == "price")
+                        price_layer.update(font_id="montserrat-black-italic", weight=900,
+                                           price_badge={"fill": "#FFFFFF", "border_start": "#009FE3", "border_end": "#1853BD"})
+                        assert styled["document"] == expected_styled
+                        runs = page.evaluate("""async doc => {
+                            const { textRuns } = await import('/src/canvas.ts');
+                            return textRuns(doc, doc.formats.feed.layers.find(layer => layer.role === 'price'));
+                        }""", styled["document"])
+                        assert [run["text"] for run in runs] == ["90\u00a0000", "AR"]
+                        assert runs[0]["fontStyle"] == "italic 900" and runs[1]["fontStyle"] == "400"
+                        assert runs[1]["fontSize"] < runs[0]["fontSize"]
+                        page.get_by_role("button", name="Annuler", exact=True).click()
+                        expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("simple")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.get_by_role("button", name="Rétablir", exact=True).click()
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.reload()
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        page.get_by_role("button", name="Prix", exact=True).click()
+                        expect(page.get_by_label("Police", exact=True)).to_have_value("montserrat-black-italic")
+                        expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                        assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"] == expected_styled
+                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+                        expect(page.get_by_role("heading", name="Votre affiche, prête à vérifier")).to_be_visible(timeout=40000)
+                        preview_url = page.locator(".final-preview img").get_attribute("src")
+                        preview_bytes = page.request.get(ORIGIN + preview_url).body()
+                        for checkbox in page.locator(".final-preview input[type=checkbox]").all():
+                            checkbox.check()
+                        page.get_by_role("button", name="Confirmer cette version", exact=True).click()
+                        link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+                        expect(link).to_be_visible()
+                        downloaded = page.request.get(ORIGIN + link.get_attribute("href"))
+                        assert downloaded.status == 200 and downloaded.body() == preview_bytes
+                        assert Image.open(io.BytesIO(preview_bytes)).size == (1080, 1350)
+                        (OUTPUT / "confirmed-stub-poster.png").write_bytes(preview_bytes)
+                        page.get_by_label("Prix en ariary", exact=True).fill("91 000")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.get_by_role("button", name="Confirmer cette version", exact=True).click()
+                        expect(page.get_by_role("alert")).to_contain_text("nouvel aperçu")
+                        assert page.request.get(ORIGIN + link.get_attribute("href")).body() == preview_bytes
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        page.get_by_label("Titre", exact=True).fill("Écouteurs " * 25)
+                        expect(page.get_by_text("Le texte dépasse son cadre.", exact=False)).to_be_visible()
+                        page.get_by_label("Titre", exact=True).fill("Son 🎵")
+                        expect(page.get_by_text("Cette police ne contient pas tous les caractères du texte.")).to_be_visible()
+                        assert not errors, errors
+                        (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
+                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")
+                    except Exception:
+                        page.screenshot(path=str(OUTPUT / "failure.png"), full_page=True)
+                        print(page.locator("body").inner_text(), flush=True)
+                        print("Page errors:", errors, flush=True)
+                        raise
+                    finally:
+                        browser.close()
+            finally:
+                vite.terminate()
+                try:
+                    vite.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    vite.kill()
+                    vite.wait(timeout=10)
+                server.should_exit = True
+                thread.join(timeout=20)
+                assert not thread.is_alive(), "API did not stop"
+
+
+if __name__ == "__main__":
+    run()

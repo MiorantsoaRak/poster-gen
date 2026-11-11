@@ -1,0 +1,23 @@
+{
+  "name": "affiche-ia-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "vue": "3.5.45",
+    "konva": "10.9.1",
+    "vue-konva": "4.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.10",
+    "typescript": "5.9.3",
+    "vite": "8.3.7",
+    "vitest": "5.1.0",
+    "vue-tsc": "3.3.14"
+  }
+}
