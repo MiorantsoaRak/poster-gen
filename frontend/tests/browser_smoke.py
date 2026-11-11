@@ -121,11 +121,13 @@ def run():
                         page.get_by_role("checkbox", name="Nom de la boutique", exact=True).check()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
                         page.get_by_role("button", name="Créer mon brouillon").click()
-                        expect(page.get_by_role("heading", name="Votre affiche", exact=True)).to_be_visible()
+                        expect(page.get_by_role("heading", name="Soundcore R50i", exact=True)).to_be_visible()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
                         # The coach line and the reasons under blocked buttons tell a new owner what to do.
-                        expect(page.locator(".coach")).to_contain_text("choisissez un style (02)")
-                        expect(page.get_by_text("Générez d’abord une scène à l’étape 02.")).to_be_visible()
+                        expect(page.locator(".coach")).to_contain_text("choisissez un style")
+                        # Several versions are possible and announced before the first one exists.
+                        expect(page.get_by_role("heading", name="Versions 0 sur 12")).to_be_visible()
+                        expect(page.get_by_text("Vous choisirez celle à exporter.", exact=False)).to_be_visible()
                         assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
                         page.get_by_text("Créer un style depuis une affiche", exact=True).click()
@@ -135,6 +137,13 @@ def run():
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_have_count(0)
                         page.get_by_label("Nom du style").fill("Vagues bleues")
                         page.get_by_role("button", name="Enregistrer ce style").click()
+                        # A paid action is confirmed first, with its cost; cancelling does nothing.
+                        expect(page.get_by_role("dialog")).to_contain_text("Créer un style depuis cette affiche ?")
+                        expect(page.get_by_role("dialog")).to_contain_text("aucune dépense")
+                        page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
+                        assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
+                        page.get_by_role("button", name="Enregistrer ce style").click()
+                        page.get_by_role("button", name="Créer le style").click()
                         expect(page.get_by_text("Style « Vagues bleues » enregistré", exact=False)).to_be_visible(timeout=15000)
                         expect(page.get_by_role("button", name="Vagues bleues")).to_have_attribute("aria-pressed", "true")
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("vagues translucides"))
@@ -154,8 +163,11 @@ def run():
                             page.unroute("**/api/creations/*/scenes", lose_response)
                         page.route("**/api/creations/*/scenes", lose_response)
                         page.get_by_role("button", name="Générer la scène").click()
+                        expect(page.get_by_role("dialog")).to_contain_text("Générer la scène ?")
+                        page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("alert")).to_contain_text("Connexion interrompue")
                         page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         for checkbox in page.locator(".review-checks input").all():
                             checkbox.check()
@@ -176,7 +188,11 @@ def run():
                         visual = page.request.get(f"{ORIGIN}/api/visuals/{scene_before['visual_id']}").json()
                         # The editor no longer sends a separate style-reference image (the API still accepts one).
                         assert visual["style_reference_asset"] is None and len(visual["original_urls"]) == 1
-                        expect(page.locator(".coach")).to_contain_text("Dernière étape (03)")
+                        expect(page.locator(".coach")).to_contain_text("Dernière étape")
+                        # The chosen version is named, and another one is one confirmed tap away.
+                        expect(page.get_by_role("heading", name="Versions 1 sur 12")).to_be_visible()
+                        expect(page.get_by_text("Choisie pour l’export", exact=True)).to_be_visible()
+                        expect(page.get_by_role("button", name="Nouvelle version")).to_be_enabled()
                         assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
                         page.locator(".poster-canvas").focus()
                         page.keyboard.press("ArrowRight")
@@ -278,7 +294,7 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"] == expected_styled
                         assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
                         page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
-                        expect(page.get_by_role("heading", name="Votre affiche, prête à vérifier")).to_be_visible(timeout=40000)
+                        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
                         preview_url = page.locator(".final-preview img").get_attribute("src")
                         preview_bytes = page.request.get(ORIGIN + preview_url).body()
                         for checkbox in page.locator(".final-preview input[type=checkbox]").all():

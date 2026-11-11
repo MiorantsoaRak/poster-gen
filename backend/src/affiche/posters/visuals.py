@@ -17,6 +17,19 @@ from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, S
 from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, compile_scene, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
+# Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
+TEXT_CHECKS = {"text_title", "text_price", "text_signature"}
+
+
+def required_checks(baked: dict | None) -> set[str]:
+    required = set(CHECKS)
+    if baked:
+        required.add("text_title")
+        if "price_ar" in baked:
+            required.add("text_price")
+        if "shop_name" in baked or "contact" in baked:
+            required.add("text_signature")
+    return required
 
 
 class PlanRequest(Model):
@@ -59,13 +72,14 @@ class RefinementRequest(Model):
 
 class Decision(Model):
     action: Literal["approve", "reject"]
-    checks: dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration"], bool] = Field(default_factory=dict)
+    checks: dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration",
+                         "text_title", "text_price", "text_signature"], bool] = Field(default_factory=dict)
     reasons: list[ReasonCode] = Field(default_factory=list, max_length=9)
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
 
     @model_validator(mode="after")
     def review(self):
-        if self.action == "approve" and (self.checks.keys() != CHECKS or not all(self.checks.values()) or self.reasons):
+        if self.action == "approve" and (not CHECKS <= self.checks.keys() or not all(self.checks.values()) or self.reasons):
             raise ValueError("all_fidelity_checks_required")
         if self.action == "reject" and not (self.reasons or self.note):
             raise ValueError("rejection_reason_required")
@@ -292,6 +306,8 @@ def decide(engine, shop, key, id, request: Decision):
             if old["status"] != status:
                 raise store.Refused("review_decided", 409)
             return 200, get_visual(conn, shop, id)
+        if request.action == "approve" and not required_checks(baked_headline(conn, shop, old)) <= request.checks.keys():
+            raise store.Refused("fidelity_incomplete")
         conn.execute(text("UPDATE poster_visuals SET status=:status,checks_json=:checks,rejection_reasons_json=:reasons,"
                           "rejection_note=:note,decided_at=:now WHERE id=:id"),
                      {"id": id, "status": status, "checks": canonical(request.checks), "reasons": canonical(request.reasons),

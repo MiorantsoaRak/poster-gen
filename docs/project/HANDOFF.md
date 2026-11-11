@@ -11,7 +11,15 @@ The user gave autonomy to change the process until posters match Original Phone 
 - Side by side (shop on top, ours below): outputs/style-study-2026-11-11/comparison-shop-top-ours-bottom.jpg.
 - Real poster through the application: outputs/style-study-2026-11-11/app-poster-final.png, **1080 × 1350**, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37. Creation/visual/keys: app-poster-run.json in the same folder. Download equals the preview; no render warnings. 340 000 Ar is the price on the shop's own poster for that model: test data.
 
-## Usability pass after the owner's first session (latest request, ADR-049)
+## Editor rebuilt to the audited mockup (latest request, ADR-050)
+
+- Audit findings and the reviewed mockup: https://claude.ai/artifact/8zwVrymwP1up1L12SUS422 (private to the user). The mockup sources are in the session scratchpad only.
+- Built: top-bar navigation with "Mes affiches" and "Styles" views; title row with one state-driven main action; stage with the owner's photo; Versions column ("n sur 12", "Choisie pour l’export", "Nouvelle version"); confirmation before every paid action; fidelity review in three groups with the drawn texts shown (backend `TEXT_CHECKS`, refusal `fidelity_incomplete`); final screen with facts and after-confirmation actions.
+- Files: frontend/src/App.vue (template rebuilt, small script additions), frontend/src/style.css (rewritten), frontend/tests/browser_smoke.py, backend/src/affiche/posters/visuals.py, backend/src/affiche/api.py, backend/tests/test_exports.py.
+- `outputs/style-study-2026-11-11/live_edge.py` predates this rebuild: its selectors (heading "Votre affiche", direct "Générer la scène" without confirmation, six review checks) no longer match. Update it before the next live run.
+- `.taste-skill/` holds the design skill's dealt sheet; it is Git-ignored.
+
+## Usability pass after the owner's first session (ADR-049)
 
 - The owner got stuck: he chose the Claude composition, it failed validation three times (`invalid_plan`), and nothing visible explained the grey button. The Claude composition and the second reference import are removed from the editor; blocked buttons explain themselves; a coach line says the next action; messages stay on screen; review sheets open in front.
 - A local server for the owner's verification runs from the session scratchpad script (`serve_local.py`: production build via `vite preview` on 5173, API on 8000, data-probe, real providers, one-off test password). It is not part of the repository and stops with the session. The Vue dev server cannot be driven from the owner's Chrome: a browser extension blocks automation on it; the production build works.

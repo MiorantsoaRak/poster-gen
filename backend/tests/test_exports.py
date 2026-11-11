@@ -22,7 +22,7 @@ def creation(engine, settings, input_id):
     original = draft(engine, settings.data_dir, input_id)
     scene(engine, settings, original, fixed(engine, settings, original))
     visual = execute(engine, settings)
-    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS}))
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
     with engine.connect() as conn:
         return store.get_creation(conn, 1, original["id"])
 
@@ -102,7 +102,7 @@ def test_hidden_title_requires_scene_headline_with_the_current_title(engine, set
     visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
         plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(brand="JBL")))
     visual = execute(engine, settings)
-    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS}))
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
     with engine.connect() as conn:
         assert visuals.get_visual(conn, 1, visual)["headline"] == {
             "brand": "JBL", "subtitle": None, "accent_word": None, "accent_colour": None, "signature": False,
@@ -134,7 +134,7 @@ def test_shop_signature_drawn_by_the_scene_must_match_the_poster_profile(engine,
     visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
         plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(signature=True)))
     visual = execute(engine, settings)
-    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS}))
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
     with engine.connect() as conn:
         baked = visuals.get_visual(conn, 1, visual)["headline"]
         prompt = conn.execute(text("SELECT prompt_text FROM poster_visuals WHERE id=:id"), {"id": visual}).scalar_one()
@@ -187,13 +187,19 @@ def test_price_drawn_by_the_scene_must_equal_the_offer_and_a_change_needs_a_new_
     visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
         plan_id=fixed(engine, settings, original)["id"], acknowledged_warnings=["low_resolution"], headline=Headline(price=True)))
     visual = execute(engine, settings)
-    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS}))
+    with pytest.raises(store.Refused, match="fidelity_incomplete"):  # the drawn title and price must be reread too
+        visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS}))
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
     with engine.connect() as conn:
         assert visuals.get_visual(conn, 1, visual)["headline"]["price_ar"] == 899000
         prompt = conn.execute(text("SELECT prompt_text FROM poster_visuals WHERE id=:id"), {"id": visual}).scalar_one()
         current = store.get_creation(conn, 1, original["id"])
     assert '"899 000"' in prompt and 'smaller upright "AR"' in prompt and "price: the" not in prompt
     assert not next(layer for layer in current["document"]["formats"]["feed"]["layers"] if layer["role"] == "price")["visible"]
+    with engine.connect() as conn:
+        assert visuals.required_checks(visuals.baked_headline(conn, 1, store._owned(conn, "poster_visuals", 1, visual))) == visuals.CHECKS | {"text_title", "text_price"}
+    assert visuals.required_checks(None) == visuals.CHECKS
+    assert visuals.required_checks({"title": "x", "contact": "034"}) == visuals.CHECKS | {"text_title", "text_signature"}
     assert render(engine, settings, current)["png_sha256"]
     for changed in (edit(current, price_ar=799000), ):
         with pytest.raises(store.Refused, match="price_stale"):

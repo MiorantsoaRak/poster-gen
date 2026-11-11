@@ -1,5 +1,17 @@
 # DECISIONS
 
+## ADR-050 — 2026-11-11 — Editor rebuilt to the audited mockup (supersedes ADR-048's layout and look)
+
+- Process: an audit with the design-taste-frontend skill's app-screen rules (run on screenshots and the stylesheet; its inspector was not run because the app sits behind sign-in), then a mockup the user reviewed (https://claude.ai/artifact/8zwVrymwP1up1L12SUS422), then "go for all". The user added three points during the review: the review and final screens, the fact that several versions can be generated and one chosen, and a confirmation before every paid action.
+- Look: the skill's dealt "true-black flat" app style (seed 1429845225) on a warm near-black ground. Elevation is a lightness step only; no gradients, glows or resting shadows. Chrome is neutral. The main action is white on black. One hue marks the chosen style and work in progress. Buttons: one 40px pill, three levels. One 16px outline icon set drawn inline. Type stays the bundled Noto Sans (the sheet dealt Inter; no new font was added).
+- Navigation: a top bar with three destinations, "Créer", "Mes affiches" and "Styles", with counts. "Mes affiches" and "Styles" are new views; the poster list left the first screen. Styles are created from the editor only, because a style job is tied to a poster.
+- Editor: a title row (poster name, save state, progress, undo/redo, the one main action whose label follows the state, and the reason when it is blocked); a rail with Textes, Style and Réglages avancés; a stage with the owner's photo beside the poster; a Versions column.
+- Versions: "n sur 12", the chosen one labelled "Choisie pour l’export", each with its state, and a "Nouvelle version" tile. Said before the first scene exists.
+- Paid actions (first scene, new version, style from a poster) open one confirmation that says what happens and the estimated cost, or that the demonstration mode spends nothing.
+- Fidelity review: three groups. The product (four checks), the image (two checks), and one check per kind of text the image model drew, each showing the typed words: title and subtitle, price, shop and contact. Backend: `TEXT_CHECKS`; `decide` refuses `fidelity_incomplete` when a drawn text is not ticked. Scenes without drawn text still need the six checks only.
+- Final screen: facts strip, the four existing checks with a counter, then after confirmation the download, "Nouvelle affiche" and "Changer le prix" (returns to the price field and explains that a new version is needed).
+- Verified: 690 backend tests; 26 Vitest; build; browser smoke in bundled Chromium and Edge 156. Not verified: a live paid run after the rebuild, a real phone, a contrast audit with a tool.
+
 ## ADR-049 — 2026-11-11 — Usability pass after the owner's first real session
 
 - User report: two ways to import a reference; a new user does not know what to do; he added a photo, title, price and a reference, chose the Claude composition, and a button stayed grey with nothing on screen saying why.

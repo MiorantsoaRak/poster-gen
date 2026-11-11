@@ -13,6 +13,10 @@
   - verified 2026-11-11: tests/test_plans.py::test_price_label_comes_only_from_the_integer_amount, tests/test_exports.py::test_price_drawn_by_the_scene_must_equal_the_offer_and_a_change_needs_a_new_scene; full suite and Edge smoke (see HANDOFF); live Edge run 4 with the real provider: outputs/style-study-2026-11-11/live-edge-4/.
 - [x] T-POSTER-PRICE-ATTEMPTS (ADR-045; D-GENERATION-JOBS-002) Scene limit raised from 3 to 12 per poster.
   - verified 2026-11-11: tests/test_poster_jobs.py::test_scene_limit_and_failed_jobs_do_not_consume_slots; full suite (see HANDOFF).
+- [x] T-UI-MOCKUP-BUILD (ADR-050; user "go for all" 2026-11-11) Editor rebuilt to the audited mockup: navigation views, one main action, stage with photo, versions column, confirmations on paid actions, nine-point review, final screen.
+  - verified 2026-11-11: backend 690 passed/3 deselected; 26 Vitest; build; browser smoke in bundled Chromium and Edge 156.
+- [ ] T-UI-LIVE-AFTER-REBUILD (ADR-050 open point) One live paid run through the rebuilt editor, and the phone check of T-UI-PHONE-CHECK.
+  - verify: scene, nine-point review with drawn texts, confirmation, download, all on real providers.
 - [x] T-UI-USABILITY-1 (ADR-049; user report 2026-11-11) One reference import, no Claude composition in the editor, reasons under blocked buttons, coach line, always-visible messages, review sheets in front.
   - verified 2026-11-11: 26 Vitest; build; browser smoke in Edge 156; Chrome on the production build.
 - [ ] T-PLANNER-CLAUDE-INVALID (ADR-049; D-PV-009) The Claude composition returns plans that fail validation with the real model (3 of 3 on 2026-11-11). Find the failing rule from a captured answer before offering it again.

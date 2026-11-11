@@ -60,6 +60,7 @@ def error_response(request: Request, error: store.Refused):
         "budget_exhausted": "Le plafond de dépense est atteint. Aucun nouvel appel n’a été envoyé.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
+        "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",
         "look_limit": "Vous avez déjà enregistré le nombre maximal de styles.",
         "invalid_brief": "Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image.",
         "attempt_limit": "Douze scènes ont déjà été demandées pour cette affiche. Conservez une version ou créez une copie pour continuer.",
