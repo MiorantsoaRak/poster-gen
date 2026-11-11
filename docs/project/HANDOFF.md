@@ -11,7 +11,13 @@ The user gave autonomy to change the process until posters match Original Phone 
 - Side by side (shop on top, ours below): outputs/style-study-2026-11-11/comparison-shop-top-ours-bottom.jpg.
 - Real poster through the application: outputs/style-study-2026-11-11/app-poster-final.png, **1080 × 1350**, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37. Creation/visual/keys: app-poster-run.json in the same folder. Download equals the preview; no render warnings. 340 000 Ar is the price on the shop's own poster for that model: test data.
 
-## Interface redesign (latest request, ADR-047)
+## Interface as an image-generation tool (latest request, ADR-048)
+
+- The user rejected ADR-047's look as an overused template and asked to design it like an image-generation tool. Now: dark stage in the middle, control rail on the left, generations filmstrip under the stage, generating state on the stage, preset wall, one orange for Generate/Export, light variant via the header button.
+- Files: frontend/src/style.css (rewritten), frontend/src/App.vue (filmstrip moved, stage class, theme toggle), frontend/src/main.ts (theme restore).
+- Screenshots: outputs/editor-smoke/intake.png, studio-start.png, desktop.png, mobile.png. The light variant has no screenshot yet.
+
+## Interface redesign, first attempt (ADR-047, look superseded)
 
 - New visual direction ("épreuve d'imprimeur") and a three-step sidebar (01 Textes, 02 Style, 03 Finaliser). Files: frontend/src/style.css (rewritten), frontend/src/App.vue (sidebar regrouped, no logic change), frontend/tests/browser_smoke.py (opens "Ce que l’IA dessine dans l’image" and "Réglages avancés", saves intake.png and studio-start.png).
 - Screenshots: outputs/editor-smoke/intake.png, studio-start.png, desktop.png, mobile.png.

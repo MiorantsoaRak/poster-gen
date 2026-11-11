@@ -1,5 +1,19 @@
 # DECISIONS
 
+## ADR-048 — 2026-11-11 — Interface designed as an image-generation tool (supersedes ADR-047's look)
+
+- User feedback on ADR-047: the hard-shadow "printer's proof" look is an overused template; then: "think like if you were designing a UI for an image generation AI tool".
+- Decision: keep ADR-047's three numbered steps and wording, replace its visual language and layout with the conventions of image-generation tools.
+  - The result is the hero: a dark, neutral stage in the middle; the generated poster is the only bright thing on the page.
+  - Controls are a compact rail on the left (01 Textes, 02 Style et génération, 03 Vérifier et télécharger). On a phone the stage comes first and the rail follows.
+  - Generations are a filmstrip under the stage ("Versions de la scène"), no longer a list inside the rail.
+  - While a scene is generated the stage itself shows it (a light sweep and a "Génération en cours…" chip), in addition to the rail status.
+  - Style presets are a three-column wall of real result thumbnails with a check on the selected one.
+  - One warm "safelight" orange is reserved for Generate and Export; no purple, no gradients on surfaces.
+  - A light variant (header button "Thème clair", remembered on the device) exists for bright daylight.
+- No font or dependency added; no logic change besides the theme toggle and the stage class.
+- Verified with the stub browser smoke in Edge 156 after the last change (screenshots in outputs/editor-smoke/). Not verified: bundled Chromium after this restyle, the light variant in a browser, a real phone, a contrast audit, the live paid flow.
+
 ## ADR-047 — 2026-11-11 — Interface direction: printer's proof, three numbered steps
 
 - User request: a modern, usable interface for the shop owner, any direction allowed except the default AI template; use the ui-ux-pro-max skill.
