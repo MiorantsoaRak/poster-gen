@@ -109,6 +109,7 @@ def run():
                         page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
                         page.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
+                        page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i")
@@ -140,6 +141,8 @@ def run():
                         # The look picker sets the art direction; this flow then tests the editable title layer.
                         page.get_by_role("button", name="Luxe sombre").click()
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("Fond noir charbon"))
+                        page.screenshot(path=str(OUTPUT / "studio-start.png"), full_page=True)
+                        page.get_by_text("Ce que l’IA dessine dans l’image", exact=True).click()
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
                         # One tap: the plan is made on the way and reused by the retry below.
                         # Lose the first paid-action response after the server accepted it; retry must reuse its key.
@@ -199,6 +202,8 @@ def run():
                         expect(page.get_by_text("Vos modifications ont été conservées dans une copie.")).to_be_visible()
                         assert page.url.split("#")[1] != creation_id
                         expect(page.get_by_label("Titre", exact=True)).to_have_value("Mon titre conservé")
+                        # Layer-level editing lives under "Réglages avancés" in the third step.
+                        page.get_by_text("Réglages avancés", exact=True).click()
                         # The stub proposal is explicitly labelled as a simulation and needs an apply decision.
                         page.get_by_text("Ajuster ce texte avec une consigne", exact=True).click()
                         page.get_by_label("Votre consigne").fill("Une couleur dorée")
@@ -264,6 +269,7 @@ def run():
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
                         expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        page.get_by_text("Réglages avancés", exact=True).click()
                         page.get_by_role("button", name="Prix", exact=True).click()
                         expect(page.get_by_label("Police", exact=True)).to_have_value("montserrat-black-italic")
                         expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")

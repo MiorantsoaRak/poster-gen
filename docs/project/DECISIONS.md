@@ -1,5 +1,15 @@
 # DECISIONS
 
+## ADR-047 — 2026-11-11 — Interface direction: printer's proof, three numbered steps
+
+- User request: a modern, usable interface for the shop owner, any direction allowed except the default AI template; use the ui-ux-pro-max skill.
+- The skill's generated system (pink brutalism with a scroll-storytelling landing pattern) fits a marketing page, not a working tool; its accessibility, touch and form rules were kept, its palette and pattern were not. A web search for professional poster-tool references returned only general 2026 trend articles (the editor recedes behind the content; warmer, less glossy surfaces), no Dribbble or Behance examples: the direction below is a design judgement, not a copy of a reference.
+- Direction: "épreuve d'imprimeur". Warm paper background with a dot grid, ink-black frames and hard offset shadows, one vermilion signal colour reserved for the action that moves the poster forward, gold for hover/focus and work in progress, crop marks around the poster. Display type is the already bundled Montserrat Black Italic, text is Noto Sans: no new font, no network.
+- Flow: the sidebar is three numbered cards with an anchor rail: 01 Textes (title, price, brand, subtitle, accent word, shop identity, one closed disclosure for what the AI draws), 02 Style et scène (looks as a contact sheet with always-readable names, create a look, generate), 03 Vérifier et télécharger (export, with layer-level editing under "Réglages avancés"). Nothing was removed; every label kept its wording.
+- Fixed on the way: look names were white on white; the header button wrapped on phones.
+- Verified with the stub browser smoke in bundled Chromium and Edge 156 (screenshots in outputs/editor-smoke/: intake.png, studio-start.png, desktop.png, mobile.png). Not verified: a real phone, a contrast audit with a tool, the live paid flow after the restyle.
+- Revisit if: the owner finds three cards on one scrolling column slower than separate screens.
+
 ## ADR-046 — 2026-11-11 — Saved looks written by Claude from a reference poster
 
 - User request after the exploration ("go"), with one requirement: the look is saved beside the others and reusable for later posters. The user's go replaced the separate requirements/design files for this feature; this entry and backend/api/README.md hold the contract.

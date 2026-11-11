@@ -13,6 +13,10 @@
   - verified 2026-11-11: tests/test_plans.py::test_price_label_comes_only_from_the_integer_amount, tests/test_exports.py::test_price_drawn_by_the_scene_must_equal_the_offer_and_a_change_needs_a_new_scene; full suite and Edge smoke (see HANDOFF); live Edge run 4 with the real provider: outputs/style-study-2026-11-11/live-edge-4/.
 - [x] T-POSTER-PRICE-ATTEMPTS (ADR-045; D-GENERATION-JOBS-002) Scene limit raised from 3 to 12 per poster.
   - verified 2026-11-11: tests/test_poster_jobs.py::test_scene_limit_and_failed_jobs_do_not_consume_slots; full suite (see HANDOFF).
+- [x] T-UI-REDESIGN (ADR-047; user request 2026-11-11) Printer's-proof visual direction and a three-step editor.
+  - verified 2026-11-11: 26 Vitest; build; browser smoke in bundled Chromium and Edge 156 after the last change. No backend change.
+- [ ] T-UI-PHONE-CHECK (ADR-047 open point) Check the redesigned editor on a real phone and run a contrast audit.
+  - verify: owner completes photo → poster on his phone without help; no text under 4.5:1.
 - [x] T-POSTER-REFERENCE-BRIEF (ADR-046; user go 2026-11-11) Owner uploads a poster he likes; Claude writes the style brief; it is saved as a reusable look beside the built-in ones.
   - verified 2026-11-11: tests/test_looks.py (brief boundary, prompt only through a look, saved look styles a later scene, foreign/unknown look refused, spooled brief revalidated); full suite (see HANDOFF); stub smoke in Edge creates and selects a look; live Edge run 5 with real Claude and image providers (outputs/style-study-2026-11-11/live-edge-5/).
   - not built: rename/delete a look; looks for the "Avec Claude" composition (it keeps its own palette).

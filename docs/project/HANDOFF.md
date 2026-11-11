@@ -11,7 +11,14 @@ The user gave autonomy to change the process until posters match Original Phone 
 - Side by side (shop on top, ours below): outputs/style-study-2026-11-11/comparison-shop-top-ours-bottom.jpg.
 - Real poster through the application: outputs/style-study-2026-11-11/app-poster-final.png, **1080 × 1350**, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37. Creation/visual/keys: app-poster-run.json in the same folder. Download equals the preview; no render warnings. 340 000 Ar is the price on the shop's own poster for that model: test data.
 
-## Saved looks from a reference poster (latest request, ADR-046)
+## Interface redesign (latest request, ADR-047)
+
+- New visual direction ("épreuve d'imprimeur") and a three-step sidebar (01 Textes, 02 Style, 03 Finaliser). Files: frontend/src/style.css (rewritten), frontend/src/App.vue (sidebar regrouped, no logic change), frontend/tests/browser_smoke.py (opens "Ce que l’IA dessine dans l’image" and "Réglages avancés", saves intake.png and studio-start.png).
+- Screenshots: outputs/editor-smoke/intake.png, studio-start.png, desktop.png, mobile.png.
+- `outputs/style-study-2026-11-11/live_edge.py` was not re-run after the restyle; its selectors use unchanged labels, but layer buttons now sit under "Réglages avancés".
+- Test passwords are now generated per run (the commit hook refuses password literals).
+
+## Saved looks from a reference poster (ADR-046)
 
 - Built: editor "Créer un style depuis une affiche" (upload, name, "Enregistrer ce style"); Claude writes the brief; the look appears in the picker beside the built-in ones and is remembered for the next poster. Backend: posters/looks.py, migration 0010, routes POST /api/creations/{id}/looks, GET /api/looks, GET /api/looks/{id}; `headline.look_id` on scene requests; `compile_scene(headline_style=, align=)`.
 - Live Edge run 5 (real Claude + GPT Image): the shop's Select 4 Go poster → look "Vagues bleues" → CMF Buds 2a poster. Evidence: outputs/style-study-2026-11-11/live-edge-5/ (`reference.png`, `brief.json`, `scene.png`, **live-edge-5-poster.png**, report.json). All eleven UI steps passed; left-aligned headline and price pill, blue waves, accent word, title, price, shop name and both numbers exact.
@@ -118,4 +125,4 @@ Ideas seen on the shop's posters and not built: feature list with icons (JBL Tun
 
 ## Uncommitted files
 
-None after the 2026-11-11 commit on main (no remote). outputs/ and backend/data-*/ are Git-ignored: protect them yourself.
+None after the 2026-11-11 commits on main (no remote). outputs/ and backend/data-*/ are Git-ignored: protect them yourself.
