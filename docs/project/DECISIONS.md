@@ -1,5 +1,17 @@
 # DECISIONS
 
+## ADR-049 — 2026-11-11 — Usability pass after the owner's first real session
+
+- User report: two ways to import a reference; a new user does not know what to do; he added a photo, title, price and a reference, chose the Claude composition, and a button stayed grey with nothing on screen saying why.
+- What the database shows for that session: three `plan` jobs with `kind='plan'` failed with `invalid_plan` (Claude's composition did not pass validation; USD 0.048572 in total). The editor's only message was a generic line at the top of the page, out of view, and in that mode the Generate button exists only after a valid plan. The Claude composition had never been run against the real model.
+- Decisions:
+  - The editor no longer offers the Claude composition. The simple composition with looks is the only path; the API route and code stay. Fixing the planner is a separate task (T-PLANNER-CLAUDE-INVALID).
+  - One way to use a reference poster: "Créer un style depuis une affiche". "S’inspirer d’une affiche" (a second image passed to the image model) is removed from the editor; the API still accepts `style_reference_asset`. The study had measured little gain from it.
+  - Every blocked main button states its reason beneath it (draft, generate, save style, final preview). A style name is optional (default "Style N").
+  - A coach line above the stage always says the next action.
+  - Errors and notices are fixed on screen (errors at the bottom, notices under the header) with a "Fermer" button; the fidelity check and the final preview open in front of the page instead of below it.
+- Verified: 26 Vitest, build, browser smoke in Edge 156 (it now asserts the coach line, the reasons and the absence of the removed controls), and by eye in Chrome on the production build with the data-probe data. Not verified: the review sheets by eye in Chrome, a real phone.
+
 ## ADR-048 — 2026-11-11 — Interface designed as an image-generation tool (supersedes ADR-047's look)
 
 - User feedback on ADR-047: the hard-shadow "printer's proof" look is an overused template; then: "think like if you were designing a UI for an image generation AI tool".

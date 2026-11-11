@@ -219,3 +219,14 @@ details.new-look { background: var(--surface-2); border: 1px dashed var(--line-s
 }
 /* The step rail floats over the scrolling controls: mask what passes behind its rounded ends. */
 .steps { box-shadow: 0 -14px 0 10px var(--bg), 0 6px 14px -6px #00000040 }
+/* Usability pass (ADR-049): nothing important happens out of sight. */
+.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); margin: 0; display: flex; align-items: center; gap: 12px; box-shadow: 0 18px 50px -12px #000000B3; font-weight: 700 }
+.message.error { bottom: 20px; background: var(--danger); color: var(--bg); border-color: var(--danger) }
+.message.notice { top: 68px; background: var(--ok); color: var(--bg); border-color: var(--ok) }
+.message .text-button { color: inherit; min-height: 36px; padding: 4px 8px; flex-shrink: 0 }
+.why { margin: 8px 2px 0; padding: 8px 12px; font-size: .86rem; color: var(--warn); background: var(--warn-wash); border: 1px solid var(--warn-line); border-radius: var(--radius-sm) }
+.coach { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 12px 16px; font-size: .98rem; color: var(--text); background: var(--primary-wash); border: 1px solid var(--primary); border-radius: var(--radius-sm) }
+.coach b { flex-shrink: 0; font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--on-primary); background: var(--primary); border-radius: 999px; padding: 3px 10px }
+/* Fidelity check and final preview open in front of everything instead of far below the page. */
+.review-panel { position: fixed; z-index: 30; inset: 4vh max(3vw, calc(50vw - 560px)); margin: 0; overflow: auto; overscroll-behavior: contain; box-shadow: 0 0 0 100vmax #000000BF, 0 30px 80px #000000B3 }
+@media (max-width: 900px) { .review-panel { inset: 0; border-radius: 0 } .coach { align-items: flex-start; font-size: .92rem } }

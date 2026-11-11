@@ -13,6 +13,10 @@
   - verified 2026-11-11: tests/test_plans.py::test_price_label_comes_only_from_the_integer_amount, tests/test_exports.py::test_price_drawn_by_the_scene_must_equal_the_offer_and_a_change_needs_a_new_scene; full suite and Edge smoke (see HANDOFF); live Edge run 4 with the real provider: outputs/style-study-2026-11-11/live-edge-4/.
 - [x] T-POSTER-PRICE-ATTEMPTS (ADR-045; D-GENERATION-JOBS-002) Scene limit raised from 3 to 12 per poster.
   - verified 2026-11-11: tests/test_poster_jobs.py::test_scene_limit_and_failed_jobs_do_not_consume_slots; full suite (see HANDOFF).
+- [x] T-UI-USABILITY-1 (ADR-049; user report 2026-11-11) One reference import, no Claude composition in the editor, reasons under blocked buttons, coach line, always-visible messages, review sheets in front.
+  - verified 2026-11-11: 26 Vitest; build; browser smoke in Edge 156; Chrome on the production build.
+- [ ] T-PLANNER-CLAUDE-INVALID (ADR-049; D-PV-009) The Claude composition returns plans that fail validation with the real model (3 of 3 on 2026-11-11). Find the failing rule from a captured answer before offering it again.
+  - verify: a captured real answer in a test; three real plans in a row validate, or the mode stays hidden.
 - [x] T-UI-IMAGE-TOOL (ADR-048; user feedback 2026-11-11) Interface redone as an image-generation tool: dark stage, control rail, generations filmstrip, light variant.
   - verified 2026-11-11: 26 Vitest; build; browser smoke in Edge 156. Light variant and bundled Chromium not run after this change.
 - [x] T-UI-REDESIGN (ADR-047, look superseded by ADR-048; user request 2026-11-11) Three-step editor.

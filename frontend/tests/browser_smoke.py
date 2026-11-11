@@ -123,14 +123,16 @@ def run():
                         page.get_by_role("button", name="Créer mon brouillon").click()
                         expect(page.get_by_role("heading", name="Votre affiche", exact=True)).to_be_visible()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
-                        page.get_by_text("S’inspirer d’une affiche", exact=True).click()
-                        page.get_by_label("Affiche de référence (facultative)").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
-                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_be_visible()
-                        style_src = page.get_by_alt_text("Affiche de référence pour le style").get_attribute("src")
+                        # The coach line and the reasons under blocked buttons tell a new owner what to do.
+                        expect(page.locator(".coach")).to_contain_text("choisissez un style (02)")
+                        expect(page.get_by_text("Générez d’abord une scène à l’étape 02.")).to_be_visible()
+                        assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
                         page.get_by_text("Créer un style depuis une affiche", exact=True).click()
+                        expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_be_visible()
                         page.get_by_label("Affiche modèle").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
                         expect(page.get_by_alt_text("Affiche modèle pour le nouveau style")).to_be_visible()
+                        expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_have_count(0)
                         page.get_by_label("Nom du style").fill("Vagues bleues")
                         page.get_by_role("button", name="Enregistrer ce style").click()
                         expect(page.get_by_text("Style « Vagues bleues » enregistré", exact=False)).to_be_visible(timeout=15000)
@@ -171,11 +173,10 @@ def run():
                         expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
                         saved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert saved["document"]["formats"]["feed"]["scene"] == scene_before
-                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_have_attribute("src", style_src)
                         visual = page.request.get(f"{ORIGIN}/api/visuals/{scene_before['visual_id']}").json()
-                        assert visual["style_reference_asset"] and len(visual["original_urls"]) == 1
-                        page.get_by_role("button", name="Retirer la référence").click()
-                        expect(page.get_by_alt_text("Affiche de référence pour le style")).to_have_count(0)
+                        # The editor no longer sends a separate style-reference image (the API still accepts one).
+                        assert visual["style_reference_asset"] is None and len(visual["original_urls"]) == 1
+                        expect(page.locator(".coach")).to_contain_text("Dernière étape (03)")
                         assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
                         page.locator(".poster-canvas").focus()
                         page.keyboard.press("ArrowRight")
