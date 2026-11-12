@@ -113,7 +113,8 @@ defineExpose({ exportPng, issues: () => inspectLayout(props.document, props.form
 </script>
 
 <template>
-  <div class="poster-canvas" :tabindex="readonly ? undefined : 0" role="img" aria-label="Aperçu de l’affiche. Utilisez aussi la liste des éléments pour modifier le contenu." @keydown="keydown">
+  <div class="poster-canvas" :tabindex="readonly ? undefined : 0" :role="readonly ? 'img' : 'application'" :style="{ touchAction: !readonly && dragEnabled ? 'none' : undefined }"
+    :aria-label="readonly ? 'Aperçu de l’affiche' : 'Affiche. Les flèches déplacent l’élément choisi dans la liste des éléments ; Maj pour aller plus vite.'" @keydown="keydown">
     <VStage ref="stage" :config="{ width: dimensions[0] * scale, height: dimensions[1] * scale, scaleX: scale, scaleY: scale }">
       <VLayer>
         <VRect :config="{ width: dimensions[0], height: dimensions[1], fill: '#17324D' }" @click="emit('select', null)" @tap="emit('select', null)" />

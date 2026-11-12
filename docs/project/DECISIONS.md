@@ -1,5 +1,13 @@
 # DECISIONS
 
+## ADR-059 — 2026-11-12 — Editor: hash routes, inert page behind a panel, confirmation for every paid or destructive tap (Claude's choices while fixing the guideline review; user request "fix all of them")
+
+- The view lives in the address hash (`''` new poster, `affiches`, `styles`, or a poster id) and the navigation is plain links; one `hashchange` handler does the routing. A hash is enough for three views and needs no router dependency or server rewrite rule. A route change that fails (for example an invalid price that cannot be saved) puts the previous hash back.
+- The three panels (paid confirmation, fidelity review, final check) stay ordinary elements with `role="dialog"`, a small focus directive and `inert` on the page behind. The native `<dialog>` was not used: it sits in the top layer, above the error message, which must stay visible and usable while a panel is open.
+- Consequence: nothing behind an open panel can be edited any more (the browser test used to change the price behind the final check).
+- "A paid call is never one tap" now holds for the scene refinement, the text proposal and the text material too; discarding unsaved work asks first. All use the existing confirmation sheet.
+- Not changed, against the letter of the guidelines: colour transitions on controls, French sentence case, no list virtualisation (`content-visibility: auto` on the rows instead).
+
 ## ADR-058 — 2026-11-12 — Logo seal: two rules changed after the paid scenes (Claude's decision under the user's autonomy grant; to confirm)
 
 - The approved design (ADR-057) accepted a disc only from 85 % of the asked diameter and printed the seal at the disc's size. The first paid scene through the application drew the disc exactly in place at 81 % (105 px for 130 asked): it was rejected and the logo removed. Across four real scenes the model drew 77 %, 79 %, 81 % and 107 % of the asked size.

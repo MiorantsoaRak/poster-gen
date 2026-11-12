@@ -183,6 +183,7 @@ def test_http_draft_roundtrip_replay_conflict_history_and_copy(client):
     assert copied.json()["document"] == saved.json()["document"]
     listed = client.get("/api/creations?limit=1").json()
     assert len(listed["items"]) == 1 and listed["items"][0]["name"] == "JBL"
+    assert isinstance(listed["items"][0]["price_ar"], int) and listed["items"][0]["title"]
     assert listed["items"][0]["thumbnail_url"] is None  # no scene and no final preview yet: nothing is invented
     assert client.get("/api/thumbnails/" + "0" * 64).status_code == 404  # not a preview or scene of this shop
     next_page = client.get("/api/creations", params={"limit": 1, "before": listed["next_cursor"]}).json()

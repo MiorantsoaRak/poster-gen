@@ -528,7 +528,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   "name": r["name"], "variant": r["variant"],
                   "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}'
                   if r["render_sha"] or r["scene_asset"] else None,
-                  "title": json.loads(r["document_json"])["offer"]["title"]} for r in rows[:limit]]
+                  **{key: json.loads(r["document_json"])["offer"][key] for key in ("title", "price_ar")}} for r in rows[:limit]]
         return {"items": items, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
 
     @protected.get("/api/creations/{id}", response_model=CreationView)

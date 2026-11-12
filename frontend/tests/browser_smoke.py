@@ -127,7 +127,7 @@ def run():
                         page.get_by_label("Contact", exact=True).first.fill("038 93 028 00 / 034 93 028 00")
                         page.get_by_role("checkbox", name="Nom de la boutique", exact=True).check()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
-                        page.get_by_role("button", name="Créer mon brouillon").click()
+                        page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i", exact=True)).to_be_visible()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
                         # The contact is one compact line written by the renderer; its position is free and remembered.
@@ -193,7 +193,7 @@ def run():
                             asked.append(route.request.post_data_json)
                             route.fulfill(status=409, content_type="application/json", body='{"detail": {"code": "plan_stale"}}')
                         page.route("**/api/creations/*/scenes", catch_scene)
-                        page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Générer l’affiche").click()
                         page.get_by_role("button", name="Lancer la génération").click()
                         until(lambda: asked)
                         page.unroute("**/api/creations/*/scenes", catch_scene)
@@ -208,11 +208,11 @@ def run():
                             route.abort("failed")
                             page.unroute("**/api/creations/*/scenes", lose_response)
                         page.route("**/api/creations/*/scenes", lose_response)
-                        page.get_by_role("button", name="Générer la scène").click()
-                        expect(page.get_by_role("dialog")).to_contain_text("Générer la scène ?")
+                        page.get_by_role("button", name="Générer l’affiche").click()
+                        expect(page.get_by_role("dialog")).to_contain_text("Générer l’affiche ?")
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("alert")).to_contain_text("Connexion interrompue")
-                        page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Générer l’affiche").click()
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         # One agreement covers the listed points (ADR-051): a summary to read, no boxes to tick.
@@ -238,10 +238,10 @@ def run():
                         page.get_by_label("Prix en ariary", exact=True).fill("95 000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.get_by_role("button", name="Annuler", exact=True).click()
-                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
-                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
                         saved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert saved["document"]["formats"]["feed"]["scene"] == scene_before
                         visual = page.request.get(f"{ORIGIN}/api/visuals/{scene_before['visual_id']}").json()
@@ -285,6 +285,12 @@ def run():
                         page.get_by_label("Votre consigne").fill("Une couleur dorée")
                         before_polish = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
+                        # Every paid call is confirmed with its cost first; Escape or "Annuler" backs out.
+                        expect(page.get_by_role("dialog")).to_contain_text("aucune dépense")
+                        page.keyboard.press("Escape")
+                        expect(page.get_by_role("dialog")).to_have_count(0)
+                        page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
+                        page.get_by_role("button", name="Lancer la proposition", exact=True).click()
                         expect(page.get_by_role("button", name="Appliquer au texte")).to_be_visible(timeout=15000)
                         unchanged = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert unchanged == before_polish
@@ -296,6 +302,7 @@ def run():
                         assert after_polish["document"] == expected
                         check_material_pixels(page, expected)
                         page.get_by_role("button", name="Générer la matière du texte", exact=True).click()
+                        page.get_by_role("button", name="Générer la matière", exact=True).click()
                         expect(page.get_by_role("button", name="Appliquer la matière", exact=True)).to_be_visible(timeout=15000)
                         still = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert still == after_polish
@@ -346,7 +353,7 @@ def run():
                         page.get_by_role("button", name="Rétablir", exact=True).click()
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
-                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90000")
+                        expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
                         page.get_by_text("Réglages avancés", exact=True).click()
                         page.get_by_role("button", name="Prix", exact=True).click()
                         expect(page.get_by_label("Police", exact=True)).to_have_value("montserrat-black-italic")
@@ -372,8 +379,12 @@ def run():
                         assert downloaded.status == 200 and downloaded.body() == preview_bytes
                         assert Image.open(io.BytesIO(preview_bytes)).size == (1080, 1350)
                         (OUTPUT / "confirmed-stub-poster.png").write_bytes(preview_bytes)
+                        # The page behind an open panel is inert: close it, change the price, and reopen by reloading.
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         page.get_by_label("Prix en ariary", exact=True).fill("91 000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.reload()
+                        expect(link).to_be_visible()
                         # A confirmed poster offers no second confirmation; the server's
                         # preview_stale refusal is covered in backend/tests/test_exports.py.
                         expect(page.get_by_role("button", name="Tout est conforme, confirmer", exact=True)).to_have_count(0)
@@ -388,6 +399,9 @@ def run():
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.set_viewport_size({"width": 1440, "height": 1000})
                         page.locator(".nav a", has_text="Mes affiches").click()
+                        # The view is in the address: a reload stays on the list.
+                        assert page.url.endswith("#affiches"), page.url
+                        page.reload()
                         thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
                         # A small resized image of the 1080 x 1350 preview, not the full file.
@@ -404,14 +418,14 @@ def run():
                         page.get_by_label("Les photos correspondent").check()
                         expect(page.get_by_role("checkbox", name="Logo", exact=True)).to_be_checked()
                         expect(page.get_by_role("checkbox", name="Nom de la boutique", exact=True)).not_to_be_checked()
-                        page.get_by_role("button", name="Créer mon brouillon").click()
+                        page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i sceau", exact=True)).to_be_visible()
                         seal_option = page.get_by_label("Logo en sceau rond dans l’image")
                         expect(seal_option).to_be_checked()
                         expect(page.get_by_label("Position du contact")).to_be_disabled()
                         sent = []
                         page.on("request", lambda request: sent.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
-                        page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Générer l’affiche").click()
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         assert sent[-1]["headline"]["logo_seal"] is True and sent[-1]["headline"]["signature_align"] == "right", sent[-1]
