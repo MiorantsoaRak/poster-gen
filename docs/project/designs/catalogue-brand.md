@@ -165,6 +165,100 @@ The editor sends `signature: true` with `signature_align` only when "Laisser l�
 
 No brand logo upload (ADR-052 default 4).
 
+## D-CATALOGUE-BRAND-006 — Logo seal printed on a disc the scene provides
+
+**Status:** Approved v2.1 by the user on 2026-11-12 ("approved, go"; ADR-057). **Covers:** R-CATALOGUE-BRAND-005. Feed format only. Evidence: [logo study](../reviews/logo-study-2026-11-12.md), rounds two and three. v1 was returned REWORK and challenged by the devil's advocate ([round 1](../reviews/logo-seal-design-r1-2026-11-12.md)); v2 was returned APPROVE WITH FIXES ([round 2](../reviews/logo-seal-design-r2-2026-11-12.md)); its fixes are in this text and were not reviewed again.
+
+**Principle.** A "calm area" is not reliably kept by the image model (ADR-055). An empty white disc is an object: in the study the model drew it, composed the price and the contact around it, and the program found it 0.4 % of the height from where it was asked, at 10.7 % of the width for 10 % asked. The real logo file is then printed on the disc by the shared renderer, so nothing of the logo is drawn by the model.
+
+**What changes for the owner.** Under the "Logo" checkbox: "Logo en sceau rond dans l’image". It is ticked by default on a new poster that includes the logo. With it:
+
+- the scene is asked for the disc, and after the scene the logo appears as a round seal on it; it stays a layer he can drag or resize;
+- the contact is drawn at the right, and "Position du contact" is disabled with the reason "Avec le sceau, le contact est à droite";
+
+**When the seal is available.** Only for the one footer this design can vouch for: the logo and the contact are selected, the shop name is not, "Laisser l’IA composer le titre" is on, the price and the contact are drawn in the image, and the poster has no scene yet. In every other case the option is disabled with its reason under it, and the logo is the plain movable layer of today. The seal is therefore chosen before the first version: turning it on or off later would change which layers the plan covers and make refinements of the existing scenes fail (`unselected_or_missing_overlay`), so it is locked once a scene exists, with the reason "Le sceau se choisit avant la première version : créez une copie de l’affiche pour le changer."
+
+**Data.** No new table and no migration.
+
+| Where | Field | Meaning |
+|---|---|---|
+| Logo layer of the poster document | `shape: "circle" \| null`, omitted when unset like `price_badge`; allowed only on the logo layer (`shape_requires_logo`) | The seal mode of this poster. The renderer draws the image clipped to the circle inscribed in the layer box, scaled to cover it (not "contain", which the plain logo uses), on a white fill. The editor sets it at poster creation and when the option is changed before the first scene. |
+| `Headline` (scene request, stored in the job payload) | `logo_seal: Literal[true] \| null`, omitted when unset | Ask the scene for the empty disc. Refused 422 `invalid_headline` unless: the logo layer is a seal; the price is drawn; the contact is drawn with `signature_align: "right"`; the shop name is not selected; and the plan's `product_region` and `overlay_regions` equal those of `fixed_plan` for this context. The plan's source cannot be used for that last test: the editor posts a plan revision for every look, stored as `manual`. |
+| `poster_visuals.placement_json` (existing nullable text column; its CHECK concerns `photo_preserved` rows only; nothing reads it for scenes) | `{"logo_disc": {"x", "y", "d"}}`, `{"logo_disc": null}`, or NULL | Disc found (centre and diameter in poster pixels, that is scene pixels × 1080 / 1088); disc asked and not found; no disc asked. Returned by `GET /api/visuals/{id}` as `logo_disc` (object, null) or absent. |
+
+**The seal is outside the plan.** `context_for` leaves a seal-shaped logo layer out of the plan's fields, so the plan is the one of a poster without a logo: the price band and a full-width contact area, as in the study. This also removes the round-1 blocker: a refinement no longer measures a 134 px seal against a 128 px planned logo box. A plain (non-seal) logo keeps its planned box as today.
+
+**Prompt (`compile_scene`, with `logo_seal`).** The study's tested prompt is kept as it is: the price sentence with its hard limit, the contact sentence, the calm areas and the constraints are the ones the application already writes. One sentence is added, the study's badge sentence, and the constraints name "the empty white badge" among what may appear. Only the disc's centre depends on the price alignment:
+
+
+| Price alignment (from the look) | Disc centre | Tested |
+|---|---|---|
+| left | x 50 %; y 1 % of the frame height above the top of the contact area (90.4 % in the usual plan) | With this prompt structure and these places, yes, twice (study rounds two and three), at 19 % and 10 % of the width; not at 12 %. The model then put the price, the disc and the contact on one row by itself. |
+| centre (also the case without a look) | x 11 %; same y | No. Geometrically the disc (5–17 % of the width) is clear of a centred pill and of a right-aligned contact line. |
+
+- Disc: 12 % of the frame width in diameter; "one small, plain, flat, pure white circular disc with a very soft shadow, completely empty: no writing, no icon, no pattern and no outline inside it, because the shop's logo is printed on it later; a discreet seal, clearly smaller than the price label; the price label and the contact line do not touch it".
+- The contact's existing fit rule and size wording are unchanged. In the study the model itself drew the contact smaller to make room (digits about 15 to 20 px); the owner sees that at the review. No new character limit is introduced, because the only measured constant for one would leave no margin.
+- In seal mode the editor sends `signature_align: "right"` whatever position is remembered on the device, and does not overwrite the remembered one. The help line "Gardez le logo à l’écart du contact" is not shown for a seal.
+
+**Finding the disc (`posters/seal.py`, pure function, Pillow only).** `find_disc(image, centre, diameter) -> (x, y, d) | None`, called when the scene or refinement result is stored (`service.py`), before the first-scene layer placement:
+
+1. Crop a window of three times the asked diameter around the planned centre.
+2. Seeds: the planned centre and eight points around it (3 % of the width, 2 % of the height). A seed counts only if every channel of its pixel is at least 249.
+3. Flood from the seed with `ImageDraw.floodfill` inside the window; its threshold is the summed channel difference from the seed pixel, set to 12.
+4. Accept the region when it is round and plausible: bounding box within 6 % of square, filled area between 70 % and 86 % of the box (a disc fills 78.5 %), diameter between 85 % and 160 % of the asked one, and it does not touch the window's edge.
+5. Otherwise `None`. Any exception is logged and treated as `None`: finding the disc can never fail a paid job.
+
+Cost measured by the reviewer on a window of this size: 0.3 to 0.4 s. A white backdrop is not excluded: with the asked shadow the reviewer's synthetic disc on pure white was found; without a visible edge it is not, and the fallback applies.
+
+**Placing the seal.**
+
+- Disc found, first scene: in the same transaction as the other layer placements, the logo layer gets the box of diameter + 4 px centred on the disc.
+- Disc asked and not found, first scene: nothing is printed at a guessed place. The logo is unticked on this poster (`include.logo` false, layer hidden) in that same revision, and the review says: "Le disque du logo n’a pas été trouvé dans l’image : le logo a été retiré de cette affiche. Cochez « Logo » pour le placer vous-même, ou générez une nouvelle version."
+- Later scenes and refinements: the server does not touch the document. When the owner chooses a version, `chooseVisual` applies the same two rules from that version's `logo_disc`: found, the logo is ticked again if a not-found version had unticked it, and placed on the disc; not found, the logo is unticked with the message.
+- Ticking "Logo" again on a version with a disc puts the seal back on the disc, not at the footer's left; on a version without one it is placed by the existing `placeFooter` as a plain layer.
+
+**Guards.**
+
+- Export (`exports.py`, where the selected `visual` row and the layer boxes are both in scope): when the selected scene has a disc, the logo layer must be visible and its inscribed circle must cover the disc: distance between centres + disc radius ≤ layer radius + 2 px. Otherwise 409 `logo_disc_uncovered`: "L’image contient un disque prévu pour le logo : replacez le logo dessus ou générez une nouvelle version." The editor shows the same reason under the main action.
+- This amends R-CATALOGUE-BRAND-002 for seal posters: unticking the logo, or moving it off its disc, needs a new version or the seal put back. The requirement says so.
+- Refinement keeps the base scene's stored headline, so `logo_seal` is kept and the disc is searched in the refined image.
+
+**Review and final screen.**
+
+- Fidelity review (it shows the raw scene, where the disc is empty): one line in the group "L’image" when a disc was asked: "Un disque blanc vide est prévu pour le logo : rien ne doit être dessiné dedans", or the not-found message above.
+- Final screen (it shows the composed poster): one line added to the points: "Le logo recouvre bien son disque". When the found disc is under 125 px, a warning line: "Le sceau est petit : le nom du logo peut être difficile à lire."
+- Neither is a new server check key.
+
+**States of a scene.** No disc asked; disc asked and found; disc asked and not found. Stored once with the visual, never recomputed. Older visuals have NULL and behave as "no disc asked".
+
+| Failure / edge | Handling |
+|---|---|
+| Disc asked, none found | Logo unticked on the poster with the message above; no export guard applies. If the model drew a disc that was not recognised, it stays visible in the image: the review line and "Aucun objet ni texte ajouté par l’IA" cover it. |
+| Disc found, but the model drew something inside it | Usually the flood fails (not found). If found, the printed seal covers it. |
+| Two discs drawn | The one reached from the seeds is used; the other is an added object for the review. |
+| The model draws the price or the contact over the disc | The region is then not round: not found, logo unticked, message shown. |
+| Found disc much smaller than asked (85–96 %) | The seal is printed at that size; the final screen warns under 125 px. Below 85 % it counts as not found. |
+| The owner unticks the logo or drags it off the disc | `logo_disc_uncovered` blocks the final preview with the reason. Ticking again puts it back on the disc. |
+| A logo that is not square | The circle shows the centre of the image scaled to cover the disc; the corners are cut. Stated in the option's help line. Transparency is lost on the white fill. |
+| Logo file missing or unreadable at render | Existing `asset_missing` refusal (D-CATALOGUE-BRAND-002). |
+| The shop name is ticked, the contact is unticked, not drawn or too long to be drawn, or the price is not drawn | The seal is not available for this poster (see "When the seal is available"); the option shows which condition is missing. The logo is a plain layer. |
+| A plan whose regions differ from the fixed plan's (Claude or hand-edited, through the API) | `logo_seal` is refused: the disc's place assumes the fixed plan's bands. |
+| A poster created before this change, or one that already has scenes | No seal; it keeps working as before. A copy of the poster can use the seal. |
+| Provider failure, timeout, budget | Unchanged scene-job handling (D-GENERATION-JOBS-002/003). |
+
+**External systems.** No new call and no new reference image: the logo file is never sent to the provider.
+
+**Verification.**
+
+- Unit tests for `find_disc` on generated images: a disc with a soft shadow on a gradient (found within 2 px); off-centre by 3 %; no disc; an oval; a disc touched by another white shape; a disc on pure white with and without a shadow; too small and too large; an exception inside is swallowed.
+- The study's two real scenes with an empty disc, reduced copies in the test fixtures: both found at the positions measured in the study.
+- Prompt tests: with `logo_seal` the prompt equals the prompt without it plus the badge sentence and the constraints wording; the disc centre for a left and a centred price; each refusal (no seal layer, price not drawn, contact not drawn or not at the right, shop name selected, regions not those of the fixed plan, and a plan revised only in its palette accepted); `logo_seal` omitted from dumps when unset; a seal logo left out of the plan's fields; refinement of a seal scene accepted.
+- Store and guard tests: found, not found (logo unticked in the first-scene revision), uncovered (unticked, moved away, made smaller), covered after a move back.
+- Renderer test: a `shape: "circle"` logo is clipped to a circle on white, covering its box.
+- Browser smoke with the stub provider, which draws the asked disc when the prompt contains the badge sentence: the option is on for a new poster with a logo and locked after the first scene; the request carries `logo_seal` and `signature_align: "right"`; the seal lands on the disc; unticking the logo blocks the final preview with the reason; ticking again restores it.
+- Paid, only with the user's go, with the real logo in the shop profile: one scene through the application with a left-aligned look (the chosen variant) and one with a centred look, about USD 0.42. For each: the disc's measured place and size, digits read, nothing touching the seal. A white look is a third, optional scene.
+- Not covered: square and story formats, a real phone, non-fixed plans.
+
 ## Verification of D-004 and D-005
 
 This list is what was verified for the v2.1 build (T-SIG-001 to 003: rendered contact and brand as plain text). The verification of D-004 v3 is at the end of its own section.

@@ -1,5 +1,15 @@
 # DECISIONS
 
+## ADR-057 — 2026-11-12 — Logo as a round seal printed on an empty disc that the scene provides (user decision; R-CATALOGUE-BRAND-005 and D-CATALOGUE-BRAND-006 approved)
+
+- Study with the user's logo (reviews/logo-study-2026-11-12.md, five paid scenes, USD 1.081501 outside the ledger). A logo drawn by the model composes well but redraws the striped ribbon, which carries the national colours. The real file added afterwards is exact but collides unless the scene left its place empty.
+- Found in the study: the model draws an empty white disc where asked and composes the price and the contact around it; the program finds the disc and prints the real logo, cut to a circle, exactly on it. The model never draws and never receives the logo.
+- User's choices: "add the logo in a round circle", then "smaller footprint", then the full logo at about 130 px in the footer between the price and the contact. The emblem-only crop was offered and not chosen.
+- Approved at v2.1 after two review rounds (REWORK, then APPROVE WITH FIXES) and one devil's-advocate pass; the last fixes were not reviewed again.
+- Limits accepted: the seal is offered only for one footer (logo and contact, no shop name, title, price and contact drawn), chosen before the first version and locked afterwards; the contact is then at the right; a centred price is untested; removing the logo from a seal poster needs a new version.
+- Not adopted: a keyed-colour disc (untested; the white disc worked twice on real scenes), kept as the idea to try if white backdrops fail.
+- Tasks: T-SEAL-001 (backend), T-SEAL-002 (editor and renderer), T-SEAL-003 (two paid scenes with the real logo in the shop profile).
+
 ## ADR-056 — 2026-11-12 — Design approved: contact drawn in the composition (D-CATALOGUE-BRAND-004 v3.1)
 
 - The user approved v3.1 ("go") after review round 3 (APPROVE WITH FIXES, no P1; fixes applied, not reviewed again). The devil's-advocate pass of this design was done on v1 and is not repeated.

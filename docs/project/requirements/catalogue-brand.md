@@ -8,6 +8,7 @@
 | R-CATALOGUE-BRAND-002 | Optional shop identity | P0 | Approved |
 | R-CATALOGUE-BRAND-003 | Discreet shop signature in a composed poster | P1 | Approved 2026-11-12 (ADR-052), amended (ADR-053, ADR-055) |
 | R-CATALOGUE-BRAND-004 | Product brand mark | P1 | Approved 2026-11-12 (ADR-052) |
+| R-CATALOGUE-BRAND-005 | Shop logo as a round seal in the composition | P1 | Approved 2026-11-12 (ADR-057) |
 
 ## R-CATALOGUE-BRAND-001 — Confirm the product and offer
 
@@ -80,3 +81,24 @@ Out of scope: uploading manufacturer logo files; any statement about trademark p
 Open question, approved without an answer; working default (Claude's choice, ADR-052) to confirm at the design review:
 
 4. Is "brand as plain text" enough as the fallback, or do you also want to upload a brand logo file that the renderer places exactly? Default: plain text is enough; brand logo upload stays out of scope.
+
+## R-CATALOGUE-BRAND-005 — Shop logo as a round seal in the composition
+
+**Status:** Approved by the user on 2026-11-12 at v2.1 ("approved, go"; ADR-057). The user chose the variant after a study with his logo ([logo study](../reviews/logo-study-2026-11-12.md)): the full logo in a round white badge, about 130 px on the 1080 px poster, in the footer between the price and the contact ("the first one in the compare small footer"). Amends R-CATALOGUE-BRAND-002 and R-CATALOGUE-BRAND-003 for posters that use the seal, as stated below.
+
+As the operator, I want my shop's logo to sit in the composition as a small round seal, exact in every detail.
+
+Acceptance criteria:
+
+- [ ] On a poster that uses the seal, the scene is asked to contain one small empty white disc, and the application prints the uploaded logo file, cut to a circle on white, exactly on that disc. The image model never draws or imitates the logo and never receives the logo file.
+- [ ] The seal is available when the footer is the one of the chosen variant: logo and contact selected, shop name not selected, and the title, the price and the contact drawn in the image. It is on by default for a new poster in that case. In any other case the option says which condition is missing and the logo is the plain movable layer of today. (This limits the eight identity combinations of R-CATALOGUE-BRAND-002 for the seal only; all eight still work with a plain logo.)
+- [ ] The seal is chosen before the first version of a poster and cannot be switched afterwards; a copy of the poster can choose again.
+- [ ] The seal is asked at 12 % of the poster width (130 px on 1080 × 1350). With a left-aligned price it sits between the price and the contact, as in the chosen variant; with a centred price it sits at the left of the footer. The size and place really obtained are measured on paid scenes before the feature is called done.
+- [ ] With the seal, the contact is drawn at the right; the position choice of R-CATALOGUE-BRAND-003 does not apply while the seal is on, and the device's remembered position is kept for other posters.
+- [ ] The application finds the disc in the generated image by itself. The seal stays an editable layer that the operator can move and resize.
+- [ ] Error case: WHEN no disc is found in the image THEN nothing is printed at a guessed place: the logo is removed from that poster, the operator is told at the review, and he can tick the logo to place it himself or generate a new version.
+- [ ] Error case: WHEN the scene contains a disc that the logo does not cover (logo unticked, moved away or made smaller) THEN export is refused with a message saying why, because an empty white disc would be left on the poster. This amends R-CATALOGUE-BRAND-002 for seal posters: removing the logo then needs a new version.
+- [ ] The review tells the operator that an empty disc is planned for the logo and that nothing may be drawn in it; the final screen lists "the logo covers its disc" among its points, and warns when the seal came out small enough for the lettering to be hard to read.
+- [ ] Posters and scenes made before this change keep working unchanged, without a seal.
+
+Out of scope: a logo drawn by the image model; an emblem-only version of the logo; a seal at the top of the poster; a seal with a contact at the left or in the centre, with a shop name, or without a drawn contact or price; square and story formats (T-POSTER-009).
