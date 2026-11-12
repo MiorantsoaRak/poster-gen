@@ -15,6 +15,11 @@
   - verified 2026-11-11: tests/test_poster_jobs.py::test_scene_limit_and_failed_jobs_do_not_consume_slots; full suite (see HANDOFF).
 - [x] T-UI-MOCKUP-BUILD (ADR-050; user "go for all" 2026-11-11) Editor rebuilt to the audited mockup: navigation views, one main action, stage with photo, versions column, confirmations on paid actions, nine-point review, final screen.
   - verified 2026-11-11: backend 690 passed/3 deselected; 26 Vitest; build; browser smoke in bundled Chromium and Edge 156.
+- [x] T-UI-FINAL-AFTER-CONFIRM (ADR-050 defect seen in Chrome 2026-11-11) On an already confirmed poster the final screen still shows the four checks at "0 sur 4" and "Confirmer cette version".
+  - delivered: in frontend/src/App.vue the checks and the confirm row render only while `confirmedDownload` is empty. The confirmed screen stays confirmed after a draft edit, as its own text promises ("Le fichier confirmé ne changera plus"). The smoke no longer clicks a second confirmation after the price change; it asserts the button and the checks are gone and the confirmed file is unchanged. `preview_stale` stays covered by backend/tests/test_exports.py.
+  - verified 2026-11-12: 26 Vitest; build; browser smoke in bundled Chromium 156. Not verified: by eye in Chrome on a reopened confirmed poster; Edge.
+- [ ] T-UI-MOCKUP-GAPS (ADR-050) Differences left from the reviewed mockup: accent word as chips, accent colour as swatches, the paid confirmation as an in-place panel (it is a dialog), thumbnails in "Mes affiches".
+  - verify: the user confirms which of these he still wants before any is built.
 - [ ] T-UI-LIVE-AFTER-REBUILD (ADR-050 open point) One live paid run through the rebuilt editor, and the phone check of T-UI-PHONE-CHECK.
   - verify: scene, nine-point review with drawn texts, confirmation, download, all on real providers.
 - [x] T-UI-USABILITY-1 (ADR-049; user report 2026-11-11) One reference import, no Claude composition in the editor, reasons under blocked buttons, coach line, always-visible messages, review sheets in front.

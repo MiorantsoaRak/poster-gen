@@ -1,148 +1,106 @@
 # HANDOFF
 
-**Session date:** 2026-11-11 (Indian/Mauritius)
-**State:** T-POSTER-SHOP-STYLE, T-POSTER-LOOK-PILL, T-POSTER-ONE-TAP (ADR-042), T-POSTER-SIGNATURE (ADR-043) T-POSTER-PRICE-IN-IMAGE (ADR-044), the 12-scene limit (ADR-045) and T-POSTER-REFERENCE-BRIEF (ADR-046) complete; five live tests in Microsoft Edge passed. **Migration 0010 is applied to backend/data-probe** (backup before it: data-probe/backups/before-looks-2026-11-11.db). T-POSTER-001–008, T-POSTER-STYLE-TEST and T-POSTER-REFERENCE-TYPE remain complete. No task is in progress; no test/server process is running. Nothing committed.
+**Session date:** 2026-11-11, closed 2026-11-12 (Indian/Mauritius)
+**Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
+**State:** nothing in progress, working tree clean, six commits on `main` this session (`05682e3` … `6f18f8c`), no remote. No server or test process is running: the local verification server was stopped by Claude Code because the machine was low on memory; it was not restarted.
 
-## Delivered result — latest user request
+## What the application does now
 
-The user gave autonomy to change the process until posters match Original Phone Mada's own, tested on 5–10 products, and then asked for a style choice designed from the owner's point of view.
+The owner uploads a product photo, types name and price, picks a style, and the image model composes the whole poster: brand, product name, subtitle, price pill, shop name and contact. Every drawn word must still equal what the poster says, or export is refused. He checks fidelity, confirms the final file and downloads a 1080 × 1350 PNG.
 
-- Ten shop posters inspected; 13 study images on 9 real products; the application now produces the shop's style. Report: [style-study-2026-11-11.md](reviews/style-study-2026-11-11.md).
-- Side by side (shop on top, ours below): outputs/style-study-2026-11-11/comparison-shop-top-ours-bottom.jpg.
-- Real poster through the application: outputs/style-study-2026-11-11/app-poster-final.png, **1080 × 1350**, SHA-256 58c6bd98e8be665cb7843b46c026b4808752ca1f5788848a01dea1c798837a37. Creation/visual/keys: app-poster-run.json in the same folder. Download equals the preview; no render warnings. 340 000 Ar is the price on the shop's own poster for that model: test data.
+Decisions of this session, newest first, all in [DECISIONS.md](DECISIONS.md): ADR-050 (editor rebuilt to the audited mockup), 049 (usability pass), 048 and 047 (two earlier looks, superseded), 046 (saved looks written by Claude from a reference poster), 045 (twelve scenes per poster), 044 (price drawn in the image, user decision), 043 (shop signature drawn), 042 (integrated headline, new scene prompt, looks).
 
-## Editor rebuilt to the audited mockup (latest request, ADR-050)
+Reports: [style-study-2026-11-11.md](reviews/style-study-2026-11-11.md). Reviewed mockup and audit findings: https://claude.ai/artifact/8zwVrymwP1up1L12SUS422 (private to the user); its sources are in `outputs/style-study-2026-11-11/audit-mockup/`.
 
-- Audit findings and the reviewed mockup: https://claude.ai/artifact/8zwVrymwP1up1L12SUS422 (private to the user). The mockup sources are in the session scratchpad only.
-- Built: top-bar navigation with "Mes affiches" and "Styles" views; title row with one state-driven main action; stage with the owner's photo; Versions column ("n sur 12", "Choisie pour l’export", "Nouvelle version"); confirmation before every paid action; fidelity review in three groups with the drawn texts shown (backend `TEXT_CHECKS`, refusal `fidelity_incomplete`); final screen with facts and after-confirmation actions.
-- Files: frontend/src/App.vue (template rebuilt, small script additions), frontend/src/style.css (rewritten), frontend/tests/browser_smoke.py, backend/src/affiche/posters/visuals.py, backend/src/affiche/api.py, backend/tests/test_exports.py.
-- `outputs/style-study-2026-11-11/live_edge.py` predates this rebuild: its selectors (heading "Votre affiche", direct "Générer la scène" without confirmation, six review checks) no longer match. Update it before the next live run.
-- `.taste-skill/` holds the design skill's dealt sheet; it is Git-ignored.
+## Exact resume point
 
-## Usability pass after the owner's first session (ADR-049)
+**T-UI-FINAL-AFTER-CONFIRM is done (2026-11-12, not committed):** the final screen hides the four checks and "Confirmer cette version" once the poster is confirmed (`v-if="!confirmedDownload"` in `frontend/src/App.vue`). The smoke test no longer confirms a second time after a price change; `preview_stale` is covered by `backend/tests/test_exports.py`. Verified with 26 Vitest, the build and the bundled-Chromium smoke; not yet seen by eye in Chrome.
 
-- The owner got stuck: he chose the Claude composition, it failed validation three times (`invalid_plan`), and nothing visible explained the grey button. The Claude composition and the second reference import are removed from the editor; blocked buttons explain themselves; a coach line says the next action; messages stay on screen; review sheets open in front.
-- A local server for the owner's verification runs from the session scratchpad script (`serve_local.py`: production build via `vite preview` on 5173, API on 8000, data-probe, real providers, one-off test password). It is not part of the repository and stops with the session. The Vue dev server cannot be driven from the owner's Chrome: a browser extension blocks automation on it; the production build works.
-- Ledger after the owner's three failed plan calls: 2.630726 + 0.048572 = **2.679298**.
+Next, in order:
 
-## Interface as an image-generation tool (ADR-048)
+1. **T-UI-LIVE-AFTER-REBUILD**: one live paid run through the rebuilt editor. `outputs/style-study-2026-11-11/live_edge.py` predates the rebuild and must be updated first: it expects the heading "Votre affiche" (now the poster's own name as `h1`), clicks "Générer la scène" without the confirmation dialog (now followed by "Lancer la génération"), saves a style without "Créer le style", and ticks six review checks (now up to nine: `.review-checks input` still selects them all).
+2. **T-UI-MOCKUP-GAPS**: ask the user which remaining mockup differences he wants (accent word as chips, colour swatches, in-place confirmation panel, thumbnails in "Mes affiches").
+3. **T-PLANNER-CLAUDE-INVALID**: the Claude composition fails validation with the real model (3 of 3). It is hidden from the editor; capture one real answer before touching it.
+4. **T-UI-PHONE-CHECK**, then **T-POSTER-009** (square/story export: the shop's own posters are mostly square).
 
-- The user rejected ADR-047's look as an overused template and asked to design it like an image-generation tool. Now: dark stage in the middle, control rail on the left, generations filmstrip under the stage, generating state on the stage, preset wall, one orange for Generate/Export, light variant via the header button.
-- Files: frontend/src/style.css (rewritten), frontend/src/App.vue (filmstrip moved, stage class, theme toggle), frontend/src/main.ts (theme restore).
-- Screenshots: outputs/editor-smoke/intake.png, studio-start.png, desktop.png, mobile.png. The light variant has no screenshot yet.
+## Commands
 
-## Interface redesign, first attempt (ADR-047, look superseded)
+Tests (from `backend/` unless stated):
 
-- New visual direction ("épreuve d'imprimeur") and a three-step sidebar (01 Textes, 02 Style, 03 Finaliser). Files: frontend/src/style.css (rewritten), frontend/src/App.vue (sidebar regrouped, no logic change), frontend/tests/browser_smoke.py (opens "Ce que l’IA dessine dans l’image" and "Réglages avancés", saves intake.png and studio-start.png).
-- Screenshots: outputs/editor-smoke/intake.png, studio-start.png, desktop.png, mobile.png.
-- `outputs/style-study-2026-11-11/live_edge.py` was not re-run after the restyle; its selectors use unchanged labels, but layer buttons now sit under "Réglages avancés".
-- Test passwords are now generated per run (the commit hook refuses password literals).
+```bash
+uv run pytest -q                                   # last full run: 690 passed, 3 deselected (192 s)
+uv run python ../frontend/tests/browser_smoke.py   # bundled Chromium; needs ports 8000 and 5173 free
+SMOKE_CHANNEL=msedge uv run python ../frontend/tests/browser_smoke.py   # same flow in installed Edge
+```
 
-## Saved looks from a reference poster (ADR-046)
+```powershell
+# from frontend/ (npm.ps1 is blocked: always npm.cmd)
+npm.cmd test          # 26 passed
+npm.cmd run build     # the smoke test and the renderer use frontend/dist
+```
 
-- Built: editor "Créer un style depuis une affiche" (upload, name, "Enregistrer ce style"); Claude writes the brief; the look appears in the picker beside the built-in ones and is remembered for the next poster. Backend: posters/looks.py, migration 0010, routes POST /api/creations/{id}/looks, GET /api/looks, GET /api/looks/{id}; `headline.look_id` on scene requests; `compile_scene(headline_style=, align=)`.
-- Live Edge run 5 (real Claude + GPT Image): the shop's Select 4 Go poster → look "Vagues bleues" → CMF Buds 2a poster. Evidence: outputs/style-study-2026-11-11/live-edge-5/ (`reference.png`, `brief.json`, `scene.png`, **live-edge-5-poster.png**, report.json). All eleven UI steps passed; left-aligned headline and price pill, blue waves, accent word, title, price, shop name and both numbers exact.
-- The look "Vagues bleues" now exists in data-probe. The reference was a 495 px screenshot upscaled to 1000 px for the upload.
-- The browser smoke found one defect before the live run: a finished look job was reloaded as a plan (404). Fixed by reporting the job kind as `look`.
-- Needs a Claude credential and `PLANNER_PROVIDER=claude`; with the planner disabled the editor hides the action and the API answers `planner_unavailable`.
-- `live_edge.py` now holds this scenario (run 5).
+Local server on the real test data (real providers, so generating costs money). It serves the production build on 5173 and the API on 8000, and writes a one-off sign-in password to the file you name:
 
-## Scene limit and reference-brief exploration (before the build)
+```bash
+cd backend
+uv run python ../outputs/style-study-2026-11-11/serve_local.py ../outputs/style-study-2026-11-11/local-password.txt
+```
 
-- **Scene limit:** 12 scene/refinement jobs per poster instead of 3 (ADR-045, `jobs.SCENE_LIMIT`).
-- **Exploration, not built:** Claude (the application's adapter, claude-sonnet-5-5) read two shop posters and wrote a style brief each (direction, surface, lighting, camera, palette, accent colour, headline typography); GPT Image applied each brief to a different product. Script and evidence: outputs/style-study-2026-11-11/explore_reference.py and reference-brief/ (`sheet-reference-vs-result.jpg`, briefs as JSON).
-- Result: backdrop, palette and headline typography carried over well (champagne rings and the outlined subtitle pill from the Tour One poster; blue waves from the Select 4 Go poster). Layout did not: the left-aligned headline and left price pill of the Select 4 Go poster came out centred, because the scene prompt fixes the layout. The accent colour was not applied in one of two.
-- Two findings for a build: Claude's first brief was accurate but about twice the allowed length, so limits must be in the instructions, not only the schema; the typographic style needs its own screened field in the prompt (the exploration injected it by string replacement).
-- Cost: about USD 0.007 per brief; two failed-length attempts were billed too. Next step is T-POSTER-REFERENCE-BRIEF, which needs the user's go.
+Open `http://127.0.0.1:5173/`. Stop it before running the smoke test (same ports). If a port stays taken on Windows:
 
-## Price drawn by the AI (ADR-044)
-
-- User decision: the price is part of the composition; changing it later means a new scene. Editor: "Dessiner aussi le prix dans l’image", default on. The amount is the offer's integer, formatted in code.
-- Live Edge run 4 (JBL Tune 770NC, "Aux couleurs du produit", title + price + shop name + contact all drawn): outputs/style-study-2026-11-11/live-edge-4/, **live-edge-4-poster.png** is the current best output. All ten UI steps passed, including: changing the price shows "Le prix est dessiné dans l’image" and disables the export; restoring it clears the notice. Title, "340 000 AR", shop name and both numbers exact.
-- The first attempt of run 4 failed an assertion and exposed a real defect (a pill-styled price layer was not hidden at the first scene, so the price would appear twice). Fixed in service.py with a regression test; that failed attempt still cost one scene (0.209323) and left creation with a doubled price in data-probe; it was never approved or exported.
-- With every text drawn, the editor's pill styling and footer fitting only matter when an option is switched off.
-- Open: T-POSTER-PRICE-ATTEMPTS (three scenes per creation).
-
-## Shop signature drawn by the AI (ADR-043)
-
-- The image model now also draws the shop name and contact when the poster includes them (ADR-043). Editor: "Dessiner aussi le nom de la boutique et le contact dans l’image", default on. Words come from the poster's profile snapshot only.
-- Live Edge runs 2 and 3 (JBL Tune 770NC, "Aux couleurs du produit"): outputs/style-study-2026-11-11/live-edge-2/ and live-edge-3/. Both passed every UI step, including the new notice when the contact is unticked after the image drew it. Digits exact in both; run 2 wrote the shop name in capitals.
-- Run 2 showed the pill on the lower ear cup. Fixed by giving the plan the signature's real footprint and stating a hard lower limit for the product; run 3 (**live-edge-3-poster.png**, the current best output) has the pill touching only the bottom rim.
-- After the last change (prompt wording in plans.py) only tests/test_plans.py and tests/test_poster_visuals.py were re-run, plus live run 3. The last full backend run was 676 passed, 3 deselected, just before it.
-- `live_edge.py` now holds the run-3 scenario; the run-1 (Sony, dark look) settings are no longer in the file.
-
-## Live test in Microsoft Edge (run 1)
-
-- `outputs/style-study-2026-11-11/live_edge.py --paid`: installed Edge 156, visible window, real GPT Image 2 call, real ledger. Sony WH-1000XM6, look "Luxe sombre", one tap. Evidence in outputs/style-study-2026-11-11/live-edge/: report.json, five screenshots, scene.png, **live-edge-poster.png** (1080 × 1350).
-- Passed in the UI: sign-in, upload, draft, look, headline fields, one tap → one scene job and no plan call, pill styled and centred, title layer hidden, fidelity approval (after the scene was inspected against the photo), stale-title notice blocks then frees the export, preview, confirmation, download equals preview, phone width without horizontal overflow. No page errors, no HTTP errors.
-- Found by the live run and fixed afterwards: white shop name/contact (invisible on light looks; now set by the look and centred); the properties panel showed the hidden title layer. Both fixes are covered by the stub smoke in Edge, **not** by a second paid run.
-- Seen and not fixed: the product ran lower than its planned area, so the pill covers the bottom of the ear cup (the shop's own posters overlap too, but less). With shop name and contact included, the pill sits high and the footer looks empty. 1 900 000 Ar is the shop's printed price for this model: test data.
-
-## What changed
-
-- **Process (ADR-042):** the image model may set brand, product name and subtitle in the scene ("titre intégré", default on in the editor). The price is never sent and stays an exact layer. This supersedes ADR-030 for the title only.
-- **Prompt:** `compile_scene` in posters/plans.py rewritten: use → references → house-style scene → subject scale against the plan's product area → lighting → headline → quiet full-width bands → constraints. `Headline` model and `screen_headline` added there.
-- **Backend:** `SceneRequest.headline`; job payload and visual expose `headline` with the exact title sent; first scene hides the title layer (service.py); a hidden title needs a matching recorded headline, else `title_missing` (exports.py); refinement keeps the headline or refuses `headline_stale`; `context_for` plans a hidden title's area; `Document` now only requires the price visible.
-- **Editor:** thumbnail look picker (Studio clair, Aux couleurs du produit, Luxe sombre, Décrire moi-même), one accent colour, headline fields (brand, subtitle, accent word), notice and blocked export when the title was edited after the image drew it. Thumbnails: frontend/public/styles/.
-- Docs: ADR-042, backend/api/README.md scenes row, TODO, this file. No migration, no dependency. Old requests replay unchanged (`headline` omitted when absent).
-
-## Verification
-
-- Backend, last full run 2026-11-11: 689 passed, 1 failed, 3 deselected. The failure was one stale assertion in tests/test_exports.py (the headline payload gained `look_id`); it was corrected and tests/test_exports.py + tests/test_looks.py then passed (21). No full run after that one-line test fix.
-- Frontend: `npm.cmd test` → **26 passed**; `npm.cmd run build` passed, after the last frontend change.
-- Browser smoke: `uv run python ../frontend/tests/browser_smoke.py` → passed in bundled Chromium and, with `SMOKE_CHANNEL=msedge`, in Edge 156, after the last frontend change. It picks "Luxe sombre", **unticks the integrated headline** to keep testing the editable title layer, uses the one-tap button and checks the automatic pill.
-- After the pill/one-tap work: backend **674 passed, 3 deselected** (227 s); 26 Vitest; build.
-- New tests: tests/test_plans.py (headline verbatim, screening, accent word, no component example), tests/test_exports.py (hidden title needs matching headline; rename → refusals; hidden title still plans).
-- Real provider: 13 direct study calls and 1 application scene, GPT Image 2 high.
-- **Not tested:** the light looks' footer colours on a real scene; a pill restyled by hand then regenerated; Claude planner with looks; physical phones; six of the seven r3 images were checked on reduced contact sheets, not at full size.
+```bash
+for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '{print $5}' | head -1); [ -n "$pid" ] && taskkill //F //PID $pid; done
+```
 
 ## Spend
 
-- Application ledger backend/data-probe/affiche.db, cap **$12**: 1.161964 → **2.630726** (seven scenes and one Claude brief: application run 0.208268, live Edge runs 0.204877, 0.208983, 0.209093, 0.209323 (failed attempt), 0.209323, then brief 0.008612 + scene 0.210283). Never reset it or start another paid data directory.
-- Study, direct provider calls **outside the ledger**: **4.196172** (outputs/style-study-2026-11-11/spend.json, including Claude brief calls). Real total spent so far ≈ 6.83; treat the remaining budget as 12 − 2.63 − 4.20 ≈ **5.17**. The study's own USD 5 budget in experiment.py is nearly used. The application's own cap check does not see the 3.05.
+- Application ledger `backend/data-probe/affiche.db`, cap **USD 12**: **2.679298** (seven scenes, one Claude style brief, three failed Claude plans). Never reset it or start another paid data directory.
+- Study calls made directly to the providers, **outside the ledger**: **4.196172** (`outputs/style-study-2026-11-11/spend.json`); one failed Claude brief of about one cent is missing from that file. The application's cap check does not see this amount.
+- Real total ≈ 6.88. Treat the remaining budget as ≈ **5.12**. The study runner's own USD 5 budget is nearly used.
 
-## Exact next step
+## Verification state
 
-1. Open points, none blocking: the shop name's letter case is not guaranteed (capitals in 1 of 5); a poster without the AI signature still uses the tall default footer boxes, so its pill sits high; the dark look with a signature was tested in the study only, not through the application.
-2. Then T-POSTER-009 (square/story, library): the shop's posters are mostly square, and the application still exports feed only.
+- After the last code change (`6f18f8c`): backend 690 passed / 3 deselected; 26 Vitest; build; browser smoke in bundled Chromium. Edge 156 passed the same flow one small CSS fix earlier.
+- Live runs with real providers (five, all before the editor rebuild): `outputs/style-study-2026-11-11/live-edge` … `live-edge-5/`.
+- **Not verified:** any live paid run through the rebuilt editor; "Mes affiches", "Styles", the confirmation dialog and the nine-point review on real data (only the final screen was seen in the user's Chrome); a real phone; a contrast audit with a tool.
 
-Ideas seen on the shop's posters and not built: feature list with icons (JBL Tune poster), coloured brand logo box. Both need verified facts or a logo asset, so they need requirements first.
+## Mental context that the code does not show
 
-## Landmines added this session
+- The user steers by looking: he rejected two looks (the first as "overused", then asked to think like an image-generation tool) and approved a mockup before the rebuild. Show a mockup or a screenshot before large visual changes.
+- He wants every paid action confirmed with its cost, and wants it visible that several versions can be generated and one chosen.
+- The price is drawn in the image by his decision (ADR-044): a price change costs a new scene. Do not "fix" that back to an overlay.
+- The scene prompt takes examples literally (an example about earbuds put earbuds on a speaker). Keep examples out of `compile_scene`.
+- The Vue dev server cannot be driven from the user's Chrome (a browser extension blocks automation on it). Use the production build (`vite preview`, as `serve_local.py` does).
+- The commit hook refuses password literals; test passwords are generated per run.
 
-- An example inside the scene prompt is taken literally by the image model (it added earbuds to a speaker). Keep examples out of `compile_scene`.
-- The promotion blocklist matches "réduction"; the headline screen exempts only "réduction de bruit".
-- `outputs/style-study-2026-11-11/experiment.py` pays outside the ledger and has its own $5 budget; finished tags are skipped. Do not re-run rounds to inspect; images are in results/.
-- The product photos in products/ were fetched from manufacturer/retailer sites for testing (sources.json); they are not shop photos.
-- Facebook image URLs cannot be read out of the browser tool; references are viewer screenshots.
+## Landmines
 
-## Previous deliveries (unchanged)
+- **Never read, print or grep `backend/.env`.** Loading settings through the application is fine.
+- Never edit applied migrations 0001–0010; migrate only through `affiche.db.migrate`; never set the engine's `isolation_level`. Migration 0010 (`looks`) is applied to `backend/data-probe`; backup before it: `backend/data-probe/backups/before-looks-2026-11-11.db`.
+- A style brief runs as a `plan` job with a `look` payload (job kinds are fixed by migration 0006); `jobs.get_job` reports it as kind `look`.
+- `outputs/` and `backend/data-*/` are Git-ignored: the paid database and its content-addressed assets must be kept together by hand.
+- `outputs/style-study-2026-11-11/experiment.py` and `explore_reference.py` pay outside the ledger; finished tags are skipped. Do not re-run them to look at results.
+- The product photos in `outputs/style-study-2026-11-11/products/` came from manufacturer and retailer sites for testing (`sources.json`); they are not shop photos. Prices used in tests are copied from the shop's own posters and are not verified offers.
+- `data-probe` holds one draft with a doubled price from a failed live attempt (never approved or exported) and the saved look "Vagues bleues".
+- Product framing still needs the owner's eye: geometry checks do not locate product pixels.
 
-- R50i reference-typography poster: outputs/style-reference-2026-11-10/soundcore-r50i-reference-typography-final.png, SHA-256 e574e884916eb29f908d22d51f3d95fad531a98225da05a834a3da0f4870b5f9; details in [style-reference-test-2026-11-10.md](reviews/style-reference-test-2026-11-10.md). Earlier dark poster: outputs/review-2026-11-10/. Shop/contact evidence: [shop-poster-sources-2026-11-10.md](reviews/shop-poster-sources-2026-11-10.md).
+## Architecture in place
 
-## Architecture already in place
-
-- Strict Pydantic application document, exact integer MGA offer, immutable product/profile snapshots, owned original uploads, optimistic revisions, idempotent replay and copies/history.
-- Shared-shop Argon2/opaque sessions, Origin and ownership checks. SQLite BEGIN IMMEDIATE transactions and forward migrations 0001–0009.
-- Fixed/Claude planning with strict geometry/commercial screening; durable jobs/spend ledger; high-quality original-guided GPT integration/refinement; fidelity review separate from final poster confirmation.
-- French Vue/Vite/Konva editor with five bundled font files, independent identity fields, manual editing/undo/autosave/conflict recovery and selected-layer Claude proposals/material review.
-- Shared offline Chromium renderer, immutable PNG previews/confirmations, exact downloads, effective-format/source/font fingerprints and stale checks.
-- No server deployment or publishing integration. Backend/API README and project designs describe contracts.
-
-## Commands and landmines
-
-- Backend: from backend/, uv run pytest -q; uv run python -m affiche.api.
-- Frontend: from frontend/, npm.cmd test; npm.cmd run build; npm.cmd run dev. Use npm.cmd; npm.ps1 is blocked. Do not change execution policy.
-- Browser smoke: from backend/, uv run python ../frontend/tests/browser_smoke.py. Needs ports 8000/5173 free, current dist and downloaded R50i fixture; uses temporary stub data, no real .env.
-- Renderer needs frontend/dist and pinned Playwright Chromium. Install if missing: uv run playwright install --only-shell --no-remove chromium. Build changes never replace historical confirmed PNGs.
-- **Never read/print/grep backend/.env.** Legitimate application settings loading is allowed; keys never enter frontend or logs. Runner uses a random in-memory auth password, never persisted.
-- Never edit applied migrations 0001–0009. Migrate only through affiche.db.migrate; never set engine isolation_level. Backups: backend/data-probe/backups/before-poster-2026-11-10.db and before-style-poster-2026-11-10.db.
-- Outputs/data are Git-ignored; protect database and content-addressed assets together. No commit/push/deploy/publication was requested or done.
-- Product framing still requires visual review: geometry checks do not locate semantic product pixels. Integrated product is not independently draggable.
-- Live Claude scene planning/text polish and real generated material quality were not tested. Controlled transport/schema/queue and Chromium glyph masking were tested. No physical phone/Safari or backup restoration test.
-- Computer-use skill permits native UI only through node_repl @oai/sky. Prior Edge observations are stale; no need for desktop access to finish this task.
-- No subagents used. Previous feed goal was completed; no new goal was created for this follow-up.
+- Strict Pydantic documents, exact integer MGA offers, immutable product/profile snapshots, owned uploads, optimistic revisions, idempotent replay, copies and history.
+- Shared-shop Argon2 sessions, Origin and ownership checks, SQLite `BEGIN IMMEDIATE`, forward migrations 0001–0010.
+- Durable jobs with a spend ledger; scene, refinement, texture, render and style-brief jobs; twelve scenes per poster.
+- `posters/plans.py` `compile_scene`: house-style prompt with optional drawn headline, shop signature, price label, and a saved look's typography and alignment.
+- Guards in `posters/exports.py`: drawn title, signature and price must equal the poster's (`title_missing`, `signature_missing`, `price_stale`); refinement refuses `headline_stale`; approval refuses `fidelity_incomplete`.
+- French Vue/Vite/Konva editor; shared offline Chromium renderer; immutable PNG previews, confirmations and downloads.
+- No deployment and no publishing integration.
 
 ## Uncommitted files
 
-None after the 2026-11-11 commits on main (no remote). outputs/ and backend/data-*/ are Git-ignored: protect them yourself.
+Not committed since `6f18f8c`:
+
+```text
+ M docs/project/HANDOFF.md
+ M docs/project/TODO.md
+ M frontend/src/App.vue
+ M frontend/tests/browser_smoke.py
+```

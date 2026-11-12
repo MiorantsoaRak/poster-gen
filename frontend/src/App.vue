@@ -677,9 +677,11 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
         <div>
           <p v-if="confirmedDownload" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
           <dl class="facts"><div><dt>Format</dt><dd>1080 × 1350 px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
+          <template v-if="!confirmedDownload">
           <div class="group"><h3><Icon n="check" />Avant de confirmer</h3><div class="review-checks"><label v-for="(label, check) in ({ framing:'Le produit est entier, bien cadré et dégagé du texte', content:'Le titre et le prix sont exacts', identity:'Les détails de la boutique sont corrects', readability:'Tous les éléments sont lisibles' } as const)" :key="check" class="check"><input v-model="finalChecks[check]" type="checkbox" />{{ label }}</label></div>
             <div v-if="finalPreview.warnings.length"><ul><li v-for="warning in finalPreview.warnings" :key="warning.id">{{ warning.message }}</li></ul><label class="check"><input v-model="warningsAccepted" type="checkbox" />J’ai vérifié ces superpositions et la lisibilité.</label></div></div>
           <div class="actions"><span class="count" role="status">{{ Object.values(finalChecks).filter(Boolean).length }} sur 4 points vérifiés</span><button class="primary" :disabled="busy || !previewLoaded || !Object.values(finalChecks).every(Boolean) || (!!finalPreview.warnings.length && !warningsAccepted)" @click="perform(confirmFinal)"><Icon n="check" />Confirmer cette version</button></div>
+          </template>
           <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="perform(fresh)"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>

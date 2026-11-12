@@ -308,8 +308,10 @@ def run():
                         (OUTPUT / "confirmed-stub-poster.png").write_bytes(preview_bytes)
                         page.get_by_label("Prix en ariary", exact=True).fill("91 000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
-                        page.get_by_role("button", name="Confirmer cette version", exact=True).click()
-                        expect(page.get_by_role("alert")).to_contain_text("nouvel aperçu")
+                        # A confirmed poster offers no second confirmation; the server's
+                        # preview_stale refusal is covered in backend/tests/test_exports.py.
+                        expect(page.get_by_role("button", name="Confirmer cette version", exact=True)).to_have_count(0)
+                        expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
                         assert page.request.get(ORIGIN + link.get_attribute("href")).body() == preview_bytes
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         page.get_by_label("Titre", exact=True).fill("Écouteurs " * 25)
