@@ -1,5 +1,20 @@
 # DECISIONS
 
+## ADR-054 — 2026-11-12 — Design approved: compact rendered contact, logo-only identity, brand as plain text
+
+- The user approved D-CATALOGUE-BRAND-004 and 005 at v2.1 ("approved, commit and go") after two review rounds (REWORK on the drawn-contact v1, APPROVE WITH FIXES on v2) and one devil's-advocate pass. The round-2 fixes were applied and not reviewed again.
+- Implementation is split into T-SIG-001 (layer icon and canvas), T-SIG-002 (editor) and T-SIG-003 (brand as plain text) in TODO.
+- No paid call is needed for the contact. One optional scene would test "brand as plain text" and needs the user's go.
+
+## ADR-053 — 2026-11-12 — The contact is written by the renderer, not drawn by the image model (user decision; supersedes ADR-043 for new scenes; amends R-CATALOGUE-BRAND-003)
+
+- Trigger: design draft v1 drew a compact contact in the scene. Its review returned REWORK (layers are placed on the first scene only, no source for the line's width, a contradiction in the refusal rule), and the devil's advocate argued that drawing a phone number is the wrong tool: a wrong digit does silent harm, code cannot read pixels, and the review is one agreement since ADR-051. Review: reviews/signature-design-r1-2026-11-12.md.
+- Decision by the user ("B, and yes to the two smaller points"): the contact is the existing text layer with a compact one-line style and a telephone icon, written by the shared renderer. Its position (left, centre, right) and its text change freely, with no new scene. New scenes no longer draw the shop name or the contact; the ADR-043 path stays for stored scenes.
+- Also decided: without a logo the footer carries the contact only, and the shop name is unticked by default; the default position is right with a logo, centre without.
+- Kept: the price stays drawn by the image model (ADR-044); the logo stays the uploaded file as a layer; the contact keeps its own band under the price; "brand as plain text" is the only brand fallback.
+- Given up: contact lettering matched to the headline style.
+- R-CATALOGUE-BRAND-003 is amended accordingly: the criterion "changing the contact or its position needs a new scene" is reversed.
+
 ## ADR-052 — 2026-11-12 — Requirements approved: discreet contact, logo-only shop identity, brand mark
 
 - The user asked for a smaller but visible contact with a left, centre or right position, a shop identity carried by the logo alone, and asked about the product brand logo. Research: reviews/signature-research-2026-11-12.md. He approved R-CATALOGUE-BRAND-003 and 004 with "go with the new requirement".

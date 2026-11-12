@@ -6,7 +6,7 @@
 |---|---|---|---|
 | R-CATALOGUE-BRAND-001 | Confirm the product and offer | P0 | Approved |
 | R-CATALOGUE-BRAND-002 | Optional shop identity | P0 | Approved |
-| R-CATALOGUE-BRAND-003 | Discreet shop signature in a composed poster | P1 | Approved 2026-11-12 (ADR-052) |
+| R-CATALOGUE-BRAND-003 | Discreet shop signature in a composed poster | P1 | Approved 2026-11-12 (ADR-052), amended (ADR-053) |
 | R-CATALOGUE-BRAND-004 | Product brand mark | P1 | Approved 2026-11-12 (ADR-052) |
 
 ## R-CATALOGUE-BRAND-001 — Confirm the product and offer
@@ -41,28 +41,25 @@ Out of scope: multiple shops, automatic logo generation, contact verification an
 
 ## R-CATALOGUE-BRAND-003 — Discreet shop signature in a composed poster
 
-**Status:** Approved by the user on 2026-11-12 ("go with the new requirement"; ADR-052). The technical design has its own approval gate. Extends ADR-043 (shop name and contact drawn by the image model). Background: [research summary](../reviews/signature-research-2026-11-12.md).
+**Status:** Approved by the user on 2026-11-12 ("go with the new requirement"; ADR-052), amended the same day by his decision to have the contact written by the renderer, not drawn by the image model ("B, and yes to the two smaller points"; ADR-053). The technical design has its own approval gate. Supersedes ADR-043 for new scenes. Background: [research summary](../reviews/signature-research-2026-11-12.md), [design review round 1](../reviews/signature-design-r1-2026-11-12.md).
 
-As the operator, I want my contact to be part of the composed poster without competing with the product and the price, and my shop to be identified by its logo alone.
+As the operator, I want my contact to be part of the poster without competing with the product and the price, and my shop to be identified by its logo alone.
 
 Acceptance criteria:
 
-- [ ] When the contact is drawn in the scene, it is one compact line: a telephone icon and the contact exactly as typed. It has no rule above it and no second line.
-- [ ] The contact is visibly smaller than the price and stays readable on a phone: on the 1080 × 1350 poster its digits are at least 22 px tall. The fidelity review shows the typed contact to compare, as today.
-- [ ] Before generation the operator chooses where the contact goes in the footer: left, centre or right. The choice is remembered on the device like the other style choices.
-- [ ] When the logo is included, the logo alone identifies the shop: the shop name is not also written in the scene. The logo is the uploaded file, placed by the renderer on a calm area that the scene leaves free. The image model never draws or imitates the logo (R-CATALOGUE-BRAND-002 stays in force).
-- [ ] The logo and the drawn contact never overlap, in any of the three positions and with or without a logo.
-- [ ] The drawn contact must still equal the poster's contact, or export is refused. Changing the contact or its position after the scene needs a new scene, as for the price (ADR-044). The logo can be changed, moved or removed without a new scene.
-- [ ] Error case: WHEN the contact does not fit on one line at the minimum size THEN the operator is told before any paid call, and can shorten it or leave it out of the scene.
-- [ ] Error case: WHEN no contact is selected THEN nothing is drawn in its place: no placeholder and no invented number.
+- [ ] The contact is written by the renderer, never drawn by the image model in a new scene. It is one compact line: a telephone icon and the contact exactly as typed, with no rule and no second line.
+- [ ] The contact is visibly smaller than the price and stays readable on a phone: on the 1080 × 1350 poster its digits are at least 22 px tall. A renderer test measures this.
+- [ ] The operator chooses where the contact goes in the footer: left, centre or right. The choice can be changed at any time without a new scene and without cost, and is remembered on the device. Default: right when the logo is included, centre otherwise.
+- [ ] When the logo is included, the logo alone identifies the shop. Without a logo, the footer carries the contact only. The shop name is unticked by default in both cases; the operator can still tick it as an editable text layer. The logo is the uploaded file, placed by the renderer; the image model never draws or imitates it (R-CATALOGUE-BRAND-002 stays in force).
+- [ ] The logo and the contact do not overlap when the poster is created, in any of the three positions. If the operator later moves one over the other, the editor warns him.
+- [ ] Changing the contact, its position or the logo never needs a new scene. The scene leaves the footer free of objects and writing.
+- [ ] Error case: WHEN the contact does not fit on one line at the minimum size THEN the editor says so at once and the final preview is blocked until the operator shortens it, removes the logo or removes the contact. No paid call is involved.
+- [ ] Error case: WHEN no contact is selected THEN nothing appears in its place: no placeholder and no invented number.
+- [ ] A poster whose existing scene already carries a drawn contact (ADR-043) keeps working with its guards; moving that contact needs a new version of the scene.
 
-Out of scope: a logo drawn by the image model; multiple contact lines in the scene; adding the contact to captions.
+Out of scope: a logo drawn by the image model; a contact drawn by the image model in new scenes; a compact style for a multi-line contact; adding the contact to captions.
 
-Open questions, approved without an answer. Each has a working default (Claude's choice, ADR-052) that the user confirms or changes at the design review:
-
-1. Without an uploaded logo, is the shop name still written in the scene as today, or is nothing shown for the shop? Default: still written, as today.
-2. Which position is the default: centre, or the side opposite the price when a look is left-aligned? Default: the side opposite the price for a left-aligned look, centre otherwise.
-3. May a left or right contact share the price band (more room for the product), or must it stay on its own line under the price? Default: its own line under the price.
+Decided on 2026-11-12 (ADR-053): the contact keeps its own band under the price; without a logo the shop name is not written by default.
 
 ## R-CATALOGUE-BRAND-004 — Product brand mark
 

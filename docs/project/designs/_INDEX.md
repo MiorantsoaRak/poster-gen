@@ -4,7 +4,7 @@
 
 | Design file | Requirements / sections | Status |
 |---|---|---|
-| [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001/002; D-001 intake, D-002 profile, D-003 shared access/API conventions | Approved v1 (ADR-031) |
+| [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001/002; D-001 intake, D-002 profile, D-003 shared access/API conventions | Approved v1 (ADR-031); D-004 compact rendered contact and logo-only identity, D-005 brand mark (R-CATALOGUE-BRAND-003/004): Approved v2.1 on 2026-11-12 (ADR-054) |
 | [generation-jobs.md](generation-jobs.md) | R-GENERATION-JOBS-001/002; D-001 Claude planning, D-002 queue/spend/recovery, D-003 failures | Approved v1 (ADR-031) |
 | [product-visuals.md](product-visuals.md) | Existing R-001–008 / D-001–008; new R-009–011 / D-009–011 | Phase 1 approved (ADR-012); normal-poster v2 approved (ADR-031) |
 | [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001–003; D-001 document/editor, D-002 review/confirm, D-003 manual/prompted text effects | Approved v1 (ADR-031) |
