@@ -4,6 +4,8 @@
 **Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
 **State:** nothing in progress. The contact is drawn in the composition again by default (ADR-055, design v3.1 approved in ADR-056); T-SIG-004 and 005 are built, tested and committed. T-SIG-006 is done: live run 8 drew the contact at the right with exact digits and no collision with the price, though beside the pill rather than below it and about 20 px high (details in TODO). "Mes affiches" now uses small resized thumbnails (T-UI-THUMBNAIL-SIZE). Everything up to here was committed with this handoff. No remote. No server is running. Next: ask the user to look at "Mes affiches" and a new poster on the real data, then T-UI-MOCKUP-GAPS, T-PLANNER-CLAUDE-INVALID, T-UI-PHONE-CHECK and T-POSTER-009; the numbered list below predates the drawn-contact work and its items 1 and 2 are done or replaced.
 
+**Logo seal (ADR-057, ADR-058), built on 2026-11-12:** the scene is asked for an empty white disc, the program finds it (`backend/src/affiche/posters/seal.py`) and the real logo file is printed on it as a round seal at 130 px. The shop's real logo is now saved in the `data-probe` profile. Two paid scenes are left pending review in `data-probe` (one of them with its logo unticked by the first, too strict, size rule). The user has seen the composed left-aligned result and has not yet seen or judged the centred dark one. Open: confirm with him the two rule changes of ADR-058, and whether the seal's place with a centred price suits him.
+
 **Read this first about the footer:** it changed direction twice on 2026-11-12. ADR-053 made the contact a rendered text layer; the first real poster showed that layer landing on the drawn price pill (the image model had drawn the pill into the band kept for the contact); ADR-055 went back to a drawn contact and kept the rendered line as the fallback. The text below about T-SIG-001 to 003 describes that fallback.
 
 ## What the application does now
@@ -74,7 +76,8 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 - Study calls made directly to the providers, **outside the ledger**: **4.196172** (`outputs/style-study-2026-11-11/spend.json`); one failed Claude brief of about one cent is missing from that file. The application's cap check does not see this amount.
 - Real total ≈ 7.52. Treat the remaining budget as ≈ **4.48**. The study runner's own USD 5 budget is nearly used.
 - Later on 2026-11-12: the ledger read **3.939988** after two scenes the user generated in the editor and live run 8 (0.210658). Real total ≈ 8.15; remaining ≈ **3.85**.
-- Logo study, same day: five direct calls, 1.081501, outside the ledger (study file now 5.277673; its own budget was raised to 5.6). Real total ≈ 9.22; remaining ≈ **2.78**. Results: reviews/logo-study-2026-11-12.md; waiting for the user's choice (T-LOGO-STUDY).
+- Logo study, same day: five direct calls, 1.081501, outside the ledger (study file now 5.277673; its own budget was raised to 5.6). Real total ≈ 9.22; remaining ≈ **2.78**.
+- Logo seal paid check, same day: two scenes through the application, 0.422076; the ledger reads **4.362064**. Real total ≈ 9.64; remaining ≈ **2.36**. Results: reviews/logo-study-2026-11-12.md; waiting for the user's choice (T-LOGO-STUDY).
 
 ## Verification state
 
@@ -114,21 +117,4 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 
 ## Uncommitted files
 
-T-SIG-001 to 003, written after the last commit of the design documents, were not committed when this was written:
-
-```text
- M backend/src/affiche/posters/models.py
- M backend/src/affiche/posters/plans.py
- M backend/tests/test_looks.py
- M backend/tests/test_poster_drafts.py
- M backend/tests/test_rendering.py
- M docs/project/HANDOFF.md
- M docs/project/TODO.md
- M frontend/src/App.vue
- M frontend/src/PosterCanvas.vue
- M frontend/src/canvas.ts
- M frontend/src/document.ts
- M frontend/tests/browser_smoke.py
-```
-
-Check `git status`: if it is clean, they were committed afterwards.
+None expected: the logo seal (T-SEAL-001 to 003, ADR-058) was committed together with this file on the user's "commit" of 2026-11-12. Check `git status`; anything listed there was written afterwards.

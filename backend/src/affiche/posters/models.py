@@ -172,6 +172,8 @@ class ImageLayer(Layer):
     role: Literal["logo", "product"]
     asset: Sha
     keep_aspect: Literal[True] = True
+    # The shop logo as a round seal printed on a disc the scene provides (ADR-057). Omitted when unset.
+    shape: Literal["circle"] | None = Field(None, exclude_if=lambda value: value is None)
 
     @field_validator("keep_aspect", mode="before")
     @classmethod
@@ -184,6 +186,8 @@ class ImageLayer(Layer):
     def matching_role(self):
         if (self.kind == "logo") != (self.role == "logo"):
             raise ValueError("invalid_image_role")
+        if self.shape is not None and self.role != "logo":
+            raise ValueError("shape_requires_logo")
         return self
 
 

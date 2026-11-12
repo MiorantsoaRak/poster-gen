@@ -11,10 +11,10 @@ from sqlalchemy import text
 from affiche import assets
 from affiche.db import utc_now
 from affiche.visuals.gateway import OpenAIProvider, image_dimensions, make_provider, prepare_provider_input, validate_image
-from . import exports, jobs, looks, rendering, store, typography, visuals
+from . import exports, jobs, looks, rendering, seal, store, typography, visuals
 from .models import FORMATS, Crop, Document, Scene, canonical
 from .planner import ClaudePlanner
-from .plans import PlanContext, ScenePlan, fixed_plan
+from .plans import SEAL_DIAMETER, PlanContext, ScenePlan, fixed_plan
 from .worker import Outcome, run_job
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,15 @@ class PosterService:
                       "plan": payload["plan_id"], "prompt": payload["prompt"], "hash": store._sha(payload["prompt"]),
                       "direction": canonical({"plan_id": payload["plan_id"]}), "model": call["model"], "quality": payload["quality"],
                       "size": payload["size"], "ack": int(payload["low_res_ack"]), "now": utc_now()})
+        disc = None
+        if payload.get("logo_seal"):
+            # The scene was asked for an empty white disc: find it, in poster pixels, or record that it is missing.
+            asked = payload["logo_seal"]
+            found = seal.find_disc(image, (asked["x"], asked["y"]), asked["d"])
+            scale = FORMATS[payload["format"]][0] / width
+            disc = {"x": round(found[0] * scale, 1), "y": round(found[1] * scale, 1), "d": round(found[2] * scale, 1)} if found else None
+            conn.execute(text("UPDATE poster_visuals SET placement_json=:placement WHERE id=:id"),
+                         {"placement": canonical({"logo_disc": disc}), "id": id})
         creation = store.get_creation(conn, job["shop_id"], job["creation_id"])
         document = Document.model_validate(creation["document"])
         layout = document.formats.get(payload["format"])
@@ -161,6 +170,15 @@ class PosterService:
                 if drawn and (layer.role == "title" or layer.role == "price" and "price_ar" in drawn
                               or layer.role in ("shop_name", "contact") and layer.role in drawn):
                     layer.visible = False  # the scene already carries this exact title / price / shop name / contact
+            logo = next((layer for layer in layout.layers if layer.role == "logo"), None)
+            if payload.get("logo_seal") and logo and disc:
+                # Printed at the size the owner chose, centred on the disc; never smaller than the disc itself.
+                size = max(disc["d"] + 4, SEAL_DIAMETER * canvas_w)
+                logo.x, logo.y, logo.width, logo.height = disc["x"] - size / 2, disc["y"] - size / 2, size, size
+            elif payload.get("logo_seal") and logo:
+                # Nothing is printed at a guessed place: the poster goes on without its logo and the review says so.
+                document.include.logo = False
+                logo.visible = False
             store._insert_version(conn, creation["id"], creation["revision"]+1, document)
             conn.execute(text("UPDATE creations SET current_revision=current_revision+1,updated_at=:now WHERE id=:id"),
                          {"id": creation["id"], "now": utc_now()})

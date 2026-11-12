@@ -394,6 +394,49 @@ def run():
                         page.wait_for_function("image => image.complete && image.naturalWidth === 192 && image.naturalHeight === 240", arg=thumbnail.element_handle())
                         assert len(page.request.get(ORIGIN + thumbnail.get_attribute("src")).body()) < 40_000
                         page.screenshot(path=str(OUTPUT / "mes-affiches.png"))
+                        # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
+                        page.locator(".nav a", has_text="Créer").click()
+                        page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        expect(page.locator(".photo-strip img")).to_have_count(1)
+                        page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i sceau")
+                        page.get_by_label("Variante confirmée").fill("Noir")
+                        page.get_by_label("Prix en ariary", exact=True).fill("90 000")
+                        page.get_by_label("Les photos correspondent").check()
+                        expect(page.get_by_role("checkbox", name="Logo", exact=True)).to_be_checked()
+                        expect(page.get_by_role("checkbox", name="Nom de la boutique", exact=True)).not_to_be_checked()
+                        page.get_by_role("button", name="Créer mon brouillon").click()
+                        expect(page.get_by_role("heading", name="Soundcore R50i sceau", exact=True)).to_be_visible()
+                        seal_option = page.get_by_label("Logo en sceau rond dans l’image")
+                        expect(seal_option).to_be_checked()
+                        expect(page.get_by_label("Position du contact")).to_be_disabled()
+                        sent = []
+                        page.on("request", lambda request: sent.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
+                        page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Lancer la génération").click()
+                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        assert sent[-1]["headline"]["logo_seal"] is True and sent[-1]["headline"]["signature_align"] == "right", sent[-1]
+                        expect(page.get_by_text("Un disque blanc vide est prévu pour le logo", exact=False)).to_be_visible()
+                        page.get_by_role("button", name="Tout est conforme, approuver").click()
+                        expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        sealed = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]
+                        disc = page.request.get(f"{ORIGIN}/api/visuals/{sealed['formats']['feed']['scene']['visual_id']}").json()["logo_disc"]
+                        seal = footer("logo")
+                        assert disc and seal["shape"] == "circle" and seal["visible"] and abs(seal["width"] - disc["d"] - 4) < .1, (disc, seal)
+                        assert abs(seal["x"] + seal["width"] / 2 - disc["x"]) < .1 and abs(seal["y"] + seal["height"] / 2 - disc["y"]) < .1
+                        # The seal is locked once a version exists; removing the logo would leave an empty disc, so export is blocked.
+                        expect(seal_option).to_be_disabled()
+                        page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
+                        expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_be_visible()
+                        expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
+                        page.get_by_role("checkbox", name="Logo", exact=True).check()
+                        until(lambda: footer("logo")["visible"] and abs(footer("logo")["x"] - seal["x"]) < .1)
+                        expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_have_count(0)
+                        page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+                        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
+                        expect(page.get_by_text("Le logo recouvre bien son disque", exact=True)).to_be_visible()
+                        expect(page.locator(".final-preview img")).to_be_visible()
+                        page.screenshot(path=str(OUTPUT / "seal-final.png"))
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
                         print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")

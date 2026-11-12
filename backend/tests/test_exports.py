@@ -1,7 +1,9 @@
 import asyncio
 import copy
+import io
 
 import pytest
+from PIL import Image
 from sqlalchemy import text
 
 from affiche import assets
@@ -13,7 +15,7 @@ from affiche.posters.worker import run_job
 from test_api import settings, password_hash  # noqa: F401
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
-from test_poster_drafts import draft, input_id, key  # noqa: F401
+from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
 from test_poster_visuals import fixed, scene, execute
 
 
@@ -271,3 +273,104 @@ def test_edit_during_render_keeps_old_preview_without_replacing_current(engine, 
         preview = exports.get_render(conn, 1, jobs.get_job(conn, 1, job["id"])["result_ref"])
     with pytest.raises(store.Refused, match="preview_stale"):
         exports.confirm(engine, settings, 1, key(), current["id"], current["revision"], confirm_request(preview))
+
+
+def seal_poster(engine, settings, input_id, include=None):
+    logo = store.upload(engine, settings.data_dir, 1, photo(colour="red"), "logo")["asset"]
+    store.save_profile(engine, settings.data_dir, 1, key(), Profile(
+        name="Original Phone Mada", contact="038 93 028 00 / 034 93 028 00", logo_asset=logo), 1)
+    created = draft(engine, settings.data_dir, input_id, include or {"logo": True, "shop_name": False, "contact": True})
+    document = Document.model_validate(created["document"])
+    next(layer for layer in document.formats["feed"].layers if layer.role == "logo").shape = "circle"
+    return store.save_creation(engine, settings.data_dir, 1, key(), created["id"], document, created["revision"])[1]
+
+
+SEAL = dict(price=True, signature=True, signature_align="right", logo_seal=True)
+
+
+def seal_scene(engine, settings, poster, **headline):
+    plan = fixed(engine, settings, poster)
+    visuals.request_scene(engine, settings, 1, key(), poster["id"], poster["revision"], visuals.SceneRequest(
+        plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(**(SEAL | headline))))
+    return plan, execute(engine, settings)
+
+
+def test_logo_seal_is_printed_on_the_disc_the_scene_provides(engine, settings, input_id):
+    poster = seal_poster(engine, settings, input_id)
+    plan, visual = seal_scene(engine, settings, poster)
+    # The seal is outside the plan: the plan is the one of a poster without a logo.
+    assert "logo" not in {region["field"] for region in plan["plan"]["overlay_regions"]}
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
+    with engine.connect() as conn:
+        seen = visuals.get_visual(conn, 1, visual)
+        prompt = conn.execute(text("SELECT prompt_text FROM poster_visuals WHERE id=:id"), {"id": visual}).scalar_one()
+        current = store.get_creation(conn, 1, poster["id"])
+    disc = seen["logo_disc"]
+    # Asked without a look, so with a centred price: at the left of the footer, 12 % of the width.
+    assert "Shop badge: one small, plain, flat, pure white circular disc" in prompt and "12% of the frame width" in prompt
+    assert abs(disc["x"] - .11 * 1080) <= 2 and abs(disc["d"] - .12 * 1080) <= 3, disc
+    document = Document.model_validate(current["document"])
+    logo = next(layer for layer in document.formats["feed"].layers if layer.role == "logo")
+    assert logo.visible and logo.shape == "circle" and logo.width == logo.height == disc["d"] + 4
+    assert abs(logo.x + logo.width / 2 - disc["x"]) < .1 and abs(logo.y + logo.height / 2 - disc["y"]) < .1
+    # The real renderer prints the (red, not square) logo file covering the circle, and nothing outside it.
+    rendered = render(engine, settings, current)
+    with engine.connect() as conn:
+        png = Image.open(io.BytesIO(exports.read_png(settings, exports.render_row(conn, 1, rendered["id"])))).convert("RGB")
+    cx, cy, radius = round(disc["x"]), round(disc["y"]), disc["d"] / 2
+    assert png.getpixel((cx, cy)) == (255, 0, 0) and png.getpixel((cx, round(cy - radius * .9))) == (255, 0, 0)
+    assert png.getpixel((round(cx - radius * .97), round(cy - radius * .97))) != (255, 0, 0)  # the box's corner
+
+    def edited(change):
+        value = Document.model_validate(current["document"])
+        change(value, next(layer for layer in value.formats["feed"].layers if layer.role == "logo"))
+        with engine.connect() as conn:
+            revision = store.get_creation(conn, 1, poster["id"])["revision"]
+        return store.save_creation(engine, settings.data_dir, 1, key(), poster["id"], value, revision)[1]
+
+    def away(value, layer): layer.x -= layer.width / 2          # half a disc off: a white crescent would show
+    def smaller(value, layer): layer.width = layer.height = layer.width - 12
+    def unticked(value, layer): value.include.logo, layer.visible = False, False
+    for change in (away, smaller, unticked):
+        changed = edited(change)
+        with pytest.raises(store.Refused, match="logo_disc_uncovered"):
+            exports.request_render(engine, settings, 1, key(), changed["id"], changed["revision"], exports.RenderRequest())
+    def nudged(value, layer): layer.x += 1                       # within the tolerance of the cover check
+    restored = edited(nudged)
+    assert exports.request_render(engine, settings, 1, key(), restored["id"], restored["revision"], exports.RenderRequest())
+    # A refinement keeps the seal: accepted, and the disc is searched again in the new image.
+    visuals.request_refinement(engine, settings, 1, key(), restored["id"], restored["revision"], visuals.RefinementRequest(
+        base_visual_id=visual, instruction_fr="Plus de lumière"))
+    refined = execute(engine, settings)
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, refined)["logo_disc"]
+
+
+def test_logo_seal_not_found_removes_the_logo_instead_of_guessing(engine, settings, input_id, monkeypatch):
+    monkeypatch.setattr("affiche.posters.seal.find_disc", lambda *args: None)
+    poster = seal_poster(engine, settings, input_id)
+    _, visual = seal_scene(engine, settings, poster)
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
+    with engine.connect() as conn:
+        seen = visuals.get_visual(conn, 1, visual)
+        current = store.get_creation(conn, 1, poster["id"])
+    assert "logo_disc" in seen and seen["logo_disc"] is None
+    document = Document.model_validate(current["document"])
+    assert document.include.logo is False
+    assert not next(layer for layer in document.formats["feed"].layers if layer.role == "logo").visible
+    assert render(engine, settings, current)["png_sha256"]  # no disc recorded: nothing to cover
+
+
+@pytest.mark.parametrize("case", ["no_seal_layer", "shop_name", "contact_left", "price_not_drawn", "contact_not_drawn"])
+def test_logo_seal_is_refused_outside_its_footer(engine, settings, input_id, case):
+    poster = seal_poster(engine, settings, input_id, {"logo": True, "shop_name": case == "shop_name", "contact": True})
+    if case == "no_seal_layer":
+        document = Document.model_validate(poster["document"])
+        next(layer for layer in document.formats["feed"].layers if layer.role == "logo").shape = None
+        poster = store.save_creation(engine, settings.data_dir, 1, key(), poster["id"], document, poster["revision"])[1]
+    headline = {"contact_left": {"signature_align": "left"}, "price_not_drawn": {"price": False},
+                "contact_not_drawn": {"signature": False, "signature_align": None}}.get(case, {})
+    with pytest.raises(store.Refused, match="invalid_headline"):
+        seal_scene(engine, settings, poster, **headline)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM poster_jobs WHERE kind='scene'")).scalar_one() == 0

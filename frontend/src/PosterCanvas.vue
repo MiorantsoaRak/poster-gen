@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, shallowRef, ref, watch } from 'vue'
 import Konva from 'konva'
-import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Path as VPath, Transformer as VTransformer } from 'vue-konva'
+import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Path as VPath, Circle as VCircle, Transformer as VTransformer } from 'vue-konva'
 import { FORMATS, type Format, type Layer, type PosterDocument } from './document'
 import { loadFonts } from './fonts'
 import { badgeConfig, iconLine, inspectLayout, textRuns, type LayoutIssue } from './canvas'
@@ -80,6 +80,16 @@ function fittedImage(layer: Layer) {
   return { image, x: (layer.width - image.naturalWidth * scale) / 2, y: (layer.height - image.naturalHeight * scale) / 2,
     width: image.naturalWidth * scale, height: image.naturalHeight * scale }
 }
+// A seal (ADR-057): the logo covers the circle inscribed in its box, on white, and is clipped to it.
+function sealImage(layer: Layer) {
+  if (layer.kind === 'text') return {}
+  const image = images.value[layer.asset]
+  if (!image) return {}
+  const side = Math.min(layer.width, layer.height), scale = side / Math.min(image.naturalWidth, image.naturalHeight)
+  return { image, x: (layer.width - image.naturalWidth * scale) / 2, y: (layer.height - image.naturalHeight * scale) / 2,
+    width: image.naturalWidth * scale, height: image.naturalHeight * scale }
+}
+const disc = (layer: Layer) => ({ x: layer.width / 2, y: layer.height / 2, radius: Math.min(layer.width, layer.height) / 2 })
 function material(layer: Layer, run: Konva.TextConfig) {
   if (layer.kind !== 'text' || !layer.texture_effect_id) return {}
   const image = images.value[`effect:${layer.texture_effect_id}`]
@@ -116,6 +126,12 @@ defineExpose({ exportPng, issues: () => inspectLayout(props.document, props.form
               <VRect v-if="layer.price_badge" :config="{ ...badgeConfig(layer), listening: false }" />
               <VPath v-if="layer.icon" :config="{ ...iconLine(document, layer).icon, listening: false }" />
               <VText v-for="(run, index) in textRuns(document, layer)" :key="index" :config="{ ...run, ...material(layer, run), listening: false }" />
+            </template>
+            <template v-else-if="layer.kind === 'logo' && layer.shape === 'circle'">
+              <VCircle :config="{ ...disc(layer), fill: '#FFFFFF', listening: false }" />
+              <VGroup :config="{ clipFunc: (context: any) => context.arc(disc(layer).x, disc(layer).y, disc(layer).radius, 0, Math.PI * 2), listening: false }">
+                <VImage :config="{ ...sealImage(layer), listening: false }" />
+              </VGroup>
             </template>
             <VImage v-else :config="{ ...fittedImage(layer), listening: false }" />
           </VGroup>

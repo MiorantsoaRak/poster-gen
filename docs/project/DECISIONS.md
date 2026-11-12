@@ -1,5 +1,13 @@
 # DECISIONS
 
+## ADR-058 — 2026-11-12 — Logo seal: two rules changed after the paid scenes (Claude's decision under the user's autonomy grant; to confirm)
+
+- The approved design (ADR-057) accepted a disc only from 85 % of the asked diameter and printed the seal at the disc's size. The first paid scene through the application drew the disc exactly in place at 81 % (105 px for 130 asked): it was rejected and the logo removed. Across four real scenes the model drew 77 %, 79 %, 81 % and 107 % of the asked size.
+- Changed: the disc is accepted from 60 % of the asked diameter, and the seal is printed at the size the user chose (12 % of the width, 130 px) centred on the disc, larger only if the disc is larger. The small-seal warning is dropped, since the seal is no longer small.
+- Consequence to watch: the printed seal reaches about 14 px beyond a 102 px disc on every side. On the two paid scenes nothing was touched. The export guard (the logo covers the disc) is unchanged.
+- Also changed: the seal is locked once the poster itself uses a version, not once the product has any version (a new poster of a known product lists that product's earlier versions); a version without a disc chosen on a seal poster unticks the logo.
+- Second paid scene, with these rules, centred price on a dark backdrop: the application found the disc and placed the seal. The design and the requirement record the results.
+
 ## ADR-057 — 2026-11-12 — Logo as a round seal printed on an empty disc that the scene provides (user decision; R-CATALOGUE-BRAND-005 and D-CATALOGUE-BRAND-006 approved)
 
 - Study with the user's logo (reviews/logo-study-2026-11-12.md, five paid scenes, USD 1.081501 outside the ledger). A logo drawn by the model composes well but redraws the striped ribbon, which carries the national colours. The real file added afterwards is exact but collides unless the scene left its place empty.

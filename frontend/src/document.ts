@@ -13,7 +13,7 @@ export interface TextLayer extends BaseLayer {
   price_badge?: { fill: string; border_start: string; border_end: string } | null
   icon?: 'phone' | null
 }
-export interface ImageLayer extends BaseLayer { kind: 'logo' | 'product_cutout'; role: 'logo' | 'product'; asset: string; keep_aspect: true }
+export interface ImageLayer extends BaseLayer { kind: 'logo' | 'product_cutout'; role: 'logo' | 'product'; asset: string; keep_aspect: true; shape?: 'circle' | null }
 export type Layer = TextLayer | ImageLayer
 export interface Crop { x: number; y: number; w: number; h: number }
 export interface Layout { scene: { visual_id: string | null; crop: Crop | null }; layers: Layer[] }
@@ -25,7 +25,7 @@ export interface PosterDocument {
   primary_format: Format; formats: Partial<Record<Format, Layout>>
 }
 export interface Creation { id: string; revision: number; status: 'active' | 'abandoned'; parent_creation_id: string | null; document: PosterDocument }
-export interface Visual { id: string; status: 'pending_review' | 'approved' | 'rejected'; image_url: string; original_urls: string[]; style_reference_asset?: string | null; headline?: { title: string; brand?: string | null; shop_name?: string; contact?: string; signature_align?: 'left' | 'centre' | 'right'; price_ar?: number } | null; size: string; base_visual_id: string | null }
+export interface Visual { id: string; status: 'pending_review' | 'approved' | 'rejected'; image_url: string; original_urls: string[]; style_reference_asset?: string | null; headline?: { title: string; brand?: string | null; shop_name?: string; contact?: string; signature_align?: 'left' | 'centre' | 'right'; price_ar?: number } | null; logo_disc?: { x: number; y: number; d: number } | null; size: string; base_visual_id: string | null }
 
 // Documents are JSON values; this also accepts Vue proxies, unlike structuredClone.
 export const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))

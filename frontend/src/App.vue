@@ -140,7 +140,7 @@ function stylePill() {
         Object.assign(footer, { fill: look.value === 'sombre' ? '#FFFFFF' : '#22262E', outline: null, shadow: null })
   })
 }
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: headline.value.accent_word.trim() || null, accent_colour: headline.value.accent_word.trim() ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: chosenAlign.value === 'center' ? 'centre' : chosenAlign.value } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: headline.value.accent_word.trim() || null, accent_colour: headline.value.accent_word.trim() ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
@@ -174,11 +174,40 @@ const whyNoDrawnContact = computed(() => {
   return value.length > Math.floor((room - 50) / 23) ? 'Ce contact est trop long pour une seule ligne dessinée : il reste un texte ajouté sur l’affiche.' : ''
 })
 const drawContact = computed(() => headline.value.on && headline.value.contact && !!doc.value?.include.contact && !!doc.value.brand_snapshot.contact && !whyNoDrawnContact.value)
+const sealLayer = computed(() => layout.value?.layers.find(layer => layer.kind === 'logo' && layer.shape === 'circle'))
+const logoLayer = computed(() => layout.value?.layers.find(layer => layer.kind === 'logo'))
+// The seal is offered only for the footer the design vouches for, and is chosen before the first version.
+const whyNoSeal = computed(() => !doc.value?.include.logo ? ''
+  : layout.value?.scene.visual_id ? 'Le sceau se choisit avant la première version : créez une copie de l’affiche pour le changer.'
+  : doc.value.include.shop_name ? 'Le sceau remplace le nom de la boutique : décochez « Nom de la boutique ».'
+  : !headline.value.on || !headline.value.price ? 'Le sceau a besoin du titre et du prix dessinés dans l’image.'
+  : !drawContact.value ? 'Le sceau a besoin du contact dessiné dans l’image.' : '')
+const sealOn = computed(() => !!sealLayer.value && !!doc.value?.include.logo && !doc.value.include.shop_name && headline.value.on && headline.value.price && drawContact.value)
+const discUncovered = computed(() => {
+  const disc = currentVisual.value?.logo_disc, logo = logoLayer.value
+  if (!disc) return false
+  return !logo?.visible || Math.hypot(logo.x + logo.width / 2 - disc.x, logo.y + logo.height / 2 - disc.y) + disc.d / 2 > Math.min(logo.width, logo.height) / 2 + 2
+})
+function setSeal(event: Event) {
+  const on = (event.target as HTMLInputElement).checked
+  edit(document => { const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo'); if (logo?.kind === 'logo') { if (on) logo.shape = 'circle'; else delete logo.shape } })
+}
 const chosenAlign = computed<Align>(() => contactLayer.value?.kind === 'text' && contactLayer.value.visible ? contactLayer.value.align : doc.value ? defaultAlign(doc.value) : 'center')
 // The server refuses to export a hidden title unless the selected scene carries exactly the current one.
+// The logo as a round seal (ADR-057): the scene provides an empty white disc and the real file is printed on it.
+function sealOnDisc(document: PosterDocument, disc: { x: number; y: number; d: number }) {
+  const logo = document.formats[format.value]!.layers.find(layer => layer.role === 'logo')
+  if (!logo) return
+  // Printed at the size the owner chose (12 % of the width), centred on the disc; never smaller than the disc.
+  const size = Math.max(disc.d + 4, FORMATS[format.value][0] * .12)
+  Object.assign(logo, { x: disc.x - size / 2, y: disc.y - size / 2, width: size, height: size })
+}
 function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | 'contact', enabled: boolean) {
   setIdentity(document, role, enabled)
-  if (role === 'logo') placeFooter(document)
+  const seal = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo' && layer.shape === 'circle')
+  // A seal goes back on its disc; it has no place in the footer. A plain logo takes the footer's left.
+  if (role === 'logo' && seal) { if (enabled && currentVisual.value?.logo_disc) sealOnDisc(document, currentVisual.value.logo_disc) }
+  else if (role === 'logo') placeFooter(document)
   // Ticking back a name/contact that the current scene already shows must not add a second copy as a layer.
   const layer = document.formats[format.value]!.layers.find(item => item.role === role)
   if (layer && role !== 'logo' && currentVisual.value?.headline?.[role] !== undefined) layer.visible = false
@@ -217,7 +246,7 @@ function changePriceLater() {
   notice.value = 'Modifiez le prix dans le bloc Textes, puis créez une nouvelle version : le prix est dessiné dans l’image.'
   nextTick(() => document.getElementById('champ-prix')?.focus())
 }
-const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || currentVisual.value?.status !== 'approved' || staleHeadline.value || issues.value.some(issue => issue.blocking))
+const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || currentVisual.value?.status !== 'approved' || staleHeadline.value || discUncovered.value || issues.value.some(issue => issue.blocking))
 const stage = computed(() => !currentVisual.value ? (job.value && ['scene', 'refine'].includes(job.value.kind) ? 1 : 0) : currentVisual.value.status === 'approved' ? 3 : 2)
 const mainAction = computed(() => {
   const visual = currentVisual.value
@@ -244,6 +273,7 @@ const whyNoExport = computed(() => job.value ? waiting
   : currentVisual.value.status === 'pending_review' ? 'Comparez d’abord la scène à votre photo et approuvez la fidélité du produit.'
   : currentVisual.value.status === 'rejected' ? 'Cette scène a été refusée : choisissez une autre version ou générez-en une nouvelle.'
   : staleHeadline.value ? 'Un texte dessiné dans l’image a changé : générez une nouvelle scène.'
+  : discUncovered.value ? 'L’image contient un disque prévu pour le logo : replacez le logo dessus (cochez « Logo ») ou générez une nouvelle version.'
   : issues.value.some(issue => issue.blocking) ? 'Corrigez d’abord les éléments signalés sous l’affiche.'
   : previewPolish.value ? 'Appliquez ou refusez d’abord l’ajustement en cours.' : '')
 const nextStep = computed(() => job.value && ['scene', 'refine'].includes(job.value.kind) ? 'Votre scène est en cours de création. Cela prend environ une minute.'
@@ -315,7 +345,12 @@ async function createPoster() {
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
-  if (doc.value?.include.contact) edit(document => compactContact(document, defaultAlign(document)))
+  if (doc.value?.include.contact) edit(document => {
+    compactContact(document, defaultAlign(document))
+    // The seal is the default for the footer it was designed for: a logo and a contact, no shop name.
+    const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
+    if (logo?.kind === 'logo' && document.include.logo && !document.include.shop_name) logo.shape = 'circle'
+  })
 }
 async function adopt(result: Creation) {
   finalPreview.value = null; confirmedDownload.value = ''; previewLoaded.value = false
@@ -417,6 +452,12 @@ let planSignature = ''
 // response sends the same scene body and key instead of paying for a second image.
 async function createScene() {
   stylePill()
+  // A seal whose footer conditions are not met cannot be asked for: it becomes a plain logo before the plan is made,
+  // so that the plan keeps a place for it.
+  if (sealLayer.value && !sealOn.value && !layout.value?.scene.visual_id) edit(document => {
+    const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
+    if (logo?.kind === 'logo') { delete logo.shape; placeFooter(document) }
+  })
   await flush()
   const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, headline.value.accent_colour, format.value])
   if (!plan.value || planSignature !== signature) { await prepareScene(); planSignature = signature }
@@ -567,6 +608,12 @@ function chooseVisual(visual: Visual) {
     // A contact that an older scene had drawn comes back as a layer: give it the compact style.
     const contact = document.formats[format.value]!.layers.find(layer => layer.role === 'contact')
     if (contact?.kind === 'text' && contact.visible && !contact.icon) compactContact(document, defaultAlign(document))
+    // A seal follows the disc of the chosen version; without a disc nothing is printed at a guessed place.
+    const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
+    if (logo?.kind === 'logo' && logo.shape === 'circle') {
+      document.include.logo = logo.visible = !!visual.logo_disc
+      if (visual.logo_disc) sealOnDisc(document, visual.logo_disc)
+    }
   })
   selected.value = null
 }
@@ -661,9 +708,13 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" maxlength="60" placeholder="JBL" :disabled="busy || !!job" /></label><label v-if="headline.brand.trim()" class="check"><input v-model="headline.brand_text" type="checkbox" :disabled="busy || !!job" />Écrire la marque en texte simple (si l’IA ne connaît pas son logo)</label><label>Sous-titre (facultatif)<input v-model="headline.subtitle" maxlength="60" placeholder="CASQUE SANS FIL" :disabled="busy || !!job" /></label><label>Mot du titre à mettre en couleur (facultatif)<input v-model="headline.accent_word" maxlength="60" placeholder="770NC" :disabled="busy || !!job" /></label></template>
             <p class="sub">Boutique sur l’affiche</p>
             <div class="checks-row"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input :checked="doc.include[role]" type="checkbox" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
-            <label v-if="doc.include.contact && contactLayer?.kind === 'text'">Position du contact<select aria-label="Position du contact" :value="chosenAlign" @change="moveContact"><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>
-            <p v-if="doc.include.contact && drawnContact" class="help">Le contact est dessiné dans l’image : la position s’applique à la prochaine version.<template v-if="logoShown"> Gardez le logo à l’écart du contact, ou générez une nouvelle version.</template></p>
-            <p v-else-if="doc.include.contact && doc.include.logo" class="help">Le contact se place dans l’espace à droite du logo.</p>
+            <label v-if="doc.include.contact && contactLayer?.kind === 'text'">Position du contact<select aria-label="Position du contact" :value="sealOn ? 'right' : chosenAlign" :disabled="sealOn" @change="moveContact"><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>
+            <p v-if="doc.include.contact && sealOn" class="help">Avec le sceau, le contact est à droite.</p>
+            <p v-else-if="doc.include.contact && drawnContact" class="help">Le contact est dessiné dans l’image : la position s’applique à la prochaine version.<template v-if="logoShown && !sealLayer"> Gardez le logo à l’écart du contact, ou générez une nouvelle version.</template></p>
+            <p v-else-if="doc.include.contact && doc.include.logo && !sealLayer" class="help">Le contact se place dans l’espace à droite du logo.</p>
+            <label v-if="doc.include.logo && logoLayer" class="check"><input type="checkbox" :checked="layout?.scene.visual_id ? !!sealLayer : sealOn" :disabled="busy || !!job || !!whyNoSeal" @change="setSeal" />Logo en sceau rond dans l’image</label>
+            <p v-if="doc.include.logo && whyNoSeal" class="why" role="status">{{ whyNoSeal }}</p>
+            <p v-else-if="sealLayer" class="help">L’image prévoit un disque blanc vide et votre logo y est imprimé tel quel, découpé en rond.</p>
             <details class="ai-draws"><summary>Ce que l’IA dessine dans l’image</summary><p class="help">Par défaut, l’IA compose le titre, le prix et le contact avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant de valider la scène ; pour corriger, générez une nouvelle version.</p><label class="check"><input v-model="headline.on" type="checkbox" :disabled="busy || !!job" /> Laisser l’IA composer le titre dans l’image</label><template v-if="headline.on"><label class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le prix dans l’image</label><label v-if="doc.include.contact" class="check"><input v-model="headline.contact" type="checkbox" :disabled="busy || !!job || !!whyNoDrawnContact" /> Dessiner aussi le contact dans l’image</label><p v-if="whyNoDrawnContact" class="why" role="status">{{ whyNoDrawnContact }}</p></template></details>
           </section>
           <section class="card" aria-labelledby="titre-style"><header><Icon n="palette" /><h2 id="titre-style">Style</h2></header>
@@ -728,7 +779,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <p v-if="confirmedDownload" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
           <dl class="facts"><div><dt>Format</dt><dd>1080 × 1350 px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
           <template v-if="!confirmedDownload">
-          <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
+          <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button></div>
           </template>
           <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="perform(fresh)"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
@@ -742,7 +793,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
         <div class="review-checks groups">
           <div class="group"><h3><Icon n="box" />Le produit</h3><p class="help">Comparé à votre photo.</p><ul class="points"><li v-for="check in (['colour', 'shape', 'hardware', 'markings'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>
           <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small>{{ item.value }}</small></li><li>Aucun autre texte que ceux ci-dessus</li></ul></div>
-          <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>
+          <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li><li v-if="review.logo_disc">Un disque blanc vide est prévu pour le logo : rien ne doit être dessiné dedans</li><li v-if="review.logo_disc === null" class="warn">Le disque du logo n’a pas été trouvé dans l’image : le logo a été retiré de cette affiche. Cochez « Logo » pour le placer vous-même, ou générez une nouvelle version.</li></ul></div>
         </div>
         <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="primary" :disabled="busy" @click="perform(() => decide('approve'))"><Icon n="check" />Tout est conforme, approuver</button></div>
         <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(() => decide('reject'))">Refuser cette version</button></div>

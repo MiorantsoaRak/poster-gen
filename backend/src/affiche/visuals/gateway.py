@@ -329,7 +329,16 @@ class StubProvider:
         for data in images:
             digest.update(hashlib.sha256(data).digest())
         buffer = io.BytesIO()
-        Image.new("RGB", dimensions, tuple(digest.digest()[:3])).save(buffer, format="PNG")
+        image = Image.new("RGB", dimensions, tuple(digest.digest()[:3]))
+        # The poster prompt may ask for an empty white disc for the logo seal: draw it, so the flow runs offline.
+        badge = re.search(r"Shop badge: .*?(\d+)% of the frame width in diameter, its centre at (\d+)% of the frame "
+                          r"width and ([\d.]+)% of the frame height", prompt)
+        if badge:
+            from PIL import ImageDraw
+            radius = int(badge[1]) / 200 * dimensions[0]
+            x, y = int(badge[2]) / 100 * dimensions[0], float(badge[3]) / 100 * dimensions[1]
+            ImageDraw.Draw(image).ellipse((x - radius, y - radius, x + radius, y + radius), fill=(255, 255, 255))
+        image.save(buffer, format="PNG")
         return ProviderResult(buffer.getvalue(), "image/png", usage=None, cost_micros=0)
 
 

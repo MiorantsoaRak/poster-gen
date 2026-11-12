@@ -232,6 +232,12 @@ def test_contact_icon_is_optional_and_only_for_the_contact(engine, tmp_path, inp
     wrong["formats"]["feed"]["layers"][0]["icon"] = "phone"
     with pytest.raises(ValueError, match="icon_requires_contact"):
         Document.model_validate(wrong)
+    # The seal shape (ADR-057) follows the same rule: optional, absent from stored documents, logo only.
+    assert all("shape" not in layer for layer in stored["formats"]["feed"]["layers"])
+    wrong = copy.deepcopy(stored)
+    wrong["formats"]["feed"]["layers"][0]["shape"] = "circle"
+    with pytest.raises(ValueError):
+        Document.model_validate(wrong)
 
 
 @pytest.mark.parametrize("bad", ["extra", "nan", "duplicate", "price_text", "missing_title", "font_url", "boolean_version"])

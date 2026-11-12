@@ -14,7 +14,7 @@ from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
 from affiche.visuals.prompts import ReasonCode
 from . import jobs, looks, store
 from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, Sha, canonical
-from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, compile_scene, fixed_plan, screen_art, validate_plan
+from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, compile_scene, seal_place, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
 # Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
@@ -105,7 +105,9 @@ def context_for(document, product, direction, format):
     sizes = {layer.role: {"w": layer.width / width, "h": layer.height / height}
              for layer in document.formats[format].layers
              if (layer.visible or layer.role in ("title", "price") or getattr(document.include, layer.role, False))
-             and layer.role != "product"}
+             and layer.role != "product"
+             # A seal is printed on a disc of the scene, outside the plan (ADR-057).
+             and not (layer.role == "logo" and getattr(layer, "shape", None) == "circle")}
     try:
         return PlanContext(name=product["name"], variant=product["variant"], direction=direction,
                            format=format, field_sizes=sizes)
@@ -215,6 +217,11 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                 raise store.Refused("invalid_headline")
             signature = {role: value for role, value in profile_signature(document).items() if role == "contact"}
         price = {"price_ar": document.offer.price_ar} if request.headline and request.headline.price else {}
+        seal = bool(request.headline and request.headline.logo_seal)
+        if seal:
+            logo = next((layer for layer in document.formats[request.format].layers if layer.role == "logo"), None)
+            if not (logo and logo.shape == "circle" and document.include.logo) or document.include.shop_name:
+                raise store.Refused("invalid_headline")
         style = look_style(conn, shop, request.headline.look_id if request.headline else None)
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
@@ -229,6 +236,8 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                    "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
         if request.headline:
             payload["headline"] = request.headline.model_dump() | {"title": title} | signature | price
+        if seal:
+            payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]), style.get("align", "centre"))
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "scene", payload)
     # Omitted optional references must preserve pre-style idempotency hashes.
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/scenes", request.model_dump(exclude_none=True), apply, revision=revision)
@@ -269,6 +278,9 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
                    "reference_roles": ["base"] + ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
         if baked:
             payload["headline"] = baked
+            if baked.get("logo_seal"):
+                payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]),
+                                                  look_style(conn, shop, baked.get("look_id")).get("align", "centre"))
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "refine", payload)
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/refinements", request.model_dump(exclude_none=True), apply, revision=revision)
 
@@ -300,7 +312,9 @@ def get_visual(conn, shop, id):
         "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
         "original_urls": [f"/api/assets/{sha}" for sha in json.loads(row["source_assets_json"])],
         "checks": json.loads(row["checks_json"]), "reasons": json.loads(row["rejection_reasons_json"] or "[]"),
-        "note": row["rejection_note"]}
+        "note": row["rejection_note"]} | (
+        # Present only when a disc was asked for the logo seal: its place in poster pixels, or null if not found.
+        {"logo_disc": json.loads(row["placement_json"])["logo_disc"]} if row["placement_json"] else {})
 
 
 def decide(engine, shop, key, id, request: Decision):

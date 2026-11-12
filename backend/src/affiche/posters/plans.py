@@ -46,6 +46,8 @@ class Headline(Model):
     # Draw the contact as one compact line at this position (ADR-055). Absent: the two-line block of ADR-043,
     # kept only so that stored scenes and their refinements compile as before. Omitted when unset.
     signature_align: Literal["left", "centre", "right"] | None = Field(None, exclude_if=lambda value: value is None)
+    # Ask the scene for an empty white disc; the real logo file is printed on it afterwards (ADR-057).
+    logo_seal: Literal[True] | None = Field(None, exclude_if=lambda value: value is None)
     # Also draw the price label (ADR-044). The amount is always the offer's exact integer, formatted in code.
     price: bool = False
     # Write the typed brand in plain lettering instead of imitating its logo (R-CATALOGUE-BRAND-004). True or
@@ -208,6 +210,19 @@ def _band(box: Box) -> str:
     return f"the full-width band from {box.y:.0%} to {box.y + box.h:.0%} of the frame height"
 
 
+SEAL_DIAMETER = .12
+
+
+def seal_place(plan: ScenePlan, align: str) -> dict[str, float]:
+    """Where the empty disc for the logo seal is asked: x and d as fractions of the frame width, y of its height.
+
+    Between the price and the contact for a left-aligned price (the variant the owner chose, tested in the logo
+    study); at the left of the footer for a centred price (not tested).
+    """
+    contact = next(region.box for region in plan.overlay_regions if region.field == "contact")
+    return {"x": .50 if align == "left" else .11, "y": round(contact.y - .01, 4), "d": SEAL_DIAMETER}
+
+
 def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                   refinement: bool = False, style_reference: bool = False, refinement_note: str | None = None,
                   headline: Headline | None = None, title: str | None = None,
@@ -243,6 +258,15 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
     start = 2 if refinement else 1
     identity = ", ".join(str(i) for i in range(start, start + photo_count))
     boxes = {region.field: region.box for region in plan.overlay_regions}
+    seal = bool(headline and headline.logo_seal)
+    if seal:
+        # Only the footer the design vouches for: price and contact drawn, contact at the right, no shop name,
+        # no planned logo box, and the fixed plan's bands (a look only revises the palette).
+        reference = fixed_plan(context)
+        if (price_ar is None or compact != "right" or {"logo", "shop_name"} & boxes.keys()
+                or plan.product_region != reference.product_region
+                or plan.overlay_regions != reference.overlay_regions):
+            raise ValueError("logo_seal_unavailable")
     lines = [
         "Use case: hero visual for a premium social-media advertisement by an electronics shop, "
         f"{POSTER_SIZES[context.format]} pixels.",
@@ -372,6 +396,18 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
     if quiet:
         lines.append("Layout: these areas show only the calm backdrop, with no objects and no writing, because "
                      f"editable layers are placed there later: {quiet}. Do not draw guides or placeholder boxes.")
+    if seal:
+        place = seal_place(plan, align)
+        lines.append("Shop badge: one small, plain, flat, pure white circular disc with a very soft shadow, "
+                     f"{place['d']:.0%} of the frame width in diameter, its centre at {place['x']:.0%} of the frame "
+                     f"width and {place['y']:.1%} of the frame height, "
+                     + ("at the bottom centre between the price label and the contact line and level with them. "
+                        if align == "left" else "at the bottom left of the frame, level with the contact line. ")
+                     + "The disc is completely empty: no writing, no icon, no pattern and no outline inside it, "
+                     "because the shop's logo is printed on it later. It is a discreet seal, clearly smaller than "
+                     "the price label. "
+                     + ("The price label keeps the left, the contact line the right, and neither touches the disc."
+                        if align == "left" else "Neither the price label nor the contact line touches the disc."))
     lines.append(("Constraints: the only writing is the headline, the price label"
                   + (f", {drawn_signature}" if signature else "") + " and the markings already printed on the "
                   "product. No other numbers, badges or watermarks. " if price_ar is not None else
@@ -386,7 +422,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                     "or watermarks. " if signature else
                     "No prices, no numbers other than those in the product name, no badges or watermarks. "
                     if headline else "")
-                 + "No duplicated products, extra devices, invented attachments, people, hands, props or packaging.")
+                 + "No duplicated products, extra devices, invented attachments, people, hands, props or packaging."
+                 + (" The empty white disc described above is the only badge." if seal else ""))
     # Summary and commercial values have no route into the image instructions.
     data = {"product": {"name": context.name, "variant": context.variant},
             "art_direction": plan.scene.setting, "surface": plan.scene.surface, "palette": plan.palette}

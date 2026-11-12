@@ -7,7 +7,7 @@ from pydantic import SecretStr, ValidationError
 
 from affiche.posters.models import canonical
 from affiche.posters.planner import ClaudePlanner, MODEL, PlannerError, parse_usage
-from affiche.posters.plans import Headline, PlanContext, ScenePlan, compile_scene, fixed_plan, validate_plan, wire_schema
+from affiche.posters.plans import Headline, PlanContext, ScenePlan, compile_scene, fixed_plan, seal_place, validate_plan, wire_schema
 
 
 def context(**updates):
@@ -170,6 +170,42 @@ def test_compact_contact_line_has_a_position_and_the_price_stays_above_the_foote
     assert compile_scene(fixed_plan(beside), beside, photo_count=1, headline=on, title="JBL Flip 7", signature={"contact": "0" * 33})
     with pytest.raises(ValueError, match="signature_unsupported"):
         compile_scene(fixed_plan(beside), beside, photo_count=1, headline=on, title="JBL Flip 7", signature={"contact": "0" * 34})
+
+
+def test_logo_seal_adds_one_badge_sentence_to_the_tested_prompt():
+    ctx = context(field_sizes=context().field_sizes | {"contact": {"w": .9, "h": .036}})
+    plan = fixed_plan(ctx)
+    contact = next(region.box for region in plan.overlay_regions if region.field == "contact")
+    drawn = dict(price=True, signature=True, signature_align="right")
+    def compiled(headline, **extra):
+        return compile_scene(plan, ctx, photo_count=1, headline=headline, title="JBL Flip 7",
+                             signature={"contact": "038 93 028 00 / 034 93 028 00"}, price_ar=190000, **extra)
+    plain, sealed = compiled(Headline(**drawn)), compiled(Headline(**drawn, logo_seal=True))
+    # Everything the study tested is kept word for word; the seal adds one sentence and names the badge.
+    badge = [line for line in sealed.split("\n") if line.startswith("Shop badge:")]
+    assert len(badge) == 1 and "completely empty" in badge[0] and "printed on it later" in badge[0]
+    assert sealed.replace(badge[0] + "\n", "").replace(" The empty white disc described above is the only badge.", "") == plain
+    # Without a look the price is centred: the disc goes to the left of the footer, just above the contact band.
+    assert f"12% of the frame width in diameter, its centre at 11% of the frame width and {contact.y - .01:.1%}" in badge[0]
+    assert "logo_seal" not in Headline(**drawn).model_dump()
+    assert seal_place(plan, "left") == {"x": .50, "y": round(contact.y - .01, 4), "d": .12}
+    assert seal_place(plan, "centre")["x"] == .11
+    # A look revises only the palette: still the fixed plan's bands, so the seal is allowed.
+    recoloured = plan.model_copy(update={"palette": ["#101010", "#F0F0F0"]})
+    assert "Shop badge:" in compile_scene(recoloured, ctx, photo_count=1, headline=Headline(**drawn, logo_seal=True),
+                                          title="JBL Flip 7", signature={"contact": "034 00 000 00"}, price_ar=190000)
+    moved = plan.model_copy(update={"product_region": plan.product_region.model_copy(update={"h": plan.product_region.h - .05})})
+    for bad_plan, bad_ctx, headline, extra in (
+            (moved, ctx, Headline(**drawn, logo_seal=True), {}),                                   # not the fixed plan
+            (plan, ctx, Headline(price=True, signature=True, signature_align="centre", logo_seal=True), {}),
+            (plan, ctx, Headline(signature=True, signature_align="right", logo_seal=True), {"price_ar": None})):
+        with pytest.raises(ValueError):
+            compile_scene(bad_plan, bad_ctx, photo_count=1, headline=headline, title="JBL Flip 7",
+                          signature={"contact": "034 00 000 00"}, **({"price_ar": 190000} | extra))
+    with pytest.raises(ValueError, match="logo_seal_unavailable"):  # a shop name has its own band across the footer
+        named = context(field_sizes=ctx.field_sizes | {"shop_name": {"w": .9, "h": .04}})
+        compile_scene(fixed_plan(named), named, photo_count=1, headline=Headline(**drawn, logo_seal=True),
+                      title="JBL Flip 7", signature={"contact": "034 00 000 00"}, price_ar=190000)
 
 
 def test_price_label_comes_only_from_the_integer_amount():
