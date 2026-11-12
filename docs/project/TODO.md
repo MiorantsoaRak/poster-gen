@@ -54,7 +54,7 @@
   - not verified in a browser: "Voir plus" (needs more than 50 posters); the refusals (generation running, list out of date); the phone layout of the rows beyond the stub screenshot.
 - [x] T-LIB-003 (D-CREATION-LIBRARY-004, server) Migration 0011 (`looks.removed_at`); rename and remove routes; list filter; limit and name rule; free numbered name when a look is stored.
   - verified 2026-11-12: `uv run pytest tests/test_looks.py tests/test_db.py -q` 20 passed (names compared without case including accents, numbering within 40 characters, rename refusals and retries, removal twice, a scene still accepted with a removed look, the limit, no provider call).
-  - not done: migration 0011 is not applied to the paid database `backend/data-probe` yet; it applies at the next start of the application on that data. Make a copy of `affiche.db` first, as before migration 0010.
+  - migration 0011 applied to the paid database `backend/data-probe` on 2026-11-13 through `affiche.db.migrate`, after the copy `backups/before-looks-removed-2026-11-13.db` (made with the SQLite backup call so the write-ahead log is included; integrity ok). Row counts of every table unchanged, 3 styles, none removed.
   - not verified: the two new routes through HTTP in a backend test (the browser smoke calls them).
 - [x] T-LIB-004 (D-CREATION-LIBRARY-004, editor) Style panel on the "Styles" page; rename, remove, "Créer une affiche avec ce style"; a poster keeps its removed style.
   - verified 2026-11-12: build, 26 Vitest, browser smoke (a supplied style opens without rename or removal, a shop style opens with its description, rename to a supplied name refused beside the field, rename, removal with its confirmation, counts, zero spend).
