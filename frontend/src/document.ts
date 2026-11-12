@@ -25,7 +25,7 @@ export interface PosterDocument {
   primary_format: Format; formats: Partial<Record<Format, Layout>>
 }
 export interface Creation { id: string; revision: number; status: 'active' | 'abandoned'; parent_creation_id: string | null; document: PosterDocument }
-export interface Visual { id: string; status: 'pending_review' | 'approved' | 'rejected'; image_url: string; original_urls: string[]; style_reference_asset?: string | null; headline?: { title: string; shop_name?: string; contact?: string; price_ar?: number } | null; size: string; base_visual_id: string | null }
+export interface Visual { id: string; status: 'pending_review' | 'approved' | 'rejected'; image_url: string; original_urls: string[]; style_reference_asset?: string | null; headline?: { title: string; brand?: string | null; shop_name?: string; contact?: string; signature_align?: 'left' | 'centre' | 'right'; price_ar?: number } | null; size: string; base_visual_id: string | null }
 
 // Documents are JSON values; this also accepts Vue proxies, unlike structuredClone.
 export const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))

@@ -208,7 +208,12 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
         if request.style_reference_asset:
             store._asset(conn, settings.data_dir, shop, request.style_reference_asset, "style")
         title = document.offer.title if request.headline else None
-        signature = profile_signature(document) if request.headline and request.headline.signature else {}
+        signature = {}
+        if request.headline and request.headline.signature:
+            # A new scene draws the contact only, as one compact line (ADR-055); the shop name is never drawn.
+            if not request.headline.signature_align:
+                raise store.Refused("invalid_headline")
+            signature = {role: value for role, value in profile_signature(document).items() if role == "contact"}
         price = {"price_ar": document.offer.price_ar} if request.headline and request.headline.price else {}
         style = look_style(conn, shop, request.headline.look_id if request.headline else None)
         try:

@@ -185,6 +185,21 @@ def run():
                         expect(plain_brand).to_be_visible()
                         page.get_by_label("Marque (facultative)").fill("")
                         page.get_by_text("Ce que l’IA dessine dans l’image", exact=True).click()
+                        # By default the contact is drawn in the composition, at the chosen position, without the
+                        # shop name (ADR-055). The request is caught here and refused, so no scene is made by it.
+                        expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
+                        asked = []
+                        def catch_scene(route):
+                            asked.append(route.request.post_data_json)
+                            route.fulfill(status=409, content_type="application/json", body='{"detail": {"code": "plan_stale"}}')
+                        page.route("**/api/creations/*/scenes", catch_scene)
+                        page.get_by_role("button", name="Générer la scène").click()
+                        page.get_by_role("button", name="Lancer la génération").click()
+                        until(lambda: asked)
+                        page.unroute("**/api/creations/*/scenes", catch_scene)
+                        assert asked[0]["headline"]["signature"] is True and asked[0]["headline"]["signature_align"] == "right", asked
+                        assert "brand_text" not in asked[0]["headline"], asked
+                        expect(page.get_by_role("alert")).to_be_visible()
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
                         # One tap: the plan is made on the way and reused by the retry below.
                         # Lose the first paid-action response after the server accepted it; retry must reuse its key.

@@ -2,7 +2,9 @@
 
 **Session date:** 2026-11-12 (Indian/Mauritius), still open when this was written
 **Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
-**State:** nothing in progress. The design for the footer (ADR-053/054) is approved and its three tasks T-SIG-001 to 003 are built and verified by tests; they were committed together with this handoff. No remote. The local server on the real data was started for the user on ports 8000 and 5173; stop it before any smoke run.
+**State:** nothing in progress. The contact is drawn in the composition again by default (ADR-055, design v3.1 approved in ADR-056); T-SIG-004 and 005 are built and verified by tests, **not committed** when this was written (check `git status`). T-SIG-006, one paid scene to see the result, waits for the user's go. No remote. No server is running.
+
+**Read this first about the footer:** it changed direction twice on 2026-11-12. ADR-053 made the contact a rendered text layer; the first real poster showed that layer landing on the drawn price pill (the image model had drawn the pill into the band kept for the contact); ADR-055 went back to a drawn contact and kept the rendered line as the fallback. The text below about T-SIG-001 to 003 describes that fallback.
 
 ## What the application does now
 

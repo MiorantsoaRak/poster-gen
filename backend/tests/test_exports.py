@@ -131,18 +131,25 @@ def test_shop_signature_drawn_by_the_scene_must_match_the_poster_profile(engine,
     store.save_profile(engine, settings.data_dir, 1, key(), Profile(name="Original Phone Mada", contact=contact), 1)
     original = draft(engine, settings.data_dir, input_id, {"logo": False, "shop_name": True, "contact": True})
     plan = fixed(engine, settings, original)
+    # A new scene cannot ask for the older two-line block, which also drew the shop name (ADR-055).
+    with pytest.raises(store.Refused, match="invalid_headline"):
+        visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
+            plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(signature=True)))
     visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
-        plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(signature=True)))
+        plan_id=plan["id"], acknowledged_warnings=["low_resolution"],
+        headline=Headline(signature=True, signature_align="right")))
     visual = execute(engine, settings)
     visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
     with engine.connect() as conn:
         baked = visuals.get_visual(conn, 1, visual)["headline"]
         prompt = conn.execute(text("SELECT prompt_text FROM poster_visuals WHERE id=:id"), {"id": visual}).scalar_one()
         current = store.get_creation(conn, 1, original["id"])
-    assert (baked["shop_name"], baked["contact"]) == ("Original Phone Mada", contact)
-    assert f'"{contact}"' in prompt and "shop_name: the" not in prompt and "899" not in prompt
+    # Only the contact is drawn, as one line at the chosen position; the shop name stays an editable layer.
+    assert (baked["contact"], baked["signature_align"]) == (contact, "right") and "shop_name" not in baked
+    assert f'Contact line, right-aligned at the right edge of the area' in prompt and f'"{contact}"' in prompt
+    assert "Original Phone Mada" not in prompt and "shop_name: the" in prompt and "899" not in prompt
     layers = {layer["role"]: layer for layer in current["document"]["formats"]["feed"]["layers"]}
-    assert not layers["shop_name"]["visible"] and not layers["contact"]["visible"] and layers["price"]["visible"]
+    assert layers["shop_name"]["visible"] and not layers["contact"]["visible"] and layers["price"]["visible"]
     assert render(engine, settings, current)["png_sha256"]
     # The poster's own contact changes: the image no longer says what the poster claims.
     document = Document.model_validate(current["document"])

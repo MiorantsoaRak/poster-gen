@@ -120,6 +120,58 @@ def test_shop_signature_is_verbatim_single_line_and_needs_its_planned_band():
         compile_scene(fixed_plan(context()), context(), photo_count=1, headline=on, title="JBL Flip 7", signature=signature)
 
 
+def test_compact_contact_line_has_a_position_and_the_price_stays_above_the_footer():
+    ctx = context(field_sizes=context().field_sizes | {"contact": {"w": .9, "h": .036}})
+    plan = fixed_plan(ctx)
+    box = next(region.box for region in plan.overlay_regions if region.field == "contact")
+    contact = "038 93 028 00 / 034 93 028 00"
+    def compiled(headline, **extra):
+        return compile_scene(plan, ctx, photo_count=1, headline=headline, title="JBL Flip 7",
+                             signature={"contact": contact}, **extra)
+    # Without a position the stored two-line block compiles as before, with no new wording.
+    legacy = compiled(Headline(signature=True))
+    assert "Shop signature, centred inside the full-width band" in legacy and "Contact line" not in legacy
+    assert "signature_align" not in Headline(signature=True).model_dump()
+    for align, words in (("left", "left-aligned at the left edge of"), ("centre", "centred inside"),
+                         ("right", "right-aligned at the right edge of")):
+        prompt = compiled(Headline(signature=True, signature_align=align, price=True), price_ar=190000)
+        line = next(item for item in prompt.split("\n") if item.startswith("Contact line"))
+        # Explicit margins: "left" and "right" must mean the 5% margins, not the frame edges.
+        assert line.startswith(f"Contact line, {words} the area left 5%, top {box.y:.0%}, width 90%"), line
+        assert f'"{contact}"' in line and "one single line" in line and "full-width band" not in line
+        assert "clearly smaller than the price and entirely below the price label" in line
+        assert "telephone contact, not a price" in line and "Shop signature" not in prompt
+        assert "the price label, the contact line and the markings" in prompt and "contact: the" not in prompt
+        assert f"Hard limit: the whole price label, outline included, stays above {box.y:.0%}" in prompt
+    # The price is named only when it is drawn; a refinement keeps the stored scene's price wording.
+    alone = compiled(Headline(signature=True, signature_align="centre"))
+    assert "price label" not in next(item for item in alone.split("\n") if item.startswith("Contact line"))
+    assert "Hard limit: the whole price label" not in alone
+    refined = compiled(Headline(signature=True, signature_align="centre", price=True), price_ar=190000,
+                       refinement=True, refinement_note="Plus de lumière")
+    assert "Hard limit: the whole price label" not in refined and "Contact line, centred inside" in refined
+    # A rendered contact or a logo below the price also gets the limit; with nothing below, no limit.
+    assert "Hard limit: the whole price label" in compile_scene(
+        plan, ctx, photo_count=1, headline=Headline(price=True), title="JBL Flip 7", price_ar=190000)
+    assert "whole price label" not in compile_scene(fixed_plan(context()), context(), photo_count=1,
+                                                    headline=Headline(price=True), title="JBL Flip 7", price_ar=190000)
+    on = Headline(signature=True, signature_align="right")
+    for bad in ({"contact": "0" * 41}, {"contact": "034 00\n033 00"}, {"contact": 'Tel "034"'}, {"contact": "Promo -20%"},
+                {"shop_name": "Original Phone Mada", "contact": contact}, {}):
+        with pytest.raises(ValueError):
+            compile_scene(plan, ctx, photo_count=1, headline=on, title="JBL Flip 7", signature=bad)
+    assert compile_scene(plan, ctx, photo_count=1, headline=on, title="JBL Flip 7", signature={"contact": "0" * 40})
+    with pytest.raises(ValueError):  # a position without the drawing option
+        compiled(Headline(signature_align="right"))
+    # Beside a logo the line is shorter: 33 characters at most.
+    # (A poster created with a logo has narrower text layers, as initial_document makes them.)
+    beside = context(field_sizes=ctx.field_sizes | {"logo": {"w": 128 / 1080, "h": 128 / 1350},
+                                                    "contact": {"w": 792 / 1080, "h": .036}})
+    assert compile_scene(fixed_plan(beside), beside, photo_count=1, headline=on, title="JBL Flip 7", signature={"contact": "0" * 33})
+    with pytest.raises(ValueError, match="signature_unsupported"):
+        compile_scene(fixed_plan(beside), beside, photo_count=1, headline=on, title="JBL Flip 7", signature={"contact": "0" * 34})
+
+
 def test_price_label_comes_only_from_the_integer_amount():
     ctx = context()
     plan = fixed_plan(ctx)

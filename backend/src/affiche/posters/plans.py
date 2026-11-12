@@ -43,6 +43,9 @@ class Headline(Model):
     accent_colour: Colour | None = None
     # Also draw the shop name and contact selected on the poster; their words come from the shop profile.
     signature: bool = False
+    # Draw the contact as one compact line at this position (ADR-055). Absent: the two-line block of ADR-043,
+    # kept only so that stored scenes and their refinements compile as before. Omitted when unset.
+    signature_align: Literal["left", "centre", "right"] | None = Field(None, exclude_if=lambda value: value is None)
     # Also draw the price label (ADR-044). The amount is always the offer's exact integer, formatted in code.
     price: bool = False
     # Write the typed brand in plain lettering instead of imitating its logo (R-CATALOGUE-BRAND-004). True or
@@ -233,6 +236,10 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
     if signature and not (headline and headline.signature and signature.keys() <= {"shop_name", "contact"}
                           and signature.keys() <= {region.field for region in plan.overlay_regions}):
         raise ValueError("invalid_signature")
+    compact = headline.signature_align if headline else None
+    if compact and signature.keys() != {"contact"}:
+        raise ValueError("signature_align_requires_contact")
+    drawn_signature = "the contact line" if compact else "the shop signature"
     start = 2 if refinement else 1
     identity = ", ".join(str(i) for i in range(start, start + photo_count))
     boxes = {region.field: region.box for region in plan.overlay_regions}
@@ -308,7 +315,24 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         if headline_style and not headline.subtitle:
             text += " There is no subtitle: ignore any subtitle or second line that the typographic style mentions."
         lines.append(text)
-    if signature:
+    if compact:
+        contact, box = signature["contact"], boxes["contact"]
+        # ponytail: a character count stands in for a measured width. About 23 px per character for digits 2%
+        # of the frame high, 50 px for the icon and its gap, on the 1080 px wide poster; measure if this misfires.
+        if not 1 <= len(contact) <= (box.w * 1080 - 50) // 23 or '"' in contact or "\n" in contact or "\r" in contact:
+            raise ValueError("signature_unsupported")
+        screen_headline(contact)
+        where = {"left": "left-aligned at the left edge of", "centre": "centred inside",
+                 "right": "right-aligned at the right edge of"}[compact]
+        under_price = price_ar is not None and box.y >= boxes["price"].y + boxes["price"].h - 1e-9
+        # Explicit margins, never "the full-width band": left and right must mean the margins, not the frame edges.
+        lines.append(f"Contact line, {where} the area {_area(box)}: one single line, a small telephone handset "
+                     f'icon followed by "{contact}", rendered verbatim, each character exactly as written, in a '
+                     "clean sans-serif with evenly spaced digits about 2% of the frame height"
+                     + (", clearly smaller than the price and entirely below the price label" if under_price else "")
+                     + ". No rule, no second line and no other words. Discreet, in the same colour family as the "
+                     "headline, clearly legible. These digits are a telephone contact, not a price.")
+    elif signature:
         for value in signature.values():
             # One short line each: a telephone number is long digits, which only this channel accepts.
             if not 1 <= len(value) <= 80 or '"' in value or "\n" in value or "\r" in value:
@@ -335,6 +359,13 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      f'lighter outline. Inside it, rendered verbatim, each digit exactly as written: "{amount}" in '
                      'heavy white sans-serif digits, followed by a smaller upright "AR". This is the only price; '
                      "write it once, with no other amount, discount, old price or currency sign anywhere.")
+        # The model once drew the pill into the band kept for the contact (ADR-055). Refinements of stored
+        # scenes keep their earlier prompt.
+        footer = [boxes[field].y for field in ("logo", "shop_name", "contact")
+                  if field in boxes and boxes[field].y >= boxes["price"].y + boxes["price"].h - 1e-9]
+        if footer and not refinement:
+            lines[-1] += (f" Hard limit: the whole price label, outline included, stays above {min(footer):.0%} of "
+                          "the frame height, because other elements are placed below it.")
     quiet = "; ".join(f"{field}: {_band(box)}" for field, box in boxes.items()
                       if not (headline and field == "title") and field not in signature
                       and not (price_ar is not None and field == "price"))
@@ -342,16 +373,16 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         lines.append("Layout: these areas show only the calm backdrop, with no objects and no writing, because "
                      f"editable layers are placed there later: {quiet}. Do not draw guides or placeholder boxes.")
     lines.append(("Constraints: the only writing is the headline, the price label"
-                  + (", the shop signature" if signature else "") + " and the markings already printed on the "
+                  + (f", {drawn_signature}" if signature else "") + " and the markings already printed on the "
                   "product. No other numbers, badges or watermarks. " if price_ar is not None else
-                  "Constraints: the only writing is the headline above, the shop signature and the markings "
+                  f"Constraints: the only writing is the headline above, {drawn_signature} and the markings "
                   "already printed on the product. " if signature else
                   "Constraints: the only writing is the headline above and the markings already printed on the "
                   "product. " if headline else
                   "Constraints: do not add lettering, prices, numbers, badges, logos or watermarks; only the "
                   "markings already printed on the product may appear. ")
                  + ("" if price_ar is not None else
-                    "No prices, no numbers other than those in the product name and the shop signature, no badges "
+                    f"No prices, no numbers other than those in the product name and {drawn_signature}, no badges "
                     "or watermarks. " if signature else
                     "No prices, no numbers other than those in the product name, no badges or watermarks. "
                     if headline else "")
