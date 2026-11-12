@@ -16,17 +16,16 @@ const caps = ref<Capabilities>(), library = ref<{ id: string; title: string; var
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = ''
 const intake = reactive({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
-const include = reactive({ logo: false, shop_name: true, contact: true })
+// The logo identifies the shop, and without one the footer carries the contact only (ADR-053): the name starts unticked.
+const include = reactive({ logo: false, shop_name: false, contact: true })
 let pendingInput: { signature: string; id: string } | null = null
 const photos = ref<{ asset: string; warnings: string[] }[]>([])
 const creation = ref<Creation | null>(null), doc = shallowRef<PosterDocument | null>(null), selected = ref<string | null>(null)
 const visuals = ref<Visual[]>([]), direction = ref('Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.'), plannerMode = ref<'fixed' | 'claude'>('fixed')
 const styleReference = ref<string | null>(null)
 // The image model sets brand, product name and subtitle itself; the price stays an exact editable layer.
-const headline = ref({ on: true, signature: true, price: true, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
+const headline = ref({ on: true, price: true, brand_text: false, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
 const profileValue = (role: 'shop_name' | 'contact') => doc.value?.include[role] ? (role === 'shop_name' ? doc.value.brand_snapshot.name : doc.value.brand_snapshot.contact) ?? undefined : undefined
-// The image model draws one short line each; anything else stays an editable layer.
-const signable = computed(() => (['shop_name', 'contact'] as const).some(role => profileValue(role)) && (['shop_name', 'contact'] as const).every(role => { const value = profileValue(role); return !value || (value.length <= 80 && !/["\r\n]/.test(value)) }))
 // Looks measured on real shop products (docs/project/reviews/style-study-2026-11-11.md): the owner picks a picture, not a prompt.
 const tint = (hex: string) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .14 + 255 * .86).toString(16).padStart(2, '0')).join('').toUpperCase()
 const LOOKS = [
@@ -77,7 +76,40 @@ try {
   }
 } catch { /* private mode or damaged entry: start from the defaults */ }
 function rememberStyle() {
-  try { localStorage.setItem(STYLE_KEY, JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand: headline.value.brand })) } catch { /* convenience only */ }
+  try { localStorage.setItem(STYLE_KEY, JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand: headline.value.brand, brand_text: headline.value.brand_text, contact_align: rememberedAlign })) } catch { /* convenience only */ }
+}
+// The contact is one compact line written by the renderer, never drawn by the image model (ADR-053).
+// Its position is the layer's own alignment; the last choice comes back on the next poster.
+type Align = 'left' | 'center' | 'right'
+let rememberedAlign: Align | null = null
+try {
+  const saved = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null')
+  if (['left', 'center', 'right'].includes(saved?.contact_align)) rememberedAlign = saved.contact_align
+  headline.value.brand_text = saved?.brand_text === true
+} catch { /* convenience only */ }
+const defaultAlign = (document: PosterDocument): Align => rememberedAlign ?? (document.include.logo ? 'right' : 'center')
+function compactContact(document: PosterDocument, align: Align) {
+  const layer = document.formats[format.value]!.layers.find(item => item.role === 'contact')
+  if (layer?.kind !== 'text') return
+  layer.align = align
+  // A contact typed on several lines keeps the plain layer: the icon line never wraps.
+  if (/[\r\n]/.test(document.brand_snapshot.contact ?? '')) return
+  // 32 px bold Noto Sans gives digits about 23 px high on the poster (22 px minimum, R-CATALOGUE-BRAND-003).
+  Object.assign(layer, { font_id: 'noto-sans', weight: 700, font_size: 32, height: 48, icon: 'phone', outline: null, shadow: null })
+}
+// Same footer as the server's first plan: the logo at the left, the texts in the span to its right.
+function placeFooter(document: PosterDocument) {
+  const layers = document.formats[format.value]!.layers, [width] = FORMATS[format.value]
+  const logo = layers.find(layer => layer.role === 'logo' && layer.visible)
+  const contact = layers.find(layer => layer.role === 'contact')
+  const left = width * .05, x = logo ? left + logo.width + width * .025 : left
+  for (const layer of layers) if (layer.role === 'shop_name' || layer.role === 'contact') { layer.x = x; layer.width = width * .95 - x }
+  if (logo) { logo.x = left; if (contact) logo.y = contact.y + contact.height - logo.height }
+}
+function moveContact(event: Event) {
+  rememberedAlign = (event.target as HTMLSelectElement).value as Align
+  edit(document => compactContact(document, rememberedAlign!))
+  rememberStyle()
 }
 const shade = (hex: string) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .5).toString(16).padStart(2, '0')).join('').toUpperCase()
 let autoPill = ''
@@ -103,10 +135,10 @@ function stylePill() {
     // Shop name and contact follow the look too: white text would vanish on the light looks.
     for (const footer of document.formats[format.value]!.layers)
       if (footer.kind === 'text' && (footer.role === 'shop_name' || footer.role === 'contact'))
-        Object.assign(footer, { fill: look.value === 'sombre' ? '#FFFFFF' : '#22262E', align: 'center', outline: null, shadow: null })
+        Object.assign(footer, { fill: look.value === 'sombre' ? '#FFFFFF' : '#22262E', outline: null, shadow: null })
   })
 }
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, subtitle: headline.value.subtitle.trim() || null, accent_word: headline.value.accent_word.trim() || null, accent_colour: headline.value.accent_word.trim() ? headline.value.accent_colour.toUpperCase() : null, signature: headline.value.signature && signable.value, price: headline.value.price, ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: headline.value.accent_word.trim() || null, accent_colour: headline.value.accent_word.trim() ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
@@ -129,9 +161,12 @@ let saver: DraftSaver | null = null, history = new History(), pollTimer: ReturnT
 const format = computed(() => doc.value?.primary_format ?? 'feed')
 const layout = computed(() => doc.value?.formats[format.value])
 const currentVisual = computed(() => visuals.value.find(item => item.id === layout.value?.scene.visual_id))
+const contactLayer = computed(() => layout.value?.layers.find(layer => layer.role === 'contact'))
+const drawnContact = computed(() => currentVisual.value?.headline?.contact !== undefined)
 // The server refuses to export a hidden title unless the selected scene carries exactly the current one.
 function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | 'contact', enabled: boolean) {
   setIdentity(document, role, enabled)
+  if (role === 'logo') placeFooter(document)
   // Ticking back a name/contact that the current scene already shows must not add a second copy as a layer.
   const layer = document.formats[format.value]!.layers.find(item => item.role === role)
   if (layer && role !== 'logo' && currentVisual.value?.headline?.[role] !== undefined) layer.visible = false
@@ -182,7 +217,7 @@ const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.v
 const textChecks = computed(() => {
   const drawn = review.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return []
-  const items = [{ key: 'text_title', label: 'Titre et sous-titre', value: [drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
+  const items = [{ key: 'text_title', label: drawn.brand ? 'Marque, titre et sous-titre' : 'Titre et sous-titre', value: [drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
   if (drawn.price_ar !== undefined) items.push({ key: 'text_price', label: 'Prix', value: `${String(drawn.price_ar).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} AR` })
   if (drawn.shop_name !== undefined || drawn.contact !== undefined) items.push({ key: 'text_signature', label: 'Boutique et contact', value: [drawn.shop_name, drawn.contact].filter(Boolean).join(' · ') })
   return items
@@ -232,7 +267,7 @@ async function loadShop() {
   savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
   // The remembered style may be one of the shop's own looks, known only now.
   try { const remembered = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
-  include.shop_name = !!saved.name; include.contact = !!saved.contact; include.logo = !!saved.logo_asset
+  include.shop_name = false; include.contact = !!saved.contact; include.logo = !!saved.logo_asset
 }
 async function signIn() {
   await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: password.value }) })
@@ -268,6 +303,7 @@ async function createPoster() {
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
+  if (doc.value?.include.contact) edit(document => compactContact(document, defaultAlign(document)))
 }
 async function adopt(result: Creation) {
   finalPreview.value = null; confirmedDownload.value = ''; previewLoaded.value = false
@@ -364,21 +400,11 @@ async function prepareScene() {
     }
   }
 }
-// A signature drawn by the image model is two short lines. The default layer boxes reserve far more, which
-// pushed the price band up onto the product (live Edge run 2); give the plan the real footprint instead.
-function fitSignature() {
-  if (!(headline.value.on && headline.value.signature && signable.value)) return
-  const heights: Record<string, number> = { shop_name: 48, contact: 56 }
-  const pending = (layer: Layer) => layer.role in heights && doc.value!.include[layer.role as 'shop_name' | 'contact'] && layer.height !== heights[layer.role]
-  if (!layout.value?.layers.some(pending)) return
-  edit(document => { for (const layer of document.formats[format.value]!.layers) if (pending(layer)) layer.height = heights[layer.role]! })
-}
 let planSignature = ''
 // One tap for the simple composition. An unchanged request reuses its plan, so a retry after a lost
 // response sends the same scene body and key instead of paying for a second image.
 async function createScene() {
   stylePill()
-  fitSignature()
   await flush()
   const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, headline.value.accent_colour, format.value])
   if (!plan.value || planSignature !== signature) { await prepareScene(); planSignature = signature }
@@ -526,6 +552,9 @@ function chooseVisual(visual: Visual) {
       const layer = document.formats[format.value]!.layers.find(item => item.role === role)
       if (layer) layer.visible = document.include[role] && visual.headline?.[role] === undefined
     }
+    // A contact that an older scene had drawn comes back as a layer: give it the compact style.
+    const contact = document.formats[format.value]!.layers.find(layer => layer.role === 'contact')
+    if (contact?.kind === 'text' && contact.visible && !contact.icon) compactContact(document, defaultAlign(document))
   })
   selected.value = null
 }
@@ -617,10 +646,13 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <section class="card" aria-labelledby="titre-textes"><header><Icon n="text" /><h2 id="titre-textes">Textes</h2></header>
             <label>Titre<textarea :value="doc.offer.title" maxlength="240" rows="2" @input="event => edit(d => { d.offer.title = (event.target as HTMLTextAreaElement).value }, 'title')" /></label>
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" inputmode="numeric" @input="changePrice" /></span></label>
-            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" maxlength="60" placeholder="JBL" :disabled="busy || !!job" /></label><label>Sous-titre (facultatif)<input v-model="headline.subtitle" maxlength="60" placeholder="CASQUE SANS FIL" :disabled="busy || !!job" /></label><label>Mot du titre à mettre en couleur (facultatif)<input v-model="headline.accent_word" maxlength="60" placeholder="770NC" :disabled="busy || !!job" /></label></template>
+            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" maxlength="60" placeholder="JBL" :disabled="busy || !!job" /></label><label v-if="headline.brand.trim()" class="check"><input v-model="headline.brand_text" type="checkbox" :disabled="busy || !!job" />Écrire la marque en texte simple (si l’IA ne connaît pas son logo)</label><label>Sous-titre (facultatif)<input v-model="headline.subtitle" maxlength="60" placeholder="CASQUE SANS FIL" :disabled="busy || !!job" /></label><label>Mot du titre à mettre en couleur (facultatif)<input v-model="headline.accent_word" maxlength="60" placeholder="770NC" :disabled="busy || !!job" /></label></template>
             <p class="sub">Boutique sur l’affiche</p>
             <div class="checks-row"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input :checked="doc.include[role]" type="checkbox" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
-            <details class="ai-draws"><summary>Ce que l’IA dessine dans l’image</summary><p class="help">Par défaut, l’IA compose le titre, le prix et la signature de la boutique avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant de valider la scène ; pour corriger, générez une nouvelle version.</p><label class="check"><input v-model="headline.on" type="checkbox" :disabled="busy || !!job" /> Laisser l’IA composer le titre dans l’image</label><template v-if="headline.on"><label class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le prix dans l’image</label><label v-if="signable" class="check"><input v-model="headline.signature" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le nom de la boutique et le contact dans l’image</label></template></details>
+            <label v-if="doc.include.contact && contactLayer?.kind === 'text'">Position du contact<select aria-label="Position du contact" :value="contactLayer.align" :disabled="drawnContact" @change="moveContact"><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>
+            <p v-if="doc.include.contact && drawnContact" class="why" role="status">Le contact est dessiné dans cette image : générez une nouvelle version pour le déplacer.</p>
+            <p v-else-if="doc.include.contact && doc.include.logo" class="help">Le contact se place dans l’espace à droite du logo.</p>
+            <details class="ai-draws"><summary>Ce que l’IA dessine dans l’image</summary><p class="help">Par défaut, l’IA compose le titre et le prix avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant de valider la scène ; pour corriger, générez une nouvelle version.</p><label class="check"><input v-model="headline.on" type="checkbox" :disabled="busy || !!job" /> Laisser l’IA composer le titre dans l’image</label><template v-if="headline.on"><label class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le prix dans l’image</label></template></details>
           </section>
           <section class="card" aria-labelledby="titre-style"><header><Icon n="palette" /><h2 id="titre-style">Style</h2></header>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img v-if="item.image" :src="item.image" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" alt="" /><span>{{ item.name }}</span></button></div>

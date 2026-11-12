@@ -24,7 +24,24 @@ export function badgeConfig(layer: TextLayer) {
     strokeLinearGradientColorStops: [0, layer.price_badge!.border_start, 1, layer.price_badge!.border_end] }
 }
 
+// Material Symbols "call" (Apache-2.0), in a 24-unit box whose ink spans units 3 to 21. A path, so no font needs it.
+const PHONE = 'M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z'
+
+// A contact with an icon is one line: handset as high as the digits, a gap of half that, then the text.
+export function iconLine(doc: PosterDocument, layer: TextLayer) {
+  const config = { ...textConfig(doc, layer), width: undefined, align: 'left', wrap: 'none' }
+  const probe = new Konva.Text(config)
+  const digit = probe.measureSize('0'), em = probe.measureSize('M'), lineHeight = layer.font_size * layer.line_height
+  const size = digit.actualBoundingBoxAscent, gap = size / 2, total = size + gap + probe.width()
+  const baseline = (em.fontBoundingBoxAscent - em.fontBoundingBoxDescent + lineHeight) / 2
+  const start = layer.align === 'left' ? 0 : layer.align === 'right' ? layer.width - total : (layer.width - total) / 2
+  probe.destroy()
+  return { total, text: { ...config, x: start + size + gap, y: 0 },
+    icon: { data: PHONE, fill: layer.fill, x: start - 3 * size / 18, y: baseline - size - 3 * size / 18, scaleX: size / 18, scaleY: size / 18 } }
+}
+
 export function textRuns(doc: PosterDocument, layer: TextLayer): Konva.TextConfig[] {
+  if (layer.icon) return [iconLine(doc, layer).text]
   const config = textConfig(doc, layer)
   if (!layer.price_badge) return [config]
   const amount = { ...config, text: config.text.slice(0, -3), width: undefined, align: 'left' }
@@ -69,7 +86,10 @@ export function inspectLayout(doc: PosterDocument, format: Format): LayoutIssue[
         })
       }
       // Measure without a height limit so draft text stays visible and overflow cannot hide letters.
-      const overflow = layer.price_badge
+      const overflow = layer.icon
+        // One line that never wraps: without this check a long contact would be cut at the layer's edge.
+        ? iconLine(doc, layer).total > layer.width + .5 || probes[0].height() > layer.height + .5
+        : layer.price_badge
         ? probes.some(probe => probe.x() < layer.font_size * .3 || probe.x() + probe.width() > layer.width - layer.font_size * .3
           || probe.y() < 6 || probe.y() + probe.height() > layer.height - 6)
         : probes[0].height() > layer.height + .5 || probes[0].measureSize(layer.role === 'price' ? text : '').width > layer.width + .5

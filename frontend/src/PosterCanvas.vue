@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, shallowRef, ref, watch } from 'vue'
 import Konva from 'konva'
-import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Transformer as VTransformer } from 'vue-konva'
+import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Path as VPath, Transformer as VTransformer } from 'vue-konva'
 import { FORMATS, type Format, type Layer, type PosterDocument } from './document'
 import { loadFonts } from './fonts'
-import { badgeConfig, inspectLayout, textRuns, type LayoutIssue } from './canvas'
+import { badgeConfig, iconLine, inspectLayout, textRuns, type LayoutIssue } from './canvas'
 
 const props = withDefaults(defineProps<{ document: PosterDocument; format: Format; sources: Record<string, string>;
   selected?: string | null; scale?: number; readonly?: boolean; dragEnabled?: boolean; fonts?: Record<string, string> }>(),
@@ -114,6 +114,7 @@ defineExpose({ exportPng, issues: () => inspectLayout(props.document, props.form
             <VRect :config="{ width: layer.width, height: layer.height, fill: 'rgba(0,0,0,0)' }" />
             <template v-if="layer.kind === 'text'">
               <VRect v-if="layer.price_badge" :config="{ ...badgeConfig(layer), listening: false }" />
+              <VPath v-if="layer.icon" :config="{ ...iconLine(document, layer).icon, listening: false }" />
               <VText v-for="(run, index) in textRuns(document, layer)" :key="index" :config="{ ...run, ...material(layer, run), listening: false }" />
             </template>
             <VImage v-else :config="{ ...fittedImage(layer), listening: false }" />

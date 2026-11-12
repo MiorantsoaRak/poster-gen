@@ -46,6 +46,48 @@ def test_offline_shared_canvas_fails_on_missing_or_untrusted_image(engine, setti
         asyncio.run(rendering.render(document, "feed", {f"scene:{input_id}": "https://untrusted.invalid/image.png"}, rendering.bundle()))
 
 
+def test_compact_contact_is_one_line_with_a_handset_at_a_readable_size(engine, settings, input_id):
+    document = draft(engine, settings.data_dir, input_id)["document"]
+    layers = document["formats"]["feed"]["layers"]
+    title = next(layer for layer in layers if layer["role"] == "title")
+    contact = dict(title, id="11111111-1111-4111-8111-111111111111", role="contact", visible=False, z=title["z"] + 5,
+                   x=200, y=1250, width=800, height=48, font_id="noto-sans", weight=700, font_size=32,
+                   fill="#FFFFFF", align="left", outline=None, shadow=None, texture_effect_id=None, icon="phone")
+    layers.append(contact)
+    document["include"]["contact"] = True
+    document["brand_snapshot"]["contact"] = "038 93 028 00"  # digits only, so the ink height is the digit height
+    build = rendering.bundle()
+
+    def image():
+        result = asyncio.run(rendering.render(document, "feed", {}, build))
+        return Image.open(io.BytesIO(rendering.png_bytes(result["png"], "feed"))).convert("RGB")
+
+    empty = image()
+    contact["visible"] = True
+    boxes = {}
+    for align in ("left", "center", "right"):
+        contact["align"] = align
+        boxes[align] = ImageChops.difference(empty, image()).getbbox()
+    left, centre, right = boxes["left"], boxes["center"], boxes["right"]
+    for box in boxes.values():
+        assert box and 22 <= box[3] - box[1] <= 30, box  # R-CATALOGUE-BRAND-003: digits at least 22 px on 1350
+        assert box[0] >= 199 and box[2] <= 1001 and box[1] >= 1250 and box[3] <= 1298, box
+    assert left[0] <= 202 and right[2] >= 998, boxes
+    assert abs((centre[0] + centre[2]) / 2 - 600) <= 2, boxes
+    widths = {box[2] - box[0] for box in boxes.values()}
+    assert max(widths) - min(widths) <= 2, boxes
+    # The handset is drawn, not a glyph: without the icon the same text is narrower by the icon and its gap.
+    contact.pop("icon")
+    contact["align"] = "left"
+    plain = ImageChops.difference(empty, image()).getbbox()
+    assert 25 <= (left[2] - left[0]) - (plain[2] - plain[0]) <= 45, (left, plain)
+    # A contact too long for one line is refused, never cut or wrapped.
+    contact["icon"] = "phone"
+    document["brand_snapshot"]["contact"] = "038 93 028 00 / 034 93 028 00 / 032 93 028 00 / 033 93 028 00 / 020 22 028 00"
+    with pytest.raises(Refused, match="layout_invalid"):
+        image()
+
+
 def test_reference_price_capsule_is_isolated_exact_and_checks_overflow(engine, settings, input_id):
     document = draft(engine, settings.data_dir, input_id)["document"]
     price = next(layer for layer in document["formats"]["feed"]["layers"] if layer["role"] == "price")

@@ -116,6 +116,13 @@ def run():
                         page.get_by_label("Variante confirmée").fill("Noir · écouteurs et boîtier")
                         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
                         page.get_by_label("Les photos correspondent").check()
+                        # A logo is saved in the profile but left off this poster; it is ticked after the scene, further down.
+                        Image.new("RGBA", (256, 256), (20, 120, 220, 255)).save(OUTPUT / "logo.png")
+                        page.locator("details input[type=file]").set_input_files(OUTPUT / "logo.png")
+                        expect(page.get_by_alt_text("Logo de la boutique")).to_be_visible()
+                        page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
+                        # The logo or the contact identifies the shop: its name starts unticked (ADR-053).
+                        expect(page.get_by_role("checkbox", name="Nom de la boutique", exact=True)).not_to_be_checked()
                         page.get_by_label("Nom de la boutique", exact=True).first.fill("Original Phone Mada")
                         page.get_by_label("Contact", exact=True).first.fill("038 93 028 00 / 034 93 028 00")
                         page.get_by_role("checkbox", name="Nom de la boutique", exact=True).check()
@@ -123,6 +130,23 @@ def run():
                         page.get_by_role("button", name="Créer mon brouillon").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i", exact=True)).to_be_visible()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+                        # The contact is one compact line written by the renderer; its position is free and remembered.
+                        def footer(role):
+                            layers = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["formats"]["feed"]["layers"]
+                            return next((layer for layer in layers if layer["role"] == role), None)
+                        def until(check):
+                            for _ in range(50):
+                                if check():
+                                    return
+                                page.wait_for_timeout(200)
+                            raise AssertionError("condition not reached")
+                        until(lambda: footer("contact").get("icon") == "phone")
+                        compact = footer("contact")
+                        assert (compact["font_size"], compact["weight"], compact["height"], compact["align"]) == (32, 700, 48, "center"), compact
+                        assert page.get_by_label("Dessiner aussi le nom de la boutique et le contact dans l’image").count() == 0
+                        page.get_by_label("Position du contact").select_option("right")
+                        until(lambda: footer("contact")["align"] == "right")
+                        assert json.loads(page.evaluate("localStorage.getItem('affiche.style')"))["contact_align"] == "right"
                         # The coach line and the reasons under blocked buttons tell a new owner what to do.
                         expect(page.locator(".coach")).to_contain_text("choisissez un style")
                         # Several versions are possible and announced before the first one exists.
@@ -153,6 +177,13 @@ def run():
                         page.get_by_role("button", name="Luxe sombre").click()
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("Fond noir charbon"))
                         page.screenshot(path=str(OUTPUT / "studio-start.png"), full_page=True)
+                        # "Brand as plain text" is offered only once a brand is typed.
+                        plain_brand = page.get_by_label("Écrire la marque en texte simple", exact=False)
+                        page.get_by_label("Marque (facultative)").fill("")
+                        expect(plain_brand).to_have_count(0)
+                        page.get_by_label("Marque (facultative)").fill("JBL")
+                        expect(plain_brand).to_be_visible()
+                        page.get_by_label("Marque (facultative)").fill("")
                         page.get_by_text("Ce que l’IA dessine dans l’image", exact=True).click()
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
                         # One tap: the plan is made on the way and reused by the retry below.
@@ -177,6 +208,15 @@ def run():
                         expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
                         page.get_by_role("button", name="Tout est conforme, approuver").click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        # The position survived the scene request, and a logo ticked now stays clear of the contact.
+                        assert footer("contact")["align"] == "right" and footer("contact")["visible"]
+                        page.get_by_role("checkbox", name="Logo", exact=True).check()
+                        until(lambda: footer("logo") and footer("logo")["visible"])
+                        logo, beside = footer("logo"), footer("contact")
+                        assert logo["x"] == 54 and beside["x"] >= logo["x"] + logo["width"] + 20 and beside["x"] + beside["width"] <= 1026.5, (logo, beside)
+                        assert abs(logo["y"] + logo["height"] - beside["y"] - beside["height"]) < 1, (logo, beside)
+                        page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
+                        until(lambda: footer("contact")["x"] == 54 and footer("contact")["width"] == 972)
                         jobs = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}/jobs").json()["items"]
                         assert len([job for job in jobs if job["kind"] == "scene"]) == 1
                         scene_before = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["formats"]["feed"]["scene"]

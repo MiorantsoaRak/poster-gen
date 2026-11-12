@@ -2,7 +2,7 @@
 
 **Session date:** 2026-11-12 (Indian/Mauritius), still open when this was written
 **Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
-**State:** T-DESIGN-SIGNATURE is in progress (design not yet written). No remote. The local server on the real data may still be running on ports 8000 and 5173 (started for the user to look at "Mes affiches"); stop it before any smoke run.
+**State:** nothing in progress. The design for the footer (ADR-053/054) is approved and its three tasks T-SIG-001 to 003 are built and verified by tests; they were committed together with this handoff. No remote. The local server on the real data was started for the user on ports 8000 and 5173; stop it before any smoke run.
 
 ## What the application does now
 
@@ -21,13 +21,14 @@ Done on 2026-11-12 (details and verification in TODO.md; decisions ADR-051 and A
 - The scene prompt counts the quoted headline strings and maps a look's described subtitle to the typed one. Live run 6 had drawn an invented line; run 7, with the fix, drew only the typed texts. One scene is not proof that the model always obeys.
 - A new price capsule takes a fill that contrasts with the digits; the "scene ready" notice no longer covers the review.
 - "Mes affiches" shows each poster's last final preview, or its scene, as a thumbnail.
-- R-CATALOGUE-BRAND-003 and 004 are approved (ADR-052): compact contact with a left, centre or right position, logo-only shop identity, brand as plain text. Four open questions carry working defaults.
+- R-CATALOGUE-BRAND-003 and 004 are approved (ADR-052) and 003 amended (ADR-053): the contact is one compact line with a telephone icon written by the renderer, never drawn by the image model in new scenes; its position (left, centre, right) is the layer's alignment and is free to change; the shop name starts unticked; the brand can be written as plain text. Design D-CATALOGUE-BRAND-004/005 approved at v2.1 (ADR-054) and built as T-SIG-001 to 003.
 
 Next, in order:
 
-1. **T-DESIGN-SIGNATURE**: write the design for R-CATALOGUE-BRAND-003/004 in `designs/catalogue-brand.md`, get a fresh review and one devil's-advocate pass, then the user's approval, including the four defaults listed in the requirements file. No task or code before that.
-2. **T-UI-ONE-VALIDATION** and **T-UI-LIBRARY-THUMBNAILS** stay `[~]` until the user has seen the screens on real data.
-3. **T-UI-MOCKUP-GAPS** (thumbnails are done), **T-PLANNER-CLAUDE-INVALID**, **T-UI-PHONE-CHECK**, then **T-POSTER-009**.
+1. Ask the user to look at a real poster with the new footer (start `serve_local.py`, see Commands). Things to look at: the contact size and colour on a real backdrop, and that with a logo the contact line is level with the top of the logo, not centred on it (this is how `fixed_plan` has always placed footer texts).
+2. With the user's go only: one paid scene with "Écrire la marque en texte simple" on (about USD 0.21).
+3. **T-UI-LIBRARY-THUMBNAILS** stays `[~]` until the user has seen the list on real data.
+4. **T-UI-MOCKUP-GAPS** (thumbnails are done), **T-PLANNER-CLAUDE-INVALID**, **T-UI-PHONE-CHECK**, then **T-POSTER-009**.
 
 Open points from the live runs:
 
@@ -109,4 +110,21 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 
 ## Uncommitted files
 
-None expected: this handoff was written just before the commit of the 2026-11-12 work. Check `git status`; anything listed there came later.
+T-SIG-001 to 003, written after the last commit of the design documents, were not committed when this was written:
+
+```text
+ M backend/src/affiche/posters/models.py
+ M backend/src/affiche/posters/plans.py
+ M backend/tests/test_looks.py
+ M backend/tests/test_poster_drafts.py
+ M backend/tests/test_rendering.py
+ M docs/project/HANDOFF.md
+ M docs/project/TODO.md
+ M frontend/src/App.vue
+ M frontend/src/PosterCanvas.vue
+ M frontend/src/canvas.ts
+ M frontend/src/document.ts
+ M frontend/tests/browser_smoke.py
+```
+
+Check `git status`: if it is clean, they were committed afterwards.

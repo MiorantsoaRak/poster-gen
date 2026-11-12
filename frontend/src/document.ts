@@ -11,6 +11,7 @@ export interface TextLayer extends BaseLayer {
   shadow: { colour: string; blur: number; offset_x: number; offset_y: number; opacity: number } | null
   texture_effect_id: string | null
   price_badge?: { fill: string; border_start: string; border_end: string } | null
+  icon?: 'phone' | null
 }
 export interface ImageLayer extends BaseLayer { kind: 'logo' | 'product_cutout'; role: 'logo' | 'product'; asset: string; keep_aspect: true }
 export type Layer = TextLayer | ImageLayer

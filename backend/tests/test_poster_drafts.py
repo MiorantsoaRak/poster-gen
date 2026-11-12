@@ -210,6 +210,30 @@ def test_copy_and_input_replacement_leave_source_untouched(engine, tmp_path, inp
     assert latest(engine, first["id"]) == first
 
 
+def test_contact_icon_is_optional_and_only_for_the_contact(engine, tmp_path, input_id):
+    stored = draft(engine, tmp_path, input_id)["document"]
+    # Unset, the field is absent: stored documents keep their canonical form and hashes.
+    assert Document.model_validate(stored).model_dump(mode="json") == stored
+    assert all("icon" not in layer for layer in stored["formats"]["feed"]["layers"])
+    title = stored["formats"]["feed"]["layers"][0]
+    assert title["role"] == "title"
+    contact = dict(title, id="11111111-1111-4111-8111-111111111111", role="contact", z=title["z"] + 5, icon="phone",
+                   visible=False)  # the contact is not selected on this draft
+    with_icon = copy.deepcopy(stored)
+    with_icon["formats"]["feed"]["layers"].append(contact)
+    kept = Document.model_validate(with_icon).model_dump(mode="json")
+    assert kept["formats"]["feed"]["layers"][-1]["icon"] == "phone"
+    for bad in ({"role": "shop_name"}, {"icon": "star"}):
+        wrong = copy.deepcopy(with_icon)
+        wrong["formats"]["feed"]["layers"][-1].update(bad)
+        with pytest.raises(ValueError):
+            Document.model_validate(wrong)
+    wrong = copy.deepcopy(stored)
+    wrong["formats"]["feed"]["layers"][0]["icon"] = "phone"
+    with pytest.raises(ValueError, match="icon_requires_contact"):
+        Document.model_validate(wrong)
+
+
 @pytest.mark.parametrize("bad", ["extra", "nan", "duplicate", "price_text", "missing_title", "font_url", "boolean_version"])
 def test_untrusted_document_properties_rejected(engine, tmp_path, input_id, bad):
     document = copy.deepcopy(draft(engine, tmp_path, input_id)["document"])

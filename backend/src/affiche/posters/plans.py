@@ -45,6 +45,10 @@ class Headline(Model):
     signature: bool = False
     # Also draw the price label (ADR-044). The amount is always the offer's exact integer, formatted in code.
     price: bool = False
+    # Write the typed brand in plain lettering instead of imitating its logo (R-CATALOGUE-BRAND-004). True or
+    # absent only, and omitted when unset, so request bodies, their idempotency hashes and stored job payloads
+    # stay as they were.
+    brand_text: Literal[True] | None = Field(None, exclude_if=lambda value: value is None)
     # A saved look (ADR-046): its stored typography and alignment are read by the server, never sent by the client.
     look_id: Id | None = None
 
@@ -277,7 +281,12 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         text = (f"Headline, {placed} the area {_area(boxes['title'])}, rendered verbatim with no extra "
                 "words and no duplicate text, in a colour with strong contrast against the backdrop (near-black "
                 "on a light backdrop, white on a dark one): ")
-        if headline.brand:
+        if headline.brand_text and not headline.brand:
+            raise ValueError("brand_text_requires_brand")
+        if headline.brand and headline.brand_text:
+            text += (f'first the brand name "{headline.brand}", small, in plain capitals of the headline '
+                     "lettering: do not imitate a logo or a trademark shape; below it ")
+        elif headline.brand:
             text += f'first the brand name "{headline.brand}", small, written as on the product; below it '
         text += f'the product name "{title}" ' + (f"set in this typographic style: {headline_style.rstrip('.')}"
                                                    if headline_style else "in a heavy, modern geometric sans-serif")

@@ -153,6 +153,8 @@ class TextLayer(Layer):
     texture_effect_id: Id | None = None
     # Omit the new default so old draft/request/style hashes remain replayable.
     price_badge: PriceBadge | None = Field(None, exclude_if=lambda value: value is None)
+    # A telephone handset drawn before a one-line contact (ADR-053). Omitted like price_badge when unset.
+    icon: Literal["phone"] | None = Field(None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def supported_typography(self):
@@ -160,6 +162,8 @@ class TextLayer(Layer):
             raise ValueError("unsupported_font")
         if self.price_badge is not None and self.role != "price":
             raise ValueError("price_badge_requires_price")
+        if self.icon is not None and self.role != "contact":
+            raise ValueError("icon_requires_contact")
         return self
 
 

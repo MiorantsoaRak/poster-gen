@@ -50,6 +50,20 @@ def test_look_style_reaches_the_prompt_only_through_a_look():
     assert "horizontal rule on each side" not in styled
     unstyled = compile_scene(plan, context, photo_count=1, headline=Headline(subtitle="ÉCOUTEURS SANS FIL"), title="CMF BUDS 2A")
     assert "horizontal rule on each side" in unstyled and "exactly the 2 quoted strings above" in unstyled
+    # R-CATALOGUE-BRAND-004: the brand is imitated from the product by default, or written plainly on request.
+    assert 'the brand name "CMF by NOTHING", small, written as on the product' in styled
+    plain_brand = compile_scene(plan, context, photo_count=1, title="CMF BUDS 2A",
+                                headline=Headline(brand="CMF by NOTHING", brand_text=True))
+    assert 'the brand name "CMF by NOTHING", small, in plain capitals' in plain_brand
+    assert "do not imitate a logo" in plain_brand and "written as on the product" not in plain_brand
+    assert "brand name" not in plain  # no brand typed: no brand sentence
+    with pytest.raises(ValueError, match="brand_text_requires_brand"):
+        compile_scene(plan, context, photo_count=1, headline=Headline(brand_text=True), title="CMF BUDS 2A")
+    with pytest.raises(ValidationError):
+        Headline(brand="JBL", brand_text=False)  # true or absent only
+    # Unset, the field leaves the request body, and so its idempotency hash, as before.
+    assert "brand_text" not in Headline(brand="JBL").model_dump()
+    assert Headline(brand="JBL", brand_text=True).model_dump()["brand_text"] is True
     for arguments in ({"headline_style": "Bold capitals"}, {"align": "left"}):
         with pytest.raises(ValueError, match="look_style_requires_look"):
             compile_scene(plan, context, photo_count=1, headline=Headline(), title="CMF BUDS 2A", **arguments)
