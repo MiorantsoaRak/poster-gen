@@ -1,5 +1,21 @@
 # DECISIONS
 
+## ADR-052 — 2026-11-12 — Requirements approved: discreet contact, logo-only shop identity, brand mark
+
+- The user asked for a smaller but visible contact with a left, centre or right position, a shop identity carried by the logo alone, and asked about the product brand logo. Research: reviews/signature-research-2026-11-12.md. He approved R-CATALOGUE-BRAND-003 and 004 with "go with the new requirement".
+- The logo stays the uploaded file placed by the renderer; the image model never draws it. This is Claude's reading of "logo only if the user wants it integrated in the scene", stated to the user before approval, and it keeps R-CATALOGUE-BRAND-002.
+- Four open questions were not answered. Working defaults, chosen by Claude and to be confirmed at the design review: without a logo the shop name is still written; the contact defaults to the side opposite the price for a left-aligned look, centre otherwise; the contact keeps its own line under the price; "brand as plain text" is the only brand fallback.
+- Next gate: a design, its review, and the user's approval before any task or code.
+
+## ADR-051 — 2026-11-12 — One agreement per review screen instead of one checkbox per point (user decision; supersedes the nine-point review of ADR-050)
+
+- Trigger: live run 6 produced a scene with an invented line ("POUR TOUTES VOS NOTES"). The live script ticked every box once a flag existed, and the user asked what the boxes are for, then asked for one validation with a summary of what to verify, on both screens.
+- Decision: the fidelity review and the final screen each show a read-only list of the points to verify and one action: "Tout est conforme, approuver" and "Tout est conforme, confirmer". "Signaler un problème" sits beside the approval. The text group gains the line "Aucun autre texte que ceux ci-dessus", and the image point now reads "Aucun objet ni texte ajouté par l’IA".
+- Layout warnings on the final screen are listed with the other points; the one confirmation acknowledges them. Their separate checkbox is removed.
+- Backend unchanged: the one click sends every check the server requires (`fidelity_incomplete`, final `checks`, `acknowledged_warning_ids`). The stored record no longer distinguishes points ticked one by one from one agreement; nothing read that distinction.
+- Requirements still met: the review covers shape, colour, branding, hardware, unwanted objects or text and integration (product-visuals), and fidelity approval stays separate from final confirmation (poster-editor).
+- Open: nothing in the code detects text the image model adds beyond the typed texts; only the owner's reading does (T-SCENE-INVENTED-TEXT).
+
 ## ADR-050 — 2026-11-11 — Editor rebuilt to the audited mockup (supersedes ADR-048's layout and look)
 
 - Process: an audit with the design-taste-frontend skill's app-screen rules (run on screenshots and the stylesheet; its inspector was not run because the app sits behind sign-in), then a mockup the user reviewed (https://claude.ai/artifact/8zwVrymwP1up1L12SUS422), then "go for all". The user added three points during the review: the review and final screens, the fact that several versions can be generated and one chosen, and a confirmation before every paid action.

@@ -39,6 +39,17 @@ def test_look_style_reaches_the_prompt_only_through_a_look():
     assert "heavy, modern geometric" not in prompt
     plain = compile_scene(plan, context, photo_count=1, headline=Headline(), title="CMF BUDS 2A")
     assert "Headline, centred inside the area" in plain and "heavy, modern geometric" in plain
+    # A style that describes a subtitle must never leave a line without words for the model to invent.
+    assert "exactly the 1 quoted string above and nothing more" in prompt and "There is no subtitle: ignore" in prompt
+    assert "exactly the 1 quoted string above" in plain and "There is no subtitle" not in plain
+    full = Headline(look_id=look.look_id, brand="CMF by NOTHING", subtitle="ÉCOUTEURS SANS FIL")
+    styled = compile_scene(plan, context, photo_count=1, headline=full, title="CMF BUDS 2A",
+                           headline_style="Bold sans; a lighter grey subtitle below.")
+    assert 'the only subtitle: "ÉCOUTEURS SANS FIL", in the subtitle lettering that style describes' in styled
+    assert "exactly the 3 quoted strings above and nothing more" in styled and "There is no subtitle" not in styled
+    assert "horizontal rule on each side" not in styled
+    unstyled = compile_scene(plan, context, photo_count=1, headline=Headline(subtitle="ÉCOUTEURS SANS FIL"), title="CMF BUDS 2A")
+    assert "horizontal rule on each side" in unstyled and "exactly the 2 quoted strings above" in unstyled
     for arguments in ({"headline_style": "Bold capitals"}, {"align": "left"}):
         with pytest.raises(ValueError, match="look_style_requires_look"):
             compile_scene(plan, context, photo_count=1, headline=Headline(), title="CMF BUDS 2A", **arguments)

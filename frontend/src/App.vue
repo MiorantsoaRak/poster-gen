@@ -10,9 +10,9 @@ interface Profile { revision: number; name: string | null; contact: string | nul
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
-const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun ajout indésirable', integration: 'Intégration naturelle dans la scène' }
+const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
 const authenticated = ref(false), checking = ref(true), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false)
-const caps = ref<Capabilities>(), library = ref<{ id: string; title: string; variant: string }[]>([])
+const caps = ref<Capabilities>(), library = ref<{ id: string; title: string; variant: string; thumbnail_url: string | null }[]>([])
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = ''
 const intake = reactive({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
@@ -110,7 +110,7 @@ const headlineBody = () => headline.value.on ? { headline: { brand: headline.val
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
-const finalChecks = reactive({ framing: false, content: false, identity: false, readability: false }), warningsAccepted = ref(false)
+const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Le titre et le prix sont exacts', identity: 'Les détails de la boutique sont corrects', readability: 'Tous les éléments sont lisibles' }
 const proposal = ref<any>(null), effect = ref<any>(null), polish = ref(''), acknowledgeContent = ref(false), previewPolish = ref(false)
 const effectSources = ref<Record<string, string>>({})
 const previewDoc = computed(() => {
@@ -122,7 +122,7 @@ const previewDoc = computed(() => {
   }
   return proposal.value?.status === 'pending' ? proposal.value.after as PosterDocument : doc.value
 })
-const review = ref<Visual | null>(null), checks = reactive<Record<string, boolean>>({}), rejection = ref('')
+const review = ref<Visual | null>(null), rejection = ref(''), rejecting = ref(false)
 const issues = ref<LayoutIssue[]>([]), canvasReady = ref(false), dragEnabled = ref(false)
 const canvasHost = ref<HTMLElement>(), canvasWidth = ref(540), viewportHeight = ref(window.innerHeight), savingTick = ref(0)
 let saver: DraftSaver | null = null, history = new History(), pollTimer: ReturnType<typeof setTimeout> | undefined, observer: ResizeObserver | undefined
@@ -323,6 +323,12 @@ function changeFont(event: Event) {
   const weight = font_id === 'montserrat-black-italic' ? 900 : chosen.value.weight === 900 ? 700 : chosen.value.weight
   patchLayer(selected.value!, { font_id, weight })
 }
+// A new capsule must not hide the digits: light digits get the dark pill, dark digits the white one.
+function capsuleFill() {
+  const text = chosen.value?.kind === 'text' ? chosen.value.fill : '#000000'
+  const [r, g, b] = [1, 3, 5].map(at => parseInt(text.slice(at, at + 2), 16))
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#22262E' : '#FFFFFF'
+}
 function badgeColour(field: 'fill' | 'border_start' | 'border_end', event: Event) {
   if (chosen.value?.kind !== 'text' || !chosen.value.price_badge) return
   patchLayer(selected.value!, { price_badge: { ...chosen.value.price_badge, [field]: (event.target as HTMLInputElement).value } }, 'badge-colour')
@@ -442,7 +448,7 @@ async function poll() {
           if (creation.value?.id !== creationId || job.value?.id !== jobId) return
           if (saved.revision !== saver?.revision && !saver?.unsaved) await adopt(saved)
         }
-        notice.value = 'Votre nouvelle scène est prête à comparer.'
+        // No notice here: the review opens in front and a notice would cover its instructions.
         review.value = visuals.value.find(item => item.id === completed.result_ref) ?? null; resetChecks()
       }
       if (job.value?.id === jobId) job.value = null
@@ -491,8 +497,7 @@ async function decideEffect(action: 'apply' | 'reject') {
   effect.value = null; previewPolish.value = false
 }
 function openFinalPreview(value: any) {
-  finalPreview.value = value; previewLoaded.value = false; confirmedDownload.value = value.download_url ?? ''; warningsAccepted.value = false
-  for (const key of Object.keys(finalChecks) as (keyof typeof finalChecks)[]) finalChecks[key] = false
+  finalPreview.value = value; previewLoaded.value = false; confirmedDownload.value = value.download_url ?? ''
 }
 async function renderFinal() {
   await flush()
@@ -502,8 +507,9 @@ async function renderFinal() {
 async function confirmFinal() {
   await flush()
   const result: any = await mutation(`/api/creations/${creation.value!.id}/confirmations`, {
-    render_id: finalPreview.value.id, png_sha256: finalPreview.value.png_sha256, checks: finalChecks,
-    acknowledged_warning_ids: warningsAccepted.value ? finalPreview.value.warnings.map((issue: LayoutIssue) => issue.id) : [],
+    render_id: finalPreview.value.id, png_sha256: finalPreview.value.png_sha256, // One confirmation covers every listed point and warning (ADR-051); the server still requires each one.
+    checks: Object.fromEntries(Object.keys(finalPoints).map(key => [key, true])),
+    acknowledged_warning_ids: finalPreview.value.warnings.map((issue: LayoutIssue) => issue.id),
   }, saver!.revision)
   confirmedDownload.value = result.download_url
 }
@@ -523,9 +529,9 @@ function chooseVisual(visual: Visual) {
   })
   selected.value = null
 }
-function resetChecks() { for (const check of [...Object.keys(checkNames), 'text_title', 'text_price', 'text_signature']) checks[check] = false; rejection.value = '' }
+function resetChecks() { rejection.value = ''; rejecting.value = false }
 async function decide(action: 'approve' | 'reject') {
-  await mutation(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, checks[key]])) } : { action, note: rejection.value })
+  await mutation(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
   await refreshVisuals(); review.value = null
 }
 function zoomScene(event: Event) {
@@ -591,7 +597,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
     <section v-if="authenticated && !doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
       <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ library.length }} {{ library.length > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour la modifier, changer son prix ou la télécharger à nouveau</p></div><button class="primary" @click="perform(() => go('create'))"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="!library.length" class="empty">Vos affiches apparaîtront ici dès la première création.</p>
-      <div class="rows"><button v-for="item in library" :key="item.id" class="library-item" @click="perform(() => openCreation(item.id))"><Icon n="image" /><strong>{{ item.title }}</strong><span>{{ item.variant }}</span><Icon n="chevron" /></button></div>
+      <div class="rows"><button v-for="item in library" :key="item.id" class="library-item" @click="perform(() => openCreation(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" alt="" loading="lazy" /><Icon v-else n="image" /><strong>{{ item.title }}</strong><span>{{ item.variant }}</span><Icon n="chevron" /></button></div>
     </section>
     <section v-if="authenticated && !doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
@@ -627,7 +633,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             <p class="sub">Éléments</p><div class="layer-list"><button :class="{ selected: selected === null }" @click="selected = null">Scène</button><button v-for="layer in layout?.layers.filter(layer => layer.visible)" :key="layer.id" :class="{ selected: selected === layer.id }" @click="selected = layer.id">{{ roleNames[layer.role] }}</button></div>
             <div v-if="chosen" class="layer-properties">
               <p class="sub">{{ roleNames[chosen.role] }}</p>
-          <template v-if="chosen.kind === 'text'"><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label></div><div class="form-row"><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: '#FFFFFF', border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><div class="checks-row"><label class="check"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div></template>
+          <template v-if="chosen.kind === 'text'"><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label></div><div class="form-row"><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: capsuleFill(), border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><div class="checks-row"><label class="check"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div></template>
           <details v-if="chosen.kind === 'text' && ['title','price'].includes(chosen.role)"><summary>Ajuster ce texte avec une consigne</summary><p class="help">Seul le {{ chosen.role === 'price' ? 'prix' : 'titre' }} sélectionné sera ajusté. La scène reste intacte.</p><label>Votre consigne<textarea v-model="polish" maxlength="500" rows="3" placeholder="Ex. Un titre doré avec une ombre légère" /></label><button :disabled="busy || !!job || !polish.trim() || !caps?.planner_available" @click="perform(proposeText)">Proposer un ajustement</button><small v-if="caps?.planner_available">Estimation Claude : {{ dollars(caps?.plan_estimate_micros) }}</small><p v-else class="help">Les consignes seront disponibles une fois Claude configuré. Les réglages manuels restent disponibles.</p>
             <div v-if="proposal && proposal.layer_id === selected" class="plan"><p>{{ proposal.patch.summary_fr }}</p><template v-if="proposal.status === 'pending'"><div v-if="proposal.patch.content_change"><p><strong>Contenu partagé modifié</strong> · Toutes les tailles de cette affiche sont concernées.</p><p>Avant : {{ proposal.before.offer[proposal.patch.content_change.field] }}<br />Après : {{ proposal.patch.content_change.value }}</p><label class="check"><input v-model="acknowledgeContent" type="checkbox" />Je confirme ce nouveau contenu.</label></div><button :disabled="busy || (!!proposal.patch.content_change && !acknowledgeContent)" @click="perform(applyProposal)">Appliquer au texte</button><button class="quiet" :disabled="busy" @click="perform(rejectProposal)">Refuser l’ajustement</button></template><template v-else-if="proposal.status === 'applied' && proposal.patch.texture_request"><p>Matière proposée : {{ proposal.patch.texture_request.description }}</p><button :disabled="busy || !!job" @click="perform(generateEffect)">Générer la matière du texte</button><small>Appel image distinct : {{ dollars(caps?.texture_estimate_micros) }}</small></template></div>
             <div v-if="effect?.status === 'proposed' && effect.layer_id === selected" class="plan"><p>Vérifiez la matière dans l’aperçu. Les lettres et le montant restent exacts.</p><button :disabled="busy" @click="perform(() => decideEffect('apply'))">Appliquer la matière</button><button class="quiet" :disabled="busy" @click="perform(() => decideEffect('reject'))">Refuser la matière</button></div>
@@ -678,25 +684,24 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <p v-if="confirmedDownload" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
           <dl class="facts"><div><dt>Format</dt><dd>1080 × 1350 px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
           <template v-if="!confirmedDownload">
-          <div class="group"><h3><Icon n="check" />Avant de confirmer</h3><div class="review-checks"><label v-for="(label, check) in ({ framing:'Le produit est entier, bien cadré et dégagé du texte', content:'Le titre et le prix sont exacts', identity:'Les détails de la boutique sont corrects', readability:'Tous les éléments sont lisibles' } as const)" :key="check" class="check"><input v-model="finalChecks[check]" type="checkbox" />{{ label }}</label></div>
-            <div v-if="finalPreview.warnings.length"><ul><li v-for="warning in finalPreview.warnings" :key="warning.id">{{ warning.message }}</li></ul><label class="check"><input v-model="warningsAccepted" type="checkbox" />J’ai vérifié ces superpositions et la lisibilité.</label></div></div>
-          <div class="actions"><span class="count" role="status">{{ Object.values(finalChecks).filter(Boolean).length }} sur 4 points vérifiés</span><button class="primary" :disabled="busy || !previewLoaded || !Object.values(finalChecks).every(Boolean) || (!!finalPreview.warnings.length && !warningsAccepted)" @click="perform(confirmFinal)"><Icon n="check" />Confirmer cette version</button></div>
+          <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
+          <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button></div>
           </template>
           <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="perform(fresh)"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>
     </section>
     <section v-if="review" class="review-panel" aria-labelledby="review-title">
-      <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Regardez les deux images côte à côte, puis relisez chaque texte que l’IA a dessiné.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
+      <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Regardez les deux images côte à côte et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
       <div class="comparison"><figure><a v-for="(url, index) in review.original_urls" :key="url" :href="url" target="_blank" rel="noopener"><img :src="url" :alt="`Photo originale ${index + 1} à comparer`" /></a><figcaption>Votre photo · ouvrir pour agrandir</figcaption></figure><figure><a :href="review.image_url" target="_blank" rel="noopener"><img :src="review.image_url" alt="Scène générée à vérifier" /></a><figcaption>Scène générée · ouvrir pour agrandir</figcaption></figure></div>
       <template v-if="review.status === 'pending_review'">
         <div class="review-checks groups">
-          <div class="group"><h3><Icon n="box" />Le produit</h3><p class="help">Comparé à votre photo.</p><label v-for="check in (['colour', 'shape', 'hardware', 'markings'] as const)" :key="check" class="check"><input v-model="checks[check]" type="checkbox" />{{ checkNames[check] }}</label></div>
-          <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><label v-for="item in textChecks" :key="item.key" class="check"><input v-model="checks[item.key]" type="checkbox" /><span>{{ item.label }}<small>{{ item.value }}</small></span></label></div>
-          <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><label v-for="check in (['extras_text', 'integration'] as const)" :key="check" class="check"><input v-model="checks[check]" type="checkbox" />{{ checkNames[check] }}</label></div>
+          <div class="group"><h3><Icon n="box" />Le produit</h3><p class="help">Comparé à votre photo.</p><ul class="points"><li v-for="check in (['colour', 'shape', 'hardware', 'markings'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>
+          <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small>{{ item.value }}</small></li><li>Aucun autre texte que ceux ci-dessus</li></ul></div>
+          <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>
         </div>
-        <div class="actions"><span class="count" role="status">{{ reviewKeys.filter(key => checks[key]).length }} sur {{ reviewKeys.length }} points vérifiés</span><button class="primary" :disabled="busy || !reviewKeys.every(key => checks[key])" @click="perform(() => decide('approve'))"><Icon n="check" />Approuver la fidélité</button></div>
-        <details><summary>Signaler un problème</summary><label>Ce qui doit être corrigé<textarea v-model="rejection" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(() => decide('reject'))">Refuser cette version</button></details>
+        <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="primary" :disabled="busy" @click="perform(() => decide('approve'))"><Icon n="check" />Tout est conforme, approuver</button></div>
+        <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(() => decide('reject'))">Refuser cette version</button></div>
       </template>
       <p v-else>{{ review.status === 'approved' ? 'La fidélité de cette version a été approuvée.' : 'Cette version a été refusée.' }}</p>
     </section>

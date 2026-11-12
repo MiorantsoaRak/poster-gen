@@ -20,7 +20,27 @@
   - verified 2026-11-12: 26 Vitest; build; browser smoke in bundled Chromium 156. Not verified: by eye in Chrome on a reopened confirmed poster; Edge.
 - [ ] T-UI-MOCKUP-GAPS (ADR-050) Differences left from the reviewed mockup: accent word as chips, accent colour as swatches, the paid confirmation as an in-place panel (it is a dialog), thumbnails in "Mes affiches".
   - verify: the user confirms which of these he still wants before any is built.
-- [ ] T-UI-LIVE-AFTER-REBUILD (ADR-050 open point) One live paid run through the rebuilt editor, and the phone check of T-UI-PHONE-CHECK.
+- [~] T-UI-ONE-VALIDATION (ADR-051; user decision 2026-11-12) Both review screens: a read-only summary of the points and one agreement, no checkbox per point.
+  - note 2026-11-12: built in frontend/src/App.vue and style.css; smoke and live script updated. 26 Vitest, the build and the browser smoke in bundled Chromium 156 pass; backend 690 passed/3 deselected. Still open: the user has not seen the two screens; Edge not run.
+  - verify: browser smoke passes; the user has seen both screens.
+- [~] T-SCENE-INVENTED-TEXT (ADR-051 open point; live run 6) The image model added a line nobody typed ("POUR TOUTES VOS NOTES") under the title.
+  - cause (hypothesis): the saved look's style phrase describes "a lighter … subtitle below in grey"; `compile_scene` put it in as the product name's style and added the typed subtitle separately, so one described line had no words.
+  - note 2026-11-12: prompt changed in backend/src/affiche/posters/plans.py: with a look, the typed subtitle takes the style's subtitle lettering; the headline states its exact number of quoted strings and forbids any other line; with a look and no subtitle, a described subtitle is ignored. tests/test_looks.py covers the four cases; 104 focused tests pass. Not yet proven on a real scene: that needs one paid scene with the user's go.
+  - verify: the next paid scene with "Vagues bleues" carries only the typed texts.
+- [x] T-UI-CAPSULE-CONTRAST (trivial; seen in the smoke's final preview 2026-11-12) Switching "Présentation du prix" back to "capsule" gave a white pill under the look's white digits: an invisible price in the exported file.
+  - delivered: a new capsule takes a dark fill under light digits and white under dark ones (`capsuleFill` in frontend/src/App.vue). The "scene ready" notice that covered the review's instructions is removed; the review opens in front by itself.
+  - verified 2026-11-12: 26 Vitest; build; browser smoke in bundled Chromium (asserts the dark fill); final preview seen with a readable price.
+- [~] T-UI-LIBRARY-THUMBNAILS (R-CREATION-LIBRARY preview criterion; one of the T-UI-MOCKUP-GAPS items; user request 2026-11-12) "Mes affiches" shows each poster's own image.
+  - note 2026-11-12: `GET /api/creations` returns `thumbnail_url` (last final preview, else the current scene, else none); the list shows it. tests/test_api.py (23 passed), 26 Vitest and the build pass. The browser smoke in bundled Chromium asserts the confirmed poster's 1080 px preview in the list and passes. Still open: the user has not yet seen the list on real data.
+  - verify: browser smoke passes; the user has seen the list on real data.
+- [x] T-REQ-SIGNATURE (chore; user request 2026-11-12) Requirements for a discreet contact with a position choice, logo-only shop identity and the product brand mark.
+  - verified 2026-11-12: the user approved R-CATALOGUE-BRAND-003 and 004 ("go with the new requirement", ADR-052); statuses updated in requirements/catalogue-brand.md and _INDEX.md. Four open questions carry working defaults to confirm at the design review. Research: reviews/signature-research-2026-11-12.md.
+- [~] T-DESIGN-SIGNATURE (chore; R-CATALOGUE-BRAND-003/004, ADR-052) Design for the compact contact with a position, logo-only identity and the brand-as-text choice; fresh review and one devil's-advocate pass; user approval.
+  - note 2026-11-12: started after the requirements approval; nothing written yet.
+  - verify: design file and designs/_INDEX.md updated; review saved in reviews/; the user approves, including the four defaults.
+- [!] T-UI-LIVE-AFTER-REBUILD (ADR-050 open point) One live paid run through the rebuilt editor, and the phone check of T-UI-PHONE-CHECK.
+  - note 2026-11-12: run 6 (`outputs/style-study-2026-11-11/live-edge-6/`, saved look "Vagues bleues", one scene call) passed sign-in, draft, saved look, cost confirmation, scene and the review screen. The scene was not approved because of the invented line, so the stale notices, final preview, confirmation, "Mes affiches" and "Styles" stay untested on real data. The scene is left pending in data-probe. Blocked on T-SCENE-INVENTED-TEXT, then one more paid scene with the user's go.
+  - note 2026-11-12, later: run 7 (`live-edge-7/`, same product and look, fixed prompt) drew only the typed texts. The user approved it, made the final preview and confirmed it by hand in the Edge window (database: approved 09:00:02 UTC, confirmed 09:00:25 UTC). The run 6 scene with the invented line is also recorded as approved (08:35:11 UTC) with a final preview and no confirmation; Claude did not approve it. Not exercised on real data: the stale title/price/signature notices and the script's own remaining steps.
   - verify: scene, nine-point review with drawn texts, confirmation, download, all on real providers.
 - [x] T-UI-USABILITY-1 (ADR-049; user report 2026-11-11) One reference import, no Claude composition in the editor, reasons under blocked buttons, coach line, always-visible messages, review sheets in front.
   - verified 2026-11-11: 26 Vitest; build; browser smoke in Edge 156; Chrome on the production build.

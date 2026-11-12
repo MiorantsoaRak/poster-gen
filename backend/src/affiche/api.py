@@ -482,13 +482,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError:
                 raise store.Refused("invalid_cursor") from None
         with app.state.engine.connect() as conn:
-            rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant FROM creations c JOIN creation_versions v "
+            # Thumbnail: the last final preview of the poster, else its current scene. Feed only until T-POSTER-009.
+            # ponytail: the full-size PNG is served as the thumbnail; add a resized variant if the list gets slow.
+            rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"
+                "(SELECT r.id FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_id,"
+                "(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
+                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_asset "
+                "FROM creations c JOIN creation_versions v "
                 "ON v.creation_id=c.id AND v.revision=c.current_revision JOIN product_inputs p "
                 "ON p.id=json_extract(v.document_json,'$.input_id') WHERE c.shop_id=:shop "
                 "AND (c.created_at,c.id)<(:stamp,:id) ORDER BY c.created_at DESC,c.id DESC LIMIT :limit"),
                 {"shop": request.state.shop, "stamp": cursor[0], "id": cursor[1], "limit": limit+1}).mappings().all()
         items = [{"id": r["id"], "revision": r["current_revision"], "status": r["status"], "created_at": r["created_at"],
                   "name": r["name"], "variant": r["variant"],
+                  "thumbnail_url": f'/api/renders/{r["render_id"]}/preview' if r["render_id"]
+                  else f'/api/assets/{r["scene_asset"]}' if r["scene_asset"] else None,
                   "title": json.loads(r["document_json"])["offer"]["title"]} for r in rows[:limit]]
         return {"items": items, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
 

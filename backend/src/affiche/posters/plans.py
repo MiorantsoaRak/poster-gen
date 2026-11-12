@@ -285,9 +285,19 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
             text += f', with only "{headline.accent_word}" in ' + (
                 f"the colour {headline.accent_colour}" if headline.accent_colour else "the palette's accent colour")
         text += "."
-        if headline.subtitle:
+        if headline.subtitle and headline_style:
+            text += (f' Below it, small, the only subtitle: "{headline.subtitle}", in the subtitle lettering that '
+                     "style describes, or in widely letter-spaced capitals if it describes none.")
+        elif headline.subtitle:
             text += (f' Below it, small, widely letter-spaced capitals: "{headline.subtitle}", with a thin '
                      "horizontal rule on each side.")
+        # A look's style phrase can describe a second line of its reference poster. Given a described line
+        # with no words, the model wrote its own (live run 6, ADR-051), so the quoted strings are counted.
+        count = sum(1 for part in (headline.brand, title, headline.subtitle) if part)
+        text += (f" The headline is exactly the {count} quoted string{'s' if count > 1 else ''} above and nothing "
+                 "more: never add a tagline, a slogan or any line whose words are not quoted here.")
+        if headline_style and not headline.subtitle:
+            text += " There is no subtitle: ignore any subtitle or second line that the typographic style mentions."
         lines.append(text)
     if signature:
         for value in signature.values():

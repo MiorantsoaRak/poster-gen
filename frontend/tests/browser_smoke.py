@@ -169,9 +169,13 @@ def run():
                         page.get_by_role("button", name="Générer la scène").click()
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
-                        for checkbox in page.locator(".review-checks input").all():
-                            checkbox.check()
-                        page.get_by_role("button", name="Approuver la fidélité").click()
+                        # One agreement covers the listed points (ADR-051): a summary to read, no boxes to tick.
+                        expect(page.locator(".review-checks .points li")).to_have_count(6)
+                        expect(page.locator(".review-panel input[type=checkbox]")).to_have_count(0)
+                        page.screenshot(path=str(OUTPUT / "review.png"))
+                        page.get_by_role("button", name="Signaler un problème").click()
+                        expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
+                        page.get_by_role("button", name="Tout est conforme, approuver").click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
                         jobs = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}/jobs").json()["items"]
                         assert len([job for job in jobs if job["kind"] == "scene"]) == 1
@@ -269,8 +273,10 @@ def run():
                         styled = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         expected_styled = copy.deepcopy(expected)
                         price_layer = next(layer for layer in expected_styled["formats"]["feed"]["layers"] if layer["role"] == "price")
+                        # The look left white digits, so the new capsule is dark: the price must stay readable.
+                        assert price_layer["fill"] == "#FFFFFF"
                         price_layer.update(font_id="montserrat-black-italic", weight=900,
-                                           price_badge={"fill": "#FFFFFF", "border_start": "#009FE3", "border_end": "#1853BD"})
+                                           price_badge={"fill": "#22262E", "border_start": "#009FE3", "border_end": "#1853BD"})
                         assert styled["document"] == expected_styled
                         runs = page.evaluate("""async doc => {
                             const { textRuns } = await import('/src/canvas.ts');
@@ -297,9 +303,14 @@ def run():
                         expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
                         preview_url = page.locator(".final-preview img").get_attribute("src")
                         preview_bytes = page.request.get(ORIGIN + preview_url).body()
-                        for checkbox in page.locator(".final-preview input[type=checkbox]").all():
-                            checkbox.check()
-                        page.get_by_role("button", name="Confirmer cette version", exact=True).click()
+                        expect(page.locator(".final-preview .points li")).not_to_have_count(0)
+                        expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
+                        expect(page.locator(".final-preview img")).to_be_visible()
+                        page.screenshot(path=str(OUTPUT / "final-mobile.png"))
+                        page.set_viewport_size({"width": 1440, "height": 1050})
+                        page.screenshot(path=str(OUTPUT / "final.png"))
+                        page.set_viewport_size({"width": 390, "height": 844})
+                        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
                         link = page.get_by_role("link", name="Télécharger le PNG confirmé")
                         expect(link).to_be_visible()
                         downloaded = page.request.get(ORIGIN + link.get_attribute("href"))
@@ -310,14 +321,22 @@ def run():
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         # A confirmed poster offers no second confirmation; the server's
                         # preview_stale refusal is covered in backend/tests/test_exports.py.
-                        expect(page.get_by_role("button", name="Confirmer cette version", exact=True)).to_have_count(0)
-                        expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
+                        expect(page.get_by_role("button", name="Tout est conforme, confirmer", exact=True)).to_have_count(0)
+                        expect(page.locator(".final-preview .points")).to_have_count(0)
                         assert page.request.get(ORIGIN + link.get_attribute("href")).body() == preview_bytes
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         page.get_by_label("Titre", exact=True).fill("Écouteurs " * 25)
                         expect(page.get_by_text("Le texte dépasse son cadre.", exact=False)).to_be_visible()
                         page.get_by_label("Titre", exact=True).fill("Son 🎵")
                         expect(page.get_by_text("Cette police ne contient pas tous les caractères du texte.")).to_be_visible()
+                        # "Mes affiches" shows each poster itself: the confirmed one by its final preview.
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        page.set_viewport_size({"width": 1440, "height": 1000})
+                        page.locator(".nav a", has_text="Mes affiches").click()
+                        thumbnail = page.locator('.library-item img[src^="/api/renders/"]').first
+                        expect(thumbnail).to_be_visible()
+                        page.wait_for_function("image => image.complete && image.naturalWidth === 1080", arg=thumbnail.element_handle())
+                        page.screenshot(path=str(OUTPUT / "mes-affiches.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
                         print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")

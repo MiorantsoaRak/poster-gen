@@ -1,8 +1,8 @@
 # HANDOFF
 
-**Session date:** 2026-11-11, closed 2026-11-12 (Indian/Mauritius)
+**Session date:** 2026-11-12 (Indian/Mauritius), still open when this was written
 **Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
-**State:** nothing in progress, working tree clean, six commits on `main` this session (`05682e3` … `6f18f8c`), no remote. No server or test process is running: the local verification server was stopped by Claude Code because the machine was low on memory; it was not restarted.
+**State:** T-DESIGN-SIGNATURE is in progress (design not yet written). No remote. The local server on the real data may still be running on ports 8000 and 5173 (started for the user to look at "Mes affiches"); stop it before any smoke run.
 
 ## What the application does now
 
@@ -14,14 +14,27 @@ Reports: [style-study-2026-11-11.md](reviews/style-study-2026-11-11.md). Reviewe
 
 ## Exact resume point
 
-**T-UI-FINAL-AFTER-CONFIRM is done (2026-11-12, not committed):** the final screen hides the four checks and "Confirmer cette version" once the poster is confirmed (`v-if="!confirmedDownload"` in `frontend/src/App.vue`). The smoke test no longer confirms a second time after a price change; `preview_stale` is covered by `backend/tests/test_exports.py`. Verified with 26 Vitest, the build and the bundled-Chromium smoke; not yet seen by eye in Chrome.
+Done on 2026-11-12 (details and verification in TODO.md; decisions ADR-051 and ADR-052):
+
+- The confirmed final screen no longer shows the checks or a second confirmation.
+- Both review screens are a read-only summary with one agreement, no checkbox per point (ADR-051, user decision).
+- The scene prompt counts the quoted headline strings and maps a look's described subtitle to the typed one. Live run 6 had drawn an invented line; run 7, with the fix, drew only the typed texts. One scene is not proof that the model always obeys.
+- A new price capsule takes a fill that contrasts with the digits; the "scene ready" notice no longer covers the review.
+- "Mes affiches" shows each poster's last final preview, or its scene, as a thumbnail.
+- R-CATALOGUE-BRAND-003 and 004 are approved (ADR-052): compact contact with a left, centre or right position, logo-only shop identity, brand as plain text. Four open questions carry working defaults.
 
 Next, in order:
 
-1. **T-UI-LIVE-AFTER-REBUILD**: one live paid run through the rebuilt editor. `outputs/style-study-2026-11-11/live_edge.py` predates the rebuild and must be updated first: it expects the heading "Votre affiche" (now the poster's own name as `h1`), clicks "Générer la scène" without the confirmation dialog (now followed by "Lancer la génération"), saves a style without "Créer le style", and ticks six review checks (now up to nine: `.review-checks input` still selects them all).
-2. **T-UI-MOCKUP-GAPS**: ask the user which remaining mockup differences he wants (accent word as chips, colour swatches, in-place confirmation panel, thumbnails in "Mes affiches").
-3. **T-PLANNER-CLAUDE-INVALID**: the Claude composition fails validation with the real model (3 of 3). It is hidden from the editor; capture one real answer before touching it.
-4. **T-UI-PHONE-CHECK**, then **T-POSTER-009** (square/story export: the shop's own posters are mostly square).
+1. **T-DESIGN-SIGNATURE**: write the design for R-CATALOGUE-BRAND-003/004 in `designs/catalogue-brand.md`, get a fresh review and one devil's-advocate pass, then the user's approval, including the four defaults listed in the requirements file. No task or code before that.
+2. **T-UI-ONE-VALIDATION** and **T-UI-LIBRARY-THUMBNAILS** stay `[~]` until the user has seen the screens on real data.
+3. **T-UI-MOCKUP-GAPS** (thumbnails are done), **T-PLANNER-CLAUDE-INVALID**, **T-UI-PHONE-CHECK**, then **T-POSTER-009**.
+
+Open points from the live runs:
+
+- The run 6 scene with the invented line "POUR TOUTES VOS NOTES" is recorded as approved in `data-probe` (approved in the Edge window, not by Claude), with a final preview and no confirmation. The user has been told; he has not said whether it was intended.
+- The stale title, price and signature notices were not exercised on real data after the rebuild.
+- With three groups of points the review's buttons sit below the fold of a 1000 px tall window; the panel scrolls.
+- `outputs/style-study-2026-11-11/live_edge.py` now writes to `live-edge-7/` and waits 45 minutes for `approve.flag`. If the reviewer approves in the browser instead, the script cannot finish its own steps.
 
 ## Commands
 
@@ -54,9 +67,9 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 
 ## Spend
 
-- Application ledger `backend/data-probe/affiche.db`, cap **USD 12**: **2.679298** (seven scenes, one Claude style brief, three failed Claude plans). Never reset it or start another paid data directory.
+- Application ledger `backend/data-probe/affiche.db`, cap **USD 12**: **3.313306**, read from both ledger tables on 2026-11-12 after live runs 6 and 7 (0.210283 and 0.210483). The figure in the previous handoff (2.679298) left out the last brief and scene of 2026-11-11. Never reset it or start another paid data directory.
 - Study calls made directly to the providers, **outside the ledger**: **4.196172** (`outputs/style-study-2026-11-11/spend.json`); one failed Claude brief of about one cent is missing from that file. The application's cap check does not see this amount.
-- Real total ≈ 6.88. Treat the remaining budget as ≈ **5.12**. The study runner's own USD 5 budget is nearly used.
+- Real total ≈ 7.52. Treat the remaining budget as ≈ **4.48**. The study runner's own USD 5 budget is nearly used.
 
 ## Verification state
 
@@ -96,11 +109,4 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 
 ## Uncommitted files
 
-Not committed since `6f18f8c`:
-
-```text
- M docs/project/HANDOFF.md
- M docs/project/TODO.md
- M frontend/src/App.vue
- M frontend/tests/browser_smoke.py
-```
+None expected: this handoff was written just before the commit of the 2026-11-12 work. Check `git status`; anything listed there came later.

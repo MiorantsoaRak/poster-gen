@@ -115,11 +115,12 @@ main { max-width: 1480px; margin: auto; padding: 8px 20px 64px }
 .logo-preview { max-width: 120px; max-height: 80px; object-fit: contain }
 .gallery { max-width: 1100px; margin: 0 auto }
 .rows { display: grid; gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden }
-.library-item { display: grid; grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 56px; padding: 0 20px; border: 0; border-radius: 0; background: var(--surface); color: var(--text); text-align: left; justify-content: stretch }
+.library-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: var(--surface); color: var(--text); text-align: left; justify-content: stretch }
 .library-item:hover:not(:disabled) { background: var(--raised) }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item span { color: var(--faint); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.library-item svg { color: var(--faint) }
+.library-item svg { color: var(--faint); justify-self: center }
+.library-item img { width: 48px; height: 60px; object-fit: cover; border-radius: 4px; display: block }
 .empty { color: var(--muted); background: var(--surface); border-radius: var(--radius); padding: 28px }
 .look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px }
 .look-wall figure { margin: 0; background: var(--surface); border-radius: var(--radius); padding: 12px; display: grid; gap: 10px }
@@ -222,8 +223,10 @@ button.version.new small { font-size: 12px; font-weight: 400 }
 .group { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; min-width: 0 }
 .group h3 svg { color: var(--muted) }
 .group .help { margin-bottom: 4px }
-.group label.check + label.check { border-top: 1px solid var(--line) }
-.group label.check small { color: var(--text); font-weight: 700; font-size: 13px }
+.points { list-style: none; margin: 0; padding: 0 }
+.points li { padding: 10px 0 }
+.points li + li { border-top: 1px solid var(--line) }
+.points small { display: block; color: var(--text); font-weight: 700; font-size: 13px }
 .actions { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-top: 14px }
 .actions .count { margin-right: auto; color: var(--muted); font-size: 13px }
 .review-panel > .actions { margin-top: 0 }
@@ -264,7 +267,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .comparison img { height: 240px }
   .facts { grid-template-columns: 1fr }
   .facts div + div { border-left: 0; border-top: 1px solid var(--line) }
-  .library-item { grid-template-columns: 16px minmax(0, 1fr) 16px }
+  .library-item { grid-template-columns: 48px minmax(0, 1fr) 16px }
   .library-item span { display: none }
   .progress { display: none }
 }
