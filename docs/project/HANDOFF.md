@@ -10,6 +10,8 @@
 
 **UX audit fixes (T-UI-UX-AUDIT), 2026-11-12:** main button fixed at the bottom on one-column widths, stale notices under their fields, title and price locked while a scene draws them, focus rules, phone sizes. A second pass changed the wording of the main flow ("Préparer mon affiche", "Générer l’affiche", "version"; Claude's proposal, the user said to fix the rest) and added price and date to "Mes affiches" (`backend/src/affiche/api.py` and `backend/tests/test_api.py` are also modified). Managing styles and posters (rename, delete, duplicate, status, more than 50 posters) needs requirements first; see the TODO entry.
 
+**Managing posters and styles (T-LIB-001 to 004), built on 2026-11-12, not committed when written:** requirements R-CREATION-LIBRARY-003/004 approved (ADR-060), design approved at v2.1 (ADR-061), all four tasks done. "Mes affiches": state in words, "Dupliquer", "Retirer de la liste" (the existing `abandoned` status), a removed view with "Remettre dans la liste", "Voir plus". "Styles": a panel per style, rename, removal (soft, `looks.removed_at`), and a poster keeps a removed style for its new versions. Verified: backend 716 passed / 3 deselected, 26 Vitest, build, browser smoke. **Landmine:** migration 0011 is new and is not applied to `backend/data-probe` yet; copy `affiche.db` into `backend/data-probe/backups/` before the next start on the real data. Not seen in a browser: a poster reopened with a removed style; "Voir plus". Uncommitted: `backend/migrations/versions/0011_looks_removed.py`, `backend/src/affiche/api.py`, `posters/looks.py`, `posters/store.py`, `backend/tests/test_api.py`, `test_db.py`, `test_looks.py`, `frontend/src/App.vue`, `style.css`, `frontend/tests/browser_smoke.py`, and the documents (DECISIONS, TODO, this file, both `_INDEX.md`, requirements and designs `creation-library.md`, reviews/library-manage-design-r1-2026-11-12.md).
+
 **Read this first about the footer:** it changed direction twice on 2026-11-12. ADR-053 made the contact a rendered text layer; the first real poster showed that layer landing on the drawn price pill (the image model had drawn the pill into the band kept for the contact); ADR-055 went back to a drawn contact and kept the rendered line as the fallback. The text below about T-SIG-001 to 003 describes that fallback.
 
 ## What the application does now
@@ -50,7 +52,7 @@ Open points from the live runs:
 Tests (from `backend/` unless stated):
 
 ```bash
-uv run pytest -q                                   # last full run: 690 passed, 3 deselected (192 s)
+uv run pytest -q                                   # last full run: 716 passed, 3 deselected (212 s)
 uv run python ../frontend/tests/browser_smoke.py   # bundled Chromium; needs ports 8000 and 5173 free
 SMOKE_CHANNEL=msedge uv run python ../frontend/tests/browser_smoke.py   # same flow in installed Edge
 ```
@@ -121,4 +123,4 @@ for p in 5173 8000; do pid=$(netstat -ano | grep LISTENING | grep ":$p " | awk '
 
 ## Uncommitted files
 
-None expected: the logo seal, T-UI-WEB-GUIDELINES and T-UI-UX-AUDIT were committed on the user's "commit" of 2026-11-12. Check `git status`; anything listed there was written afterwards (the draft requirements R-CREATION-LIBRARY-003 and 004 were started right after that commit).
+The logo seal, T-UI-WEB-GUIDELINES and T-UI-UX-AUDIT are committed. T-LIB-001 to 004 and their documents were written afterwards and are not committed; the list is in the paragraph "Managing posters and styles" near the top. Check `git status`.

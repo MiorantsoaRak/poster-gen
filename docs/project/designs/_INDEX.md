@@ -9,7 +9,7 @@
 | [product-visuals.md](product-visuals.md) | Existing R-001–008 / D-001–008; new R-009–011 / D-009–011 | Phase 1 approved (ADR-012); normal-poster v2 approved (ADR-031) |
 | [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001–003; D-001 document/editor, D-002 review/confirm, D-003 manual/prompted text effects | Approved v1 (ADR-031) |
 | [format-export.md](format-export.md) | R-FORMAT-EXPORT-001/002; D-001 formats, D-002 stored-preview confirmation/download | Approved v1 (ADR-031) |
-| [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001/002; D-001 revisions/recovery, D-002 reuse | Approved v1 (ADR-031) |
+| [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001/002; D-001 revisions/recovery, D-002 reuse. R-CREATION-LIBRARY-003/004; D-003 manage posters, D-004 manage saved styles | D-001/002: Approved v1 (ADR-031). D-003/004: Approved v2.1 on 2026-11-12 (ADR-061) |
 
 ## Approval packet — 2026-11-09
 

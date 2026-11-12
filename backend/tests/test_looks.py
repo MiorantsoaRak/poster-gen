@@ -118,3 +118,80 @@ def test_spooled_brief_is_validated_again_before_it_is_stored(engine, settings, 
     with engine.connect() as conn, pytest.raises(ValidationError):
         looks.insert_look(conn, job, payload, {"brief": brief(direction_fr="Prix 899 000 Ar"), "source": "claude"})
     assert creation["revision"] == 1
+
+
+def test_saved_look_is_renamed_and_removed_without_breaking_what_used_it(engine, settings, input_id):
+    settings.planner_provider = "stub"
+    creation = draft(engine, settings.data_dir, input_id)
+    reference = store.upload(engine, settings.data_dir, 1, photo(), "style")["asset"]
+
+    def make(name):
+        looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"],
+                           looks.LookRequest(name=name, reference_asset=reference))
+        return execute(engine, settings)
+
+    def names():
+        with engine.connect() as conn:
+            return [item["name"] for item in looks.list_looks(conn, 1)]
+
+    first, second = make("Été bleu"), make("été BLEU")  # the same name without case: the second one is numbered
+    assert sorted(names()) == ["Été bleu", "été BLEU (2)"]
+    long = make("x" * 40)
+    assert make("X" * 40) != long and "x" * 36 + " (2)" in [name.casefold() for name in names()]
+
+    with pytest.raises(ValidationError):
+        looks.Rename(name="   ")
+    with pytest.raises(ValidationError):
+        looks.Rename(name="y" * 41)
+    with pytest.raises(store.Refused, match="look_name_taken"):
+        looks.rename_look(engine, 1, key(), second, looks.Rename(name="ÉTÉ BLEU"))
+    with pytest.raises(store.Refused, match="not_found"):
+        looks.rename_look(engine, 2, key(), second, looks.Rename(name="Autre"))
+    assert looks.rename_look(engine, 1, key(), second, looks.Rename(name="Nuit"))[1]["name"] == "Nuit"
+    # A retry with a new key, and a change of case only, are not refused by the look's own name.
+    assert looks.rename_look(engine, 1, key(), second, looks.Rename(name="Nuit"))[1]["name"] == "Nuit"
+    assert looks.rename_look(engine, 1, key(), second, looks.Rename(name="NUIT"))[1]["name"] == "NUIT"
+
+    # A scene made with the look, then the look is removed.
+    plan = fixed(engine, settings, creation)
+    visuals.request_scene(engine, settings, 1, key(), creation["id"], creation["revision"], visuals.SceneRequest(
+        plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(look_id=first)))
+    execute(engine, settings)
+    with pytest.raises(store.Refused, match="not_found"):
+        looks.remove_look(engine, 2, key(), first)
+    removed = looks.remove_look(engine, 1, key(), first)[1]
+    assert removed["removed_at"] and looks.remove_look(engine, 1, key(), first)[1] == removed  # twice is not an error
+    assert "Été bleu" not in names()
+    with pytest.raises(store.Refused, match="look_removed"):
+        looks.rename_look(engine, 1, key(), first, looks.Rename(name="Retour"))
+    with engine.connect() as conn:
+        assert looks.get_look(conn, 1, first)["name"] == "Été bleu"  # still readable by id
+        assert visuals.look_style(conn, 1, first)["align"] == "left"
+        current = store.get_creation(conn, 1, creation["id"])
+        rows = conn.execute(text("SELECT COUNT(*) FROM looks")).scalar_one()
+        calls = conn.execute(text("SELECT COUNT(*) FROM poster_calls")).scalar_one()
+    # The poster keeps its removed look for a new version: the request is accepted, not refused.
+    again = visuals.request_scene(engine, settings, 1, key(), current["id"], current["revision"], visuals.SceneRequest(
+        plan_id=fixed(engine, settings, current)["id"], acknowledged_warnings=["low_resolution"], headline=Headline(look_id=first)))
+    assert again[0] == 202
+    with engine.connect() as conn:
+        calls = conn.execute(text("SELECT COUNT(*) FROM poster_calls")).scalar_one()
+    # The name is free again, the row is kept, and neither rename nor removal reached a provider.
+    assert looks.rename_look(engine, 1, key(), second, looks.Rename(name="Été bleu"))[1]["name"] == "Été bleu"
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM looks")).scalar_one() == rows == 4
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_calls")).scalar_one() == calls
+
+
+def test_removed_looks_do_not_count_towards_the_limit(engine, settings, input_id, monkeypatch):
+    settings.planner_provider = "stub"
+    monkeypatch.setattr(looks, "LOOK_LIMIT", 1)
+    creation = draft(engine, settings.data_dir, input_id)
+    reference = store.upload(engine, settings.data_dir, 1, photo(), "style")["asset"]
+    request = looks.LookRequest(name="Seul", reference_asset=reference)
+    looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)
+    only = execute(engine, settings)
+    with pytest.raises(store.Refused, match="look_limit"):
+        looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)
+    looks.remove_look(engine, 1, key(), only)
+    assert looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)[0] == 202

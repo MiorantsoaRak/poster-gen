@@ -66,6 +66,8 @@ def error_response(request: Request, error: store.Refused):
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
         "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",
         "look_limit": "Vous avez déjà enregistré le nombre maximal de styles.",
+        "look_name_taken": "Un autre style porte déjà ce nom. Choisissez-en un autre.",
+        "look_removed": "Ce style a été retiré.",
         "invalid_brief": "Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image.",
         "attempt_limit": "Douze scènes ont déjà été demandées pour cette affiche. Conservez une version ou créez une copie pour continuer.",
         "planner_unavailable": "La préparation par Claude n’est pas disponible. La composition simple reste disponible.",
@@ -294,6 +296,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with app.state.engine.connect() as conn:
             return looks.get_look(conn, request.state.shop, id)
 
+    @protected.put("/api/looks/{id}")
+    def rename_look(id: Id, body: looks.Rename, request: Request, key: Key):
+        return result_response(looks.rename_look(app.state.engine, request.state.shop, key, id, body))
+
+    @protected.delete("/api/looks/{id}")
+    def remove_look(id: Id, request: Request, key: Key):
+        return result_response(looks.remove_look(app.state.engine, request.state.shop, key, id))
+
     @protected.get("/api/plans/{id}")
     def plan(id: Id, request: Request):
         with app.state.engine.connect() as conn:
@@ -503,7 +513,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @protected.get("/api/creations")
     def creations(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
-                  before: Annotated[str | None, Query(max_length=100)] = None):
+                  before: Annotated[str | None, Query(max_length=100)] = None,
+                  status: Literal["active", "abandoned"] = "active"):
         cursor = ("9999", "")
         if before:
             try:
@@ -518,18 +529,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"
                 "(SELECT r.png_sha256 FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_sha,"
                 "(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
-                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_asset "
+                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_asset,"
+                "(SELECT s.status FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
+                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_status,"
+                # A later version waits outside the document until it is chosen: look at the creation's own jobs too.
+                "EXISTS(SELECT 1 FROM poster_visuals w JOIN poster_jobs j ON j.id=w.job_id "
+                "WHERE j.creation_id=c.id AND w.status='pending_review') AS waiting,"
+                "EXISTS(SELECT 1 FROM confirmations k WHERE k.creation_id=c.id "
+                "AND k.confirmed_revision=c.current_revision) AS confirmed "
                 "FROM creations c JOIN creation_versions v "
                 "ON v.creation_id=c.id AND v.revision=c.current_revision JOIN product_inputs p "
-                "ON p.id=json_extract(v.document_json,'$.input_id') WHERE c.shop_id=:shop "
+                "ON p.id=json_extract(v.document_json,'$.input_id') WHERE c.shop_id=:shop AND c.status=:status "
                 "AND (c.created_at,c.id)<(:stamp,:id) ORDER BY c.created_at DESC,c.id DESC LIMIT :limit"),
-                {"shop": request.state.shop, "stamp": cursor[0], "id": cursor[1], "limit": limit+1}).mappings().all()
+                {"shop": request.state.shop, "status": status, "stamp": cursor[0], "id": cursor[1], "limit": limit+1}).mappings().all()
+            total = conn.execute(text("SELECT COUNT(*) FROM creations WHERE shop_id=:shop AND status=:status"),
+                                 {"shop": request.state.shop, "status": status}).scalar_one()
         items = [{"id": r["id"], "revision": r["current_revision"], "status": r["status"], "created_at": r["created_at"],
                   "name": r["name"], "variant": r["variant"],
+                  # The one state that asks the owner to act comes first; "confirmed" means the file is this revision.
+                  "state": "to_review" if r["waiting"] or r["scene_status"] == "pending_review" else
+                           "confirmed" if r["confirmed"] else "approved" if r["scene_status"] == "approved" else "draft",
                   "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}'
                   if r["render_sha"] or r["scene_asset"] else None,
                   **{key: json.loads(r["document_json"])["offer"][key] for key in ("title", "price_ar")}} for r in rows[:limit]]
-        return {"items": items, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
+        return {"items": items, "total": total, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
 
     @protected.get("/api/creations/{id}", response_model=CreationView)
     def creation(id: Id, request: Request):
@@ -563,6 +586,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @protected.post("/api/creations/{id}/abandon", response_model=CreationView)
     def abandon_creation(id: Id, request: Request, key: Key, version: Version = None, body: Model | None = None):
         return result_response(store.abandon_creation(app.state.engine, request.state.shop, key, id, expected_revision(version)))
+
+    @protected.post("/api/creations/{id}/restore", response_model=CreationView)
+    def restore_creation(id: Id, request: Request, key: Key, version: Version = None, body: Model | None = None):
+        return result_response(store.restore_creation(app.state.engine, request.state.shop, key, id, expected_revision(version)))
 
     app.include_router(protected)
     return app

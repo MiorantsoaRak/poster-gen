@@ -1,5 +1,17 @@
 # DECISIONS
 
+## ADR-061 — 2026-11-12 — Design D-CREATION-LIBRARY-003/004 approved at v2.1; "Confirmée" only while the file matches the poster (user decision)
+
+- The user approved the design for managing posters and saved styles ("approved, go with your recommendation") after two review rounds and a devil's advocate (reviews/library-manage-design-r1-2026-11-12.md).
+- His choice on the one open point: a row says "Confirmée" only while a confirmed file exists for the poster as it is now (a confirmation of the current revision). After a later edit the row falls back to "Approuvée" or "À vérifier" until he confirms again. This amends the wording of R-CREATION-LIBRARY-003 ("a confirmed file exists").
+- Decisions of the design worth remembering: "Retirer de la liste" is the existing `abandoned` status plus a new restore route, with no schema change; a style is removed softly (`removed_at`, migration 0011) because old versions still read it; a poster made with a removed style keeps it for new versions; a style creation never fails on its name.
+
+## ADR-060 — 2026-11-12 — Managing posters and saved styles: requirements approved with the working defaults (user decision)
+
+- The user approved R-CREATION-LIBRARY-003 and 004 ("approved, go") without changing the five answers proposed as defaults: a poster of any state can be removed from the list (nothing is erased); no search yet; "Dupliquer" asks nothing; a style is still created from an open poster; a removed style is not recoverable.
+- The two criteria that the defaults left out (search, creating a style from the "Styles" page) moved to "out of scope" in the requirement.
+- Next gate: the design D-CREATION-LIBRARY-003/004, its review and the user's approval, before any task or code.
+
 ## ADR-059 — 2026-11-12 — Editor: hash routes, inert page behind a panel, confirmation for every paid or destructive tap (Claude's choices while fixing the guideline review; user request "fix all of them")
 
 - The view lives in the address hash (`''` new poster, `affiches`, `styles`, or a poster id) and the navigation is plain links; one `hashchange` handler does the routing. A hash is enough for three views and needs no router dependency or server rewrite rule. A route change that fails (for example an invalid price that cannot be saved) puts the previous hash back.

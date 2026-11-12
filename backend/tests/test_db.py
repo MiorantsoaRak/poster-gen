@@ -67,7 +67,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0010"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0011"
     finally:
         engine.dispose()
 

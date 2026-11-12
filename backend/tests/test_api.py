@@ -233,6 +233,76 @@ def test_abandon_readonly_can_copy_and_replay_prior_save(client):
     assert post(client, path+"/copies", {"source_revision": 1, "reason": "new_campaign"}).json()["status"] == "active"
 
 
+def test_list_states_removed_view_restore_and_stale_copy(client, settings):
+    # The scene, review and export helpers live in modules that import this one: import them late.
+    from affiche.posters import exports, visuals
+    from affiche.posters.models import Document
+    from test_exports import confirm_request, render
+    from test_poster_visuals import execute, fixed, scene
+    login(client)
+    engine = client.app.state.engine
+    poster = create_draft(client)
+    path = f'/api/creations/{poster["id"]}'
+
+    def listed(status="active"):
+        return client.get("/api/creations", params={"status": status}).json()
+
+    def state():
+        return {item["id"]: item["state"] for item in listed()["items"]}[poster["id"]]
+
+    def current():
+        return client.get(path).json()
+
+    def act(action, revision):
+        return client.post(f"{path}/{action}", headers={"Idempotency-Key": str(uuid4()), "If-Match": f'"{revision}"'})
+
+    assert state() == "draft" and listed()["total"] == 1
+    scene(engine, settings, poster, fixed(engine, settings, poster))
+    first = execute(engine, settings)
+    assert state() == "to_review"
+    visuals.decide(engine, 1, str(uuid4()), first, visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}))
+    assert state() == "approved"
+    approved = current()
+    preview = render(engine, settings, approved)
+    exports.confirm(engine, settings, 1, str(uuid4()), poster["id"], approved["revision"], confirm_request(preview))
+    assert state() == "confirmed"
+    # Edited after the confirmation: the confirmed file is no longer the poster as it is now (ADR-061).
+    document = Document.model_validate(approved["document"])
+    document.offer.price_ar += 1000
+    edited = store.save_creation(engine, settings.data_dir, 1, str(uuid4()), poster["id"], document, approved["revision"])[1]
+    assert state() == "approved"
+    # A second version waits for the review without being the one the document shows.
+    scene(engine, settings, edited, fixed(engine, settings, edited))
+    second = execute(engine, settings)
+    assert current()["document"]["formats"]["feed"]["scene"]["visual_id"] == first != second
+    assert state() == "to_review"
+
+    with engine.connect() as conn:
+        calls = conn.exec_driver_sql("SELECT count(*) FROM poster_calls").scalar_one()
+    # A copy asked from a stale row is refused; from the current revision it is made.
+    stale =post(client, path+"/copies", {"source_revision": 1, "reason": "new_campaign"})
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "revision_conflict"
+    copied = post(client, path+"/copies", {"source_revision": current()["revision"], "reason": "new_campaign"})
+    assert copied.status_code == 201 and listed()["total"] == 2
+    # The copy shows the approved first version; the waiting one was made in the source and is not the copy's.
+    assert {item["id"]: item["state"] for item in listed()["items"]}[copied.json()["id"]] == "approved"
+
+    revision = current()["revision"]
+    assert act("abandon", revision-1).status_code == 409
+    assert act("abandon", revision).json()["status"] == "abandoned"
+    assert poster["id"] not in [item["id"] for item in listed()["items"]] and listed()["total"] == 1
+    removed = listed("abandoned")
+    assert [item["id"] for item in removed["items"]] == [poster["id"]] and removed["total"] == 1
+    assert act("abandon", revision).status_code == 200  # a new key: removing twice is not an error
+    assert act("restore", revision).json()["status"] == "active"
+    assert act("restore", revision).json()["status"] == "active"
+    assert listed()["total"] == 2 and listed("abandoned")["items"] == []
+    assert client.get("/api/creations", params={"status": "deleted"}).status_code == 422
+    with engine.connect() as conn:
+        # Copying, removing and restoring never reach a provider.
+        assert conn.exec_driver_sql("SELECT count(*) FROM poster_calls").scalar_one() == calls
+
+
 def test_storage_error_is_safe_and_no_partial_creation(client, monkeypatch, caplog):
     login(client)
     def fail(*args, **kwargs):

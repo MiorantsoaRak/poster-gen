@@ -408,6 +408,30 @@ def run():
                         page.wait_for_function("image => image.complete && image.naturalWidth === 192 && image.naturalHeight === 240", arg=thumbnail.element_handle())
                         assert len(page.request.get(ORIGIN + thumbnail.get_attribute("src")).body()) < 40_000
                         page.screenshot(path=str(OUTPUT / "mes-affiches.png"))
+                        # Managing the list (R-CREATION-LIBRARY-003): state in words, copy, remove with confirmation, restore.
+                        rows = page.locator(".library-row")
+                        before = rows.count()
+                        expect(page.locator(".library-item span").first).to_contain_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
+                        expect(page.locator(".nav a", has_text="Mes affiches")).to_contain_text(str(before))
+                        rows.first.get_by_role("button", name=re.compile("^Dupliquer")).click()
+                        expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+                        copy_id = page.url.split("#")[1]
+                        page.locator(".nav a", has_text="Mes affiches").click()
+                        expect(rows).to_have_count(before + 1)
+                        rows.first.get_by_role("button", name=re.compile("^Retirer")).click()
+                        expect(page.get_by_role("dialog")).to_contain_text("Rien n’est effacé")
+                        page.get_by_role("dialog").get_by_role("button", name="Retirer de la liste").click()
+                        expect(rows).to_have_count(before)
+                        # A removed poster is not opened by its address: the list of removed posters is shown instead.
+                        page.goto(f"{ORIGIN}/#{copy_id}")
+                        expect(page.get_by_text("Cette affiche a été retirée de la liste.", exact=False)).to_be_visible()
+                        expect(page.get_by_label("Afficher les affiches retirées")).to_be_checked()
+                        expect(rows).to_have_count(1)
+                        rows.first.get_by_role("button", name=re.compile("^Remettre")).click()
+                        expect(rows).to_have_count(0)
+                        page.get_by_label("Afficher les affiches retirées").uncheck()
+                        expect(rows).to_have_count(before + 1)
+                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
                         page.locator(".nav a", has_text="Créer").click()
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
@@ -451,6 +475,32 @@ def run():
                         expect(page.locator(".final-preview img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "seal-final.png"))
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        # Managing styles (R-CREATION-LIBRARY-004): open, rename with its refusals, remove with confirmation.
+                        page.locator(".final-preview").wait_for(state="detached")
+                        page.locator(".nav a", has_text="Styles").click()
+                        cards = page.locator(".look-card")
+                        expect(cards).to_have_count(4)
+                        cards.filter(has_text="Studio clair").click()
+                        panel = page.get_by_role("dialog")
+                        expect(panel).to_contain_text("ne peut pas être renommé ni retiré")
+                        expect(panel.get_by_role("button", name="Retirer ce style")).to_have_count(0)
+                        page.keyboard.press("Escape")
+                        cards.filter(has_text="Vagues bleues").click()
+                        expect(panel).to_contain_text("Ambiance")
+                        panel.get_by_label("Nom du style").fill("Luxe sombre")
+                        panel.get_by_role("button", name="Renommer").click()
+                        expect(panel.get_by_role("alert")).to_contain_text("style fourni")
+                        panel.get_by_label("Nom du style").fill("Vagues du soir")
+                        panel.get_by_role("button", name="Renommer").click()
+                        expect(panel.get_by_role("heading", name="Vagues du soir")).to_be_visible()
+                        panel.get_by_role("button", name="Retirer ce style").click()
+                        expect(page.locator(".confirm")).to_contain_text("le gardent")
+                        page.locator(".confirm").get_by_role("button", name="Retirer ce style").click()
+                        expect(cards).to_have_count(3)
+                        expect(page.locator(".nav a", has_text="Styles")).to_contain_text("3")
+                        assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
+                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        page.screenshot(path=str(OUTPUT / "styles.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
                         print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")

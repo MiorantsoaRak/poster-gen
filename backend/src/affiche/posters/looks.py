@@ -16,7 +16,7 @@ from . import jobs, store
 from .models import Colour, Model, Sha, canonical
 from .plans import ArtDirection, screen_art, wire_schema
 
-LOOK_LIMIT = 24  # per shop: the picker stays usable; nothing is deleted yet
+LOOK_LIMIT = 24  # per shop, counting only looks in use: the picker stays usable
 Style = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240, pattern=r'^[^"\r\n]+$')]
 
 # Length limits are stated here as well as in the schema: the first real brief was accurate but twice too long.
@@ -55,9 +55,16 @@ class StyleBrief(Model):
     _screen = field_validator("direction_fr", "surface_fr", "headline_style_en")(screen_art)
 
 
+LookName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+
+
 class LookRequest(Model):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    name: LookName
     reference_asset: Sha
+
+
+class Rename(Model):
+    name: LookName
 
 
 def stub_brief() -> StyleBrief:
@@ -71,7 +78,7 @@ def stub_brief() -> StyleBrief:
 def request_look(engine, settings, shop, key, creation_id, revision, request: LookRequest):
     def apply(conn):
         store._asset(conn, settings.data_dir, shop, request.reference_asset, "style")
-        if conn.execute(text("SELECT COUNT(*) FROM looks WHERE shop_id=:shop"), {"shop": shop}).scalar_one() >= LOOK_LIMIT:
+        if conn.execute(text("SELECT COUNT(*) FROM looks WHERE shop_id=:shop AND removed_at IS NULL"), {"shop": shop}).scalar_one() >= LOOK_LIMIT:
             raise store.Refused("look_limit", 409)
         # Runs on the planner queue and budget: the job kinds are fixed by an applied migration.
         return 202, jobs.enqueue(conn, settings, shop, creation_id, revision, "plan",
@@ -91,8 +98,9 @@ async def propose(planner, image: bytes):
 def insert_look(conn, job, payload, result) -> str:
     brief = StyleBrief.model_validate(result["brief"])  # the spooled provider answer is still untrusted
     id = str(uuid4())
-    conn.execute(text("INSERT INTO looks VALUES (:id,:shop,:job,:name,:asset,:brief,:source,:now)"),
-                 {"id": id, "shop": job["shop_id"], "job": job["id"], "name": payload["look"]["name"],
+    conn.execute(text("INSERT INTO looks VALUES (:id,:shop,:job,:name,:asset,:brief,:source,:now,NULL)"),
+                 {"id": id, "shop": job["shop_id"], "job": job["id"],
+                  "name": free_name(payload["look"]["name"], _names(conn, job["shop_id"])),
                   "asset": payload["look"]["reference_asset"], "brief": canonical(brief), "source": result["source"],
                   "now": utc_now()})
     return id
@@ -100,13 +108,52 @@ def insert_look(conn, job, payload, result) -> str:
 
 def _public(row) -> dict:
     return {"id": row["id"], "name": row["name"], "reference_asset": row["reference_asset"],
-            "brief": json.loads(row["brief_json"]), "created_at": row["created_at"]}
+            "brief": json.loads(row["brief_json"]), "created_at": row["created_at"], "removed_at": row["removed_at"]}
 
 
 def get_look(conn, shop, id) -> dict:
+    """Also a removed look: the scenes made with it, and their refinements, still read it."""
     return _public(store._owned(conn, "looks", shop, id))
 
 
 def list_looks(conn, shop) -> list[dict]:
     return [_public(row) for row in conn.execute(
-        text("SELECT * FROM looks WHERE shop_id=:shop ORDER BY created_at DESC, id"), {"shop": shop}).mappings()]
+        text("SELECT * FROM looks WHERE shop_id=:shop AND removed_at IS NULL ORDER BY created_at DESC, id"),
+        {"shop": shop}).mappings()]
+
+
+def _names(conn, shop, *, apart: str | None = None) -> set[str]:
+    """Names in use, compared without case. In Python: SQLite folds ASCII only ("Été" and "été" would differ)."""
+    return {row["name"].casefold() for row in conn.execute(
+        text("SELECT id,name FROM looks WHERE shop_id=:shop AND removed_at IS NULL"), {"shop": shop}).mappings()
+        if row["id"] != apart}
+
+
+def free_name(name: str, taken: set[str]) -> str:
+    """A paid brief is never lost to a name clash: a taken name gets the first free number, within 40 characters."""
+    candidate, number = name, 2
+    while candidate.casefold() in taken:
+        suffix = f" ({number})"
+        candidate, number = name[:40-len(suffix)].rstrip() + suffix, number+1
+    return candidate
+
+
+def rename_look(engine, shop, key, id, request: Rename):
+    def apply(conn):
+        row = store._owned(conn, "looks", shop, id)
+        if row["removed_at"]:
+            raise store.Refused("look_removed", 409)
+        # The look itself is left out: a retried rename, or a change of case only, is not a clash.
+        if request.name.casefold() in _names(conn, shop, apart=id):
+            raise store.Refused("look_name_taken", 409, field="name")
+        conn.execute(text("UPDATE looks SET name=:name WHERE id=:id"), {"name": request.name, "id": id})
+        return 200, get_look(conn, shop, id)
+    return store.mutate(engine, shop, key, "PUT", f"/api/looks/{id}", request.model_dump(), apply)
+
+
+def remove_look(engine, shop, key, id):
+    def apply(conn):
+        store._owned(conn, "looks", shop, id)
+        conn.execute(text("UPDATE looks SET removed_at=COALESCE(removed_at,:now) WHERE id=:id"), {"now": utc_now(), "id": id})
+        return 200, get_look(conn, shop, id)
+    return store.mutate(engine, shop, key, "DELETE", f"/api/looks/{id}", {}, apply)

@@ -9,7 +9,7 @@
 | [generation-jobs.md](generation-jobs.md) | R-GENERATION-JOBS-001 … 002 | Approved | [generation-jobs](../designs/generation-jobs.md) |
 | [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001 … 003 | Approved | [poster-editor](../designs/poster-editor.md) |
 | [format-export.md](format-export.md) | R-FORMAT-EXPORT-001 … 002 | Approved | [format-export](../designs/format-export.md) |
-| [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001 … 002 | Approved | [creation-library](../designs/creation-library.md) |
+| [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001 … 004 | 001–002: Approved; 003 (manage posters) and 004 (manage saved styles): Approved 2026-11-12 (ADR-060; "Confirmée" amended by ADR-061), design D-CREATION-LIBRARY-003/004 approved v2.1 (ADR-061) | [creation-library](../designs/creation-library.md) |
 
 Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → fidelity review → manual or prompted selected-text polish → server preview → confirm → download the same PNG. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
 

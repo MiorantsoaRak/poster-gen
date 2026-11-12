@@ -272,6 +272,10 @@ def save_creation(engine, data_dir, shop, key, id, document: Document, revision)
 def copy_creation(engine, data_dir, shop, key, id, request: CopyCreation):
     def apply(conn):
         source = get_creation(conn, shop, id, request.source_revision)
+        # A copy asked from the list must not silently take an older price than the poster now has.
+        current = _owned(conn, "creations", shop, id)["current_revision"]
+        if request.reason == "new_campaign" and request.source_revision != current:
+            raise Refused("revision_conflict", 409, current_revision=current)
         document = request.unsaved_document or Document.model_validate(source["document"])
         if document.input_id != source["document"]["input_id"]:
             raise Refused("input_immutable")
@@ -300,3 +304,14 @@ def abandon_creation(engine, shop, key, id, revision):
                      {"id": id, "now": utc_now()})
         return 200, get_creation(conn, shop, id)
     return mutate(engine, shop, key, "POST", f"/api/creations/{id}/abandon", {}, apply, revision=revision)
+
+
+def restore_creation(engine, shop, key, id, revision):
+    """Back in the list. Restoring an active creation changes nothing, like abandoning an abandoned one."""
+    def apply(conn):
+        old = get_creation(conn, shop, id)
+        _revision(old["revision"], revision)
+        conn.execute(text("UPDATE creations SET status='active',updated_at=:now WHERE id=:id"),
+                     {"id": id, "now": utc_now()})
+        return 200, get_creation(conn, shop, id)
+    return mutate(engine, shop, key, "POST", f"/api/creations/{id}/restore", {}, apply, revision=revision)

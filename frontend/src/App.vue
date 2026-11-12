@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import PosterCanvas from './PosterCanvas.vue'
-import { api, mutation, upload } from './api'
+import { api, ApiError, mutation, upload } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, parsePrice, setIdentity, type Creation, type FontId, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number }
+interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
+interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
+const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
 const authenticated = ref(false), checking = ref(true), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
-const caps = ref<Capabilities>(), library = ref<{ id: string; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }[]>([])
+const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -40,9 +43,12 @@ const LOOKS = [
 interface SavedLook { id: string; name: string; reference_asset: string; brief: { direction_fr: string; surface_fr: string; lighting: string; camera: string; palette: string[]; accent_colour: string; alignment: string } }
 const savedLooks = ref<SavedLook[]>([]), lookName = ref(''), lookReference = ref<string | null>(null)
 const look = ref<string>('clair')
-const savedLook = computed(() => savedLooks.value.find(item => item.id === look.value))
+// A poster made with a style that was removed since keeps it for its new versions (D-CREATION-LIBRARY-004). It is held
+// apart, for the open poster only: never in the picker, never in the style remembered for the next poster.
+const keptLook = ref<SavedLook | null>(null)
+const savedLook = computed(() => savedLooks.value.find(item => item.id === look.value) ?? (look.value === 'libre' ? keptLook.value ?? undefined : undefined))
 function pickLook(id: string) {
-  look.value = id
+  look.value = id; keptLook.value = null
   const saved = savedLooks.value.find(item => item.id === id)
   if (saved) { direction.value = saved.brief.direction_fr; headline.value.accent_colour = saved.brief.accent_colour.toLowerCase(); return }
   const chosen = LOOKS.find(item => item.id === id)!
@@ -51,10 +57,17 @@ function pickLook(id: string) {
 }
 // A reopened poster brings back what its scene was made with (brand, subtitle, accent, look), so that a new
 // scene after a price change is the same poster and not a different one.
-function restoreHeadline() {
+async function restoreHeadline() {
   const drawn = currentVisual.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return
   if (drawn.look_id && savedLooks.value.some(item => item.id === drawn.look_id)) pickLook(drawn.look_id)
+  else if (drawn.look_id) {
+    // Removed since: the server still has it. If it cannot be read, the poster opens without it and says nothing false.
+    try {
+      const kept = await api<SavedLook>(`/api/looks/${drawn.look_id}`)
+      pickLook('libre'); direction.value = kept.brief.direction_fr; keptLook.value = kept
+    } catch { keptLook.value = null }
+  }
   Object.assign(headline.value, { on: true, brand: drawn.brand ?? '', subtitle: drawn.subtitle ?? '', accent_word: drawn.accent_word ?? '',
     price: drawn.price_ar !== undefined, signature: drawn.shop_name !== undefined || drawn.contact !== undefined })
   if (/^#[0-9A-Fa-f]{6}$/.test(drawn.accent_colour ?? '')) headline.value.accent_colour = drawn.accent_colour.toLowerCase()
@@ -278,7 +291,43 @@ function askDiscard() {
   paid.value = { title: 'Abandonner vos modifications ?', label: 'Abandonner et recharger', cost: '',
     text: 'Les modifications non enregistrées de cette affiche seront perdues. La version enregistrée est rechargée.', run: discardAndReload }
 }
-const modalOpen = computed(() => !!(paid.value || review.value || finalPreview.value))
+const modalOpen = computed(() => !!(paid.value || review.value || finalPreview.value || opened.value))
+// "Styles": a style opens in a panel; one made by the shop can be renamed or removed there.
+const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
+const opened = computed(() => {
+  const own = savedLooks.value.find(item => item.id === openedId.value)
+  if (own) return { id: own.id, name: own.name, image: `/api/assets/${own.reference_asset}?prepared=true`, direction: own.brief.direction_fr, brief: own.brief, own: true }
+  const given = LOOKS.find(item => item.id === openedId.value && item.image)
+  return given ? { id: given.id as string, name: given.label as string, image: given.image as string, direction: given.direction as string, brief: null, own: false } : null
+})
+function openLook(id: string) { openedId.value = id; renameText.value = opened.value?.name ?? ''; renameError.value = '' }
+function useLook(id: string) { pickLook(id); rememberStyle(); openedId.value = null; leave('') }
+const reloadLooks = async () => { savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items }
+// Renaming and removing are safe to repeat: each attempt has its own key.
+async function renameLook() {
+  const name = renameText.value.trim(), id = openedId.value!
+  if (LOOKS.some(item => item.label.toLowerCase() === name.toLowerCase())) { renameError.value = 'Ce nom est celui d’un style fourni. Choisissez-en un autre.'; return }
+  try {
+    await mutation(`/api/looks/${id}`, { name }, undefined, crypto.randomUUID(), 'PUT')
+    renameError.value = ''; await reloadLooks(); renameText.value = opened.value?.name ?? ''
+  } catch (reason) {
+    if (!(reason instanceof ApiError)) throw reason
+    if (reason.code === 'look_name_taken') renameError.value = reason.message
+    else if (reason.code === 'validation_error') renameError.value = 'Le nom doit compter de 1 à 40 caractères.'
+    else if (reason.code === 'look_removed') { openedId.value = null; await reloadLooks(); throw new Error('Ce style a été retiré entre-temps. La liste est à jour.') }
+    else throw reason
+  }
+}
+function askRemoveLook() {
+  const target = opened.value!
+  paid.value = { title: `Retirer le style « ${target.name} » ?`, label: 'Retirer ce style', cost: '',
+    text: 'Il ne sera plus proposé pour de nouvelles affiches. Les affiches faites avec ce style le gardent. Cette action ne peut pas être annulée.',
+    run: async () => {
+      await mutation(`/api/looks/${target.id}`, {}, undefined, crypto.randomUUID(), 'DELETE')
+      openedId.value = null; await reloadLooks()
+      if (look.value === target.id) { pickLook('clair'); rememberStyle() }
+    } }
+}
 function confirmPaid() { const action = paid.value; paid.value = null; if (action) perform(action.run) }
 function changePriceLater() {
   finalPreview.value = null
@@ -354,8 +403,8 @@ async function perform(action: () => Promise<void>) {
   finally { busy.value = false; if (routeDue) { routeDue = false; onHash() } }
 }
 async function loadShop() {
-  const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<{ items: typeof library.value }>('/api/creations?limit=50')])
-  Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; library.value = list.items
+  const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<Listing>('/api/creations?limit=50')])
+  Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; library.value = list.items; libraryNext.value = list.next_cursor; activeTotal.value = list.total; showRemoved.value = false
   savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
   // The remembered style may be one of the shop's own looks, known only now.
   try { const remembered = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
@@ -411,7 +460,8 @@ async function adopt(result: Creation) {
   saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT'), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
   window.location.hash = result.id
   await refreshVisuals(); styleReference.value = currentVisual.value?.style_reference_asset ?? null
-  restoreHeadline()
+  keptLook.value = null
+  await restoreHeadline()
   await refreshEffects(); await nextTick()
   observer?.disconnect()
   if (canvasHost.value) { observer = new ResizeObserver(entries => { canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }
@@ -432,8 +482,52 @@ async function adopt(result: Creation) {
     if (previousPlan) acceptPlan(await api(`/api/plans/${previousPlan.result_ref}`))
   }
 }
-async function openCreation(id: string) { await flush(); await adopt(await api<Creation>(`/api/creations/${id}`)) }
-async function fresh() { await flush(); finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
+async function openCreation(id: string) {
+  await flush()
+  const found = await api<Creation>(`/api/creations/${id}`)
+  if (found.status === 'active') return adopt(found)
+  // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
+  if (doc.value) await fresh()
+  view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
+  await loadLibrary()
+  notice.value = 'Cette affiche a été retirée de la liste. Remettez-la dans la liste pour l’ouvrir.'
+}
+// "Mes affiches": the shown list (in use or removed), its next page, and the count for the navigation.
+const libraryNext = ref<string | null>(null), activeTotal = ref(0), shownTotal = ref(0), showRemoved = ref(false)
+const listUrl = (extra = '') => `/api/creations?limit=50&status=${showRemoved.value ? 'abandoned' : 'active'}${extra}`
+async function loadLibrary() {
+  const list = await api<Listing>(listUrl())
+  library.value = list.items; libraryNext.value = list.next_cursor; shownTotal.value = list.total
+  activeTotal.value = showRemoved.value ? (await api<Listing>('/api/creations?limit=1')).total : list.total
+}
+async function moreLibrary() {
+  const list = await api<Listing>(listUrl(`&before=${encodeURIComponent(libraryNext.value!)}`))
+  library.value = [...library.value, ...list.items]; libraryNext.value = list.next_cursor
+}
+// The list is reloaded after every action, done or refused. Removing and restoring are safe to repeat, so each
+// attempt has its own key; only the copy keeps its key, so that a lost answer cannot make two copies.
+async function onRow(action: () => Promise<unknown>) {
+  try { await action() }
+  catch (reason) {
+    await loadLibrary()
+    if (reason instanceof ApiError && reason.code === 'revision_conflict') throw new Error('Cette affiche a changé depuis l’affichage de la liste. La liste est à jour : réessayez.')
+    if (reason instanceof ApiError && reason.code === 'image_job_running') throw new Error('Une génération est en cours pour cette affiche : attendez sa fin.')
+    throw reason
+  }
+  await loadLibrary()
+}
+const duplicate = (item: LibraryItem) => perform(async () => {
+  let copied: Creation | undefined
+  await onRow(async () => { copied = await mutation<Creation>(`/api/creations/${item.id}/copies`, { source_revision: item.revision, reason: 'new_campaign' }) })
+  if (copied) await adopt(copied)
+})
+const restore = (item: LibraryItem) => perform(() => onRow(() => mutation(`/api/creations/${item.id}/restore`, {}, item.revision, crypto.randomUUID())))
+function askRemove(item: LibraryItem) {
+  paid.value = { title: `Retirer « ${item.title} » de la liste ?`, label: 'Retirer de la liste', cost: '',
+    text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
+    run: () => onRow(() => mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID())) }
+}
+async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
 async function refreshVisuals() {
   const id = creation.value?.id
   if (!id) return
@@ -714,7 +808,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
 <template>
   <button class="skip" type="button" @click="($refs.main as HTMLElement).focus()">Aller au contenu</button>
   <header class="app-header" :inert="modalOpen"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Atelier</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
-    <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" />Créer</a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" />Mes affiches <span class="count">{{ library.length }}</span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" />Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
+    <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" />Créer</a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" />Mes affiches <span class="count">{{ activeTotal }}</span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" />Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
   <main ref="main" tabindex="-1">
     <p v-if="checking" role="status">Ouverture de l’atelier…</p>
@@ -736,14 +830,18 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
       </form>
     </div>
     <section v-if="authenticated && !doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ library.length }} {{ library.length > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour la modifier, changer son prix ou la télécharger à nouveau</p></div><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
-      <p v-if="!library.length" class="empty">Vos affiches apparaîtront ici dès la première création.</p>
-      <div class="rows"><button v-for="item in library" :key="item.id" class="library-item" @click="perform(() => openCreation(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [`${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon n="chevron" /></button></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour la modifier, changer son prix ou la télécharger à nouveau</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
+      <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
+        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openCreation(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
+        <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
+      </div></div>
+      <p v-if="libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
     <section v-if="authenticated && !doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
-      <div class="look-wall"><figure v-for="item in LOOKS.filter(item => item.image)" :key="item.id"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><figcaption>{{ item.label }}<small>Fourni</small></figcaption></figure><figure v-for="item in savedLooks" :key="item.id"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><figcaption>{{ item.name }}<small>Créé depuis une affiche</small></figcaption></figure></div>
-      <p class="help">Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans le bloc Style.</p>
+      <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
+      <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans le bloc Style.</p>
     </section>
     <div v-if="doc" class="editor" :inert="modalOpen">
       <div class="titlerow">
@@ -777,8 +875,9 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <section class="card" aria-labelledby="titre-style"><header><Icon n="palette" /><h2 id="titre-style">Style</h2></header>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="96" height="96" alt="" /><span>{{ item.name }}</span></button></div>
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez. Claude décrit son style (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label>Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
+            <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
             <label class="inline">Couleur d’accent<input v-model="headline.accent_colour" type="color" :disabled="busy || !!job" /></label>
-            <details><summary>Ambiance et qualité</summary><label>{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'" /></label><label class="check"><input v-model="lowResAccepted" type="checkbox" />J’accepte une qualité réduite si la photo source est petite.</label></details>
+            <details><summary>Ambiance et qualité</summary><label>{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label><label class="check"><input v-model="lowResAccepted" type="checkbox" />J’accepte une qualité réduite si la photo source est petite.</label></details>
           </section>
           <details class="card advanced"><summary><Icon n="sliders" />Réglages avancés</summary><p class="help">Retoucher un texte resté en calque, recadrer la scène ou déplacer un élément.</p>
             <label class="check"><input v-model="dragEnabled" type="checkbox" />Déplacer les éléments</label>
@@ -837,6 +936,17 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button></div>
           </template>
           <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+        </div>
+      </div>
+    </section>
+    <section v-if="opened" v-modal class="review-panel look-panel" role="dialog" aria-modal="true" aria-labelledby="titre-style-ouvert" :inert="!!paid" @keydown.esc="openedId = null">
+      <div class="section-heading"><div><h2 id="titre-style-ouvert" translate="no">{{ opened.name }}</h2><p class="lede">{{ opened.own ? 'Style créé depuis une de vos affiches modèles.' : 'Style fourni : il ne peut pas être renommé ni retiré.' }}</p></div><button class="ghost" @click="openedId = null"><Icon n="close" />Fermer</button></div>
+      <div class="final-grid">
+        <div class="shot"><img :src="opened.image" alt="Affiche modèle de ce style" /></div>
+        <div class="stack">
+          <div class="group"><h3><Icon n="palette" />Description</h3><ul class="points"><li>Ambiance<small>{{ opened.direction }}</small></li><template v-if="opened.brief"><li>Surface<small>{{ opened.brief.surface_fr }}</small></li><li>Couleurs<small class="swatches"><span v-for="colour in opened.brief.palette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></small></li><li>Titre et prix<small>{{ opened.brief.alignment === 'left' ? 'Alignés à gauche' : 'Centrés' }}</small></li></template></ul></div>
+          <div v-if="opened.own" class="group"><label>Nom du style<input v-model="renameText" name="look-name" autocomplete="off" maxlength="40" :aria-invalid="!!renameError || undefined" aria-describedby="erreur-nom-style" @keydown.enter="perform(renameLook)" /></label><p v-if="renameError" id="erreur-nom-style" class="why" role="alert">{{ renameError }}</p><button :disabled="busy || !renameText.trim() || renameText.trim() === opened.name" @click="perform(renameLook)">Renommer</button></div>
+          <div class="after"><button class="primary" @click="useLook(opened.id)"><Icon n="plus" />Créer une affiche avec ce style</button><button v-if="opened.own" :disabled="busy" @click="askRemoveLook">Retirer ce style</button></div>
         </div>
       </div>
     </section>
