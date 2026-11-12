@@ -5,7 +5,7 @@
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
 | [product-visuals.md](product-visuals.md) | R-PRODUCT-VISUALS-001 … 011 | 001–008: phase-1 baseline; 009–011: approved normal-poster amendments | [product-visuals](../designs/product-visuals.md) |
-| [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001 … 004 | Approved (003–004 on 2026-11-12, ADR-052; 003 amended by ADR-053; design approved, ADR-054) | [catalogue-brand](../designs/catalogue-brand.md) |
+| [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001 … 004 | Approved (003–004 on 2026-11-12, ADR-052; 003 amended by ADR-053 then ADR-055; design D-004 v3.1 approved, ADR-056) | [catalogue-brand](../designs/catalogue-brand.md) |
 | [generation-jobs.md](generation-jobs.md) | R-GENERATION-JOBS-001 … 002 | Approved | [generation-jobs](../designs/generation-jobs.md) |
 | [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001 … 003 | Approved | [poster-editor](../designs/poster-editor.md) |
 | [format-export.md](format-export.md) | R-FORMAT-EXPORT-001 … 002 | Approved | [format-export](../designs/format-export.md) |

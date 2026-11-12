@@ -80,55 +80,69 @@ Creation document carries an exact brand snapshot {profile_revision,name,contact
 
 **Security failure modes:** wrong/missing password blocks all data routes; missing auth configuration refuses hosted startup; expired sessions fail closed; DB outage returns 503 and issues no session; logout invalidates the token server-side. App and renderer logs contain request IDs, states, timing and redacted error codes, never images, contacts or prompts by default. Private backups follow creation-library.
 
-## D-CATALOGUE-BRAND-004 — Compact rendered contact with a position, logo-only identity
+## D-CATALOGUE-BRAND-004 — Compact contact drawn in the composition, with a position; rendered line as fallback
 
-**Status:** Approved v2.1 by the user on 2026-11-12 ("approved, commit and go"; ADR-054). **Covers:** R-CATALOGUE-BRAND-003 as amended by ADR-053. Replaces draft v1, which drew the contact in the image and was returned REWORK ([round 1](../reviews/signature-design-r1-2026-11-12.md)). Round 2 returned APPROVE WITH FIXES ([round 2](../reviews/signature-design-r2-2026-11-12.md)); its fixes are in this text. Feed format only until T-POSTER-009.
+**Status:** Approved v3.1 by the user on 2026-11-12 ("go"; ADR-056). Round 3 returned APPROVE WITH FIXES, no P1 ([round 3](../reviews/signature-design-r3-2026-11-12.md)); its fixes are in this text and were not reviewed again. **Covers:** R-CATALOGUE-BRAND-003 as amended by ADR-055. Feed format only until T-POSTER-009. The editor sends the fixed plan only; a Claude or hand-edited plan sent through the API is outside what this section guarantees.
 
-**Principle.** The image model no longer draws the shop name or the contact in new scenes. The contact is the existing editable text layer, given a compact one-line style and written by the shared renderer, so its characters and size are exact. The scene leaves the footer calm, which the prompt already does for every field it does not draw ("Layout: these areas show only the calm backdrop").
+**History.** v1 drew the contact and was returned REWORK ([round 1](../reviews/signature-design-r1-2026-11-12.md)). v2.1 wrote the contact with the renderer (ADR-053), was approved (ADR-054) and built (T-SIG-001/002). The first real poster showed its flaw: the image model drew the price pill below its band, into the band reserved for the contact, and the rendered contact landed on the pill. The user decided to draw the contact in the composition again (ADR-055). v3 keeps what v2.1 built as the fallback and answers the round-1 findings.
+
+**Principle.** By default the image model draws the contact, so it composes it with the price. The rendered compact line (layer with `icon: "phone"`) is used when the owner unticks drawing, and for a contact the model cannot be asked to draw. The shop name is never drawn in a new scene; the logo stays the uploaded file as a layer.
 
 **What changes for the owner.**
 
-- In the "Textes" card, under "Boutique sur l’affiche": a choice "Position du contact" (Gauche, Centre, Droite), shown when "Contact" is ticked. It can be changed at any time, at no cost, and undone.
-- The option "Dessiner aussi le nom de la boutique et le contact dans l’image" is removed from the editor.
-- "Nom de la boutique" is unticked by default on a new poster: the logo identifies the shop, and without a logo the footer carries the contact only (user decision, ADR-053). The owner can still tick it; it is then an editable text layer above the contact, as today. This is a frontend default only (the intake form's initial selection); the backend already requires an explicit selection. It replaces "Default each available field on" in D-CATALOGUE-BRAND-002 for the shop name.
+- "Ce que l’IA dessine dans l’image" gets back one option, on by default: "Dessiner aussi le contact dans l’image".
+- "Position du contact" (Gauche, Centre, Droite) stays in the "Textes" card and is no longer disabled when the contact is drawn. With a drawn contact it sets where the next version draws it, and a help line says so: "Le contact est dessiné dans l’image : la position s’applique à la prochaine version." That next version goes through the existing cost confirmation. With a rendered contact it moves the line at once, as built. The layer says `center` where the request field says `centre`; the editor maps one to the other.
+- The fidelity review point reads "Contact" when only the contact is drawn (today it always reads "Boutique et contact"), with the typed contact to compare. The stale-text notice under the Textes card names the contact only in that case.
 
-**Data.** No table and no migration. One optional field on text layers of the poster document, following the `price_badge` precedent (`Field(None, exclude_if=…)`, so stored documents, their hashes and their renders are unchanged):
+**Data.** No table and no migration. `Headline` gains one optional field, omitted when unset like `brand_text` (`Field(None, exclude_if=…)`), so request bodies, idempotency hashes and stored payloads of earlier scenes are unchanged:
 
-| Field | Type | Rule |
+| Field | Type | Meaning |
 |---|---|---|
-| `icon` | `"phone" \| null` | Allowed only on the layer with role `contact` (422 `icon_requires_contact` otherwise). The shared canvas draws a telephone handset as a vector path at the start of the first line, in the layer's fill, as high as the digits, followed by a gap of half that height. Editor and server renderer use the same code (`frontend/src/canvas.ts`), so preview and PNG agree. |
+| `signature_align` | `"left" \| "centre" \| "right" \| null` | Absent: the ADR-043 block (rule, shop name line, contact line, centred) for stored scenes, their refinements and replays; that branch of `compile_scene` is not touched. Set: the compact contact line at that position. |
 
-The position is not a new field: it is the contact layer's existing `align` (`left`, `center`, `right`). The select reads and writes that property.
+The editor sends `signature: true` with `signature_align` only when "Laisser l’IA composer le titre" and the drawing option are ticked, the contact is selected and it is drawable; otherwise it sends neither. `signature_align` without `signature: true`, or with no contact selected, is refused 422 `invalid_headline` in `compile_scene`, before any job exists. A new scene request with `signature: true` and no `signature_align` is refused the same way in `request_scene`, so the older block that also draws the shop name cannot be requested any more; refinements are built from the stored payload and are not affected. This removes the round-1 contradiction: a poster with nothing to draw sends nothing.
 
-**Compact style.** One frontend function applies it to a one-line contact layer, in three places: right after a new poster is created (the server creates the layer at 24 px), when the owner uses the position choice, and when a contact layer becomes visible again on a poster whose earlier scene had drawn it. It sets: `font_id` noto-sans, weight 700 (the bundled Noto Sans has 400 and 700 only), `font_size` 32, `line_height` as today, `icon: "phone"`, no outline, no shadow, height 48 px. Bundled Noto Sans digits are about 0.71 em high, so 32 px gives digits of about 23 px on the 1080 × 1350 poster; a renderer test measures the drawn digit height and requires at least 22 px. The fill keeps today's rule (`stylePill`: white on the dark look, near-black on the others). Every property stays editable in "Réglages avancés".
+**Which words are drawn.** With `signature_align` set, `request_scene` passes only the contact to `compile_scene`, never the shop name. A ticked shop name stays an editable layer in its own plan region, as today.
 
-**Layout.** No change to `fixed_plan`: the logo keeps the left of the footer and the text fields take the span to its right, as today. The contact layer is placed in that span on the first scene (`service.py`, unchanged) and `align` positions the line inside it: against the logo, centred in the span, or at the right margin. With a logo, "Centre" is therefore centred in the free span, not on the poster's axis; this is stated in the control's help line. Later scenes do not move layers, and nothing in a scene depends on the position, so the round-1 overlap finding does not arise.
+**Layout.** No change to `fixed_plan` and no new `PlanContext` field. The plan already reserves a contact region: the full width, or the span to the right of the logo. The position is not a different box: it is how the line is aligned inside that box, stated in the prompt. Consequences:
 
-Default for a new poster: `right` when the logo is included, `center` otherwise (ADR-053). The last choice on the device (`affiche.style`) wins over the default; the position choice saves it there itself, because today that entry is only written when a scene is requested.
+- A plan does not go stale when the position changes; no plan code changes (round-1 claim b).
+- The planned logo box and contact box never intersect (`ScenePlan` validation), and the drawn line stays inside its box whatever its alignment. The planned logo is always at the left, so no logo move is needed between versions (round-1 first P1). This is about planned areas: a logo layer the owner drags or ticks later is covered in the table below.
+- No line width is needed from the editor (round-1 third P1).
 
-Two existing behaviours must change for this to hold:
+**Fit rule.** A drawn contact must be one line: no line break, no double quote (existing rule), and at most `floor((box width in px − 50) / 23)` characters, which is 40 for the full width and 33 beside a 128 px logo. The divisor is an estimate for digits 2 % of the frame high (27 px), the size the prompt asks for. It is checked in the editor (reason under the option, which is then disabled) and again in `compile_scene` (`invalid_headline`). A contact that fails keeps the rendered layer, where the exact `text_fit` check applies. The server also screens the contact for price-like or instruction-like text (`screen_headline`); if it refuses a contact the editor allowed, the editor shows the refusal and the owner unticks drawing.
 
-- `stylePill` forces `align: 'center'` on the shop-name and contact layers each time a scene is requested. It stops setting `align` (it keeps setting the fill).
-- A logo ticked after the first scene is created at the bottom right, or comes back in its old box, while the contact keeps the full width. Ticking the logo therefore places it at the left of the footer and gives the contact layer the span to its right, with the same numbers as `fixed_plan`. Unticking it gives the contact the full width back.
+**Prompt (`compile_scene`).** With `signature_align` set:
 
-**Scene request.** The editor stops sending `headline.signature: true`. The API still accepts it and the ADR-043 branch of `compile_scene` is left untouched, so stored scenes, their refinements and replayed requests behave as before. No `signature_align`, no `PlanContext` change.
+- A new sentence replaces the signature sentence: a contact line, left-aligned at the left edge of, centred inside, or right-aligned at the right edge of the contact area, always given as explicit margins with `_area` (never "the full-width band", so that left and right mean the 5 % margins, not the frame edges); one single line; a small telephone handset icon then the contact, verbatim, each character exactly as written; clean sans-serif, evenly spaced digits about 2 % of the frame height; no rule, no second line, no other words; "these digits are a telephone contact, not a price". Only when the price is drawn and the contact area lies below it, the sentence adds "clearly smaller than the price and entirely below the price label".
+- The price sentence gains a hard limit whenever a logo, shop-name or contact area lies below the price, drawn or not: the price label's lowest edge stays above the highest of those areas. All boxes are available in `compile_scene`. This also protects the rendered fallback and the layers from the failure seen on the real poster. It is not added to refinements, so the prompts of refinements of stored scenes stay as they were; "byte for byte" below is about the signature sentence.
+- The closing constraint names "the contact line" among the only writing. No example text enters the prompt.
 
-**Old posters.** A poster whose current scene drew the contact (its stored headline has `contact`) keeps its hidden layer and its guards. For it the position choice is disabled with the reason "Le contact est dessiné dans cette image : générez une nouvelle version pour le déplacer." A new version of that poster follows the new rule: when the owner chooses the new version, `chooseVisual` shows the contact layer again (the first-scene placement does not run a second time), and the compact style is applied to it then, so its digits meet the 22 px minimum.
+**Guards (existing code).** The job payload records `contact` and `signature_align`. `exports.py` refuses `signature_missing` when the drawn contact no longer equals the poster's snapshot, or when a selected contact is neither drawn nor a visible layer. The first scene hides only drawn roles (`service.py`); `chooseVisual` hides or shows the contact layer per version and gives a re-shown layer the compact style (built). Refinement rebuilds the headline from the stored payload, so it keeps `signature_align`, or its absence.
 
-**States.** None new. A position or contact edit is an ordinary document revision: autosaved, undoable, no provider call, no change to the scene's fidelity status. A confirmed poster stays confirmed; a changed draft needs a new final preview, as for any edit (`preview_stale`).
+**The 22 px minimum.** For a drawn contact it is asked for, not enforced: nothing in the code measures drawn text. The owner checks it at the review. It is measured by a test only for the rendered fallback (built). R-CATALOGUE-BRAND-003 says this in its amended text.
+
+**States.** None new. The position and the drawing option describe the next scene and are kept on the device (`affiche.style`). Changing the contact text, or unticking the contact, after it was drawn makes the poster stale exactly as today (`signature_missing`, notice under the Textes card) until a new version is made or the old text is restored.
 
 | Failure / edge | Handling |
 |---|---|
-| The contact does not fit on one line at 32 px in the free span | The blocking issue `text_fit` ("Le texte dépasse son cadre…") appears in the editor at once and blocks the final preview. No paid call is involved. The owner shortens the contact or unticks the logo. This needs two changes in `canvas.ts`, where today only the price is non-wrapping and width-checked: a layer with `icon` is also non-wrapping, and its width check measures the line plus the handset and its gap. Without them a long contact would be cut silently. |
-| The contact has several lines in the profile | The compact style is not applied; the layer stays as today (multi-line, no icon) and the position choice only sets `align`. One-line contact is the supported case (requirement: multiple lines out of scope). |
-| No contact selected | No layer is shown and nothing is drawn; no placeholder. |
-| The contact colour has poor contrast on a generated backdrop | Not measured. It is visible on the canvas and in the final preview; the fill is editable; "Tous les éléments sont lisibles" is part of the final agreement. |
-| The owner drags the logo over the contact | The existing non-blocking overlap warning between layers appears and is listed on the final screen. Both are layers now, so the code sees it. |
-| The scene draws something in the footer band | Not detected by code; "Aucun objet ni texte ajouté par l’IA" at the fidelity review. |
-| A font without the digits or punctuation typed | Existing glyph warning. The handset is a path, not a glyph, so it needs no font. |
-| Profile contact changed later | Unchanged: the poster keeps its snapshot; applying the new profile is an explicit edit, free of charge. |
+| The model draws a wrong or missing digit | Not detected by code. The review shows the typed contact beside the image; the owner refuses the version. This risk is the price of drawing and was accepted in ADR-055. |
+| The model draws the contact at another place, on two lines, too small, or adds words | Not detected by code; refused at the review ("Contact", "Aucun autre texte que ceux ci-dessus"). |
+| The model still draws the price into the contact region | Reduced by the new hard limit, not excluded. With a drawn contact the model places both itself; with the rendered fallback the owner can drag the line or refuse the version. |
+| A logo layer is visible on a poster whose scene drew the contact (ticked after the scene, or dragged) | The logo may cover part of the drawn line; code cannot see it. Whenever a contact is drawn and the logo is shown, a help line under the checkboxes says: "Le contact est dessiné dans l’image : gardez le logo à l’écart, ou générez une nouvelle version." The final preview shows the result. |
+| Contact too long, with a line break or a double quote | Drawing is disabled with the reason; the rendered layer is used. No paid call. |
+| No contact selected | Nothing is drawn and no layer is shown; no placeholder. |
+| Old scene with the ADR-043 block | Unchanged behaviour and guards; its refinement keeps the block. |
+| Provider failure, timeout, budget | Unchanged scene-job handling (D-GENERATION-JOBS-002/003): no retry for unknown outcomes, the slot is freed on failure, the cap is checked before the call. |
 
-**External systems.** None involved. No prompt wording changes for new scenes except that the signature sentence is no longer requested; no paid trial is needed for this section.
+**External systems.** No new call: the same single GPT Image request with a different prompt. Cost and rate handling are unchanged.
+
+**Verification of D-004 v3.**
+
+- Unit tests (no spend): the three position wordings and their boxes; contact only, never the shop name; refusals (`signature_align` without `signature`, without a contact, too long, with a quote); absent `signature_align` keeps the ADR-043 sentence byte for byte and is omitted from dumps; the price hard limit appears when a contact or logo region lies below the price and not otherwise; refinement of an old and of a new scene; export guard for a changed contact.
+- Browser smoke (stub): the option is on by default and sends `signature` with `signature_align`; unticking it gives the rendered line; the position choice is remembered; the too-long reason.
+- Paid, only with the user's go: one scene with the position at the right and the logo ticked (about USD 0.21). Read every digit, measure the digit height, and check the pill and the contact are clear of each other. One scene shows it can work, not that it always does.
+- Not covered: square and story formats, a real phone.
 
 ## D-CATALOGUE-BRAND-005 — Product brand mark: drawn or plain text
 
@@ -152,6 +166,8 @@ Two existing behaviours must change for this to hold:
 No brand logo upload (ADR-052 default 4).
 
 ## Verification of D-004 and D-005
+
+This list is what was verified for the v2.1 build (T-SIG-001 to 003: rendered contact and brand as plain text). The verification of D-004 v3 is at the end of its own section.
 
 - Backend unit tests: `icon` accepted on the contact layer only; a stored document without `icon` keeps its canonical form and hash; `brand_text` wording, its refusal without a brand, and an unchanged idempotency body when it is absent; the ADR-043 prompt branch unchanged for a stored scene and its refinement.
 - Renderer test (bundled Chromium, no spend): a contact with the compact style renders one line with the handset; measured digit height at least 22 px; left, centre and right positions with and without a logo; a too-long contact reports `text_fit`.

@@ -6,7 +6,7 @@
 |---|---|---|---|
 | R-CATALOGUE-BRAND-001 | Confirm the product and offer | P0 | Approved |
 | R-CATALOGUE-BRAND-002 | Optional shop identity | P0 | Approved |
-| R-CATALOGUE-BRAND-003 | Discreet shop signature in a composed poster | P1 | Approved 2026-11-12 (ADR-052), amended (ADR-053) |
+| R-CATALOGUE-BRAND-003 | Discreet shop signature in a composed poster | P1 | Approved 2026-11-12 (ADR-052), amended (ADR-053, ADR-055) |
 | R-CATALOGUE-BRAND-004 | Product brand mark | P1 | Approved 2026-11-12 (ADR-052) |
 
 ## R-CATALOGUE-BRAND-001 — Confirm the product and offer
@@ -41,25 +41,26 @@ Out of scope: multiple shops, automatic logo generation, contact verification an
 
 ## R-CATALOGUE-BRAND-003 — Discreet shop signature in a composed poster
 
-**Status:** Approved by the user on 2026-11-12 ("go with the new requirement"; ADR-052), amended the same day by his decision to have the contact written by the renderer, not drawn by the image model ("B, and yes to the two smaller points"; ADR-053). The technical design has its own approval gate. Supersedes ADR-043 for new scenes. Background: [research summary](../reviews/signature-research-2026-11-12.md), [design review round 1](../reviews/signature-design-r1-2026-11-12.md).
+**Status:** Approved by the user on 2026-11-12 (ADR-052). Amended twice the same day by his decisions: first to a contact written by the renderer (ADR-053), then, after the first real poster showed that line landing on the drawn price, back to a contact drawn in the composition with the rendered line as fallback ("yes"; ADR-055). The technical design has its own approval gate. Background: [research summary](../reviews/signature-research-2026-11-12.md), [design review round 1](../reviews/signature-design-r1-2026-11-12.md), [round 2](../reviews/signature-design-r2-2026-11-12.md).
 
-As the operator, I want my contact to be part of the poster without competing with the product and the price, and my shop to be identified by its logo alone.
+As the operator, I want my contact to be part of the composition, without competing with the product and the price, and my shop to be identified by its logo alone.
 
 Acceptance criteria:
 
-- [ ] The contact is written by the renderer, never drawn by the image model in a new scene. It is one compact line: a telephone icon and the contact exactly as typed, with no rule and no second line.
-- [ ] The contact is visibly smaller than the price and stays readable on a phone: on the 1080 × 1350 poster its digits are at least 22 px tall. A renderer test measures this.
-- [ ] The operator chooses where the contact goes in the footer: left, centre or right. The choice can be changed at any time without a new scene and without cost, and is remembered on the device. Default: right when the logo is included, centre otherwise.
-- [ ] When the logo is included, the logo alone identifies the shop. Without a logo, the footer carries the contact only. The shop name is unticked by default in both cases; the operator can still tick it as an editable text layer. The logo is the uploaded file, placed by the renderer; the image model never draws or imitates it (R-CATALOGUE-BRAND-002 stays in force).
-- [ ] The logo and the contact do not overlap when the poster is created, in any of the three positions. If the operator later moves one over the other, the editor warns him.
-- [ ] Changing the contact, its position or the logo never needs a new scene. The scene leaves the footer free of objects and writing.
-- [ ] Error case: WHEN the contact does not fit on one line at the minimum size THEN the editor says so at once and the final preview is blocked until the operator shortens it, removes the logo or removes the contact. No paid call is involved.
+- [ ] By default the contact is drawn by the image model as part of the composition: one compact line, a telephone icon and the contact exactly as typed, with no rule and no second line.
+- [ ] The operator chooses where the contact goes in the footer: left, centre or right. The choice is remembered on the device. Default: right when the logo is included, centre otherwise. For a drawn contact a new position needs a new version of the scene, confirmed with its cost.
+- [ ] The contact is asked to be visibly smaller than the price and readable on a phone (digits about 2 % of the poster height, at least 22 px on 1080 × 1350). For a drawn contact this is checked by the operator at the review; nothing in the application measures drawn text.
+- [ ] The fidelity review shows the typed contact beside the image. The drawn contact must still equal the poster's contact, or export is refused; changing it needs a new version.
+- [ ] The operator can untick drawing. The contact is then one compact line written by the renderer (exact characters, digits at least 22 px, measured by a test), and its position and text change freely without a new scene.
+- [ ] When the logo is included, the logo alone identifies the shop. Without a logo, the footer carries the contact only. The shop name is unticked by default and is never drawn in a new scene; the operator can tick it as an editable text layer. The logo is the uploaded file, placed by the renderer; the image model never draws or imitates it (R-CATALOGUE-BRAND-002 stays in force).
+- [ ] The areas planned for the logo and the contact do not overlap, in any of the three positions. The scene is asked to keep the price above them.
+- [ ] Error case: WHEN the contact is too long for one line, or has a line break or a double quote THEN drawing is disabled with the reason, before any paid call, and the contact stays a rendered text layer.
 - [ ] Error case: WHEN no contact is selected THEN nothing appears in its place: no placeholder and no invented number.
-- [ ] A poster whose existing scene already carries a drawn contact (ADR-043) keeps working with its guards; moving that contact needs a new version of the scene.
+- [ ] A poster whose existing scene carries the older two-line signature (ADR-043) keeps working with its guards.
 
-Out of scope: a logo drawn by the image model; a contact drawn by the image model in new scenes; a compact style for a multi-line contact; adding the contact to captions.
+Out of scope: a logo drawn by the image model; a shop name drawn in new scenes; several contact lines in the scene; adding the contact to captions; reading the drawn digits by program.
 
-Decided on 2026-11-12 (ADR-053): the contact keeps its own band under the price; without a logo the shop name is not written by default.
+Decided on 2026-11-12: the contact keeps its own band under the price; without a logo the shop name is not written by default (ADR-053, kept by ADR-055).
 
 ## R-CATALOGUE-BRAND-004 — Product brand mark
 

@@ -1,5 +1,20 @@
 # DECISIONS
 
+## ADR-056 — 2026-11-12 — Design approved: contact drawn in the composition (D-CATALOGUE-BRAND-004 v3.1)
+
+- The user approved v3.1 ("go") after review round 3 (APPROVE WITH FIXES, no P1; fixes applied, not reviewed again). The devil's-advocate pass of this design was done on v1 and is not repeated.
+- Tasks: T-SIG-004 (backend prompt and request rules), T-SIG-005 (editor), T-SIG-006 (one paid scene, only with the user's go).
+
+## ADR-055 — 2026-11-12 — The contact is drawn in the composition again; the rendered line is the fallback (user decision; reverses ADR-053's default; amends R-CATALOGUE-BRAND-003)
+
+- Evidence: the first real poster made with the rendered contact (Soundcore Space One, scene `f3714e6b`, 2026-11-12). The prompt reserved 79–88 % of the height for the price and 91–95 % for the contact; the image model drew the pill at about 86–94 %, and the renderer wrote the contact on top of it. The user: "This is why having the contact not part of the comp [is] a bad idea".
+- What was wrong in ADR-053 and design v2.1: both relied on "the scene keeps the band calm". Neither review tested that on a real scene. Claude recommended that approach.
+- Decision: by default the image model draws the contact as one compact line with a telephone icon, at the left, centre or right of its region, so it composes it with the price. The rendered compact line built in T-SIG-001/002 stays as the fallback when the owner unticks drawing or the contact cannot be drawn.
+- Accepted cost: a drawn digit is checked only by the owner's eye at the review, and a new position needs a new version (about USD 0.21).
+- Kept from ADR-053: the shop name is unticked by default and never drawn in new scenes; the logo is the uploaded file as a layer; default position right with a logo, centre without; brand as plain text.
+- Added: the price label gets a hard lower limit in the prompt whenever a contact or logo region lies below it.
+- Open: the logo is still added after the scene, so the same collision can happen under it; the owner can drag the logo for free.
+
 ## ADR-054 — 2026-11-12 — Design approved: compact rendered contact, logo-only identity, brand as plain text
 
 - The user approved D-CATALOGUE-BRAND-004 and 005 at v2.1 ("approved, commit and go") after two review rounds (REWORK on the drawn-contact v1, APPROVE WITH FIXES on v2) and one devil's-advocate pass. The round-2 fixes were applied and not reviewed again.
