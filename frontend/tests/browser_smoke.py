@@ -388,9 +388,11 @@ def run():
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.set_viewport_size({"width": 1440, "height": 1000})
                         page.locator(".nav a", has_text="Mes affiches").click()
-                        thumbnail = page.locator('.library-item img[src^="/api/renders/"]').first
+                        thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
-                        page.wait_for_function("image => image.complete && image.naturalWidth === 1080", arg=thumbnail.element_handle())
+                        # A small resized image of the 1080 x 1350 preview, not the full file.
+                        page.wait_for_function("image => image.complete && image.naturalWidth === 192 && image.naturalHeight === 240", arg=thumbnail.element_handle())
+                        assert len(page.request.get(ORIGIN + thumbnail.get_attribute("src")).body()) < 40_000
                         page.screenshot(path=str(OUTPUT / "mes-affiches.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")

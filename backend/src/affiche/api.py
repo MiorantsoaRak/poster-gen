@@ -1,12 +1,15 @@
 """Authenticated HTTP boundary for the pilot. Run with python -m affiche.api."""
 import hashlib
+import io
 import json
 import logging
 import re
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from typing import Annotated, Literal
 from uuid import uuid4
 
+from PIL import Image
 from fastapi import APIRouter, Depends, FastAPI, Header, Path, Query, Request
 from fastapi.security import APIKeyCookie
 from fastapi.exceptions import RequestValidationError
@@ -199,6 +202,17 @@ def expected_revision(value: str | None) -> int | None:
 def result_response(result):
     status, body = result
     return JSONResponse(body, status_code=status, headers={"ETag": f'"{body["revision"]}"'} if "revision" in body else {})
+
+
+@lru_cache(maxsize=256)
+def _thumbnail(path: str) -> bytes:
+    """A small JPEG of a stored image. Files are content-addressed, so a path always means the same bytes."""
+    with Image.open(path) as image:
+        small = image.convert("RGB")
+        small.thumbnail((192, 240))
+        out = io.BytesIO()
+        small.save(out, "JPEG", quality=82)
+        return out.getvalue()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -422,6 +436,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await run_in_threadpool(store.upload, app.state.engine, settings.data_dir, request.state.shop,
                                            data, form["role"], min_short_edge=settings.min_source_short_edge)
 
+    @protected.get("/api/thumbnails/{sha}")
+    def thumbnail(sha: Sha, request: Request):
+        # Only this shop's final previews and scenes have thumbnails.
+        with app.state.engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT 'image/png' FROM poster_renders r JOIN creations c ON c.id=r.creation_id "
+                "WHERE r.png_sha256=:sha AND c.shop_id=:shop UNION ALL "
+                "SELECT a.mime FROM poster_visuals v JOIN assets a ON a.sha256=v.image_asset "
+                "WHERE v.image_asset=:sha AND v.shop_id=:shop LIMIT 1"), {"sha": sha, "shop": request.state.shop}).first()
+        if row is None:
+            raise store.Refused("not_found", 404)
+        try:
+            data = _thumbnail(str(assets.path(settings.data_dir, sha, assets.extension(row[0]))))
+        except (OSError, ValueError):  # missing, unreadable or not an image: the list falls back to its icon
+            raise store.Refused("not_found", 404) from None
+        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
     @protected.get("/api/assets/{sha}")
     def asset(sha: Sha, request: Request, prepared: bool = False):
         with app.state.engine.connect() as conn:
@@ -483,9 +514,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise store.Refused("invalid_cursor") from None
         with app.state.engine.connect() as conn:
             # Thumbnail: the last final preview of the poster, else its current scene. Feed only until T-POSTER-009.
-            # ponytail: the full-size PNG is served as the thumbnail; add a resized variant if the list gets slow.
             rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"
-                "(SELECT r.id FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_id,"
+                "(SELECT r.png_sha256 FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_sha,"
                 "(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
                 "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_asset "
                 "FROM creations c JOIN creation_versions v "
@@ -495,8 +525,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"shop": request.state.shop, "stamp": cursor[0], "id": cursor[1], "limit": limit+1}).mappings().all()
         items = [{"id": r["id"], "revision": r["current_revision"], "status": r["status"], "created_at": r["created_at"],
                   "name": r["name"], "variant": r["variant"],
-                  "thumbnail_url": f'/api/renders/{r["render_id"]}/preview' if r["render_id"]
-                  else f'/api/assets/{r["scene_asset"]}' if r["scene_asset"] else None,
+                  "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}'
+                  if r["render_sha"] or r["scene_asset"] else None,
                   "title": json.loads(r["document_json"])["offer"]["title"]} for r in rows[:limit]]
         return {"items": items, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
 
