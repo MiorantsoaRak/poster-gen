@@ -143,7 +143,7 @@ Verification: pure document/schema/price/layout tests; manual/prompt changes wit
 
 **Tests:** the browser smoke walks a new poster through the three steps on empty data without touching anything outside the visible step, checks the tabs after the first version, removes the logo from the poster and undoes it, checks that the title offers no removal, and keeps its contrast check on every screen in both themes. Vitest stays as it is (no logic moved out of the component).
 
-## D-POSTER-EDITOR-005 — Phone-first editor (v2) and the look (waiting) (covers R-POSTER-EDITOR-007, the amendment to 006)
+## D-POSTER-EDITOR-005 — Phone-first editor (v2) and the look (covers R-POSTER-EDITOR-007, the amendment to 006)
 
 **Status:** v2, 2026-11-13, after a fresh review and a devil's advocate on v1 (reviews/phone-first-design-r1-2026-11-13.md, ADR-075). Part A (structure) approved under the autonomy grant, to be built after the current fixes are released. Part B (look) waits for the user's choices. v2 was not reviewed again; its build gets a fresh code review.
 
@@ -167,7 +167,15 @@ Verification: pure document/schema/price/layout tests; manual/prompt changes wit
 
 **Never** put `backdrop-filter`, `filter`, `transform` or `will-change` on `.stage` or `.app-header` children that hold fixed elements: they become the containing block of `position: fixed` descendants.
 
-### Part B — the look (task T-PF-LOOK, waits for the user)
+### Part B — the look (task T-PF-LOOK; approved 2026-11-13, ADR-077)
+
+**Amendment 2026-11-14 (ADR-077):** the user approved mockup version 20 ("let's go with that for now"). The conditionals below are settled: the theme follows the phone, Figtree is used, and glass is on every surface. Added to this part:
+
+- **Glass on every surface** (replaces ADR-072's "floating chrome only"): panels, cards, sheets, bars, the tools row, badges, fields, chips, secondary buttons and tiles are translucent with `backdrop-filter`. Tokens as in the mockup: light `--glass-panel: rgb(255 255 255 / .74)`, field `.62`, strong `.92`; dark `rgb(30 28 26 / .58)`, field `rgb(255 255 255 / .07)`. Panels blur 26 px, fields 16 px. The backdrop is three fixed soft colour patches on the page ground (pale blue, pale blue, warm cream; 12 % strength in dark), on a fixed pseudo-element of the root, never a blurred copy of the poster.
+- **Constraints:** the rule at the end of part A holds: no `backdrop-filter` on an ancestor of a `position: fixed` element (the bottom bar, the bottom navigation, dialogs, the large view); put the blur on the leaf or a pseudo-element. Text on glass keeps 4.5:1 over the darkest and lightest part of the backdrop (the smoke's contrast check measures it). `@supports not (backdrop-filter: blur(1px))` and `prefers-reduced-transparency: reduce` give opaque surfaces. `forced-colors` unchanged.
+- **Controls:** one reset that single-class rules can override; on one-column screens every tappable element is at least 44 px and bottom-bar buttons 52 px, bold 15.5 px; the poster's shadow is short (light `0 1px 2px .08, 0 6px 16px -6px .16`).
+- **Owed before release:** a speed check on a low-end Android phone (the observed session, T-HOST-004).
+
 
 - Theme default: if the user chooses "follow the phone": a one-line inline script in the head of `index.html` sets `data-theme` before the first paint, two `theme-color` metas with `media`, the `theme` ref follows a device change while no choice is stored, `toggleTheme` reads the colour from the tokens; the smoke pins `color_scheme="dark"` where it toggles. If he keeps dark: only the light tokens change.
 - Light tokens as in v1, with faint `#67605A` (4.5:1 on the well) and the off switch track outlined in `--muted` (3:1).

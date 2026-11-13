@@ -1,62 +1,79 @@
-/* Affiche Atelier (ADR-050, ADR-072). An image tool on a warm near-black ground: the poster first, panels quiet.
-   Elevation is a lightness step; the only shadow lifts the poster. Chrome is neutral; the main action is white
-   on black; the one hue marks the chosen style and work in progress. Light variant: clair.
-   Glass (translucent and blurred) is kept for what floats above content: see the end of this file.
-   Fonts are the bundled poster fonts, so nothing is fetched from the network. */
-@font-face { font-family: Atelier; src: url('/fonts/NotoSans-Regular.ttf'); font-weight: 400; font-display: swap }
-@font-face { font-family: Atelier; src: url('/fonts/NotoSans-Bold.ttf'); font-weight: 700; font-display: swap }
+/* Affiche Atelier (ADR-050, ADR-077, D-POSTER-EDITOR-005 part B). A warm light ground (clair) or a warm near-black one
+   (sombre), frosted glass on every surface over three soft colour patches, an ink main button, the brand amber as the
+   only accent. The theme follows the device until the owner picks one (index.html, App.vue). The poster is the one
+   lifted thing, with a short shadow. Glass rules and their solid fallback: see the tokens and the end of this file.
+   Interface type: Figtree, bundled with its licence; nothing is fetched from another site. The poster keeps its own fonts. */
+@font-face { font-family: Figtree; src: url('/fonts/Figtree-Variable.woff2') format('woff2'); font-weight: 300 900; font-display: swap }
+/* Figtree has no narrow no-break space (U+202F), the French thousands separator of « 90 000 »: the bundled Noto Sans
+   draws that one character, so a price is spaced the same on every phone (checked with fontTools, 2026-11-14). */
+@font-face { font-family: Figtree; src: url('/fonts/NotoSans-Regular.ttf') format('truetype'); font-weight: 300 900; font-display: swap; unicode-range: U+202F }
 
 :root {
-  --ground: #0e0d0c; --surface: #181716; --raised: #262422; --line: #2a2826; --control: #4a4743;
-  --text: #ffffff; --muted: #b8b4ae; --faint: #96918a; --hue: #f2a33d;
-  --ok: #7fd1a2; --ok-bg: #16261d; --warn: #e9b458; --warn-bg: #2a2212; --bad: #ef7d74; --bad-bg: #331a18;
-  --invert: #ffffff; --invert-ink: #0e0d0c; --scrim: #000000cc; --radius: 20px; --field: 10px;
-  --well: #090908; --lift: 0 18px 48px rgb(0 0 0 / .5); --glass: rgb(18 17 16 / .8); --glass-line: rgb(255 255 255 / .1);
-  font-family: Atelier, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
-  font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark;
+  --ground: #100f0e; --surface: #1b1a18; --raised: #2a2825; --line: #302d2a; --control: #57524c;
+  --text: #f5f2ee; --muted: #bdb6ad; --faint: #a39b91; --hue: #f2a33d; --accent-soft: #3b2a13; --accent-ink: #f8c27a;
+  --ok: #8fddb0; --ok-bg: #16261d; --warn: #e9b458; --warn-bg: #2a2212; --bad: #ef7d74; --bad-bg: #331a18;
+  --invert: #f5f2ee; --invert-ink: #100f0e; --scrim: #000000cc; --radius: 24px; --field: 16px;
+  --lift: 0 1px 2px rgb(0 0 0 / .5), 0 10px 28px -10px rgb(0 0 0 / .7); --poster-shadow: 0 8px 20px -8px rgb(0 0 0 / .6);
+  /* Glass: bars and sheets over content (--glass), panels and tiles (--glass-panel), fields, chips and secondary buttons
+     (--glass-field), a chosen segment (--glass-strong). Each is opaque enough for 4.5:1 over the whole backdrop. */
+  --glass: rgb(27 26 24 / .86); --glass-panel: rgb(30 28 26 / .58); --glass-field: rgb(255 255 255 / .07); --glass-strong: rgb(70 66 62 / .7);
+  --glass-line: rgb(255 255 255 / .1); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65); --warn-glass: rgb(42 34 18 / .8);
+  --blur-panel: blur(26px) saturate(1.5); --blur-field: blur(16px) saturate(1.4);
+  /* The backdrop: pale blue, pale blue, warm cream; 12 % as strong as in the light theme. */
+  --patch-1: rgb(205 224 247 / .1); --patch-2: rgb(220 233 250 / .1); --patch-3: rgb(252 228 196 / .09);
+  font-family: Figtree, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
+  font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark; -webkit-font-smoothing: antialiased;
 }
 :root[data-theme=clair] {
-  --ground: #f4f2ef; --surface: #ffffff; --raised: #ebe8e3; --line: #e3dfd9; --control: #b9b4ac;
-  --text: #15130f; --muted: #4f4a43; --faint: #6b665e; --hue: #b8610a;
-  --ok: #1d6a47; --ok-bg: #e4f1ea; --warn: #7a5a10; --warn-bg: #fbf1d4; --bad: #a3271f; --bad-bg: #fbeae8;
-  --invert: #15130f; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
-  --well: #ebe8e3; --lift: 0 14px 36px rgb(21 19 15 / .18); --glass: rgb(250 249 247 / .9); --glass-line: rgb(21 19 15 / .12);
+  --ground: #f4f1ec; --surface: #ffffff; --raised: #ebe5dc; --line: #e2dacf; --control: #c9c0b4;
+  --text: #1b1815; --muted: #5c554d; --faint: #67605a; --hue: #e58e1a; --accent-soft: #fcead0; --accent-ink: #7a4300;
+  --ok: #145c37; --ok-bg: #e2f2e8; --warn: #6b4600; --warn-bg: #fff1d6; --bad: #a3271f; --bad-bg: #fbeae8;
+  --invert: #1b1815; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
+  --lift: 0 1px 2px rgb(40 28 14 / .06), 0 10px 28px -10px rgb(40 28 14 / .18); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
+  --glass: rgb(255 255 255 / .86); --glass-panel: rgb(255 255 255 / .74); --glass-field: rgb(255 255 255 / .62); --glass-strong: rgb(255 255 255 / .92);
+  --glass-line: rgb(255 255 255 / .75); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3); --warn-glass: rgb(255 241 214 / .8);
+  --patch-1: rgb(205 224 247 / .85); --patch-2: rgb(220 233 250 / .8); --patch-3: rgb(252 228 196 / .75);
 }
+:root { --ambient: radial-gradient(70% 45% at 10% 8%, var(--patch-1), transparent 70%), radial-gradient(60% 45% at 95% 50%, var(--patch-2), transparent 70%), radial-gradient(60% 40% at 20% 100%, var(--patch-3), transparent 70%) }
 
 * { box-sizing: border-box }
 html { scroll-behavior: smooth; scroll-padding: 64px 0 80px; -webkit-tap-highlight-color: transparent }
+/* What the glass blurs: the patches, fixed on the page ground; never a blurred copy of the poster (a dark product blurs
+   to grey). The body stays transparent so that they show. */
+html::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--ambient) }
 /* In the editor a focused field is never under what stays at the top (measured in App.vue: top bar, and the poster in the tabs). */
 html:has(main.editing) { scroll-padding-top: calc(var(--sticky-top, 56px) + 8px) }
-body { margin: 0; background: var(--ground) }
+body { margin: 0 }
 h1, h2, h3, p { margin-top: 0 }
-h1 { font-size: 20px; line-height: 26px; font-weight: 700; margin-bottom: 2px; text-wrap: balance }
-h2 { font-size: 16px; line-height: 22px; font-weight: 700; margin-bottom: 0 }
+h1 { font-size: 22px; line-height: 28px; font-weight: 800; letter-spacing: -.01em; margin-bottom: 2px; text-wrap: balance }
+h2 { font-size: 18px; line-height: 24px; font-weight: 800; letter-spacing: -.01em; margin-bottom: 0 }
 h3 { font-size: 14px; font-weight: 700; margin: 0 0 4px; display: flex; align-items: center; gap: 8px }
 a { color: var(--text) }
-small, .help { font-size: 13px; color: var(--faint) }
+small, .help { font-size: 13px; line-height: 19px; color: var(--faint) }
 small { display: block }
 .sub { font-size: 13px; font-weight: 700; color: var(--muted); margin: 18px 0 6px }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round }
 
-/* Controls: one height, one pill shape, three levels (filled, outlined, text) */
+/* Controls: one reset that any single class overrides (:where has no weight), pills, three levels (filled, glass, text). */
 button, input, textarea, select { font: inherit }
 button, a, input, select, textarea, summary, label { touch-action: manipulation }
-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 18px; border-radius: 999px;
-  border: 1px solid var(--control); background: none; color: var(--text); font-weight: 700; cursor: pointer;
+:where(button) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 20px; border-radius: 999px;
+  border: 1.5px solid var(--line); background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field);
+  color: var(--text); font-weight: 700; line-height: 1.2; cursor: pointer;
   transition: background-color .15s ease-out, border-color .15s ease-out, opacity .15s ease-out, transform .1s ease-out }
 /* Hover looks only where there is a hovering pointer: on a touch screen the finger stays where the next button is
    drawn and the look sticks to it (« Générer l’affiche » appeared under « Continuer » and read as disabled). */
-@media (hover: hover) { button:hover:not(:disabled) { background: var(--raised) } }
-button:active:not(:disabled) { transform: scale(.98) }
-button:disabled { color: var(--faint); border-color: var(--line); cursor: not-allowed }
-button.primary, .download-button { background: var(--invert); border-color: var(--invert); color: var(--invert-ink) }
+@media (hover: hover) { :where(button:hover:not(:disabled)) { background-color: var(--raised) } }
+:where(button:active:not(:disabled)) { transform: scale(.98) }
+:where(button:disabled) { color: var(--faint); cursor: not-allowed }
+button.primary, button.secondary { min-height: 48px; font-size: 15px }
+button.primary, .download-button { background: var(--invert); border-color: var(--invert); color: var(--invert-ink); -webkit-backdrop-filter: none; backdrop-filter: none }
 @media (hover: hover) { button.primary:hover:not(:disabled), .download-button:hover { background: var(--invert); opacity: .86 } }
 button.primary:disabled { background: var(--raised); border-color: var(--raised); color: var(--faint); opacity: 1 }
-button.ghost { border-color: transparent; color: var(--muted); font-weight: 400; padding: 0 12px }
-button.ghost:hover:not(:disabled) { color: var(--text) }
-button.icon { width: 40px; padding: 0 }
-button.text-button { min-height: 32px; padding: 0 4px; border: 0; border-radius: 4px; color: var(--muted); font-weight: 400; text-decoration: underline; background: none }
-button.text-button:hover:not(:disabled) { color: var(--text); background: none }
+button.ghost { border-color: transparent; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); font-weight: 500; padding: 0 12px }
+button.icon { width: 44px; min-height: 44px; padding: 0 }
+button.text-button { min-height: 32px; padding: 0 4px; border: 0; border-radius: 4px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--muted); font-weight: 600; text-decoration: underline; text-underline-offset: 2px }
+@media (hover: hover) { button.text-button:hover:not(:disabled) { color: var(--text); background: none } }
 :is(button, input, select, textarea, summary, a, .poster-canvas):focus-visible { outline: 2px solid var(--text); outline-offset: 2px }
 /* A chosen style or version already wears this ring: the focus ring goes outside it. */
 :is(.look, .thumb):focus-visible { outline-offset: 6px }
@@ -64,32 +81,51 @@ main:focus, [role=dialog]:focus, .panel:focus { outline: none }
 .skip { position: absolute; left: -9999px; z-index: 60; background: var(--surface) }
 .skip:focus-visible { left: 12px; top: 8px }
 
-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); margin-bottom: 14px }
-input, textarea, select { width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: var(--field); padding: 8px 12px; background: var(--ground); color: var(--text); font-size: 14px; font-weight: 400; transition: border-color .15s ease-out }
-:is(input, textarea, select):hover, :is(input, textarea, select):focus { border-color: var(--control) }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); margin-bottom: 14px }
+:where(input, textarea, select) { width: 100%; min-height: 48px; border: 1.5px solid var(--line); border-radius: var(--field); padding: 10px 16px;
+  background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); color: var(--text); font-size: 15px; font-weight: 550; transition: border-color .15s ease-out }
+@media (hover: hover) { :where(input, textarea, select):hover { border-color: var(--control) } }
+:where(input, textarea, select):focus { border-color: var(--text) }
 input::placeholder, textarea::placeholder { color: var(--faint); opacity: .8 }
 textarea { resize: vertical }
-input[type=color] { padding: 3px; width: 56px; cursor: pointer }
+input:is([type=color], [type=range], [type=checkbox], [type=file]) { -webkit-backdrop-filter: none; backdrop-filter: none }
+input[type=color] { padding: 4px; width: 56px; cursor: pointer }
 input[type=range] { padding: 0; min-height: 28px; accent-color: var(--text); border: 0; background: none }
 input[type=file] { font-size: 13px; border-style: dashed; cursor: pointer }
-input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; flex: none; margin: 1px 0 0; accent-color: var(--text); cursor: pointer }
-label.check { flex-direction: row; align-items: flex-start; gap: 10px; min-height: 40px; padding: 10px 0; margin: 0; font-size: 14px; font-weight: 400; color: var(--text); cursor: pointer }
+input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; flex: none; margin: -1px 0 0; padding: 0; accent-color: var(--text); cursor: pointer }
+label.check { flex-direction: row; align-items: flex-start; gap: 12px; min-height: 40px; padding: 10px 0; margin: 0; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer }
 label.check small { margin-top: 2px; overflow-wrap: anywhere }
 label.inline { flex-direction: row; align-items: center; justify-content: space-between; margin: 14px 0 0 }
-/* A choice among a few values: word chips and colour swatches, the chosen one marked by aria-pressed */
-.choice { display: grid; gap: 6px; margin: 14px 0; font-size: 13px; font-weight: 700; color: var(--muted) }
+/* A choice that changes the poster at once is a switch (R-POSTER-EDITOR-006 amendment). It stays a checkbox for the
+   keyboard and for screen readers. The label is on the left and the switch on the right; the off track is outlined in
+   --muted (3:1). Forced colours restore the native box. */
+label.switch { flex-direction: row-reverse; justify-content: space-between; align-items: center; gap: 16px; width: 100% }
+label.switch input { appearance: none; -webkit-appearance: none; position: relative; width: 52px; height: 32px; min-height: 32px; margin: 0; border: 0; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 2px var(--muted); transition: background-color .15s ease-out }
+label.switch input::before { content: ''; position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: inset .15s ease-out, width .15s ease-out, height .15s ease-out }
+label.switch input:checked { background: var(--invert); box-shadow: none }
+label.switch input:checked::before { top: 4px; left: 24px; width: 24px; height: 24px; background: var(--invert-ink) }
+label.switch input:disabled { opacity: .45; cursor: not-allowed }
+@media (forced-colors: active) {
+  label.switch input { appearance: auto; -webkit-appearance: auto; width: 22px; height: 22px; min-height: 22px; box-shadow: none }
+  label.switch input::before { content: none }
+}
+/* Switches read as a list of settings: one glass group, a line between rows. */
+.checks-row.switches { display: grid; gap: 0; margin: 0 0 14px; padding: 0 16px; border-radius: 20px; background: var(--glass-panel); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+.checks-row.switches .switch + .switch { border-top: 1px solid var(--line) }
+/* A choice among a few values: word chips and colour swatches, the chosen one marked by aria-pressed, by its shape as
+   well as its colour (a pill among rounded squares, a ring). */
+.choice { display: grid; gap: 6px; margin: 14px 0; font-size: 13px; font-weight: 650; color: var(--muted) }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
-.chip { min-height: 32px; padding: 0 12px; border-color: var(--line); color: var(--muted); font-weight: 400; overflow-wrap: anywhere }
-.chip[aria-pressed=true] { background: var(--raised); border-color: var(--text); color: var(--text); font-weight: 700 }
-.sw { width: 32px; min-height: 32px; padding: 0; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--control) }
-.sw:hover:not(:disabled) { background: inherit }
-.sw[aria-pressed=true] { box-shadow: 0 0 0 2px var(--text) }
-label.other { flex-direction: row; align-items: center; gap: 8px; margin: 0; font-weight: 400 }
-label.other input { width: 36px; min-height: 32px; border-radius: 999px }
+.chip { min-height: 40px; min-width: 44px; padding: 0 15px; border-radius: 12px; border-color: var(--line); color: var(--muted); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; transition: border-radius .2s ease-out, background-color .15s ease-out, border-color .15s ease-out }
+.chip[aria-pressed=true] { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
+.sw { width: 36px; min-height: 36px; padding: 0; border: 3px solid var(--surface); box-shadow: 0 0 0 1.5px var(--control); -webkit-backdrop-filter: none; backdrop-filter: none }
+.sw[aria-pressed=true] { box-shadow: 0 0 0 2.5px var(--text) }
+label.other { flex-direction: row; align-items: center; gap: 8px; margin: 0; font-weight: 500 }
+label.other input { width: 36px; min-height: 36px; border-radius: 999px }
 label.other.on input { border-color: var(--text); box-shadow: 0 0 0 1px var(--text) }
-@media (pointer: coarse) { .chip, .sw, label.other input { min-height: 44px } .sw { width: 44px } }
+@media (pointer: coarse) { .chip, .sw, label.other input { min-height: 44px } .sw { width: 44px } label.other input { width: 44px } }
 .unit { position: relative; display: block }
-.unit::after { content: 'Ar'; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--faint); font-weight: 400 }
+.unit::after { content: 'Ar'; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--faint); font-weight: 600 }
 details { border-top: 1px solid var(--line); margin-top: 14px }
 summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-weight: 700; list-style: none; color: var(--muted) }
 summary::-webkit-details-marker { display: none }
@@ -101,41 +137,45 @@ details[open] > summary { color: var(--text) }
 .checks-row { display: flex; flex-wrap: wrap; gap: 0 18px }
 .wide { width: 100%; margin-top: 16px }
 
-/* Shell: one ground, a plain top bar, real destinations */
-.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 52px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left)); background: var(--ground); border-bottom: 1px solid transparent }
-.wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: var(--text); text-decoration: none }
+/* Shell: a glass top bar over the patches, real destinations */
+.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left));
+  background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
+.wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
 .mark { width: 20px; height: 24px }
 .mark path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round }
 .mark .hue { fill: var(--hue) }
 .mark .ink { fill: currentColor }
-.shop-label { color: var(--muted); font-size: 13px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.nav { display: flex; gap: 2px; margin-right: auto; flex-wrap: wrap }
-.nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border-radius: 999px; color: var(--muted); text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out }
-@media (hover: hover) { .nav a:hover { background: var(--surface); color: var(--text) } }
-.nav a[aria-current] { color: var(--text); font-weight: 700 }
-.count { color: var(--faint); font-weight: 400 }
+.shop-label { color: var(--muted); font-size: 13px; font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.nav { display: flex; gap: 4px; margin-right: auto; flex-wrap: wrap }
+.nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px; color: var(--muted); font-weight: 650; text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out }
+@media (hover: hover) { .nav a:hover { background: var(--glass-field); color: var(--text) } }
+.nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--glass-field); box-shadow: inset 0 0 0 1.5px var(--line) }
+.count { color: var(--faint); font-weight: 500 }
 .app-header .count { color: var(--muted) }
 .theme-toggle { margin-left: auto }
 .nav + .theme-toggle { margin-left: 0 }
 main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, env(safe-area-inset-right)); max-width: 1480px; margin: auto; padding: 8px var(--gutter-r) max(64px, env(safe-area-inset-bottom)) var(--gutter-l) }
-.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); color: var(--text); font-weight: 700 }
+.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
+  border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
 .message::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok) }
 .message.error { bottom: max(20px, env(safe-area-inset-bottom)) }
 .message.error::before { background: var(--bad) }
 .message.notice { top: 64px }
 .message .text-button { color: inherit; flex: none }
-.demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px }
+.demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); color: var(--warn); font-size: 13px; font-weight: 550 }
 
-/* Sign-in, new poster, galleries */
-.sign-in { max-width: 420px; background: var(--surface); padding: 28px; margin: 10vh auto; border-radius: var(--radius) }
-.sign-in h1, .intake h1 { font-size: 24px; line-height: 30px; margin-bottom: 8px }
+/* Sign-in, new poster, galleries: glass panels on the patches */
+.sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state { background: var(--glass-panel); box-shadow: var(--glass-shadow) }
+.sign-in, .intake, .empty, .look-card, .rows, .group, .comparison figure, .shot, .facts, .job-state { -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+.sign-in { max-width: 420px; padding: 28px; margin: 10vh auto; border-radius: var(--radius) }
+.sign-in h1, .intake h1 { font-size: 26px; line-height: 32px; margin-bottom: 8px }
 .intake-layout { max-width: 640px; margin: 20px auto }
-.intake { background: var(--surface); border-radius: var(--radius); padding: 28px }
+.intake { border-radius: var(--radius); padding: 28px }
 .intro { color: var(--muted); margin-bottom: 22px; max-width: 52ch }
-.upload-zone { background: var(--ground); border: 1px dashed var(--control); border-radius: var(--field); padding: 22px; cursor: pointer; color: var(--text); font-size: 14px; transition: border-color .15s ease-out }
-.upload-zone:hover { border-color: var(--text) }
-.upload-zone span { font-size: 13px; font-weight: 400; color: var(--faint) }
+.upload-zone { background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); border: 2px dashed var(--control); border-radius: var(--field); padding: 22px; cursor: pointer; color: var(--text); font-size: 14px; transition: border-color .15s ease-out }
+@media (hover: hover) { .upload-zone:hover { border-color: var(--text) } }
+.upload-zone span { font-size: 13px; font-weight: 500; color: var(--faint) }
 .upload-zone input { border: 0; padding: 0; background: none; min-height: 0 }
 /* The browser's own file control writes in the browser's language (« Choose Files ») with a small button. It stays
    in its label, over the whole area and transparent, for touch, keyboard and screen readers; the label shows a
@@ -143,7 +183,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .file-pick { position: relative }
 .file-pick input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; min-height: 0; padding: 0; border: 0 }
 .file-pick:focus-within { outline: 2px solid var(--text); outline-offset: 2px }
-.file-pick .pick-button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); color: var(--text); font-size: 14px; font-weight: 700 }
+.file-pick .pick-button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 20px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--glass-strong); color: var(--text); font-size: 14px; font-weight: 700 }
 .file-pick:has(input:disabled) .pick-button { color: var(--faint); border-color: var(--line) }
 .photo-strip { display: flex; gap: 10px; margin: 10px 0 16px }
 .photo-strip:empty { display: none }
@@ -151,36 +191,38 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .photo-strip img { width: 76px; height: 76px; object-fit: contain; background: #fff; border-radius: var(--field) }
 .logo-preview { width: 120px; height: 80px; object-fit: contain }
 .gallery { max-width: 1100px; margin: 0 auto }
-.rows { display: grid; gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden }
-.library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; background: var(--surface) }
+.rows { display: grid; border-radius: var(--radius); overflow: hidden }
+.library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center }
+.library-row + .library-row { border-top: 1px solid var(--line) }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 8px 0 }
-.row-actions button { min-height: 36px; padding: 0 14px; font-weight: 400 }
+.row-actions button { min-height: 36px; padding: 0 14px; font-weight: 600 }
 .more { margin: 14px 0 0; text-align: center }
 .gallery .titlerow label.check { padding: 0 }
-.library-item { display: grid; align-items: center;grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: var(--surface); color: var(--text); text-align: left; justify-content: stretch }
+.library-item { display: grid; align-items: center;grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); text-align: left; justify-content: stretch }
 /* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
 .library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
-@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--raised) } }
+@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--glass-field) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.library-item span { color: var(--faint); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.library-item span { color: var(--faint); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item svg { color: var(--faint); justify-self: center }
-.library-item img { width: 48px; height: 60px; object-fit: cover; border-radius: 4px; display: block }
-.empty { color: var(--muted); background: var(--surface); border-radius: var(--radius); padding: 28px }
+.library-item img { width: 48px; height: 60px; object-fit: cover; border-radius: 8px; display: block }
+.empty { color: var(--muted); border-radius: var(--radius); padding: 28px }
 .look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px }
-.look-card { margin: 0; background: var(--surface); border: 0; border-radius: var(--radius); padding: 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
-.look-wall img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--field); display: block }
+.look-card { margin: 0; border: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
+.look-card span { padding: 0 6px }
+.look-wall img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 18px; display: block }
 .look-card span { font-weight: 700 }
 .stack { display: grid; gap: 14px; min-width: 0 }
 .stack .after { margin-top: 0 }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px 14px }
 .swatches span { display: inline-flex; align-items: center; gap: 6px }
 .swatches i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--control) }
-.look-wall small { font-weight: 400 }
+.look-wall small { font-weight: 500 }
 
 /* Editor: title row, then rail (one group of controls at a time) / stage (the poster and the one main action) / versions */
 .titlerow { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 10px 0 16px }
 .titlerow .what { margin-right: auto; min-width: 0 }
-.meta { color: var(--faint); font-size: 13px; margin: 0 }
+.meta { color: var(--faint); font-size: 13px; font-weight: 500; margin: 0 }
 .progress { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; color: var(--faint); font-size: 13px }
 .progress li { display: flex; align-items: center; gap: 6px }
 .progress li + li::before { content: ''; width: 16px; height: 1px; background: var(--control); margin-right: 2px }
@@ -188,57 +230,70 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .progress .now { color: var(--text); font-weight: 700 }
 .undo { display: flex }
 .main-action { display: contents }
-.why { flex-basis: 100%; margin: 0; color: var(--warn); font-size: 13px; text-align: right }
+.why { flex-basis: 100%; margin: 0; color: var(--warn); font-size: 13px; font-weight: 550; text-align: right }
 .why .text-button, .help .text-button { min-height: 24px; font-size: inherit }
 .why .text-button { color: inherit }
 .look-grid + .help { margin-top: 12px }
 .card .why, .stage .why, .intake .why, .group .why { text-align: left; margin-top: 8px }
 .intake .form-row + .why { margin: -6px 0 12px }
 .work { display: grid; grid-template-columns: 360px minmax(0, 1fr) 156px; gap: 14px; align-items: start }
-.card { background: var(--surface); border-radius: var(--radius); padding: 20px 22px; min-width: 0 }
+.card { border-radius: var(--radius); padding: 20px 22px; min-width: 0 }
 .rail { display: grid; align-content: start }
+/* The rail holds the phone's fixed bottom bar, and a blurred element is the containing block of its fixed
+   descendants (part A): the rail carries the colour, a pseudo-element behind it carries the blur. */
+.rail { position: relative }
+.rail::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
 .rail.card { padding-bottom: 0 }
 .step-count { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--muted) }
-/* Steps and tabs are the same row: steps carry their number and open once visited, tabs are all open. */
-.tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--ground); border-radius: 999px; overflow-x: auto }
+/* Steps and tabs are the same row: steps carry their number and open once visited, tabs are all open. The chosen one
+   is a raised pill, the others have no shape. */
+.tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--glass-field); box-shadow: inset 0 0 0 1.5px var(--line); border-radius: 999px; overflow-x: auto }
 .tabs [role=tablist] { display: flex; gap: 2px; flex: 3 1 auto; min-width: 0 }
-.tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 6px; gap: 5px; border: 0; color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap }
+.tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 8px; gap: 5px; border: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap }
 .stepping .tab { flex: 1 1 auto }
-.tab[aria-selected=true], .tab[aria-selected=true]:hover { background: var(--raised); color: var(--text); font-weight: 700 }
+.tab[aria-selected=true] { background: var(--glass-strong); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
+@media (hover: hover) { .tab[aria-selected=true]:hover { background: var(--glass-strong) } }
 span.tab { display: inline-flex; align-items: center; justify-content: center }
 .tab .n { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--line); font-size: 11px; line-height: 1; font-weight: 700 }
 .tab[aria-selected=true] .n { background: var(--text); color: var(--surface) }
 .panel { min-width: 0; padding-bottom: 20px }
 .lead { margin-bottom: 14px }
 .panel > .check:last-child { margin-bottom: -8px }
-.refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-bg); border-radius: var(--field) }
+.refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-glass); border-radius: var(--field) }
 .ambiance { margin-top: 16px }
 /* « Retour » and « Continuer » stay in reach at the bottom of the step, however long it is. */
-.main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px; background: var(--surface); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
+.main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px;
+  background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
 .step-nav .primary { margin-left: auto }
 .step-nav .why { margin: 0; text-align: left }
 .see, .see-big, .stage .back, .back-link, .demo-badge, .side-choice, .tab .tool, .panel-theme { display: none }
 
+/* Styles: glass tiles; the chosen one is ringed and ticked. */
 .look-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
-.look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--muted); font-size: 12px; line-height: 16px; font-weight: 400; text-align: left }
-.look:hover:not(:disabled) { background: none; color: var(--text) }
-.look img, .add { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--field); display: grid; place-items: center }
-.add { border: 1px dashed var(--control); color: var(--muted) }
-.look.selected { color: var(--text); font-weight: 700 }
-.look.selected img, .look.selected .add { outline: 2px solid var(--text); outline-offset: 2px }
-.look.selected::after { content: ''; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--hue) }
-details.new-look { border: 0; margin-top: 4px; padding: 0 14px; background: var(--ground); border-radius: var(--field) }
+.look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 5px 5px 8px; border: 0; border-radius: 18px;
+  background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); color: var(--muted); font-size: 12.5px; line-height: 16px; font-weight: 600; text-align: left }
+.look > span:not(.add) { padding: 0 4px }
+@media (hover: hover) { .look:hover:not(:disabled) { background: var(--glass-panel); color: var(--text) } }
+.look img, .add { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 13px; display: grid; place-items: center }
+.add { border: 2px dashed var(--control); background: var(--glass-field); color: var(--muted) }
+/* The ring is a shadow, so that the focus ring (an outline) still shows around a chosen style. */
+.look.selected { color: var(--text); font-weight: 700; box-shadow: 0 0 0 2px var(--ground), 0 0 0 5px var(--text) }
+.look.selected::before { content: ''; position: absolute; z-index: 1; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--invert) }
+.look.selected::after { content: ''; position: absolute; z-index: 1; top: 15px; right: 19px; width: 5px; height: 10px; border: solid var(--invert-ink); border-width: 0 2px 2px 0; transform: rotate(45deg) }
+details.new-look { border: 0; margin-top: 4px; padding: 0 14px; background: var(--glass-field); border-radius: var(--field) }
 details.new-look[open] { padding-bottom: 14px }
+/* The poster's elements: chips, the chosen one a pill. */
 .layer-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px }
-.layer-list button, .selection .remove { min-height: 32px; padding: 0 12px; font-weight: 400; color: var(--muted); border-color: var(--line) }
-.layer-list button[aria-pressed=true] { background: var(--raised); border-color: var(--raised); color: var(--text) }
+.layer-list button { min-height: 36px; padding: 0 14px; border-radius: 12px; font-weight: 600; color: var(--muted); border-color: var(--line); transition: border-radius .2s ease-out, background-color .15s ease-out }
+.layer-list button[aria-pressed=true] { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
 .selection { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px }
 .selection p { margin: 0; text-align: center }
-.selection .remove { color: var(--text); border-color: var(--control) }
-.plan { padding: 14px; background: var(--ground); border-radius: var(--field); margin-top: 14px }
+/* « Retirer de l’affiche » is the one dark pill near the poster. */
+.selection .remove { min-height: 40px; padding: 0 16px; background: var(--invert); border-color: var(--invert); color: var(--invert-ink); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: var(--lift) }
+.plan { padding: 14px; background: var(--glass-field); border-radius: var(--field); margin-top: 14px }
 
-/* The stage is a well darker than the panels, and the poster is the one lifted thing on the screen. */
-.stage { display: grid; gap: 14px; justify-items: stretch; align-content: start; position: sticky; top: 64px; min-width: 0; padding: 14px 20px 20px; border-radius: var(--radius); background: var(--well) }
+/* The stage has no surface of its own: the poster sits on the patches, the one lifted thing on the screen. */
+.stage { display: grid; gap: 14px; justify-items: stretch; align-content: start; position: sticky; top: 64px; min-width: 0; padding: 14px 20px 20px; border-radius: var(--radius); background: none }
 .stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-height: 40px }
 .stage-head .coach { flex: 1 1 280px }
 .stage-head .why { margin: 0; text-align: right }
@@ -248,59 +303,65 @@ details.new-look[open] { padding-bottom: 14px }
 .pin { display: grid; gap: 14px; min-width: 0 }
 .canvas-host { position: relative; display: flex; justify-content: center; flex: 1; min-width: 0; min-height: 240px }
 .frame { position: relative; max-width: 100%; line-height: 0 }
-.poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: var(--lift) }
-/* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
+.poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 5px; overflow: hidden; box-shadow: var(--poster-shadow) }
 /* A pill or badge over the poster is always in front of it (user, 2026-11-13, ADR-076): an explicit order, not the
    DOM's. The « Aperçu » pill says the draft is a preview (the scene comes at generation); the badge names the version.
    Only on one column, where the poster is small: on a wide screen and in the large view it would hide the corner of
-   the poster from the pointer. */
-.frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; margin: 0; padding: 3px 10px; border-radius: 999px; background: var(--raised); color: var(--text); font-size: 12px; line-height: 18px; font-weight: 700; white-space: nowrap }
+   the poster from the pointer. Glass blurs the poster under the pill only. */
+.frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; align-items: center; gap: 6px; min-height: 28px; margin: 0; padding: 0 11px; border-radius: 999px;
+  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
 .tap-open { position: absolute; inset: 0; z-index: 1; cursor: zoom-in }
+/* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
 .canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; z-index: 3; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
 @keyframes pulse { 50% { opacity: .55 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
 .coach svg { margin-top: 2px }
 .coach b { color: var(--text) }
-.job-state { padding: 14px 16px; border-radius: var(--field); background: var(--surface); display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap }
+.job-state { padding: 14px 16px; border-radius: var(--field); display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap }
 .job-state p { margin: 0; color: var(--muted); font-size: 13px; margin-right: auto }
-.issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-bg); border-radius: var(--field) }
+.issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-glass); border-radius: var(--field) }
 .issues .text-button { color: var(--warn) }
 .issues .blocking .text-button { color: var(--bad); font-weight: 700 }
-.save-recovery, .polish-preview { padding: 12px 14px; background: var(--warn-bg); color: var(--warn); border-radius: var(--field); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px }
+.save-recovery, .polish-preview { padding: 12px 14px; background: var(--warn-glass); color: var(--warn); border-radius: var(--field); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px }
+.issues, .save-recovery, .polish-preview, .refusal { -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field) }
 .stage > .help { margin: 0; text-align: center }
 
 .versions { display: grid; gap: 12px; align-content: start; min-width: 0 }
-.versions h2 { font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap }
+.versions h2 { font-size: 13px; font-weight: 700; letter-spacing: 0; color: var(--muted); white-space: nowrap }
 .version { display: grid; gap: 4px; font-size: 12px; line-height: 16px; color: var(--muted); min-width: 0 }
-.version .thumb { display: block; min-height: 0; padding: 0; border: 0; border-radius: 8px; background: none }
-.version img { width: 100%; aspect-ratio: 4/5; object-fit: cover; border-radius: 8px; display: block }
-.version.selected img { outline: 2px solid var(--text); outline-offset: 2px }
+.version .thumb { display: block; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none }
+.version img { width: 100%; aspect-ratio: 4/5; object-fit: cover; border-radius: 10px; display: block; box-shadow: var(--poster-shadow) }
+.version.selected img { outline: 2.5px solid var(--text); outline-offset: 2px }
 .version .pick { color: var(--text) }
 .version .text-button { justify-self: start; min-height: 28px; font-size: 12px }
 .state { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px }
-.state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn) }
+.state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--warn) }
 .state.approved::before { background: var(--ok) }
 .state.rejected::before { background: var(--bad) }
-button.version.new { justify-items: stretch; justify-content: stretch; text-align: left; min-height: 0; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--text); font-size: 12px; font-weight: 700 }
-button.version.new:hover:not(:disabled) { background: none }
-button.version.new .add { aspect-ratio: 4/5; border-radius: 8px }
-button.version.new:hover:not(:disabled) .add { border-color: var(--text); color: var(--text) }
-button.version.new small { font-size: 12px; font-weight: 400 }
+button.version.new { justify-items: stretch; justify-content: stretch; text-align: left; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); font-size: 12px; font-weight: 700 }
+@media (hover: hover) {
+  button.version.new:hover:not(:disabled) { background: none }
+  button.version.new:hover:not(:disabled) .add { border-color: var(--text); color: var(--text) }
+}
+button.version.new .add { aspect-ratio: 4/5; border-radius: 10px }
+button.version.new small { font-size: 12px; font-weight: 500 }
 
 /* Confirmation of a paid action, the fidelity check and the final check open in front of the page */
-.confirm-sheet { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--scrim); overflow: auto; overscroll-behavior: contain }
-.confirm { width: min(100%, 440px); background: var(--surface); border: 1px solid transparent; border-radius: var(--radius); padding: 24px; display: grid; gap: 10px }
+.confirm-sheet { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--scrim); overflow: auto; overscroll-behavior: contain; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px) }
+.confirm { width: min(100%, 440px); background: var(--glass); border: 1px solid var(--glass-line); border-radius: 28px; padding: 24px; display: grid; gap: 10px; box-shadow: var(--glass-shadow) }  /* its sheet already blurs the page behind */
 .confirm p { margin: 0; color: var(--muted) }
 .confirm .cost { color: var(--text); font-weight: 700 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px }
-.review-panel { position: fixed; z-index: 30; inset: 3vh max(3vw, calc(50vw - 580px)); overflow: auto; overscroll-behavior: contain; background: var(--ground); border-radius: var(--radius); padding: 22px 24px 24px; display: grid; gap: 16px; align-content: start; box-shadow: 0 0 0 100vmax var(--scrim) }
+/* A panel in front: its own ground and patches (the page behind would show through glass); on a phone it holds a fixed
+   decision bar, so it never blurs itself (part A). */
+.review-panel { position: fixed; z-index: 30; inset: 3vh max(3vw, calc(50vw - 580px)); overflow: auto; overscroll-behavior: contain; background: var(--ambient), var(--ground); border-radius: 28px; padding: 22px 24px 24px; display: grid; gap: 16px; align-content: start; box-shadow: 0 0 0 100vmax var(--scrim) }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px }
-.section-heading h2 { font-size: 20px; line-height: 26px; margin-bottom: 4px }
+.section-heading h2 { font-size: 21px; line-height: 27px; margin-bottom: 4px }
 .lede { color: var(--muted); margin: 0; max-width: 62ch }
 .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 14px }
-.comparison figure { margin: 0; background: var(--surface); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; min-width: 0; align-content: start }
-.comparison img { display: block; width: 100%; height: 380px; object-fit: contain; border-radius: 8px }
+.comparison figure { margin: 0; border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; min-width: 0; align-content: start }
+.comparison img { display: block; width: 100%; height: 380px; object-fit: contain; border-radius: 12px }
 .comparison figure:first-child img { background: #fff }
 .comparison figcaption { color: var(--muted); font-size: 13px }
 .comparison a { display: block; cursor: zoom-in }
@@ -308,7 +369,7 @@ button.version.new small { font-size: 12px; font-weight: 400 }
 .comparison.zoomed img { height: auto }
 .comparison.zoomed a { cursor: zoom-out }
 .review-checks.groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px }
-.group { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; min-width: 0 }
+.group { border-radius: 20px; padding: 18px 20px; min-width: 0 }
 .group h3 svg { color: var(--muted) }
 .group .help { margin-bottom: 4px }
 .points { list-style: none; margin: 0; padding: 0 }
@@ -319,18 +380,18 @@ button.version.new small { font-size: 12px; font-weight: 400 }
 .actions .count { margin-right: auto; color: var(--muted); font-size: 13px }
 .review-panel > .actions { margin-top: 0 }
 .final-grid { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 14px; align-items: start }
-.shot { background: var(--surface); border-radius: var(--radius); padding: 18px; display: grid; gap: 10px; justify-items: center }
-.shot img { width: 100%; height: auto; border-radius: 4px; display: block }
+.shot { border-radius: var(--radius); padding: 18px; display: grid; gap: 10px; justify-items: center }
+.shot img { width: 100%; height: auto; border-radius: 5px; display: block; box-shadow: var(--poster-shadow) }
 .shot .help { margin: 0 }
-.facts { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 14px; background: var(--surface); border-radius: var(--radius) }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 14px; border-radius: 20px }
 .facts div { padding: 16px 20px; min-width: 0 }
 .facts div + div { border-left: 1px solid var(--line) }
 .facts dt { color: var(--faint); font-size: 13px }
 .facts dd { margin: 2px 0 0; font-size: 16px; font-weight: 700 }
-p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 14px 18px; border-radius: var(--radius); background: var(--ok-bg); color: var(--ok) }
+p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 14px 18px; border-radius: 20px; background: var(--ok-bg); color: var(--ok); font-weight: 650 }
 .after { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px }
 .after .help { flex-basis: 100%; margin: 0 }
-.download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 18px; border: 1px solid var(--invert); border-radius: 999px; font-weight: 700; text-decoration: none; transition: opacity .15s ease-out }
+.download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 1.5px solid var(--invert); border-radius: 999px; font-weight: 700; text-decoration: none; transition: opacity .15s ease-out }
 
 @media (max-width: 1080px) {
   /* A column, not a one-column grid: a grid item can only stick inside its own row, and the poster of the tabs must
@@ -345,7 +406,12 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   /* One column: the main action (or the step's « Retour » and « Continuer ») and its reason stay at the bottom of the screen. */
   html { scroll-padding-bottom: 150px }
   .editor { padding-bottom: 150px }
-  .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line); border-radius: 0 }
+  .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 12px max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 }
+  /* The bottom bar's buttons: 52 px, bold 15.5 px (ADR-077). At 360 px « Retour », « Voir l’affiche » and « Générer
+     l’affiche » fit on one line only with 16 px paddings and an icon button 44 px wide (measured: 4 px to spare). */
+  .main-action button:not(.text-button) { min-height: 52px; padding: 0 16px; font-size: 15.5px }
+  .main-action button.icon { width: 44px; padding: 0 }
   .main-action .primary { flex: 1; margin: 0 }
   .main-action .why { margin: 0 }
   .main-action .see { display: inline-flex }
@@ -370,7 +436,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
      then the tools. The large view is still the stage itself. */
   .editor:not(.stepping) .stage:not(.peek) { display: contents }
   .editor:not(.stepping) .stage:not(.peek) > * { order: -4 }
-  .editor:not(.stepping) .stage:not(.peek) > .pin { order: -5; position: sticky; top: var(--bar-h, 0px); z-index: 4; gap: 8px; margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: 8px var(--gutter-r) 8px var(--gutter-l); background: var(--ground); border-bottom: 1px solid var(--line) }
+  .editor:not(.stepping) .stage:not(.peek) > .pin { order: -5; position: sticky; top: var(--bar-h, 0px); z-index: 4; gap: 8px; margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: 8px var(--gutter-r) 8px var(--gutter-l);
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
   .editor:not(.stepping) .stage:not(.peek) > :is(.stage-head, .help) { order: -2 }
   .editor:not(.stepping) .versions { order: -3 }
   .editor:not(.stepping) .stage:not(.peek) .photo { display: none }
@@ -382,13 +449,14 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
   .editor:not(.stepping) :is(.version img, button.version.new .add) { width: 56px; height: 70px }
   .editor:not(.stepping) .version.new small { display: none }
-  /* Tools: the four groups as a row of icons with their labels, the active one marked by a pill behind its icon. */
-  .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 0; margin-bottom: 10px; background: none; border-radius: 0 }
-  .editor:not(.stepping) .tab { flex-direction: column; gap: 2px; min-height: 56px; padding: 4px 2px; font-size: 12px; line-height: 16px }
-  .editor:not(.stepping) .tab[aria-selected=true] { background: none }
-  .tab .tool { display: block; width: 52px; height: 28px; padding: 6px 18px; border-radius: 999px; transition: background-color .15s ease-out }
-  .tab[aria-selected=true] .tool { background: var(--raised) }
-  .stage.peek { position: fixed; inset: 0; z-index: 25; overflow: auto; overscroll-behavior: contain; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: var(--ground) }
+  /* Tools: the four groups as a glass row of icons with their labels, the active one marked by an amber pill behind its icon. */
+  .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 6px; margin-bottom: 12px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 28px }
+  .editor:not(.stepping) .tab { flex-direction: column; gap: 3px; min-height: 58px; padding: 4px 2px; font-size: 12.5px; line-height: 16px; font-weight: 650; border-radius: 22px }
+  .editor:not(.stepping) .tab[aria-selected=true] { background: none; box-shadow: none; color: var(--text) }
+  .tab .tool { display: block; width: 54px; height: 32px; padding: 6px 17px; border-radius: 999px; transition: background-color .15s ease-out }
+  .tab[aria-selected=true] .tool { background: var(--accent-soft); color: var(--accent-ink) }
+  .stage.peek { position: fixed; inset: 0; z-index: 25; overflow: auto; overscroll-behavior: contain; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
   .stage.peek .back { display: inline-flex; justify-self: start }
   .stage.peek .main-action { display: none }
   .frame .badge { display: inline-flex }
@@ -396,7 +464,9 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .stage.peek :is(.help, figcaption) { color: var(--muted) }
 }
 @media (max-width: 720px) {
-  .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)) }
+  /* The header holds the fixed navigation bar: its colour stays on it, its blur moves to a pseudo-element behind it. */
+  .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)); -webkit-backdrop-filter: none; backdrop-filter: none }
+  .app-header::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
   .shop-label { display: none }
   main { --gutter-l: max(12px, env(safe-area-inset-left)); --gutter-r: max(12px, env(safe-area-inset-right)); padding: 4px var(--gutter-r) max(56px, env(safe-area-inset-bottom)) var(--gutter-l) }
   .intake, .sign-in { padding: 20px }
@@ -404,10 +474,13 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
      poster's name and its save state, undo, redo. The application's header and the long demo notice leave. */
   .app-header.editing, main.editing .demo-notice { display: none }
   main.editing { padding-top: 0 }
-  .titlerow.bar { position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; gap: 4px; min-height: calc(56px + env(safe-area-inset-top)); margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left)); background: var(--ground); border-bottom: 1px solid var(--line) }
+  .titlerow.bar { position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; gap: 4px; min-height: calc(56px + env(safe-area-inset-top)); margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
   .bar .what { flex: 1 }
-  .bar h1 { font-size: 16px; line-height: 22px; margin: 0 }
+  .bar h1 { font-size: 16px; line-height: 22px; font-weight: 700; letter-spacing: 0; margin: 0 }
   .bar :is(h1, .meta) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  /* Content scrolls under this bar: its second line is --muted, which keeps 4.5:1 over anything blurred behind. */
+  .bar .meta { color: var(--muted); font-size: 12.5px }
   .bar .format { display: none }
   .back-link { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; border-radius: 999px; color: var(--text) }
   .demo-badge { display: inline-block; flex: none; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 700 }
@@ -418,13 +491,16 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .gallery .titlerow { flex-wrap: wrap; align-items: center }
   .gallery .titlerow .what { flex: 1 1 100% }
   .intake .form-row { grid-template-columns: 1fr }
+  /* Two styles to a row, large enough to judge (the approved mockup). */
+  .look-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
   /* The review and the final check are two screens tall on a phone: their decision stays at the bottom of the screen. */
   .review-panel { padding-bottom: calc(176px + env(safe-area-inset-bottom)) }
-  .review-panel .actions { position: fixed; z-index: 1; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line) }
+  .review-panel .actions { position: fixed; z-index: 1; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
   /* Side by side, « Tout est conforme, approuver » wrapped on three lines at 360 px: one full-width button per row,
      the decision that moves forward on top. */
   .review-panel .actions .count { flex-basis: 100%; order: -2 }
-  .review-panel .actions button { flex: 1 1 100% }
+  .review-panel .actions button { flex: 1 1 100%; min-height: 52px; font-size: 15.5px }
   .review-panel .actions button.primary { order: -1 }
   .card { padding: 18px 16px }
   .proof { flex-direction: column; align-items: center }
@@ -433,9 +509,9 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .review-panel { inset: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)) }
   .comparison, .final-grid { grid-template-columns: 1fr }
   /* One image at a time, at full width, « La version » first; « Votre photo » shows the owner's photos one under the other. */
-  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface); border-radius: 999px }
-  .side-choice button { border: 0; font-weight: 400; color: var(--muted) }
-  .side-choice button[aria-pressed=true] { background: var(--raised); color: var(--text); font-weight: 700 }
+  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 999px }
+  .side-choice button { border: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; font-weight: 600; color: var(--muted) }
+  .side-choice button[aria-pressed=true] { background: var(--glass-strong); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
   .comparison.side-version figure:first-child, .comparison.side-photo figure:last-child, .zoom-hint { display: none }
   .comparison figure { padding: 8px }
   .comparison img { height: auto }
@@ -454,11 +530,12 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .nav + .theme-toggle { margin-left: auto }
   /* Outside the editor the three destinations are a bar at the bottom of the screen (R-POSTER-EDITOR-007). It stays in
      the header's markup, so the header must not blur here: a blurred ancestor becomes the containing block of a fixed bar. */
-  .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; padding: 4px max(8px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line) }
-  .nav a { flex-direction: column; justify-content: center; gap: 2px; min-height: 56px; padding: 0 4px; border-radius: var(--field); font-size: 12px; line-height: 16px; text-align: center }
-  .nav .i { width: 52px; height: 28px; padding: 6px 18px; border-radius: 999px }
-  .nav a[aria-current] .i { background: var(--raised) }
-  main:not(.editing) { padding-bottom: calc(84px + env(safe-area-inset-bottom)) }
+  .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
+  .nav a, .nav a[aria-current] { flex-direction: column; justify-content: center; gap: 3px; min-height: 58px; padding: 0 4px; border-radius: var(--field); background: none; box-shadow: none; font-size: 12.5px; line-height: 16px; text-align: center }
+  .nav .i { width: 58px; height: 32px; padding: 7px 20px; border-radius: 999px }
+  .nav a[aria-current] .i { background: var(--accent-soft); color: var(--accent-ink) }
+  main:not(.editing) { padding-bottom: calc(88px + env(safe-area-inset-bottom)) }
   /* The format and the file type never change: on a phone only the price is worth a row before the points. */
   .facts div:not(:last-child) { display: none }
   .facts div + div { border: 0 }
@@ -467,33 +544,27 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   button, .download-button, label.check, summary, select, textarea, input:not([type=checkbox]) { min-height: 44px }
   button.text-button, .version .text-button, .why .text-button, .help .text-button, .layer-list button, .selection .remove, .tab, .row-actions button, .nav a { min-height: 44px }
   button.icon { width: 44px }
+  /* Main buttons and fields: 52 px on a touch screen (R-POSTER-EDITOR-006 amendment). */
+  button.primary, button.secondary, .download-button, textarea, select, input:not([type=checkbox], [type=range], [type=color], [type=file]) { min-height: 52px }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
   .canvas-host.generating::after { animation: none }
 }
 
-/* Glass (R-POSTER-EDITOR-006): only what floats above content, namely the header, the fixed action bar of one-column
-   screens, the confirmation dialog, the poster sheet of the steps, notices. The three large panels (fidelity, final
-   file, a style) stay solid: colours are judged there, and a tint from the page behind would mislead. The solid colours set above are the fallback. --glass is opaque enough that
-   --text, --muted and --warn keep 4.5:1 over the lightest and the darkest content; --faint does not, so it is not
-   used on these surfaces. One switch turns it all off: the two tokens below. */
-@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .app-header, .message, .stage.peek { background: var(--glass); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
-  .confirm { background: var(--glass) }  /* its sheet already blurs the page behind */
-  .app-header { border-bottom-color: var(--glass-line) }
-  .message, .confirm { border-color: var(--glass-line) }
-  .confirm-sheet { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px) }
-  @media (max-width: 1080px) {
-    .main-action, .main-action.step-nav { background: var(--glass); border-top-color: var(--glass-line); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
-  }
-  /* On phones the header holds the fixed navigation bar: it stays solid and the bar blurs instead. */
-  @media (max-width: 720px) {
-    .app-header { background: var(--ground); -webkit-backdrop-filter: none; backdrop-filter: none }
-    .nav { background: var(--glass); border-top-color: var(--glass-line); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
-  }
+/* Glass blurs once. A control or a tile on a surface that already blurs keeps its translucent fill but not a blur of its
+   own: it would show nothing more and cost a compositing layer each (code review, 2026-11-14). Controls directly on the
+   page keep theirs; the pill over the poster blurs the poster; a sticky or fixed bar is its own surface. */
+:is(.app-header, .titlerow.bar, .rail, .main-action, .sign-in, .intake, .empty, .rows, .look-card, .group, .comparison figure, .shot, .facts, .job-state, .message, .confirm-sheet, .stage.peek, .review-panel .actions)
+  :is(button, input, textarea, select, .upload-zone, .look, .tabs, .switches, .issues, .save-recovery, .polish-preview, .refusal) { -webkit-backdrop-filter: none; backdrop-filter: none }
+@media (max-width: 1080px) { .editor:not(.stepping) .stage:not(.peek) > .pin button { -webkit-backdrop-filter: none; backdrop-filter: none } }
+
+/* Solid glass. Where the browser cannot blur, or the person asked for less transparency or less motion, every surface
+   is opaque and nothing blurs: one switch, the tokens below. forced-colors needs nothing here. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root:root { --glass: var(--surface); --glass-panel: var(--surface); --glass-field: var(--ground); --glass-strong: var(--surface); --warn-glass: var(--warn-bg); --glass-line: var(--line) }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
-  :root:root { --glass: var(--surface); --glass-line: var(--line) }
-  .app-header, .message, .confirm-sheet, .stage.peek, .main-action, .main-action.step-nav, .nav { -webkit-backdrop-filter: none; backdrop-filter: none }
+  :root:root { --glass: var(--surface); --glass-panel: var(--surface); --glass-field: var(--ground); --glass-strong: var(--surface); --warn-glass: var(--warn-bg); --glass-line: var(--line); --blur-panel: none; --blur-field: none }
+  .confirm-sheet { -webkit-backdrop-filter: none; backdrop-filter: none }
 }

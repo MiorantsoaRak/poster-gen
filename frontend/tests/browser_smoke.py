@@ -73,21 +73,38 @@ def check_material_pixels(page, document):
 
 
 # Contrast of every visible text against the colour behind it (WCAG: 4.5:1, or 3:1 from 24 px, or from 18.66 px
-# in bold). Not measured: disabled controls, text over an image or a gradient (the poster itself), placeholders.
+# in bold). Not measured: disabled controls, text over an image (the poster itself), placeholders.
+# Glass is translucent over soft colour patches (ADR-077): a text must read over the darkest and the lightest point of
+# that backdrop, so it is measured over the bare ground and over each patch at its strongest, and the worst ratio counts.
+# The patches are the colours of a gradient background, or of the fixed ::before layer of the page. A glass surface's
+# saturate() acts on what is behind it before its fill is laid over (sRGB matrix of Filter Effects, as Chromium draws
+# it); its blur only averages the backdrop towards less extreme colours, so leaving it out keeps the worst case.
 CONTRAST_JS = r"""() => {
   const parse = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
   const channel = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4 }
   const luminance = c => .2126 * channel(c[0]) + .7152 * channel(c[1]) + .0722 * channel(c[2])
   const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3]))
+  const patches = style => (style.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(parse).filter(colour => colour[3] > 0)
+  const spread = (bases, colours) => bases.flatMap(base => [base, ...colours.map(colour => over(colour, base))])
+  const saturation = e => { const found = [getComputedStyle(e).backdropFilter, getComputedStyle(e, '::before').backdropFilter].join(' ').match(/saturate\(([\d.]+)(%?)\)/); return found ? Number(found[1]) / (found[2] ? 100 : 1) : 1 }
+  const saturate = (c, s) => [[.213 + .787 * s, .715 - .715 * s, .072 - .072 * s], [.213 - .213 * s, .715 + .285 * s, .072 - .072 * s], [.213 - .213 * s, .715 - .715 * s, .072 + .928 * s]]
+    .map(row => Math.min(255, Math.max(0, row[0] * c[0] + row[1] * c[1] + row[2] * c[2])))
+  const fold = (layers, bases) => layers.reverse().reduce((under, [top, extra, s]) => spread(under.map(base => over(top, saturate(base, s))), extra), bases)
   const backdrop = element => {
     const layers = []
     for (let e = element; e; e = e.parentElement) {
       const style = getComputedStyle(e)
-      if (style.backgroundImage !== 'none' || e.matches('canvas, img, .poster-canvas')) return null
+      if (style.backgroundImage.includes('url(') || e.matches('canvas, img, .poster-canvas')) return null
       const colour = parse(style.backgroundColor)
-      if (colour[3] > 0) { layers.push(colour); if (colour[3] === 1) break }
+      if (colour[3] === 1) {
+        const before = getComputedStyle(e, '::before')
+        let bases = spread([colour], patches(style))
+        if (before.content !== 'none') bases = spread(bases, patches(before))
+        return fold(layers, bases)
+      }
+      layers.push([colour, patches(style), saturation(e)])
     }
-    return layers.reverse().reduce((under, top) => over(top, under), parse(getComputedStyle(document.documentElement).backgroundColor))
+    return fold(layers, [parse(getComputedStyle(document.documentElement).backgroundColor)])
   }
   const failures = [], seen = new Set()
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
@@ -99,13 +116,35 @@ CONTRAST_JS = r"""() => {
     if (!box.width || !box.height || style.visibility !== 'visible' || !element.checkVisibility({ opacityProperty: true })) continue
     const behind = backdrop(element)
     if (!behind) continue
-    const ink = over(parse(style.color), behind), a = luminance(ink), b = luminance(behind)
-    const ratio = (Math.max(a, b) + .05) / (Math.min(a, b) + .05), size = parseFloat(style.fontSize)
-    const needed = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700) ? 3 : 4.5
-    if (ratio < needed) failures.push(`${ratio.toFixed(2)} < ${needed}: "${text.slice(0, 40)}" <${element.tagName.toLowerCase()} class="${element.className}"> ${style.color} on rgb(${behind.map(Math.round)})`)
+    const [ratio, worst] = behind.map(base => {
+      const a = luminance(over(parse(style.color), base)), b = luminance(base)
+      return [(Math.max(a, b) + .05) / (Math.min(a, b) + .05), base]
+    }).reduce((low, item) => item[0] < low[0] ? item : low)
+    const size = parseFloat(style.fontSize), needed = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700) ? 3 : 4.5
+    if (ratio < needed) failures.push(`${ratio.toFixed(2)} < ${needed}: "${text.slice(0, 40)}" <${element.tagName.toLowerCase()} class="${element.className}"> ${style.color} on rgb(${worst.map(Math.round)})`)
   }
   return failures
 }"""
+
+# Every tappable element of the editor is at least 44 × 44 px on a phone (ADR-077). A box in a label is tapped through
+# its label, so the label is measured; hidden and inert elements cannot be tapped.
+SMALL_TARGETS_JS = r"""() => [...document.querySelectorAll('.editor :is(button, a[href], input, select, textarea, summary)')]
+  .map(e => ['checkbox', 'radio', 'color', 'file'].includes(e.type) && e.closest('label') || e)
+  .filter((e, i, all) => all.indexOf(e) === i && !e.closest('[inert]') && e.checkVisibility({ visibilityProperty: true }))
+  .map(e => [e, e.getBoundingClientRect()])
+  .filter(([, box]) => box.width < 44 || box.height < 44)
+  .map(([e, box]) => `${Math.round(box.width)} x ${Math.round(box.height)} <${e.tagName.toLowerCase()} class="${e.className}"> ${(e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 40)}`)"""
+# Glass blurs once (code review 2026-11-14): nothing that blurs sits inside a surface that already blurs (its own or its
+# ::before). Sticky and fixed bars are surfaces of their own over moving content; the pill over the poster blurs the poster.
+NESTED_BLUR_JS = r"""() => {
+  const blurs = (e, pseudo) => getComputedStyle(e, pseudo).backdropFilter !== 'none'
+  return [...document.querySelectorAll('body *')]
+    .filter(e => blurs(e) && !['fixed', 'sticky'].includes(getComputedStyle(e).position) && !e.matches('.frame .badge') && e.checkVisibility())
+    .filter(e => { for (let a = e.parentElement; a; a = a.parentElement) if (blurs(a) || blurs(a, '::before')) return true; return false })
+    .map(e => `<${e.tagName.toLowerCase()} class="${e.className}"> ${(e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 30)}`)
+}"""
+NO_SIDEWAYS = "document.documentElement.scrollWidth <= innerWidth"
+GROUNDS = {"clair": "#f4f1ec", "sombre": "#100f0e"}
 
 
 def check_contrast(page, where):
@@ -144,6 +183,109 @@ def topmost(locator):
     return locator.evaluate("e => { const r = e.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e }")
 
 
+def check_targets(page, where):
+    small = page.evaluate(SMALL_TARGETS_JS)
+    assert not small, f"tappable elements under 44 px on {where}:\n" + "\n".join(small)
+
+
+def check_one_blur(page, where):
+    nested = page.evaluate(NESTED_BLUR_JS)
+    assert not nested, f"blur inside a blurred surface on {where}:\n" + "\n".join(nested)
+
+
+def bar_colour(page):
+    # The browser's bar colour in use: the theme-color meta whose media matches the device now.
+    return page.evaluate("[...document.querySelectorAll('meta[name=theme-color]')].find(meta => !meta.media || matchMedia(meta.media).matches).content.toLowerCase()")
+
+
+def theme_of(page):
+    return page.evaluate("document.documentElement.dataset.theme")
+
+
+def walk_look(browser, session, scheme, errors):
+    """A phone that never picked a theme follows its own setting (R-POSTER-EDITOR-006 amendment). A new poster is walked
+    at 360 × 740 with a touch pointer: contrast on every glass surface, 44 px targets in the editor, and the pictures
+    of the look (look-*.png). Returns the poster's id."""
+    theme = "clair" if scheme == "light" else "sombre"
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme=scheme, storage_state=session)
+    device = context.new_page()
+    device.set_default_timeout(10000)
+    device.on("pageerror", lambda error: errors.append(str(error)))
+    device.goto(ORIGIN)
+    expect(device.get_by_label("Photos du produit")).to_be_attached()
+    assert theme_of(device) == theme and bar_colour(device) == GROUNDS[theme], (theme_of(device), bar_colour(device))
+    assert device.evaluate("getComputedStyle(document.body).fontFamily").startswith("Figtree")
+    device.wait_for_function("document.fonts.check('16px Figtree')")
+    check_one_blur(device, f"intake at 360 px, {theme}")
+    check_contrast(device, f"intake at 360 px, {theme}, no stored choice")
+    shot(device, f"look-360-{theme}-creer.png", full_page=False)
+    device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+    expect(device.locator(".photo-strip img")).to_have_count(1)
+    device.get_by_label("Nom du produit", exact=True).fill(f"CMF Buds 2a {theme}")
+    device.get_by_label("Prix en ariary", exact=True).fill("190 000")
+    device.get_by_label("Les photos correspondent").check()
+    device.get_by_role("button", name="Préparer mon affiche").tap()
+    proceed = device.get_by_role("button", name="Continuer", exact=True)
+    for number, step in ((2, "textes"), (3, "boutique"), (4, "style")):
+        expect(device.locator(".step-count")).to_have_text(f"Étape {number} sur 4")
+        device.wait_for_function(NO_SIDEWAYS)
+        check_one_blur(device, f"step {step} at 360 px, {theme}")
+        check_contrast(device, f"step {step} at 360 px, {theme}")
+        check_targets(device, f"step {step} at 360 px, {theme}")
+        shot(device, f"look-360-{theme}-etape-{step}.png", full_page=False)
+        if step != "style":
+            proceed.tap()
+    # Changes that act at once are switches; what acts on the next version stays a checkbox under its heading.
+    device.get_by_role("tab", name="Boutique", exact=True).tap()
+    expect(device.locator("label.switch")).to_have_count(3)
+    expect(device.get_by_role("checkbox", name="Contact", exact=True)).to_be_checked()
+    expect(device.get_by_text("Pour la prochaine version", exact=True)).to_be_visible()
+    expect(device.locator("label.check:not(.switch)", has_text="Dessiner aussi le contact dans l’image")).to_be_visible()
+    device.get_by_role("tab", name="Style", exact=True).tap()
+    device.get_by_role("button", name="Générer l’affiche").tap()
+    device.get_by_role("button", name="Lancer la génération").tap()
+    expect(device.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+    check_one_blur(device, f"review at 360 px, {theme}")
+    check_contrast(device, f"review at 360 px, {theme}")
+    shot(device, f"look-360-{theme}-verifier.png", full_page=False)
+    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    expect(device.get_by_role("tab")).to_have_count(4)
+    device.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+    for name in ("Textes", "Boutique", "Style", "Réglages"):
+        device.get_by_role("tab", name=name, exact=True).tap()
+        expect(device.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
+        device.wait_for_function(NO_SIDEWAYS)
+        check_one_blur(device, f"tab {name} at 360 px, {theme}")
+        check_contrast(device, f"tab {name} at 360 px, {theme}")
+        check_targets(device, f"tab {name} at 360 px, {theme}")
+        shot(device, f"look-360-{theme}-onglet-{name.lower().replace('é', 'e')}.png", full_page=False)
+    poster = device.url.split("#")[1]
+    device.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+    shot(device, f"look-360-{theme}-affiche.png", full_page=False)
+    device.get_by_role("link", name="Retour à Mes affiches").tap()
+    expect(device.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
+    check_one_blur(device, f"Mes affiches at 360 px, {theme}")
+    check_contrast(device, f"Mes affiches at 360 px, {theme}")
+    shot(device, f"look-360-{theme}-mes-affiches.png", full_page=False)
+    if scheme == "light":
+        # Nothing stored: a change of the device's setting is followed at once, bar colour included.
+        device.emulate_media(color_scheme="dark")
+        device.wait_for_function("document.documentElement.dataset.theme === 'sombre'")
+        assert bar_colour(device) == GROUNDS["sombre"]
+        check_contrast(device, "Mes affiches after the device turned dark")
+        device.emulate_media(color_scheme="light")
+        device.wait_for_function("document.documentElement.dataset.theme === 'clair'")
+        # Once the owner picks with the theme button, his choice wins over the device, bar colour included.
+        toggle_theme(device, "Passer au thème sombre")
+        device.emulate_media(color_scheme="light")
+        assert theme_of(device) == "sombre" and bar_colour(device) == GROUNDS["sombre"], (theme_of(device), bar_colour(device))
+        device.reload()
+        expect(device.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
+        assert theme_of(device) == "sombre" and bar_colour(device) == GROUNDS["sombre"], (theme_of(device), bar_colour(device))
+    context.close()
+    return poster
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
@@ -163,7 +305,7 @@ def run():
                     browser = playwright.chromium.launch(headless=True, channel=os.environ.get("SMOKE_CHANNEL") or None)
                     print("Browser:", browser.browser_type.name, os.environ.get("SMOKE_CHANNEL") or "bundled", browser.version, flush=True)
                     try:
-                        page = browser.new_page(viewport={"width": 1440, "height": 1050})
+                        page = browser.new_page(viewport={"width": 1440, "height": 1050}, color_scheme="dark")
                         errors = []
                         page.set_default_timeout(10000)
                         page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
@@ -187,8 +329,9 @@ def run():
                         page.get_by_role("button", name="Réessayer").click()
                         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
                         check_contrast(page, "sign-in")
-                        # Dark by default, and the browser's bar says so (it took the light colour before T-THEME-COLOR).
-                        assert page.evaluate("document.querySelector('meta[name=theme-color]').content") == "#0e0d0c"
+                        # A dark device and no choice stored: the dark theme, and the browser's bar says so (it took the
+                        # light colour before T-THEME-COLOR).
+                        assert theme_of(page) == "sombre" and bar_colour(page) == GROUNDS["sombre"], (theme_of(page), bar_colour(page))
                         # The home-screen manifest and its icons are served.
                         manifest = page.request.get(f"{ORIGIN}/manifest.webmanifest").json()
                         assert manifest["display"] == "standalone" and manifest["lang"] == "fr", manifest
@@ -200,12 +343,12 @@ def run():
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
                         check_contrast(page, "intake")
                         page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
-                        # Glass is for what floats (here the header), never for a content panel; it is solid for a person
-                        # who asked for less motion (R-POSTER-EDITOR-006).
+                        # Glass on every surface, the header and the panels alike (ADR-077); all solid for a person who
+                        # asked for less motion (R-POSTER-EDITOR-006).
                         blur = "selector => getComputedStyle(document.querySelector(selector)).backdropFilter"
-                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") == "none"
+                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") != "none"
                         page.emulate_media(reduced_motion="reduce")
-                        assert page.evaluate(blur, ".app-header") == "none"
+                        assert page.evaluate(blur, ".app-header") == "none" and page.evaluate(blur, ".intake") == "none"
                         assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
                         check_contrast(page, "intake, solid chrome")
                         page.emulate_media(reduced_motion="no-preference")
@@ -301,7 +444,7 @@ def run():
                         assert json.loads(page.evaluate("localStorage.getItem('affiche.style')"))["contact_align"] == "right"
                         # By default the contact is drawn in the composition, at the chosen position, without the
                         # shop name (ADR-055). The option is in view: no section has to be opened to find it.
-                        expect(page.get_by_text("Ce que l’IA dessine dans l’image", exact=True)).to_be_visible()
+                        expect(page.get_by_text("Pour la prochaine version", exact=True)).to_be_visible()
                         expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
                         check_contrast(page, "step Boutique")
                         shot(page, "step-boutique.png")
@@ -913,7 +1056,7 @@ def run():
                         # The phone-first editor (R-POSTER-EDITOR-007, D-POSTER-EDITOR-005 part A) on a low-end Android
                         # phone: 360 × 740 with a touch pointer, same session.
                         phone = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True,
-                                                    storage_state=page.context.storage_state())
+                                                    color_scheme="dark", storage_state=page.context.storage_state())
                         mobile = phone.new_page()
                         mobile.set_default_timeout(10000)
                         mobile.on("pageerror", lambda error: errors.append(str(error)))
@@ -1079,6 +1222,31 @@ def run():
                         check_contrast(mobile, "Mes affiches at 360 px with the bottom navigation")
                         shot(mobile, "phone-mes-affiches.png", full_page=False)
                         phone.close()
+                        # The look (D-POSTER-EDITOR-005 part B): phones that never picked a theme, light then dark, and a
+                        # 1366 × 768 screen. Same session, no theme stored.
+                        session = {"cookies": page.context.storage_state()["cookies"], "origins": []}
+                        light_poster = walk_look(browser, session, "light", errors)
+                        walk_look(browser, session, "dark", errors)
+                        desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+                        screen = desk.new_page()
+                        screen.set_default_timeout(10000)
+                        screen.on("pageerror", lambda error: errors.append(str(error)))
+                        for address, name in ((f"#{light_poster}", "editeur"), ("#", "creer")):
+                            screen.goto(f"{ORIGIN}/{address}")
+                            if name == "editeur":
+                                expect(screen.get_by_role("tab", name="Textes", exact=True)).to_have_attribute("aria-selected", "true")
+                                # The poster is drawn once its scene is loaded; the main action waits for it.
+                                expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
+                            else:
+                                expect(screen.get_by_label("Photos du produit")).to_be_attached()
+                            for theme, scheme in (("clair", "light"), ("sombre", "dark")):
+                                screen.emulate_media(color_scheme=scheme)
+                                screen.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+                                screen.wait_for_function(NO_SIDEWAYS)
+                                check_one_blur(screen, f"{name} at 1366 px, {theme}")
+                                check_contrast(screen, f"{name} at 1366 px, {theme}")
+                                shot(screen, f"look-1366-{theme}-{name}.png", full_page=False)
+                        desk.close()
                         assert not errors, errors
                         # A poster's address opened without a session: after the sign-in the owner is on that poster.
                         other = browser.new_page(viewport={"width": 390, "height": 844})
