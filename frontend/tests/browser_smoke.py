@@ -72,6 +72,49 @@ def check_material_pixels(page, document):
     textured_price.save(OUTPUT / "capsule-material-test.png")
 
 
+# Contrast of every visible text against the colour behind it (WCAG: 4.5:1, or 3:1 from 24 px, or from 18.66 px
+# in bold). Not measured: disabled controls, text over an image or a gradient (the poster itself), placeholders.
+CONTRAST_JS = r"""() => {
+  const parse = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
+  const channel = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4 }
+  const luminance = c => .2126 * channel(c[0]) + .7152 * channel(c[1]) + .0722 * channel(c[2])
+  const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3]))
+  const backdrop = element => {
+    const layers = []
+    for (let e = element; e; e = e.parentElement) {
+      const style = getComputedStyle(e)
+      if (style.backgroundImage !== 'none' || e.matches('canvas, img, .poster-canvas')) return null
+      const colour = parse(style.backgroundColor)
+      if (colour[3] > 0) { layers.push(colour); if (colour[3] === 1) break }
+    }
+    return layers.reverse().reduce((under, top) => over(top, under), parse(getComputedStyle(document.documentElement).backgroundColor))
+  }
+  const failures = [], seen = new Set()
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const element = node.parentElement, text = node.textContent.trim()
+    if (!text || seen.has(element) || element.closest(':disabled, [aria-disabled=true], [inert], script, style')) continue
+    seen.add(element)
+    const style = getComputedStyle(element), box = element.getBoundingClientRect()
+    if (!box.width || !box.height || style.visibility !== 'visible' || !element.checkVisibility({ opacityProperty: true })) continue
+    const behind = backdrop(element)
+    if (!behind) continue
+    const ink = over(parse(style.color), behind), a = luminance(ink), b = luminance(behind)
+    const ratio = (Math.max(a, b) + .05) / (Math.min(a, b) + .05), size = parseFloat(style.fontSize)
+    const needed = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700) ? 3 : 4.5
+    if (ratio < needed) failures.push(`${ratio.toFixed(2)} < ${needed}: "${text.slice(0, 40)}" <${element.tagName.toLowerCase()} class="${element.className}"> ${style.color} on rgb(${behind.map(Math.round)})`)
+  }
+  return failures
+}"""
+
+
+def check_contrast(page, where):
+    # A colour still in its 150 ms transition is neither the old nor the new one: measure settled colours only.
+    page.wait_for_function("document.getAnimations().length === 0")
+    failures = page.evaluate(CONTRAST_JS)
+    assert not failures, f"contrast on {where}:\n" + "\n".join(failures)
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
@@ -106,11 +149,27 @@ def run():
                                 if attempt == 59:
                                     raise
                                 time.sleep(.25)
+                        # The files load but the application's own process does not answer: a French message with a retry.
+                        page.route("**/api/session", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":{"code":"service_down","message_fr":"Le service est momentanément indisponible.","retryable":true}}'))
+                        page.reload()
+                        expect(page.get_by_role("alert")).to_contain_text("momentanément indisponible")
+                        expect(page.get_by_label("Mot de passe", exact=True)).to_have_count(0)
+                        page.unroute("**/api/session")
+                        page.get_by_role("button", name="Réessayer").click()
+                        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+                        check_contrast(page, "sign-in")
+                        # The home-screen manifest and its icons are served.
+                        manifest = page.request.get(f"{ORIGIN}/manifest.webmanifest").json()
+                        assert manifest["display"] == "standalone" and manifest["lang"] == "fr", manifest
+                        for icon in [*manifest["icons"], {"src": "/icons/apple-touch-icon.png"}]:
+                            served = page.request.get(ORIGIN + icon["src"])
+                            assert served.status == 200 and served.headers["content-type"] == "image/png", icon
                         page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
                         page.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
+                        check_contrast(page, "intake")
                         page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
-                        page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i")
                         page.get_by_label("Variante confirmée").fill("Noir · écouteurs et boîtier")
@@ -156,7 +215,7 @@ def run():
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
                         page.get_by_text("Créer un style depuis une affiche", exact=True).click()
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_be_visible()
-                        page.get_by_label("Affiche modèle").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        page.get_by_label("Affiche modèle").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.get_by_alt_text("Affiche modèle pour le nouveau style")).to_be_visible()
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_have_count(0)
                         page.get_by_label("Nom du style").fill("Vagues bleues")
@@ -188,6 +247,14 @@ def run():
                         # By default the contact is drawn in the composition, at the chosen position, without the
                         # shop name (ADR-055). The request is caught here and refused, so no scene is made by it.
                         expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
+                        # The accent is chosen among the title's own words and a few colours, never typed.
+                        chips = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
+                        expect(chips.last).to_have_text("Aucun")
+                        expect(chips.last).to_have_attribute("aria-pressed", "true")
+                        accent = chips.first.inner_text()
+                        chips.first.click()
+                        expect(chips.first).to_have_attribute("aria-pressed", "true")
+                        page.get_by_role("button", name="Rouge", exact=True).click()
                         asked = []
                         def catch_scene(route):
                             asked.append(route.request.post_data_json)
@@ -199,6 +266,7 @@ def run():
                         page.unroute("**/api/creations/*/scenes", catch_scene)
                         assert asked[0]["headline"]["signature"] is True and asked[0]["headline"]["signature_align"] == "right", asked
                         assert "brand_text" not in asked[0]["headline"], asked
+                        assert asked[0]["headline"]["accent_word"] == accent and asked[0]["headline"]["accent_colour"] == "#D92B2B", asked
                         expect(page.get_by_role("alert")).to_be_visible()
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
                         # One tap: the plan is made on the way and reused by the retry below.
@@ -264,6 +332,10 @@ def run():
                         expect(page.get_by_label("Titre", exact=True)).to_be_visible()
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         page.screenshot(path=str(OUTPUT / "mobile.png"), full_page=True)
+                        check_contrast(page, "editor at phone width")
+                        page.get_by_role("button", name="Passer au thème clair").click()
+                        check_contrast(page, "editor at phone width, light theme")
+                        page.get_by_role("button", name="Passer au thème sombre").click()
                         # A second tab changes the saved version. Local work must remain available for a copy.
                         creation_id = page.url.split("#")[1]
                         remote = page.request.get(f"{ORIGIN}/api/creations/{creation_id}").json()
@@ -369,6 +441,7 @@ def run():
                         expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
                         expect(page.locator(".final-preview img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "final-mobile.png"))
+                        check_contrast(page, "final screen at phone width")
                         page.set_viewport_size({"width": 1440, "height": 1050})
                         page.screenshot(path=str(OUTPUT / "final.png"))
                         page.set_viewport_size({"width": 390, "height": 844})
@@ -404,6 +477,11 @@ def run():
                         page.reload()
                         thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
+                        check_contrast(page, "Mes affiches")
+                        page.get_by_role("button", name="Passer au thème clair").click()
+                        check_contrast(page, "Mes affiches, light theme")
+                        page.get_by_role("button", name="Passer au thème sombre").click()
+                        expect(thumbnail).to_be_visible()
                         # A small resized image of the 1080 x 1350 preview, not the full file.
                         page.wait_for_function("image => image.complete && image.naturalWidth === 192 && image.naturalHeight === 240", arg=thumbnail.element_handle())
                         assert len(page.request.get(ORIGIN + thumbnail.get_attribute("src")).body()) < 40_000
@@ -434,7 +512,7 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
                         page.locator(".nav a", has_text="Créer").click()
-                        page.get_by_label("Photos du produit").set_input_files(ROOT / "outputs/review-2026-11-10/soundcore-r50i-black-original.jpg")
+                        page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i sceau")
                         page.get_by_label("Variante confirmée").fill("Noir")
@@ -503,6 +581,14 @@ def run():
                         page.screenshot(path=str(OUTPUT / "styles.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
+                        # A poster's address opened without a session: after the sign-in the owner is on that poster.
+                        other = browser.new_page(viewport={"width": 390, "height": 844})
+                        other.goto(f"{ORIGIN}/#{copy_id}")
+                        other.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+                        other.get_by_role("button", name="Ouvrir l’atelier").click()
+                        expect(other.get_by_label("Titre", exact=True)).to_be_visible()
+                        assert other.url.endswith(f"#{copy_id}"), other.url
+                        other.close()
                         print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")
                     except Exception:
                         page.screenshot(path=str(OUTPUT / "failure.png"), full_page=True)

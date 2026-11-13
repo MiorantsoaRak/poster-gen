@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     max_hole_ratio: float = Field(0.05, gt=0, lt=1)
     data_dir: Path = BACKEND_DIR / "data"
     app_origin: str | None = None  # Required by the HTTP server, not the evaluation CLI.
+    # The API listens on loopback and believes forwarding headers from loopback only. In a container that
+    # publishes no port, the host is 0.0.0.0 and the trusted addresses are Docker's private ranges.
+    api_host: str = "127.0.0.1"
+    forwarded_allow_ips: str = "127.0.0.1"
+    serve_frontend: bool = False  # also serve the built frontend at / (no separate web server in the container)
+    backup_dir: Path | None = None  # where `python -m affiche.backup` writes; /api/status reads its marker
     shop_password_hash: SecretStr | None = None
     planner_provider: Literal["disabled", "stub", "claude"] = "disabled"
     anthropic_api_key: SecretStr | None = None
@@ -73,6 +79,14 @@ class Settings(BaseSettings):
     def _key_for_openai(self) -> "Settings":
         if self.image_provider == "openai" and self.openai_api_key is None:
             raise ValueError("OPENAI_API_KEY is required when IMAGE_PROVIDER=openai")
+        return self
+
+    @model_validator(mode="after")
+    def _proxy_named_when_not_on_loopback(self) -> "Settings":
+        # Off loopback there is a proxy in front. With the default trust list every client would look like that
+        # proxy, and five wrong passwords from anyone would lock the whole shop out.
+        if self.api_host not in ("127.0.0.1", "::1", "localhost") and self.forwarded_allow_ips == "127.0.0.1":
+            raise ValueError("FORWARDED_ALLOW_IPS must name the proxy's addresses when API_HOST is not loopback")
         return self
 
     @model_validator(mode="after")

@@ -4,7 +4,9 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import mimetypes
+import weakref
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,6 +19,10 @@ from .models import Document, FORMATS, canonical
 from .store import Refused
 
 BUILD_DIR = BACKEND_DIR.parent / "frontend" / "dist"
+log = logging.getLogger(__name__)
+# One Chromium at a time: two would double the peak memory of a container that has a hard limit. A semaphore
+# belongs to the event loop it was first awaited on, so there is one per loop (tests start several loops).
+_browser_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
 ORIGIN = "https://affiche-render.invalid"
 
 
@@ -113,9 +119,11 @@ async def render(document: dict, format: str, sources: dict, build: dict):
             finally:
                 await browser.close()
     try:
-        async with asyncio.timeout(30):
-            result = await execute()
-    except (BrowserError, TimeoutError):
+        async with _browser_slots.setdefault(asyncio.get_running_loop(), asyncio.Semaphore(1)):
+            async with asyncio.timeout(30):  # the wait for the slot is outside the 30 s
+                result = await execute()
+    except (BrowserError, TimeoutError) as error:
+        log.warning("render unavailable: %s", type(error).__name__)  # the type only: a browser message can quote the page
         raise Refused("render_unavailable", 503) from None
     png_bytes(result["png"], format)
     return result

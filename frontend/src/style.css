@@ -69,6 +69,18 @@ input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; flex: none; 
 label.check { flex-direction: row; align-items: flex-start; gap: 10px; min-height: 40px; padding: 10px 0; margin: 0; font-size: 14px; font-weight: 400; color: var(--text); cursor: pointer }
 label.check small { margin-top: 2px; overflow-wrap: anywhere }
 label.inline { flex-direction: row; align-items: center; justify-content: space-between; margin: 14px 0 0 }
+/* A choice among a few values: word chips and colour swatches, the chosen one marked by aria-pressed */
+.choice { display: grid; gap: 6px; margin: 14px 0; font-size: 13px; font-weight: 700; color: var(--muted) }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.chip { min-height: 32px; padding: 0 12px; border-color: var(--line); color: var(--muted); font-weight: 400; overflow-wrap: anywhere }
+.chip[aria-pressed=true] { background: var(--raised); border-color: var(--text); color: var(--text); font-weight: 700 }
+.sw { width: 32px; min-height: 32px; padding: 0; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--control) }
+.sw:hover:not(:disabled) { background: inherit }
+.sw[aria-pressed=true] { box-shadow: 0 0 0 2px var(--text) }
+label.other { flex-direction: row; align-items: center; gap: 8px; margin: 0; font-weight: 400 }
+label.other input { width: 36px; min-height: 32px; border-radius: 999px }
+label.other.on input { border-color: var(--text); box-shadow: 0 0 0 1px var(--text) }
+@media (pointer: coarse) { .chip, .sw, label.other input { min-height: 44px } .sw { width: 44px } }
 .unit { position: relative; display: block }
 .unit::after { content: 'Ar'; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--faint); font-weight: 400 }
 details { border-top: 1px solid var(--line); margin-top: 14px }

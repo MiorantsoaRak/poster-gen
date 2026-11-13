@@ -33,7 +33,7 @@ Affiche IA helps Original Phone Mada turn a product photo, verified information 
 | Database | SQLite + SQLAlchemy/Alembic for phase 1 | Phase-2 local persistence approved; hosting remains open. |
 | Background processing | Durable SQLite queue in one FastAPI process | Approved design; implementation queued. |
 | Asset storage | Existing content-addressed local files | Immutable originals/scenes/textures/exports, with database ownership. |
-| Infra / deploy | Not selected | Define hosting, access protection, logging, backups and budget before deployment. |
+| Infra / deploy | One rented Linux server, Caddy in front, systemd, SQLite (designs/hosted-pilot.md) | Requirements approved 2026-11-13 (ADR-064). The server, the DNS name and the pilot's provider keys are the administrator's actions; nothing is deployed yet. |
 
 The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. The independent Git repository is on `main`; since 2026-11-13 it has the remote `origin`, the private GitHub repository `MiorantsoaRak/poster-gen`. The installed backend and verified CLI commands are documented in AGENTS.md. The authenticated API and Vue editor exist; deployment remains unconfigured.
 
@@ -103,6 +103,7 @@ These are planning boundaries, not requirement files or implementation tasks. Ea
 | poster-editor | Flexible composition, French text/prices/branding, phone/desktop editing and undo/redo. | R-POSTER-EDITOR-, D-POSTER-EDITOR- |
 | format-export | Format-specific layout/crop, previews, checks and downloads. | R-FORMAT-EXPORT-, D-FORMAT-EXPORT- |
 | creation-library | Save/reopen, versions, approved assets and price-only reuse. | R-CREATION-LIBRARY-, D-CREATION-LIBRARY- |
+| hosted-pilot (added 2026-11-13, ADR-064) | One HTTPS address for the shop's phones, long session, the pilot's own ledger and cap, backups, deployment, the first real-phone session. | R-HOSTED-PILOT-, D-HOSTED-PILOT- |
 
 Access control, storage, validation and observability must be covered wherever applicable. Publishing/Odoo require separate later scope approval.
 

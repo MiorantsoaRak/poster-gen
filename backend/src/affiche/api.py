@@ -3,8 +3,10 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -20,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response
+from starlette.staticfiles import StaticFiles
 
 from affiche import assets
 from affiche.config import Settings, load_settings
@@ -61,7 +64,7 @@ def error_response(request: Request, error: store.Refused):
         "asset_missing": "Une image est introuvable. Restaurez le fichier original.",
         "asset_corrupt": "Une image est endommagée. Restaurez le fichier original.",
         "internal_error": "Une erreur est survenue. Conservez vos modifications.",
-        "budget_exhausted": "Le plafond de dépense est atteint. Aucun nouvel appel n’a été envoyé.",
+        "budget_exhausted": "Le budget d’images de la boutique est atteint. Vous pouvez encore modifier et télécharger vos affiches. Pour créer de nouvelles images, contactez l’administrateur.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
         "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",
@@ -93,14 +96,19 @@ class AccessBoundary:
             return await self.app(scope, receive, send)
         request = Request(scope)
         request.state.request_id = str(uuid4())
+        api_path = scope["path"].startswith("/api/")
         started = False
 
         async def headers(message):
             nonlocal started
             if message["type"] == "http.response.start":
                 started = True
-                message["headers"] += [(b"cache-control", b"no-store"), (b"x-content-type-options", b"nosniff"),
-                                       (b"x-request-id", request.state.request_id.encode("ascii"))]
+                # Shop data is never cached. The built frontend is public: hashed files for a year, the rest revalidated.
+                caching = (b"no-store" if api_path else b"public, max-age=31536000, immutable"
+                           if scope["path"].startswith("/assets/") and message["status"] == 200 else b"no-cache")
+                message["headers"] = [pair for pair in message["headers"] if pair[0] != b"cache-control"] + [
+                    (b"cache-control", caching), (b"x-content-type-options", b"nosniff"),
+                    (b"x-request-id", request.state.request_id.encode("ascii"))]
             await send(message)
 
         limit = store.MAX_UPLOAD_BYTES+65536 if scope["path"] == "/api/assets" else 128*1024
@@ -118,9 +126,11 @@ class AccessBoundary:
         try:
             if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("origin") != self.settings.app_origin:
                 raise store.Refused("forbidden_origin", 403)
+            # Everything under /api/ needs a session; the built frontend (SERVE_FRONTEND) is public and holds no data.
+            # The Origin check above and the size limits below stay on every path.
             request.state.shop = await run_in_threadpool(auth.session_shop, self.owner.state.engine,
-                                                         request.cookies.get(auth.COOKIE))
-            if scope["path"] != "/api/session" and request.state.shop is None:
+                                                         request.cookies.get(auth.COOKIE)) if api_path else None
+            if api_path and scope["path"] != "/api/session" and request.state.shop is None:
                 raise store.Refused("unauthenticated", 401)
             length = request.headers.get("content-length", "0")
             if not length.isascii() or not length.isdigit():
@@ -218,6 +228,19 @@ def _thumbnail(path: str) -> bytes:
         return out.getvalue()
 
 
+def _backup_state(folder) -> dict | None:
+    """The last backup as its marker file tells it, with its age; None when there is none to read."""
+    if folder is None:
+        return None
+    try:
+        finished = json.loads((folder / "last-backup.json").read_text(encoding="utf-8"))["finished_at"]
+        age = (datetime.now(UTC) - datetime.fromisoformat(finished)).total_seconds() / 3600
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        log.warning("last-backup.json is missing or unreadable: %s", type(error).__name__)
+        return None
+    return {"finished_at": finished, "age_hours": round(age, 1), "late": age > 48}
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
 
@@ -226,8 +249,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         auth.validate_config(settings)
         runtime = start(settings, "api")
         app.state.engine = runtime.engine
+        app.state.started_at = datetime.now(UTC).isoformat(timespec="seconds")
         service = None
         try:
+            auth.end_sessions_on_new_password(runtime.engine, settings)
             app.state.pending_finalisations = jobs.recover(runtime.engine, settings.data_dir)
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
@@ -261,6 +286,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with app.state.engine.connect() as conn:
             return {"recorded_micros": spent_micros(conn, settings),
                     "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()}
+
+    @protected.get("/api/status")
+    def status():
+        """For the administrator: which code runs, the last backup, the spend, recent failures. No provider call."""
+        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="microseconds")
+        with app.state.engine.connect() as conn:
+            return {"commit": os.environ.get("REVISION") or "dev",
+                    "migration": conn.execute(text("SELECT version_num FROM alembic_version")).scalar(),
+                    "started_at": app.state.started_at,
+                    "backup": _backup_state(settings.backup_dir),
+                    "spend": {"recorded_micros": spent_micros(conn, settings),
+                              "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()},
+                    "failed_jobs_24h": conn.execute(text(
+                        "SELECT count(*) FROM poster_jobs WHERE status IN ('failed','interrupted') AND finished_at>:since"),
+                        {"since": since}).scalar_one()}
 
     @protected.get("/api/capabilities")
     def capabilities():
@@ -592,9 +632,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return result_response(store.restore_creation(app.state.engine, request.state.shop, key, id, expected_revision(version)))
 
     app.include_router(protected)
+    if settings.serve_frontend:
+        # After every route: a mount at / matches all paths, so it must be the last thing the router tries.
+        app.mount("/", StaticFiles(directory=rendering.BUILD_DIR, html=True), name="frontend")
     return app
+
+
+# Loopback by default. One front process (Vite, a tunnel client, or Caddy on the container network) is the only
+# door, and only its forwarding headers are believed, so the login limit counts the real client and not the front process.
+UVICORN = {"host": "127.0.0.1", "port": 8000, "proxy_headers": True, "forwarded_allow_ips": "127.0.0.1", "access_log": False}
+
+
+
+def uvicorn_options(settings: Settings) -> dict:
+    """In a container, API_HOST and FORWARDED_ALLOW_IPS replace the loopback defaults (config.py)."""
+    return {**UVICORN, "host": settings.api_host, "forwarded_allow_ips": settings.forwarded_allow_ips}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(create_app(), host="127.0.0.1", port=8000, proxy_headers=False, access_log=False)
+    configured = load_settings()
+    uvicorn.run(create_app(configured), **uvicorn_options(configured))

@@ -14,7 +14,7 @@ const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'A
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
-const authenticated = ref(false), checking = ref(true), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
+const authenticated = ref(false), checking = ref(true), down = ref(false), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
 const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -155,7 +155,12 @@ function stylePill() {
         Object.assign(footer, { fill: look.value === 'sombre' ? '#FFFFFF' : '#22262E', outline: null, shadow: null })
   })
 }
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: headline.value.accent_word.trim() || null, accent_colour: headline.value.accent_word.trim() ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+// The server refuses an accent that is not in the title, so the choice is made among the title's own words.
+// A reopened poster may carry a longer accent ("Buds 2a"): it stays offered while the title still contains it.
+const accentWord = computed(() => (doc.value?.offer.title ?? '').includes(headline.value.accent_word.trim()) ? headline.value.accent_word.trim() : '')
+const accentWords = computed(() => [...new Set([...(doc.value?.offer.title ?? '').split(/\s+/).filter(Boolean), ...(accentWord.value ? [accentWord.value] : [])])])
+const ACCENTS = [['#1e6fe0', 'Bleu'], ['#1f3250', 'Bleu nuit'], ['#d92b2b', 'Rouge'], ['#f08a1c', 'Orange'], ['#c8a45a', 'Or']] as const
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
@@ -796,11 +801,17 @@ function toggleTheme() {
   try { localStorage.setItem('affiche.theme', theme.value) } catch { /* convenience only */ }
 }
 function warnUnload(event: BeforeUnloadEvent) { if (saver?.unsaved) { event.preventDefault(); event.returnValue = '' } }
-onMounted(async () => {
-  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
+// The page's files can load while the application's own process is down or restarting (the front server answers
+// 502 to 504, or nothing): say so with a retry, instead of a sign-in form that cannot work.
+async function start() {
+  checking.value = true; down.value = false
   try { authenticated.value = (await api<{ authenticated: boolean }>('/api/session')).authenticated; if (authenticated.value) { await loadShop(); await route() } }
-  catch (reason) { error.value = (reason as Error).message }
+  catch (reason) { const failure = reason as ApiError; if (failure.code === 'network' || [502, 503, 504].includes(failure.status)) down.value = true; else error.value = failure.message }
   finally { checking.value = false }
+}
+onMounted(() => {
+  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
+  return start()
 })
 onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.disconnect(); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
 </script>
@@ -815,7 +826,8 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <form v-if="!checking && !authenticated" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous pour retrouver les visuels de la boutique.</p><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button></form>
+    <section v-if="!checking && down" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="start">Réessayer</button></section>
+    <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous pour retrouver les visuels de la boutique.</p><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button></form>
     <div v-if="authenticated && !doc && view === 'create'" class="intake-layout">
       <form class="intake" @submit.prevent="perform(createPoster)">
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Ajoutez vos photos, votre titre et le prix. Vous pourrez ensuite ajuster chaque élément.</p>
@@ -859,7 +871,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" name="price" autocomplete="off" inputmode="numeric" :disabled="drawingTexts && headline.price" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="changePrice" @blur="tidyPrice" /></span></label>
             <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
             <p v-if="stalePrice" class="why" role="status">Le prix est dessiné dans l’image<template v-if="currentVisual?.headline?.price_ar !== undefined"> ({{ currentVisual.headline.price_ar.toLocaleString('fr-FR') }} AR)</template>. Pour le changer, générez une nouvelle version.</p>
-            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" /></label><label v-if="headline.brand.trim()" class="check"><input v-model="headline.brand_text" type="checkbox" :disabled="busy || !!job" />Écrire la marque en texte simple (si l’IA ne connaît pas son logo)</label><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" /></label><label>Mot du titre à mettre en couleur (facultatif)<input v-model="headline.accent_word" name="accent" autocomplete="off" spellcheck="false" maxlength="60" placeholder="770NC…" :disabled="busy || !!job" /></label></template>
+            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" /></label><label v-if="headline.brand.trim()" class="check"><input v-model="headline.brand_text" type="checkbox" :disabled="busy || !!job" />Écrire la marque en texte simple (si l’IA ne connaît pas son logo)</label><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" /></label><div class="choice"><span id="accent-word-label">Mot du titre en couleur</span><div class="chips" role="group" aria-labelledby="accent-word-label"><button v-for="word in accentWords" :key="word" type="button" class="chip" translate="no" :aria-pressed="accentWord === word" :disabled="busy || !!job" @click="headline.accent_word = word">{{ word }}</button><button type="button" class="chip" :aria-pressed="!accentWord" :disabled="busy || !!job" @click="headline.accent_word = ''">Aucun</button></div></div></template>
             <p class="sub">Boutique sur l’affiche</p>
             <div class="checks-row"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input :checked="doc.include[role]" type="checkbox" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
             <p v-if="staleSignature" class="why" role="status">{{ currentVisual?.headline?.shop_name !== undefined ? 'Le nom de la boutique ou le contact' : 'Le contact' }} est dessiné dans l’image. Pour le changer ou le retirer, générez une nouvelle version.</p>
@@ -876,7 +888,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="pickLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="96" height="96" alt="" /><span>{{ item.name }}</span></button></div>
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez. Claude décrit son style (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label>Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
-            <label class="inline">Couleur d’accent<input v-model="headline.accent_colour" type="color" :disabled="busy || !!job" /></label>
+            <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="headline.accent_colour.toLowerCase() === value" :disabled="busy || !!job" @click="headline.accent_colour = value" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === headline.accent_colour.toLowerCase()) }">Autre…<input v-model="headline.accent_colour" type="color" aria-label="Autre couleur d’accent" :disabled="busy || !!job" /></label></div></div>
             <details><summary>Ambiance et qualité</summary><label>{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label><label class="check"><input v-model="lowResAccepted" type="checkbox" />J’accepte une qualité réduite si la photo source est petite.</label></details>
           </section>
           <details class="card advanced"><summary><Icon n="sliders" />Réglages avancés</summary><p class="help">Retoucher un texte resté en calque, recadrer la scène ou déplacer un élément.</p>

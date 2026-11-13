@@ -1,0 +1,53 @@
+# Affiche IA on the Hetzner box mx1, beside Maizina, Trap Duel and PPN Market. deploy.py builds and starts it
+# from /opt/affiche-ia/app:
+#   REVISION=<sha> docker compose -f /opt/affiche-ia/app/deploy/compose.yml up -d affiche-ia
+# Diagnostics need no file: docker compose -p affiche-ia logs|ps. See deploy/README.md.
+name: affiche-ia
+
+services:
+  affiche-ia:
+    build:
+      context: ..
+      args:
+        REVISION: ${REVISION:?set by deploy.py, or read from the running container label}
+    image: affiche-ia:${REVISION:?set by deploy.py, or read from the running container label}
+    restart: unless-stopped
+    init: true                              # Python as process 1 would not reap Chromium's children
+    mem_limit: 1g                           # renderer tests peak at 457 MB; the box has 1.6 GB available, no swap
+    stop_grace_period: 5m                   # shutdown waits for a paid generation that is running (180 s at most)
+    env_file:
+      - ../../secrets/app.env               # password hash, provider keys, spend cap and its start date
+    environment:
+      APP_ORIGIN: https://affiches.miorantsoa.app
+      DATA_DIR: /data
+      BACKUP_DIR: /backups
+      # Not the defaults on purpose: "stub" would be recorded as this data's provider mode for good.
+      IMAGE_PROVIDER: openai
+      OPENAI_IMAGE_MODEL: gpt-image-2
+      OPENAI_IMAGE_QUALITY: high
+      PLANNER_PROVIDER: claude
+      SERVE_FRONTEND: "true"
+      API_HOST: 0.0.0.0
+      # Docker's private ranges: the right-most address outside them in X-Forwarded-For is the client.
+      # Safe only because nothing below publishes a port. NEVER add `ports:` to this file.
+      FORWARDED_ALLOW_IPS: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
+    volumes:
+      - data:/data                          # affiche.db and the asset files, together
+      - /opt/affiche-ia/backups:/backups    # owned by uid 10001 (deploy.py); daily.sh writes here through docker exec
+    read_only: true
+    tmpfs: ["/tmp"]                         # Chromium's profile and shared memory live here, inside the 1 GB
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: journald                      # kept across releases (json-file logs die with the container)
+      options: {tag: affiche-ia}            # journalctl -t affiche-ia; the box keeps 14 days (README)
+    networks: [edge]
+    # No ports: Maizina's Caddy reaches affiche-ia:8000 over affiche_ia_edge.
+
+networks:
+  edge:
+    name: affiche_ia_edge                   # declared by Maizina's compose; only its Caddy joins it
+    external: true
+
+volumes:
+  data:

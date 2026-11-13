@@ -10,6 +10,7 @@
 | [poster-editor.md](poster-editor.md) | R-POSTER-EDITOR-001–003; D-001 document/editor, D-002 review/confirm, D-003 manual/prompted text effects | Approved v1 (ADR-031) |
 | [format-export.md](format-export.md) | R-FORMAT-EXPORT-001/002; D-001 formats, D-002 stored-preview confirmation/download | Approved v1 (ADR-031) |
 | [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001/002; D-001 revisions/recovery, D-002 reuse. R-CREATION-LIBRARY-003/004; D-003 manage posters, D-004 manage saved styles | D-001/002: Approved v1 (ADR-031). D-003/004: Approved v2.1 on 2026-11-12 (ADR-061) |
+| [hosted-pilot.md](hosted-pilot.md) | R-HOSTED-PILOT-001–006; D-001 access, D-002 session and home screen, D-006 first phone session (phase A); D-003 data and spend, D-004 backups, D-005 deploy and status (phase B, outline) | v2 approved 2026-11-13 under the autonomy grant (ADR-065) after one review round and a devil's advocate; phase B is re-scoped and reviewed again after the phone session |
 
 ## Approval packet — 2026-11-09
 

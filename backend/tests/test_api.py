@@ -1,8 +1,11 @@
 import hashlib
+from datetime import UTC, datetime, timedelta
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from uuid import uuid4
 
@@ -11,11 +14,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from affiche import assets
-from affiche.api import create_app
+from affiche import assets, backup
+from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
 from affiche.db import write_tx
-from affiche.posters import auth, jobs, store
+from affiche.posters import auth, jobs, rendering, store
 from test_config import env  # noqa: F401
 from test_poster_drafts import photo
 
@@ -85,13 +88,44 @@ def test_owned_job_status_usage_and_cancel(client, settings):
     assert post(client, result["status_url"] + "/cancel", {}).status_code == 409
 
 
+def test_status_tells_the_administrator_what_runs_and_how_old_the_backup_is(client, settings, tmp_path, monkeypatch):
+    assert client.get("/api/status").status_code == 401
+    login(client)
+    status = client.get("/api/status").json()
+    assert status["commit"] == "dev" and status["migration"] and status["backup"] is None
+    assert status["spend"] == {"recorded_micros": 0, "cap_micros": 20000000, "since": settings.spend_cap_since.isoformat()}
+    assert status["failed_jobs_24h"] == 0 and datetime.fromisoformat(status["started_at"]) <= datetime.now(UTC)
+
+    settings.backup_dir = tmp_path / "backups"
+    assert client.get("/api/status").json()["backup"] is None  # no marker yet: not an error
+    backup.run(settings.data_dir, settings.backup_dir)
+    monkeypatch.setenv("REVISION", "abc123")
+    creation = create_draft(client)
+    with write_tx(client.app.state.engine) as conn:
+        for finished, state in ((datetime.now(UTC), "failed"), (datetime.now(UTC)-timedelta(hours=30), "failed"),
+                                (datetime.now(UTC), "interrupted"), (datetime.now(UTC), "succeeded")):
+            job = jobs.enqueue(conn, settings, 1, creation["id"], 1, "render", {"n": str(uuid4())})
+            conn.exec_driver_sql("UPDATE poster_jobs SET status=?, finished_at=? WHERE id=?",
+                                 (state, finished.isoformat(timespec="microseconds"), job["status_url"].rsplit("/", 1)[1]))
+    status = client.get("/api/status").json()
+    assert status["commit"] == "abc123" and status["failed_jobs_24h"] == 2
+    assert status["backup"]["late"] is False and status["backup"]["age_hours"] == 0.0
+
+    marker = settings.backup_dir / "last-backup.json"
+    old = (datetime.now(UTC)-timedelta(hours=49)).isoformat(timespec="seconds")
+    marker.write_text('{"finished_at": "%s"}' % old, encoding="utf-8")
+    assert client.get("/api/status").json()["backup"] == {"finished_at": old, "age_hours": 49.0, "late": True}
+    marker.write_text("not json", encoding="utf-8")
+    assert client.get("/api/status").json()["backup"] is None
+
+
 def test_cookie_is_opaque_hash_only_and_logout_revokes(client):
     assert client.get("/api/shop-profile").status_code == 401
     assert client.get("/api/session").json() == {"authenticated": False}
     response = login(client)
     assert response.json() == {"authenticated": True}
     cookie = response.headers["set-cookie"]
-    assert all(flag in cookie for flag in ("HttpOnly", "Secure", "SameSite=strict", "Max-Age=43200", "Path=/"))
+    assert all(flag in cookie for flag in ("HttpOnly", "Secure", "SameSite=strict", "Max-Age=7776000", "Path=/"))
     token = client.cookies.get(auth.COOKIE)
     with client.app.state.engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT token_hash FROM sessions").scalar_one() == hashlib.sha256(token.encode()).hexdigest()
@@ -123,6 +157,127 @@ def test_failed_logins_are_persistent_and_forwarded_ip_cannot_bypass(client, set
     with client.app.state.engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT count(*) FROM login_failures").scalar_one() == 5
     assert response.json()["error"]["code"] == "unauthenticated"
+
+
+def test_password_is_verified_outside_the_write_transaction_and_not_at_all_once_limited(client, settings, monkeypatch):
+    engine, calls = client.app.state.engine, []
+
+    class Probe:
+        def verify(self, password, stored):
+            # With the write lock held by the login, this second writer would wait 5 s and fail "database is locked".
+            with write_tx(engine) as conn:
+                conn.exec_driver_sql("INSERT INTO meta (key,value) VALUES ('probe','1') ON CONFLICT(key) DO NOTHING")
+            calls.append(password)
+            return False
+
+    monkeypatch.setattr(auth, "PASSWORDS", Probe())
+    for _ in range(5):
+        assert client.post("/api/session", json={"password": "wrong"}).status_code == 401
+    assert client.post("/api/session", json={"password": "wrong"}).status_code == 429
+    assert len(calls) == 5
+
+
+def test_at_most_two_passwords_are_verified_at_once(client, settings, monkeypatch):
+    engine, lock, state = client.app.state.engine, threading.Lock(), {"now": 0, "peak": 0}
+
+    class Slow:
+        def verify(self, password, stored):
+            with lock:
+                state["now"] += 1
+                state["peak"] = max(state["peak"], state["now"])
+            time.sleep(.15)
+            with lock:
+                state["now"] -= 1
+            return False
+
+    monkeypatch.setattr(auth, "PASSWORDS", Slow())
+
+    def attempt(i):
+        with pytest.raises(store.Refused):
+            auth.login(engine, settings, "wrong", f"198.51.100.{i}")
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
+    [thread.start() for thread in threads]
+    [thread.join(timeout=20) for thread in threads]
+    assert state["peak"] == 2 and state["now"] == 0
+
+
+def test_container_settings_reach_uvicorn_and_a_proxy_must_be_named_off_loopback(settings, env):
+    assert uvicorn_options(settings)["host"] == "127.0.0.1" and uvicorn_options(settings)["forwarded_allow_ips"] == "127.0.0.1"
+    env.setenv("API_HOST", "0.0.0.0")
+    with pytest.raises(ConfigError, match="FORWARDED_ALLOW_IPS"):
+        load_settings(env_file=None)
+    env.setenv("FORWARDED_ALLOW_IPS", "10.0.0.0/8,172.16.0.0/12")
+    options = uvicorn_options(load_settings(env_file=None))
+    assert options["host"] == "0.0.0.0" and options["forwarded_allow_ips"] == "10.0.0.0/8,172.16.0.0/12"
+    assert options["proxy_headers"] is True and options["access_log"] is False
+
+
+def test_the_built_frontend_is_public_and_everything_under_api_stays_closed(settings, tmp_path, monkeypatch):
+    build = tmp_path / "dist"
+    (build / "assets").mkdir(parents=True)
+    (build / "index.html").write_text("<!doctype html><title>Atelier</title>", encoding="utf-8")
+    (build / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+    monkeypatch.setattr(rendering, "BUILD_DIR", build)
+    settings.serve_frontend = True
+    app = create_app(settings)
+    # No data route may live outside the boundary: every declared route is under /api/, only the mount is not.
+    def paths(routes):
+        for route in routes:
+            included = getattr(route, "original_router", None)  # this FastAPI keeps an included router whole
+            yield from paths(included.routes) if included is not None else [route.path]
+
+    declared = list(paths(app.routes))
+    assert len(declared) > 40 and [path for path in declared if not path.startswith("/api/")] == [""]
+    with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as client:
+        page = client.get("/")
+        assert page.status_code == 200 and "Atelier" in page.text and page.headers["cache-control"] == "no-cache"
+        script = client.get("/assets/app-abc123.js")
+        assert script.status_code == 200 and script.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert script.headers["x-content-type-options"] == "nosniff"
+        missing = client.get("/assets/gone.js")
+        assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
+        assert missing.headers["cache-control"] == "no-cache"
+        assert client.get("/../backend/pyproject.toml").status_code == 404
+        for path in ("/api/shop-profile", "/api/creations", "/api/openapi.json", "/api/status", "/api/nothing"):
+            closed = client.get(path)
+            assert closed.status_code == 401 and closed.headers["cache-control"] == "no-store", path
+        assert client.post("/", headers={"Origin": "https://evil.example"}).status_code == 403
+        assert client.post("/").status_code in (404, 405)
+        login(client)
+        assert client.get("/api/shop-profile").status_code == 200
+
+
+def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
+    engine = client.app.state.engine
+    assert auth.limit_key("2001:db8:1:2:aaaa::1") == auth.limit_key("2001:db8:1:2:bbbb::9") == "2001:db8:1:2::"
+    assert auth.limit_key("2001:db8:1:3::1") != auth.limit_key("2001:db8:1:2::1")
+    assert auth.limit_key("::ffff:192.0.2.7") == auth.limit_key("192.0.2.7") == "192.0.2.7"
+    assert auth.limit_key("unknown") == "unknown"
+    for i in range(5):
+        with pytest.raises(store.Refused, match="unauthenticated"):
+            auth.login(engine, settings, "wrong", f"2001:db8:1:2:{i}::1")
+    with pytest.raises(store.Refused, match="rate_limited"):
+        auth.login(engine, settings, PASSWORD, "2001:db8:1:2:ffff::1")
+    assert auth.login(engine, settings, PASSWORD, "2001:db8:1:3::1")
+    assert auth.login(engine, settings, PASSWORD, "192.0.2.8")
+
+
+def test_session_lasts_90_days_and_a_new_password_ends_every_session(settings):
+    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as first:
+        login(first)
+        token = first.cookies.get(auth.COOKIE)
+        with first.app.state.engine.connect() as conn:
+            expires = datetime.fromisoformat(conn.exec_driver_sql("SELECT expires_at FROM sessions").scalar_one())
+        assert timedelta(days=90)-timedelta(minutes=1) < expires-datetime.now(UTC) <= timedelta(days=90)
+    cookie = {"Cookie": f"{auth.COOKIE}={token}"}
+    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as same:
+        assert same.get("/api/session", headers=cookie).json()["authenticated"]
+    settings.shop_password_hash = SecretStr(auth.PASSWORDS.hash(os.urandom(12).hex()))
+    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as changed:
+        assert not changed.get("/api/session", headers=cookie).json()["authenticated"]
+        with changed.app.state.engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT count(*) FROM sessions").scalar_one() == 0
 
 
 @pytest.mark.parametrize("origin", [None, "http://shop.example", "https://user@shop.example", "https://shop.example/", "https://shop.example?x=1"])
@@ -339,9 +494,8 @@ def test_actual_uvicorn_http_session(settings, env):
         port = sock.getsockname()[1]
     origin = f"http://127.0.0.1:{port}"
     env.setenv("APP_ORIGIN", origin)
-    code = ("import uvicorn; from affiche.api import create_app; from affiche.config import load_settings; "
-            f"uvicorn.run(create_app(load_settings(env_file=None)), host='127.0.0.1', port={port}, "
-            "proxy_headers=False, access_log=False, log_level='warning')")
+    code = ("import uvicorn; from affiche.api import UVICORN, create_app; from affiche.config import load_settings; "
+            f"uvicorn.run(create_app(load_settings(env_file=None)), **{{**UVICORN, 'port': {port}, 'log_level': 'warning'}})")
     proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     try:
@@ -362,6 +516,11 @@ def test_actual_uvicorn_http_session(settings, env):
             assert remote.get("/api/shop-profile").json()["revision"] == 1
             assert remote.delete("/api/session").status_code == 200
             assert remote.get("/api/shop-profile").status_code == 401
+            # The front process on loopback is believed: the failure is counted for the phone, not for the proxy.
+            assert remote.post("/api/session", json={"password": "wrong"},
+                               headers={"X-Forwarded-For": "198.51.100.7, 203.0.113.9"}).status_code == 401
     finally:
         proc.kill()
         proc.communicate(timeout=10)
+    with sqlite3.connect(settings.data_dir / "affiche.db") as conn:
+        assert conn.execute("SELECT ip FROM login_failures").fetchall() == [("203.0.113.9",)]

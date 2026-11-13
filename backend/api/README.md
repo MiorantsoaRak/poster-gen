@@ -15,9 +15,9 @@ uv run python -c "from getpass import getpass; from pwdlib import PasswordHash; 
 uv run python -m affiche.api
 ```
 
-The server binds `127.0.0.1:8000`, uses one process, and ignores forwarded client headers. For development, the Vite proxy forwards `/api` and preserves the configured browser Origin (`http://127.0.0.1:5173`). Hosting/proxy setup is separate: HTTPS and an exact trusted proxy policy are required before exposure. Never run this development entry point as a public unauthenticated file server. Existing data folders retain their provider mode and ledger.
+The server binds `127.0.0.1:8000`, uses one process, and believes `X-Forwarded-For` only from a peer on loopback (the one front process: Vite, a tunnel client or Caddy), so the login limit counts the real client (D-HOSTED-PILOT-001). For development, the Vite proxy forwards `/api` and preserves the configured browser Origin (`http://127.0.0.1:5173`). Hosting/proxy setup is separate: HTTPS and an exact trusted proxy policy are required before exposure. Never run this development entry point as a public unauthenticated file server. Existing data folders retain their provider mode and ledger.
 
-Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST /api/session {"password":"…"}`; retain the HttpOnly, SameSite Strict cookie. HTTPS origins use Secure cookies. `GET /api/session` reports authentication state; `DELETE` revokes the session. Five failed logins from the actual peer IP in 15 minutes block further attempts, including across server restarts. Staff share one shop and its data.
+Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST /api/session {"password":"…"}`; retain the HttpOnly, SameSite Strict cookie. HTTPS origins use Secure cookies. `GET /api/session` reports authentication state; `DELETE` revokes the session. Five failed logins from one client address (an IPv6 address counts as its /64) in 15 minutes block further attempts, including across server restarts. A session lasts 90 days; a changed `SHOP_PASSWORD_HASH` ends every session at the next start. Staff share one shop and its data.
 
 | Route | Request | Result |
 |---|---|---|

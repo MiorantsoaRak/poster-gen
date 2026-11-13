@@ -2,6 +2,7 @@
 import hashlib
 import ipaddress
 import secrets
+import threading
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -15,7 +16,10 @@ from affiche.posters.store import Refused
 
 PASSWORDS = PasswordHash.recommended()
 COOKIE = "affiche_session"
-SESSION_SECONDS = 12 * 60 * 60
+# One Argon2 check takes tens of MiB. Forty worker threads verifying at once would pass the container's memory
+# limit and restart it in the middle of a paid job; two at a time is plenty for one shop.
+VERIFYING = threading.BoundedSemaphore(2)
+SESSION_SECONDS = 90 * 24 * 60 * 60  # fixed from sign-in: no write on the path that reads a session (ADR-065)
 
 
 def validate_config(settings: Settings):
@@ -57,16 +61,46 @@ def session_shop(engine, token: str | None) -> int | None:
                             {"hash": token_hash(token), "now": utc_now()}).scalar()
 
 
+def limit_key(ip: str) -> str:
+    """The address the login limit counts. One IPv6 host can rotate inside its /64, so a /64 is one client."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 4:
+        return ip
+    if address.ipv4_mapped:
+        return str(address.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{address}/64", strict=False).network_address)
+
+
+def end_sessions_on_new_password(engine, settings: Settings):
+    """At start: a password hash other than the one last seen ends every session (a lost phone, a leaked password)."""
+    fingerprint = hashlib.sha256(settings.shop_password_hash.get_secret_value().encode("utf-8")).hexdigest()
+    with write_tx(engine) as conn:
+        if conn.execute(text("SELECT value FROM meta WHERE key='password_fingerprint'")).scalar() != fingerprint:
+            conn.execute(text("DELETE FROM sessions"))
+            conn.execute(text("INSERT INTO meta (key,value) VALUES ('password_fingerprint',:value) "
+                              "ON CONFLICT(key) DO UPDATE SET value=excluded.value"), {"value": fingerprint})
+
+
 def login(engine, settings: Settings, password: str, ip: str, previous: str | None = None) -> str:
     now = datetime.now(UTC)
     since = (now-timedelta(minutes=15)).isoformat(timespec="microseconds")
+    ip = limit_key(ip)
+    with engine.connect() as conn:
+        failures = conn.execute(text("SELECT count(*) FROM login_failures WHERE ip=:ip AND attempted_at>:since"),
+                                {"ip": ip, "since": since}).scalar_one()
+    if failures >= 5:
+        raise Refused("rate_limited", 429)
+    # Argon2 is slow on purpose. Verified outside the write transaction: inside it, a flood of logins would hold
+    # the database's write lock and stall autosaves and job commits. Parallel wrong attempts can therefore pass
+    # the count together; they are bounded by the worker threads and each one is recorded.
+    with VERIFYING:
+        valid = PASSWORDS.verify(password, settings.shop_password_hash.get_secret_value())
     with write_tx(engine) as conn:
         conn.execute(text("DELETE FROM login_failures WHERE attempted_at<=:since"), {"since": since})
         conn.execute(text("DELETE FROM sessions WHERE expires_at<=:now"), {"now": now.isoformat(timespec="microseconds")})
-        failures = conn.execute(text("SELECT count(*) FROM login_failures WHERE ip=:ip"), {"ip": ip}).scalar_one()
-        if failures >= 5:
-            raise Refused("rate_limited", 429)
-        valid = PASSWORDS.verify(password, settings.shop_password_hash.get_secret_value())
         if valid:
             token = secrets.token_urlsafe(32)
             if previous:
@@ -76,7 +110,7 @@ def login(engine, settings: Settings, password: str, ip: str, previous: str | No
         else:
             conn.execute(text("INSERT INTO login_failures (ip,attempted_at) VALUES (:ip,:now)"),
                          {"ip": ip, "now": now.isoformat(timespec="microseconds")})
-    # Commit the failed attempt before reporting failure.
+    # The failed attempt is committed before the failure is reported.
     if not valid:
         raise Refused("unauthenticated", 401)
     return token

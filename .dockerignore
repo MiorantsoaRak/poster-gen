@@ -1,0 +1,15 @@
+# The image is built from a git archive, which already leaves these out; this file covers a build from a checkout.
+.git
+**/.env
+**/.env.*
+**/.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+backend/data
+backend/data-*
+backend/tests
+backend/fixtures
+outputs
+docs

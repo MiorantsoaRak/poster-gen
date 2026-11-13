@@ -1,5 +1,59 @@
 # DECISIONS
 
+## ADR-069 — 2026-11-13 — Hosted pilot phase B: round 2 fixes applied, built without Docker (Claude, under the autonomy grant)
+
+- Round 2 on phase B: APPROVE WITH FIXES, five P1 (reviews/hosted-pilot-design-r2-2026-11-13.md). All applied as design v3.1, not reviewed again.
+- Choices worth remembering: the session test of the access boundary is narrowed to `/api/` and nothing else is (Origin check and size limits stay on every path); the frontend is served by the application itself behind a boolean; at most two password verifications and one browser at a time, because the container has a hard 1 GB limit on a box without swap; the release stops the old container before it backs up and starts the new one (one SQLite writer), so each release has a short downtime; logs go to journald so that they survive a release.
+- What could not be proven here: the development machine gives Claude no access to Docker, so the image was never built, and pyinfra never ran `deploy.py`. `docker compose config`, `sh -n` and `py_compile` pass; the shell text of the deploy parses. The first rollout is the proof, and `deploy/README.md` says so at its top.
+- Not Claude's to do: the DNS record, the two changes in the Maizina repository and the Caddy recreate, the pilot's provider keys, the choice of an off-box backup, the commit, the push and the deploy itself.
+
+## ADR-068 — 2026-11-13 — Phase B of the hosted pilot starts before the phone session (Claude, on the user's "next")
+
+- ADR-065 put the server work after the owner's first session. Changed: the session waits on the user and the owner, the server exists and its deployment pattern is proven by PPN Market, and what the session can teach is about the editor, not about hosting. The session through the tunnel stays available and is still the fastest way to see the owner use the application.
+- Phase B is detailed in designs/hosted-pilot.md v3: one more compose project on `mx1` in PPN Market's pattern. A fresh review runs before its container files are relied on.
+- Limit on this machine: Claude cannot reach the Docker daemon (the user is not in the `docker` group), so the image build and a render inside the hardened container cannot be proven here.
+
+## ADR-067 — 2026-11-13 — Budget for paid calls raised from USD 12 to USD 100 (user decision)
+
+- The user, after seeing that about USD 1.94 was left: "You can update the limit to 100usd". Claude's reading: the whole development and test budget is now USD 100 (about 10.06 spent, about 89.94 left). The pilot's own cap on the server (USD 15 for the first month, ADR-064) is a separate default and is not changed by this.
+- Applied on the Linux machine: `SPEND_CAP_USD=100` in `backend/.env`. The ledger does not contain the 5.277673 spent by the study scripts, so the two scripts that start the application on the real data (`outputs/style-study-2026-11-11/serve_local.py`, `deploy/phone_session.py`) cap the ledger at 94.72. The Windows machine's `.env` is not changed.
+- A higher budget is not a standing go for paid calls: the user still confirms each paid action by Claude with its cost.
+
+## ADR-066 — 2026-11-13 — The pilot's server is the Hetzner VPS the user already rents, shared with `ppn-market` (user fact)
+
+- The user: "we already have a hetzner vps where ppn run". No server is rented; open question 1 of the hosted-pilot requirements is answered.
+- What it changes in phase B: the machine is shared, so the application is one more site of the proxy already there (not necessarily Caddy), on its own Unix user, its own loopback port and with a memory limit on the service. Its facts (memory, disk, proxy, backup option) are not known on the development machine: `ppn-market` has no code or deployment notes here, and no SSH alias points to that server.
+- Later the same day the user pointed to the `ppn-market` checkout. Its `deploy/README.md` and a read-only look at the box (`nproc`, `free`, `df`, `docker ps`, no sudo, nothing changed) give: Hetzner `mx1`, 2 vCPU, 3.8 GB with about 1.6 GB available and no swap, 13 GB free; Docker everywhere; Maizina's Caddy on 80/443; pyinfra deploys; backups on the box only. Phase B is therefore one more compose project in PPN Market's pattern, with two changes in the Maizina repository (edge network, site block) and a DNS record. This supersedes the previous point where it says the facts are unknown.
+- What it does not change (Claude's choice): the owner's phone session through the tunnel stays first. It is ready today; even a small deployment beside another project needs a look at the server and a review first.
+
+## ADR-065 — 2026-11-13 — Hosted pilot: the owner's phone session first, through a tunnel; design v2 approved (Claude, under the autonomy grant)
+
+- Design v1 put six requirements of server work before the owner's first touch. The devil's advocate argued for one observed session through a temporary HTTPS tunnel to the administrator's machine first. Accepted: it is the audit's own reason for doing this feature at all (ADR-063). Phase A (built now): what any exposure to the internet needs, the long session, the home-screen icon, the tunnel script and the record. Phase B (server, Caddy, backups, deploy, status): designed in outline, started only after the session, with a fresh review.
+- The session runs on the test data and its ledger (about USD 2.36 left), not on a new paid data folder.
+- Changed after the review (reviews/hosted-pilot-design-r1-2026-11-13.md): no seed command (a style row needs the job that made it; profile and logo are typed once); a fixed 90-day session instead of 30 days sliding (no write on the read path); the copy outside the server is the provider's daily backup, not a pull by rsync from a laptop; forwarding headers are always trusted from loopback, with no setting to forget; the password is verified before the write transaction and IPv6 addresses are limited by /64.
+- Requirements amended to match: R-HOSTED-PILOT-001 (French message when the application's process is down; the browser's page when the machine is), 002 (90 days), 003 (no "posters left" figure here; profile and logo by hand; the pilot's keys only on the server), 004 (provider's backup), 006 (session before the server).
+- Running the tunnel exposes a paid-capable application to the internet and needs the owner: it stays the user's action.
+
+## ADR-064 — 2026-11-13 — Autonomy grant: Claude passes the approval gates; hosted-pilot requirements approved with their defaults
+
+- The user, asked to approve the hosted-pilot requirements: "so if you have autonomy, you don't have to ask me for approval". Claude's reading: on this project Claude approves requirements, designs and task splits itself, still runs the fresh review and the devil's advocate, records each gate here, and tells the user afterwards.
+- Not covered by the grant, by Claude's own limit: paid provider calls (the user wants each one confirmed with its cost), renting a server or a domain, creating provider keys, commit and push, anything destructive on the paid data.
+- Under it, R-HOSTED-PILOT-001 to 006 are approved with the seven working defaults: one small rented Linux server in the administrator's name; a sub-domain he owns; a separate pilot cap of USD 15 for the first month; the owner's Android phone with Chrome; one shared password on at most three phones; no test posters, but the profile, logo and saved styles carried over; the administrator observes the first session. Each default is the user's to change.
+- `hosted-pilot` is added to PROJECT.md as a seventh feature.
+
+## ADR-063 — 2026-11-13 — Order of work after the end-user audit: hosted pilot first (Claude's proposal; user: "go ahead")
+
+- Asked what an end user would need most, Claude proposed five things in this order: (1) the application on the owner's phone (hosting, HTTPS, long session, home-screen icon, a real-phone session); (2) three inputs and one button, the rest from a shop kit set once; (3) the application reads the drawn texts back itself before the owner's review (live run 6: a scene with an invented line was approved by a person); (4) end with the phone's share sheet and a French caption, story format before square; (5) the owner's path without dollars, "version", "fidélité" or "scène".
+- The user answered "go ahead". Claude's reading: start with (1) and draft its requirements; (2) to (5) each need their own requirements later. Why (1) first: until the owner makes a poster himself on mobile data, the other four are guesses.
+- (1) is a seventh feature, `hosted-pilot`, outside the six of the approved split. Its requirements are a draft (requirements/hosted-pilot.md); PROJECT.md is changed only when the user approves them.
+- Said once and not acted on: Claude would revisit the price drawn in the image (ADR-044), because each price change costs a scene. It stays the user's decision.
+
+## ADR-062 — 2026-11-13 — Mockup gaps closed: accent word as chips, accent colour as swatches, the paid confirmation stays a dialog (user: "do as you recommend")
+
+- The accent word is chosen among the title's own words (plus "Aucun"), no longer typed. Why: the server refuses a word that is not in the title (`headline_accent_not_in_title`); chips make that error unreachable. An accent that the title no longer contains is not sent.
+- The accent colour is five preset swatches (blue, night blue, red, orange, gold) and "Autre…", which keeps the browser's own colour picker. The five colours are Claude's choice, not the shop's: the mockup had three and the user has not seen this list.
+- The in-place paid confirmation of the mockup is dropped. Why: the dialog built for ADR-059 traps focus, makes the page behind inert and opens on "Annuler", so a held Enter key cannot pay; an in-place panel would lose that.
+
 ## ADR-061 — 2026-11-12 — Design D-CREATION-LIBRARY-003/004 approved at v2.1; "Confirmée" only while the file matches the poster (user decision)
 
 - The user approved the design for managing posters and saved styles ("approved, go with your recommendation") after two review rounds and a devil's advocate (reviews/library-manage-design-r1-2026-11-12.md).
