@@ -35,7 +35,7 @@ Affiche IA helps Original Phone Mada turn a product photo, verified information 
 | Asset storage | Existing content-addressed local files | Immutable originals/scenes/textures/exports, with database ownership. |
 | Infra / deploy | Not selected | Define hosting, access protection, logging, backups and budget before deployment. |
 
-The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. The independent Git repository is on `main`, with ten commits and no remotes as of 2026-11-09. The installed backend and verified CLI commands are documented in AGENTS.md. The authenticated API and Vue editor exist; deployment remains unconfigured.
+The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. The independent Git repository is on `main`; since 2026-11-13 it has the remote `origin`, the private GitHub repository `MiorantsoaRak/poster-gen`. The installed backend and verified CLI commands are documented in AGENTS.md. The authenticated API and Vue editor exist; deployment remains unconfigured.
 
 ## Constraints
 
