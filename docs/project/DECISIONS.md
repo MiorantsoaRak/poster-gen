@@ -1,5 +1,18 @@
 # DECISIONS
 
+## ADR-073 — 2026-11-13 — The owner's accent colour wins over a style's; glass stays restrained; the progress line says « Préparation » (Claude's picks, asked by the user: "What would be the direction you would pick", then "go")
+
+- Accent colour: a style used to replace the colour picked two steps earlier and say so afterwards. Now a colour the owner picked himself stays when he chooses a style, and the style's colour is proposed with one button (« Utiliser la couleur du style »). When he never touched the colour, the style's applies as before. Because: an explicit choice is not overridden by a default.
+- Glass: kept on floating chrome only (ADR-072). If the screens feel flat, add depth with the poster's shadow and the stage's contrast, not with blur on panels.
+- Progress line: « Préparation → Génération → Fidélité → Téléchargement » names the poster's phases; « Étape n sur 4 » names what is being filled in. The earlier « Textes et style » made two step counters.
+
+## ADR-072 — 2026-11-13 — Editor in steps and tabs, removal from the poster, glass on floating chrome only (user request; requirements and design passed by Claude under the autonomy grant)
+
+- The user: "Run another improvement review … run another autonomous edit and search and test locally first. You can explore glassmorphism, or another styles. And you can make the image generation with multiple step with less control, instead of all control in one view, that will confuse user. Group similar control in the same panel, and add a possibility to remove a comp from an affiche view."
+- R-POSTER-EDITOR-004 to 006 and D-POSTER-EDITOR-004 are written and approved by Claude. Deviation from the usual gate, on purpose: no design review before building. The user steers by looking and asked for a local result; the built editor gets a fresh review, and nothing is committed or deployed before he has seen it.
+- Glass is limited to what floats (header, phone action bar, dialogs, notices). Why not everywhere: the owner's phone is a low-end Android, blur is costly there, and text over a changing backdrop cannot be held at 4.5:1. The poster stays the hero.
+- "Remove" means leaving an element off the poster with undo, never erasing pixels of a generated image; title and price stay, because a poster always states the product and its price.
+
 ## ADR-071 — 2026-11-13 — Every refusal the owner can cause has its own sentence; a test reads the source to keep it so (Claude, after the user's remark on the hidden box)
 
 - Context: the first poster on the live pilot failed on a box hidden in a closed section, with "Vérifiez les informations saisies.". Three audits had missed it. A scripted audit found 39 refusal codes of 75 without a sentence, and rules on the drawn title that no screen stated.

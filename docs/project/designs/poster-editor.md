@@ -111,3 +111,34 @@ The same shared renderer implements texture-filled glyphs in browser and server:
 [Konva Vue bindings](https://konvajs.org/docs/vue/index.html), [application-state persistence](https://konvajs.org/docs/vue/Save-Load.html), [text editing](https://konvajs.org/docs/sandbox/Editable_Text.html) and [export](https://konvajs.org/docs/data_and_serialization/High-Quality-Export.html) support this proposed approach; [Fabric concepts](https://www.fabricjs.com/docs/core-concepts/) informed the alternative. Versions/licences must be pinned and the shared-component texture path proven in the first approved implementation slice.
 
 Verification: pure document/schema/price/layout tests; manual/prompt changes with undo; stale/malicious patches; texture mask pixel isolation and no image call on manual edits; all eight identity combinations; French accents; long content; two-tab conflict; new scene preserving text; physical phone touch/keyboard; server preview equality. No such UI or effect-rendering spike has been implemented in this design session.
+
+## D-POSTER-EDITOR-004 — Steps, tabs, removal and the glass chrome (covers R-POSTER-EDITOR-004, 005, 006)
+
+**Status:** Approved on 2026-11-13 by Claude under the autonomy grant (ADR-072). No design review before building: the result is reviewed by a fresh reviewer and shown to the user on a local server before any deploy (he steers by looking).
+
+**Approach:** the editor's rail stops being three stacked cards. One reactive value names the visible group (`textes`, `boutique`, `style`, `reglages`). While the poster has no version, the groups are steps with "Retour" and "Continuer" and the main action only on the last; once a version exists they are tabs and the main action is what it is today (review, final preview). Nothing changes on the server and nothing in the saved document: this is the editor's presentation only.
+
+**Data model changes:** none. **API:** none.
+
+**State:** `group` (the visible one), `visited` (steps already opened, for the indicator). Not persisted and not in the address: a reload returns to the first step of an unversioned poster, or to "Textes" of a versioned one. Field values live where they do today, so moving between groups loses nothing.
+
+**Moves between groups:** the accent colour joins the accent word in "Textes"; "what the image draws" is split by subject (title and price in "Textes", contact and seal in "Boutique"); typography, position and the text instruction form "Réglages". No setting is removed.
+
+**Blocked actions:** each reason knows its group (`whyNoHeadline` → `textes`, the contact reasons → `boutique`); the reason line carries a button that opens it. A refusal with `field` does the same (`offer.title` → `textes`, `contact` → `boutique`).
+
+**Removal:** uses what exists: `include.logo`, `include.shop_name`, `include.contact` and the layer's `visible`, through the same `edit()` that feeds undo and autosave. A selected title or price shows why it stays. For an element drawn in the current image, the action sets the option for the next version and says so; the image is never edited.
+
+**Glass:** two tokens per theme for a translucent surface and its border; `backdrop-filter` inside `@supports`, switched off under `prefers-reduced-transparency` and with a solid fallback colour first. Applied to the header, the phone's action bar, dialogs, sheets and notices only.
+
+**Failure modes & handling:**
+
+| Failure | Detection | Behaviour |
+|---|---|---|
+| A needed control ends up in a group that is not visible | Smoke: the walk on empty data never ticks or opens anything a first-time user would not | The reason opens the group; a test asserts it for the small photo and for a title with a quote |
+| Blur is slow on a low-end phone | Seen in the phone session | Blur only on small fixed surfaces; one CSS switch turns it off |
+| Text over a translucent surface loses contrast when content scrolls under it | Contrast check of the smoke; the surfaces' opacity is high enough that the worst case (lightest and darkest content under) still passes | Raise the opacity; the fallback is solid |
+| The smoke's selectors move with the layout and a check is dropped by mistake | The count of assertions in the smoke does not go down; every removed line is listed in the review | — |
+
+**Edge cases:** a reopened poster with versions opens on tabs, never on steps. A poster whose only version was rejected is in steps again (it has no usable version) but keeps its values. Keyboard: steps and tabs are buttons in a `tablist`; arrow keys move between tabs.
+
+**Tests:** the browser smoke walks a new poster through the three steps on empty data without touching anything outside the visible step, checks the tabs after the first version, removes the logo from the poster and undoes it, checks that the title offers no removal, and keeps its contrast check on every screen in both themes. Vitest stays as it is (no logic moved out of the component).

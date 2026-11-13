@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(public code: string, message: string, public status: number, public currentRevision?: number) { super(message) }
+  constructor(public code: string, message: string, public status: number, public currentRevision?: number, public field?: string) { super(message) }
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -9,7 +9,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   let data: any
   try { data = await response.json() }
   catch { throw new ApiError('invalid_response', 'Réponse du serveur illisible. Réessayez.', response.status) }
-  if (!response.ok) throw new ApiError(data.error?.code ?? 'server_error', data.error?.message_fr ?? 'La demande a échoué.', response.status, data.error?.current_revision)
+  if (!response.ok) throw new ApiError(data.error?.code ?? 'server_error', data.error?.message_fr ?? 'La demande a échoué.', response.status, data.error?.current_revision, data.error?.field)
   return data as T
 }
 

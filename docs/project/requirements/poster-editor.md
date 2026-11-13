@@ -7,6 +7,9 @@
 | R-POSTER-EDITOR-001 | A complete, editable first draft | P0 | Approved |
 | R-POSTER-EDITOR-002 | Polish and confirm a version | P0 | Approved |
 | R-POSTER-EDITOR-003 | Manual and prompted text/effect editing | P0 | Approved |
+| R-POSTER-EDITOR-004 | Guided creation in steps, one group of controls at a time | P0 | Approved 2026-11-13 (ADR-072) |
+| R-POSTER-EDITOR-005 | Remove an element from the poster | P1 | Approved 2026-11-13 (ADR-072) |
+| R-POSTER-EDITOR-006 | Visual language: the poster first, glass only on floating chrome | P2 | Approved 2026-11-13 (ADR-072) |
 
 ## R-POSTER-EDITOR-001 — A complete, editable first draft
 
@@ -56,3 +59,53 @@ Acceptance criteria:
 - [ ] Final confirmation/export includes the exact selected text/effect state. A later manual or prompted edit requires a new confirmation; prior confirmed PNGs remain unchanged.
 
 Out of scope for this version: text engraved into physical scene surfaces; guaranteed exact typography from model-generated raster glyphs; automatic whole-poster polishing.
+
+## R-POSTER-EDITOR-004 — Guided creation in steps, one group of controls at a time
+
+**Status:** Approved on 2026-11-13 by Claude under the user's autonomy grant (ADR-072). From the user's request of that day: "make the image generation with multiple step with less control, instead of all control in one view, that will confuse user. Group similar control in the same panel".
+
+As the owner, I am taken through a new poster one small step at a time, and I never face every control at once.
+
+Acceptance criteria:
+
+- [ ] Before a poster has its first version, the editor shows one step at a time, in this order: "Textes", "Boutique", "Style". (The product step, photo, name and price, is the existing first screen.) Each step shows only its own controls, a "Continuer" and a "Retour" action, and where the owner is ("Étape 2 sur 4").
+- [ ] The owner can go straight through: with nothing changed in a step, "Continuer" works, and the last step's main action is "Générer l’affiche" with its paid confirmation, as today.
+- [ ] A step that was visited can be reopened from the step indicator. Nothing typed in a step is lost by moving between steps.
+- [ ] After the first version exists, the same groups are tabs beside the poster, one visible at a time, plus "Réglages" for fine adjustments. The poster and the main action stay visible.
+- [ ] Controls of a kind live together and nowhere else: "Textes" holds title, price, brand, subtitle, the coloured word **and its colour**, and what the image draws of them; "Boutique" holds logo, shop name, contact, its position, the round seal and the drawn contact; "Style" holds the styles, "create a style from a poster" and the ambiance; "Réglages" holds the typography of the selected text, its position and size, and the text instruction.
+- [ ] No control that an action needs is inside a closed section (T-UX-HIDDEN-RULES). WHEN the main action is blocked THEN its reason is shown beside it and, when the control that unblocks it is in another step or tab, the reason opens that step or tab.
+- [ ] On a phone (360 px wide) a step fits without horizontal scrolling, the main action stays reachable at the bottom, and the poster can be looked at from any step.
+- [ ] Error case: WHEN a refusal names a field THEN the step or tab that holds the field is opened and the message is shown there.
+- [ ] Every rule that exists today still holds: the paid confirmation, the small-photo agreement, the reasons for a title that cannot be drawn, the fidelity review, the stale-text notices, autosave and its recovery.
+
+Out of scope: changing the first screen (photo, name, price); removing any existing setting; a different order of the server's steps; the "three inputs and one button" shop kit (later requirement).
+
+## R-POSTER-EDITOR-005 — Remove an element from the poster
+
+**Status:** Approved on 2026-11-13 (ADR-072). From the user's request: "add a possibility to remove a comp from an affiche view".
+
+As the owner, I select something on the poster and take it off, without looking for its checkbox.
+
+Acceptance criteria:
+
+- [ ] WHEN the logo, the shop name or the contact is selected on the poster (tap, click or keyboard) THEN an action "Retirer de l’affiche" is shown next to the poster. It removes the element at once, the change is saved like any edit, and "Annuler" brings it back.
+- [ ] A removed element can be put back from the "Boutique" group; its box there reflects what the poster shows.
+- [ ] The title and the price cannot be removed: a poster always states the product and its price. WHEN one of them is selected THEN the action is not offered and a short line says why.
+- [ ] WHEN the selected element is drawn inside the image of the current version (drawn contact, logo on its disc) THEN the poster says that this version's image contains it, and offers to leave it out of the **next** version instead; nothing is erased from the image.
+- [ ] Error case: WHEN the change cannot be saved THEN the existing save-recovery applies and the element is not silently lost or kept.
+
+Out of scope: deleting versions; erasing part of a generated image; removing the product.
+
+## R-POSTER-EDITOR-006 — Visual language: the poster first, glass only on floating chrome
+
+**Status:** Approved on 2026-11-13 (ADR-072). From the user's request: "You can explore glassmorphism, or another styles."
+
+Acceptance criteria:
+
+- [ ] The poster is the brightest and largest thing on the editing screen; panels are quiet.
+- [ ] Translucent, blurred surfaces are used only on what floats above content: the header, the fixed action bar on a phone, dialogs and sheets, notices. Content panels and fields keep solid surfaces. WHERE the browser cannot blur, or the person asked for less transparency or less motion, THEN the same surfaces are solid.
+- [ ] Every text keeps a contrast of 4.5:1 or more in both themes (3:1 from 24 px), measured by the browser smoke on the screens it visits.
+- [ ] Touch targets are at least 44 px on touch screens; focus is always visible; no layout jump when a step or tab changes.
+- [ ] No new dependency and no image or font downloaded from another site.
+
+Out of scope: a new brand, illustration or logo; the look of the posters themselves.

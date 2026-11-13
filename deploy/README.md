@@ -236,12 +236,12 @@ backup that the release took just before starting.
 
 ## Not proven yet (2026-11-13, after the first deploy)
 
-- **Memory during a real render and a real generation** (step 5): nobody has made a poster on the box yet.
+- **Memory during a final render** (step 5). About four scenes were generated on the box on 2026-11-13 (ledger USD 0.82) without a restart or an out-of-memory kill, 263 MiB at rest afterwards; a generation does not start Chromium, the final preview does, and nobody watched one yet.
 - **The restore** (step 8), on the box or on a development machine. The backup and a restore are tested on
   temporary data only (`backend/tests/test_backup.py`).
 - **Backups off the box:** not decided. Everything is on `mx1` only.
 - **The owner's phone** (step 9), and the home-screen icon on a real phone.
-- **A second release:** the stop, backup and start of an existing container, and a rollback, have never run.
+- **A rollback** has never run. (The second release ran on 2026-11-13 at 15:53 UTC: old container stopped, backup with the new image, new container healthy 9 seconds later, second backup; the poster, the profile, the ledger and both sessions were kept.)
 - Disk: 7.9 GB free after the first build (13 GB before). The deploy needs 5 GB; watch it before each release.
 
 Proven on 2026-11-13: the image builds on the box; the hardened container starts and stays healthy; Chromium

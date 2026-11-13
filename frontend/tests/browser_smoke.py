@@ -115,6 +115,14 @@ def check_contrast(page, where):
     assert not failures, f"contrast on {where}:\n" + "\n".join(failures)
 
 
+def shot(page, name, full_page=True):
+    # A picture for a person to judge: from the top of the page, and not in the middle of a colour transition.
+    if full_page:
+        page.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+    page.wait_for_function("document.getAnimations().length === 0")
+    page.screenshot(path=str(OUTPUT / name), full_page=full_page)
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
@@ -169,6 +177,15 @@ def run():
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
                         check_contrast(page, "intake")
                         page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
+                        # Glass is for what floats (here the header), never for a content panel; it is solid for a person
+                        # who asked for less motion (R-POSTER-EDITOR-006).
+                        blur = "selector => getComputedStyle(document.querySelector(selector)).backdropFilter"
+                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") == "none"
+                        page.emulate_media(reduced_motion="reduce")
+                        assert page.evaluate(blur, ".app-header") == "none"
+                        assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
+                        check_contrast(page, "intake, solid chrome")
+                        page.emulate_media(reduced_motion="no-preference")
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i")
@@ -202,16 +219,73 @@ def run():
                         until(lambda: footer("contact").get("icon") == "phone")
                         compact = footer("contact")
                         assert (compact["font_size"], compact["weight"], compact["height"], compact["align"]) == (32, 700, 48, "center"), compact
-                        assert page.get_by_label("Dessiner aussi le nom de la boutique et le contact dans l’image").count() == 0
-                        page.get_by_label("Position du contact").select_option("right")
-                        until(lambda: footer("contact")["align"] == "right")
-                        assert json.loads(page.evaluate("localStorage.getItem('affiche.style')"))["contact_align"] == "right"
+                        # A new poster is walked one step at a time (R-POSTER-EDITOR-004): « Textes », « Boutique », « Style ».
+                        # Each step shows its own controls only; the main action waits on the last one.
+                        def tab(name):
+                            return page.get_by_role("tab", name=name, exact=True)
+                        def open_group(name):
+                            tab(name).click()
+                            expect(tab(name)).to_have_attribute("aria-selected", "true")
+                        step_count = page.locator(".step-count")
+                        proceed = page.get_by_role("button", name="Continuer", exact=True)
+                        generate = page.get_by_role("button", name="Générer l’affiche")
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(page.get_by_role("tab")).to_have_count(3)
+                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
+                        expect(tab("Boutique")).to_be_disabled()
+                        expect(tab("Style")).to_be_disabled()
+                        expect(generate).to_have_count(0)
+                        expect(page.get_by_role("button", name="Retour", exact=True)).to_have_count(0)
+                        expect(page.get_by_label("Position du contact")).to_have_count(0)
+                        expect(page.locator(".look-grid")).to_have_count(0)
                         # The coach line and the reasons under blocked buttons tell a new owner what to do.
                         expect(page.locator(".coach")).to_contain_text("choisissez un style")
                         # Several versions are possible and announced before the first one exists.
                         expect(page.get_by_role("heading", name="Versions 0 sur 12")).to_be_visible()
                         expect(page.get_by_text("Vous choisirez celle à exporter.", exact=False)).to_be_visible()
                         assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
+                        check_contrast(page, "step Textes")
+                        shot(page, "step-textes.png")
+                        # "Brand as plain text" is offered only once a brand is typed.
+                        plain_brand = page.get_by_label("Écrire la marque en texte simple", exact=False)
+                        page.get_by_label("Marque (facultative)").fill("")
+                        expect(plain_brand).to_have_count(0)
+                        page.get_by_label("Marque (facultative)").fill("JBL")
+                        expect(plain_brand).to_be_visible()
+                        page.get_by_label("Marque (facultative)").fill("")
+                        # The accent is chosen among the title's own words and a few colours, never typed; the colour
+                        # sits with the word it colours.
+                        chips = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
+                        expect(chips.last).to_have_text("Aucun")
+                        expect(chips.last).to_have_attribute("aria-pressed", "true")
+                        accent = chips.first.inner_text()
+                        chips.first.click()
+                        expect(chips.first).to_have_attribute("aria-pressed", "true")
+                        page.get_by_role("button", name="Rouge", exact=True).click()
+                        proceed.click()
+                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
+                        expect(page.get_by_role("button", name="Retour", exact=True)).to_be_visible()
+                        expect(generate).to_have_count(0)
+                        expect(page.get_by_label("Titre", exact=True)).to_have_count(0)
+                        assert page.get_by_label("Dessiner aussi le nom de la boutique et le contact dans l’image").count() == 0
+                        page.get_by_label("Position du contact").select_option("right")
+                        until(lambda: footer("contact")["align"] == "right")
+                        assert json.loads(page.evaluate("localStorage.getItem('affiche.style')"))["contact_align"] == "right"
+                        # By default the contact is drawn in the composition, at the chosen position, without the
+                        # shop name (ADR-055). The option is in view: no section has to be opened to find it.
+                        expect(page.get_by_text("Ce que l’IA dessine dans l’image", exact=True)).to_be_visible()
+                        expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
+                        check_contrast(page, "step Boutique")
+                        shot(page, "step-boutique.png")
+                        proceed.click()
+                        expect(step_count).to_have_text("Étape 4 sur 4")
+                        expect(tab("Style")).to_have_attribute("aria-selected", "true")
+                        expect(proceed).to_have_count(0)
+                        expect(generate).to_be_enabled()
+                        expect(page.get_by_label("Position du contact")).to_have_count(0)
+                        check_contrast(page, "step Style")
+                        shot(page, "step-style.png")
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
                         page.get_by_text("Créer un style depuis une affiche", exact=True).click()
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_be_visible()
@@ -223,11 +297,15 @@ def run():
                         # A paid action is confirmed first, with its cost; cancelling does nothing.
                         expect(page.get_by_role("dialog")).to_contain_text("Créer un style depuis cette affiche ?")
                         expect(page.get_by_role("dialog")).to_contain_text("aucune dépense")
+                        check_contrast(page, "paid confirmation")
+                        shot(page, "confirm.png", full_page=False)
                         page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
                         assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
                         page.get_by_role("button", name="Enregistrer ce style").click()
                         page.get_by_role("button", name="Créer le style").click()
                         expect(page.get_by_text("Style « Vagues bleues » enregistré", exact=False)).to_be_visible(timeout=15000)
+                        check_contrast(page, "notice")
+                        shot(page, "notice.png", full_page=False)
                         expect(page.get_by_role("button", name="Vagues bleues")).to_have_attribute("aria-pressed", "true")
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("vagues translucides"))
                         looks = page.request.get(f"{ORIGIN}/api/looks").json()["items"]
@@ -236,25 +314,22 @@ def run():
                         page.get_by_role("button", name="Luxe sombre").click()
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("Fond noir charbon"))
                         page.screenshot(path=str(OUTPUT / "studio-start.png"), full_page=True)
-                        # "Brand as plain text" is offered only once a brand is typed.
-                        plain_brand = page.get_by_label("Écrire la marque en texte simple", exact=False)
-                        page.get_by_label("Marque (facultative)").fill("")
-                        expect(plain_brand).to_have_count(0)
-                        page.get_by_label("Marque (facultative)").fill("JBL")
-                        expect(plain_brand).to_be_visible()
-                        page.get_by_label("Marque (facultative)").fill("")
-                        page.get_by_text("Ce que l’IA dessine dans l’image", exact=True).click()
-                        # By default the contact is drawn in the composition, at the chosen position, without the
-                        # shop name (ADR-055). The request is caught here and refused, so no scene is made by it.
-                        expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
-                        # The accent is chosen among the title's own words and a few colours, never typed.
-                        chips = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
-                        expect(chips.last).to_have_text("Aucun")
-                        expect(chips.last).to_have_attribute("aria-pressed", "true")
-                        accent = chips.first.inner_text()
-                        chips.first.click()
-                        expect(chips.first).to_have_attribute("aria-pressed", "true")
+                        # This style has its own accent colour, but the owner picked red two steps earlier: his colour stays,
+                        # and the style's is proposed, one tap away (ADR-073). Taking it and picking red again both work.
+                        proposal = page.get_by_text("Ce style propose sa couleur d’accent ; la vôtre est conservée.", exact=False)
+                        expect(proposal).to_be_visible()
+                        tab("Textes").click()
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(page.get_by_role("button", name="Rouge", exact=True)).to_have_attribute("aria-pressed", "true")
+                        tab("Style").click()
+                        page.get_by_role("button", name="Utiliser la couleur du style").click()
+                        expect(proposal).to_have_count(0)
+                        tab("Textes").click()
+                        expect(page.get_by_role("button", name="Or", exact=True)).to_have_attribute("aria-pressed", "true")
                         page.get_by_role("button", name="Rouge", exact=True).click()
+                        tab("Style").click()
+                        expect(proposal).to_have_count(0)
+                        # The request is caught here and refused, so no scene is made by it.
                         asked = []
                         def catch_scene(route):
                             asked.append(route.request.post_data_json)
@@ -268,7 +343,27 @@ def run():
                         assert "brand_text" not in asked[0]["headline"], asked
                         assert asked[0]["headline"]["accent_word"] == accent and asked[0]["headline"]["accent_colour"] == "#D92B2B", asked
                         expect(page.get_by_role("alert")).to_be_visible()
+                        # A refusal that names a field opens the step holding that field and is written there.
+                        def refuse_contact(route):
+                            route.fulfill(status=422, content_type="application/json", body=json.dumps({"error": {
+                                "code": "contact_unsupported", "field": "contact", "retryable": False,
+                                "message_fr": "Le contact est trop long ou contient un guillemet : l’IA ne peut pas le dessiner."}}))
+                        page.route("**/api/creations/*/scenes", refuse_contact)
+                        generate.click()
+                        page.get_by_role("button", name="Lancer la génération").click()
+                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(page.locator(".panel .refusal")).to_contain_text("Le contact est trop long")
+                        shot(page, "refus.png")
+                        expect(page.locator(".message.error")).to_have_count(0)
+                        page.unroute("**/api/creations/*/scenes", refuse_contact)
+                        # A visited step is reopened from the indicator, and what was chosen there is still chosen.
+                        tab("Textes").click()
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(chips.first).to_have_attribute("aria-pressed", "true")
+                        expect(page.get_by_role("button", name="Rouge", exact=True)).to_have_attribute("aria-pressed", "true")
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
+                        tab("Style").click()
+                        expect(page.get_by_role("button", name="Luxe sombre")).to_have_attribute("aria-pressed", "true")
                         # One tap: the plan is made on the way and reused by the retry below.
                         # Lose the first paid-action response after the server accepted it; retry must reuse its key.
                         def lose_response(route):
@@ -291,18 +386,58 @@ def run():
                         expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
                         page.get_by_role("button", name="Tout est conforme, approuver").click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        # With a version, the same groups are tabs beside the poster, plus « Réglages »; no step is left.
+                        expect(page.get_by_role("tab")).to_have_count(4)
+                        expect(step_count).to_have_count(0)
+                        expect(proceed).to_have_count(0)
+                        expect(tab("Réglages")).to_be_enabled()
+                        expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_visible()
+                        # The arrow keys move between the tabs.
+                        tab("Style").focus()
+                        page.keyboard.press("ArrowRight")
+                        expect(tab("Réglages")).to_have_attribute("aria-selected", "true")
+                        expect(tab("Réglages")).to_be_focused()
+                        page.keyboard.press("ArrowRight")
+                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
                         # The position survived the scene request, and a logo ticked now stays clear of the contact.
                         assert footer("contact")["align"] == "right" and footer("contact")["visible"]
+                        open_group("Boutique")
                         page.get_by_role("checkbox", name="Logo", exact=True).check()
                         until(lambda: footer("logo") and footer("logo")["visible"])
                         logo, beside = footer("logo"), footer("contact")
                         assert logo["x"] == 54 and beside["x"] >= logo["x"] + logo["width"] + 20 and beside["x"] + beside["width"] <= 1026.5, (logo, beside)
                         assert abs(logo["y"] + logo["height"] - beside["y"] - beside["height"]) < 1, (logo, beside)
+                        # « Retirer de l’affiche » (R-POSTER-EDITOR-005): the logo is selected on the poster itself and
+                        # taken off; its box in « Boutique » follows, and « Annuler » brings it back.
+                        canvas = page.locator(".poster-canvas canvas").first.bounding_box()
+                        ratio = canvas["width"] / 1080
+                        page.mouse.click(canvas["x"] + (logo["x"] + logo["width"] / 2) * ratio, canvas["y"] + (logo["y"] + logo["height"] / 2) * ratio)
+                        remove = page.get_by_role("button", name="Retirer de l’affiche", exact=True)
+                        expect(remove).to_be_visible()
+                        shot(page, "retirer.png")
+                        remove.click()
+                        until(lambda: not footer("logo")["visible"])
+                        expect(page.get_by_role("checkbox", name="Logo", exact=True)).not_to_be_checked()
+                        expect(page.get_by_text("Logo retiré de l’affiche.", exact=False)).to_be_visible()
+                        expect(remove).to_have_count(0)
+                        page.get_by_role("button", name="Annuler", exact=True).click()
+                        until(lambda: footer("logo")["visible"])
+                        expect(page.get_by_role("checkbox", name="Logo", exact=True)).to_be_checked()
+                        expect(remove).to_be_visible()
+                        # The title and the price stay: no removal is offered, and a line says why.
+                        elements = page.get_by_role("group", name="Éléments de l’affiche")
+                        elements.get_by_role("button", name="Titre", exact=True).click()
+                        expect(remove).to_have_count(0)
+                        expect(page.get_by_text("Le titre ne se retire pas : une affiche annonce toujours le produit et son prix.")).to_be_visible()
+                        elements.get_by_role("button", name="Prix", exact=True).click()
+                        expect(remove).to_have_count(0)
+                        expect(page.get_by_text("Le prix ne se retire pas", exact=False)).to_be_visible()
                         page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
                         until(lambda: footer("contact")["x"] == 54 and footer("contact")["width"] == 972)
                         jobs = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}/jobs").json()["items"]
                         assert len([job for job in jobs if job["kind"] == "scene"]) == 1
                         scene_before = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["formats"]["feed"]["scene"]
+                        open_group("Textes")
                         page.get_by_label("Prix en ariary", exact=True).fill("95 000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.get_by_role("button", name="Annuler", exact=True).click()
@@ -328,6 +463,20 @@ def run():
                         assert moved["document"]["formats"]["feed"]["layers"][0]["x"] == saved["document"]["formats"]["feed"]["layers"][0]["x"] + 1
                         page.evaluate("scrollTo(0, 0)")
                         page.screenshot(path=str(OUTPUT / "desktop.png"), full_page=True)
+                        # Each tab holds its own kind of control, and the poster with its main action stays in view.
+                        for name, held in (("Boutique", page.get_by_label("Position du contact")), ("Style", page.locator(".look-grid")),
+                                           ("Réglages", page.get_by_label("Police", exact=True)), ("Textes", page.get_by_label("Titre", exact=True))):
+                            open_group(name)
+                            expect(held).to_be_visible()
+                            expect(page.get_by_role("tabpanel")).to_have_count(1)
+                            expect(page.locator(".poster-canvas canvas").first).to_be_in_viewport()
+                            expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_in_viewport()
+                            check_contrast(page, f"tab {name}")
+                            shot(page, f"tab-{name.lower().replace('é', 'e')}.png")
+                        page.get_by_role("button", name="Passer au thème clair").click()
+                        check_contrast(page, "editor, light theme")
+                        shot(page, "desktop-clair.png")
+                        page.get_by_role("button", name="Passer au thème sombre").click()
                         page.set_viewport_size({"width": 390, "height": 844})
                         expect(page.get_by_label("Titre", exact=True)).to_be_visible()
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
@@ -335,6 +484,7 @@ def run():
                         check_contrast(page, "editor at phone width")
                         page.get_by_role("button", name="Passer au thème clair").click()
                         check_contrast(page, "editor at phone width, light theme")
+                        shot(page, "mobile-clair.png")
                         page.get_by_role("button", name="Passer au thème sombre").click()
                         # A second tab changes the saved version. Local work must remain available for a copy.
                         creation_id = page.url.split("#")[1]
@@ -350,10 +500,11 @@ def run():
                         expect(page.get_by_text("Vos modifications ont été conservées dans une copie.")).to_be_visible()
                         assert page.url.split("#")[1] != creation_id
                         expect(page.get_by_label("Titre", exact=True)).to_have_value("Mon titre conservé")
-                        # Layer-level editing lives under "Réglages avancés" in the third step.
-                        page.get_by_text("Réglages avancés", exact=True).click()
+                        # Layer-level editing lives in the « Réglages » tab; the instruction is in view there, in no closed section.
+                        open_group("Réglages")
                         # The stub proposal is explicitly labelled as a simulation and needs an apply decision.
-                        page.get_by_text("Ajuster ce texte avec une consigne", exact=True).click()
+                        expect(page.get_by_text("Ajuster ce texte avec une consigne", exact=True)).to_be_visible()
+                        expect(page.get_by_text("Écrivez d’abord votre consigne ci-dessus.")).to_be_visible()
                         page.get_by_label("Votre consigne").fill("Une couleur dorée")
                         before_polish = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
@@ -391,7 +542,7 @@ def run():
                         undone = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert undone["document"] == expected
                         # Reference typography is a manual single-layer edit, saved and undoable without generation.
-                        page.get_by_role("button", name="Prix", exact=True).click()
+                        page.get_by_role("group", name="Élément à régler").get_by_role("button", name="Prix", exact=True).click()
                         # The chosen look already dressed the price as its dark pill, at half the canvas width.
                         auto_pill = next(layer for layer in expected["formats"]["feed"]["layers"] if layer["role"] == "price")
                         assert auto_pill["price_badge"] == {"fill": "#111114", "border_start": "#C8A45A", "border_end": "#C8A45A"}
@@ -426,8 +577,8 @@ def run():
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
                         expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
-                        page.get_by_text("Réglages avancés", exact=True).click()
-                        page.get_by_role("button", name="Prix", exact=True).click()
+                        open_group("Réglages")
+                        page.get_by_role("group", name="Élément à régler").get_by_role("button", name="Prix", exact=True).click()
                         expect(page.get_by_label("Police", exact=True)).to_have_value("montserrat-black-italic")
                         expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
@@ -445,6 +596,12 @@ def run():
                         page.set_viewport_size({"width": 1440, "height": 1050})
                         page.screenshot(path=str(OUTPUT / "final.png"))
                         page.set_viewport_size({"width": 390, "height": 844})
+                        # A refusal while this panel is open is written above it, not in the groups that are inert behind it.
+                        page.route("**/api/creations/*/confirmations", lambda route: route.fulfill(status=409, content_type="application/json", body='{"error":{"code":"price_stale","message_fr":"Le prix dessiné dans l’image ne correspond plus au prix de l’affiche.","retryable":false}}'))
+                        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
+                        expect(page.locator(".message.error")).to_contain_text("ne correspond plus au prix")
+                        expect(page.locator(".message.error")).to_be_in_viewport()
+                        page.unroute("**/api/creations/*/confirmations")
                         page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
                         link = page.get_by_role("link", name="Télécharger le PNG confirmé")
                         expect(link).to_be_visible()
@@ -454,6 +611,7 @@ def run():
                         (OUTPUT / "confirmed-stub-poster.png").write_bytes(preview_bytes)
                         # The page behind an open panel is inert: close it, change the price, and reopen by reloading.
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        open_group("Textes")
                         page.get_by_label("Prix en ariary", exact=True).fill("91 000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
@@ -522,12 +680,58 @@ def run():
                         expect(page.get_by_role("checkbox", name="Nom de la boutique", exact=True)).not_to_be_checked()
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i sceau", exact=True)).to_be_visible()
+                        # This poster goes straight through the steps on its defaults: nothing is ticked, opened or filled.
+                        # On a phone (360 px) a step fits the width, « Continuer » stays at the bottom of the screen, and
+                        # the poster opens in front of the step and gives the step back as it was.
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        page.set_viewport_size({"width": 360, "height": 740})
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                        expect(proceed).to_be_in_viewport()
+                        expect(page.get_by_label("Titre", exact=True)).to_be_in_viewport()
+                        check_contrast(page, "step Textes at phone width")
+                        shot(page, "step-textes-mobile.png", full_page=False)
+                        proceed.click()
+                        expect(step_count).to_have_text("Étape 3 sur 4")
                         seal_option = page.get_by_label("Logo en sceau rond dans l’image")
                         expect(seal_option).to_be_checked()
                         expect(page.get_by_label("Position du contact")).to_be_disabled()
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                        shot(page, "step-boutique-mobile.png", full_page=False)
+                        page.get_by_role("button", name="Voir l’affiche", exact=True).click()
+                        sheet = page.get_by_role("dialog", name="Affiche")
+                        expect(sheet).to_be_visible()
+                        expect(sheet.locator(".poster-canvas canvas").first).to_be_in_viewport()
+                        page.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().width > 250")
+                        check_contrast(page, "poster opened over a step")
+                        shot(page, "step-affiche-mobile.png", full_page=False)
+                        sheet.get_by_role("button", name="Revenir à l’étape").click()
+                        expect(page.get_by_role("dialog")).to_have_count(0)
+                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(seal_option).to_be_checked()
+                        # From the poster sheet, taking the contact off and following the link back: the sheet closes and the
+                        # « Boutique » step shows the unticked box (the link used to change the group behind the sheet only).
+                        page.get_by_role("button", name="Voir l’affiche", exact=True).click()
+                        sheet.get_by_role("group", name="Éléments de l’affiche").get_by_role("button", name="Contact").click()
+                        sheet.get_by_role("button", name="Retirer de l’affiche").click()
+                        sheet.get_by_role("button", name="Le remettre depuis « Boutique »").click()
+                        expect(page.get_by_role("dialog")).to_have_count(0)
+                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(page.get_by_role("checkbox", name="Contact", exact=True)).not_to_be_checked()
+                        page.get_by_role("checkbox", name="Contact", exact=True).check()
+                        expect(seal_option).to_be_checked()
+                        page.get_by_role("button", name="Passer au thème clair").click()
+                        check_contrast(page, "step Boutique at phone width, light theme")
+                        shot(page, "step-boutique-mobile-clair.png", full_page=False)
+                        page.get_by_role("button", name="Passer au thème sombre").click()
+                        proceed.click()
+                        expect(step_count).to_have_text("Étape 4 sur 4")
+                        expect(generate).to_be_in_viewport()
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                        shot(page, "step-style-mobile.png", full_page=False)
+                        page.set_viewport_size({"width": 1440, "height": 1000})
                         sent = []
                         page.on("request", lambda request: sent.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
-                        page.get_by_role("button", name="Générer l’affiche").click()
+                        generate.click()
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         assert sent[-1]["headline"]["logo_seal"] is True and sent[-1]["headline"]["signature_align"] == "right", sent[-1]
@@ -539,11 +743,28 @@ def run():
                         seal = footer("logo")
                         assert disc and seal["shape"] == "circle" and seal["visible"] and abs(seal["width"] - disc["d"] - 4) < .1, (disc, seal)
                         assert abs(seal["x"] + seal["width"] / 2 - disc["x"]) < .1 and abs(seal["y"] + seal["height"] / 2 - disc["y"]) < .1
+                        # What this version's image holds is never erased (R-POSTER-EDITOR-005): for the seal on its disc and
+                        # for the drawn contact the poster says so and offers the next version, not a removal.
+                        elements = page.get_by_role("group", name="Éléments de l’affiche")
+                        leave_out = page.get_by_role("button", name="Ne plus le mettre dans la prochaine version")
+                        elements.get_by_role("button", name="Logo", exact=True).click()
+                        expect(page.get_by_text("un disque dessiné dans l’image de cette version", exact=False)).to_be_visible()
+                        expect(leave_out).to_be_visible()
+                        expect(page.get_by_role("button", name="Retirer de l’affiche", exact=True)).to_have_count(0)
+                        elements.get_by_role("button", name="Contact (dans l’image)", exact=True).click()
+                        expect(page.get_by_text("L’image de cette version contient le contact", exact=False)).to_be_visible()
+                        expect(leave_out).to_be_visible()
+                        expect(page.get_by_role("button", name="Retirer de l’affiche", exact=True)).to_have_count(0)
                         # The seal is locked once a version exists; removing the logo would leave an empty disc, so export is blocked.
+                        open_group("Boutique")
                         expect(seal_option).to_be_disabled()
                         page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
                         expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_be_visible()
                         expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
+                        # The reason beside the blocked action opens the group that holds the fix.
+                        open_group("Textes")
+                        page.locator(".main-action .why").get_by_role("button", name="Ouvrir « Boutique »").click()
+                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
                         page.get_by_role("checkbox", name="Logo", exact=True).check()
                         until(lambda: footer("logo")["visible"] and abs(footer("logo")["x"] - seal["x"]) < .1)
                         expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_have_count(0)
@@ -593,12 +814,24 @@ def run():
                         page.get_by_label("Les photos correspondent").check()
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
-                        # A title the image model cannot draw is said under the main button, before the paid step, with the reason.
+                        # A title the image model cannot draw is said at the field, then beside the main button on the last step,
+                        # before the paid step, with the reason; from there the reason opens the step that holds the title.
                         page.get_by_label("Titre", exact=True).fill('Petite photo 32"')
-                        expect(page.get_by_role("button", name="Générer l’affiche")).to_be_disabled()
                         expect(page.get_by_text("contient un guillemet droit", exact=False)).to_be_visible()
+                        proceed.click()
+                        proceed.click()
+                        expect(page.get_by_role("button", name="Générer l’affiche")).to_be_disabled()
+                        expect(page.locator(".step-nav .why")).to_contain_text("contient un guillemet droit")
+                        check_contrast(page, "blocked main action")
+                        shot(page, "bloque.png")
+                        page.locator(".step-nav .why").get_by_role("button", name="Ouvrir « Textes »").click()
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
                         page.get_by_label("Titre", exact=True).fill("Petite photo")
+                        expect(page.get_by_text("contient un guillemet droit", exact=False)).to_have_count(0)
+                        tab("Style").click()
                         expect(page.get_by_role("button", name="Générer l’affiche")).to_be_enabled()
+                        expect(page.locator(".step-nav .why")).to_have_count(0)
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         agree = page.get_by_role("dialog").get_by_label("J’accepte une qualité réduite", exact=False)
                         page.get_by_role("button", name="Générer l’affiche").click()
@@ -610,6 +843,10 @@ def run():
                         page.reload()
                         expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
                         before = len(sent)
+                        # A poster without a version reopens on its first step; the walk is the same.
+                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        proceed.click()
+                        proceed.click()
                         page.get_by_role("button", name="Générer l’affiche").click()
                         expect(agree).to_have_count(0)
                         page.get_by_role("button", name="Lancer la génération").click()

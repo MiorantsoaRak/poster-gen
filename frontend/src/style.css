@@ -1,6 +1,7 @@
-/* Affiche Atelier (ADR-050). An image tool on a warm near-black ground.
-   Elevation is a lightness step only: no gradients, glows or shadows at rest. Chrome is neutral; the main
-   action is white on black; the one hue marks the chosen style and work in progress. Light variant: clair.
+/* Affiche Atelier (ADR-050, ADR-072). An image tool on a warm near-black ground: the poster first, panels quiet.
+   Elevation is a lightness step; the only shadow lifts the poster. Chrome is neutral; the main action is white
+   on black; the one hue marks the chosen style and work in progress. Light variant: clair.
+   Glass (translucent and blurred) is kept for what floats above content: see the end of this file.
    Fonts are the bundled poster fonts, so nothing is fetched from the network. */
 @font-face { font-family: Atelier; src: url('/fonts/NotoSans-Regular.ttf'); font-weight: 400; font-display: swap }
 @font-face { font-family: Atelier; src: url('/fonts/NotoSans-Bold.ttf'); font-weight: 700; font-display: swap }
@@ -10,6 +11,7 @@
   --text: #ffffff; --muted: #b8b4ae; --faint: #96918a; --hue: #f2a33d;
   --ok: #7fd1a2; --ok-bg: #16261d; --warn: #e9b458; --warn-bg: #2a2212; --bad: #ef7d74; --bad-bg: #331a18;
   --invert: #ffffff; --invert-ink: #0e0d0c; --scrim: #000000cc; --radius: 20px; --field: 10px;
+  --well: #090908; --lift: 0 18px 48px rgb(0 0 0 / .5); --glass: rgb(18 17 16 / .8); --glass-line: rgb(255 255 255 / .1);
   font-family: Atelier, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
   font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark;
 }
@@ -18,6 +20,7 @@
   --text: #15130f; --muted: #4f4a43; --faint: #6b665e; --hue: #b8610a;
   --ok: #1d6a47; --ok-bg: #e4f1ea; --warn: #7a5a10; --warn-bg: #fbf1d4; --bad: #a3271f; --bad-bg: #fbeae8;
   --invert: #15130f; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
+  --well: #ebe8e3; --lift: 0 14px 36px rgb(21 19 15 / .18); --glass: rgb(250 249 247 / .9); --glass-line: rgb(21 19 15 / .12);
 }
 
 * { box-sizing: border-box }
@@ -53,7 +56,7 @@ button.text-button:hover:not(:disabled) { color: var(--text); background: none }
 :is(button, input, select, textarea, summary, a, .poster-canvas):focus-visible { outline: 2px solid var(--text); outline-offset: 2px }
 /* A chosen style or version already wears this ring: the focus ring goes outside it. */
 :is(.look, .thumb):focus-visible { outline-offset: 6px }
-main:focus, [role=dialog]:focus { outline: none }
+main:focus, [role=dialog]:focus, .panel:focus { outline: none }
 .skip { position: absolute; left: -9999px; z-index: 60; background: var(--surface) }
 .skip:focus-visible { left: 12px; top: 8px }
 
@@ -95,24 +98,28 @@ details[open] > summary { color: var(--text) }
 .wide { width: 100%; margin-top: 16px }
 
 /* Shell: one ground, a plain top bar, real destinations */
-.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 52px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left)); background: var(--ground) }
+.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 52px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left)); background: var(--ground); border-bottom: 1px solid transparent }
 .wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: var(--text); text-decoration: none }
 .mark { width: 20px; height: 24px }
 .mark path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round }
 .mark .hue { fill: var(--hue) }
 .mark .ink { fill: currentColor }
-.shop-label { color: var(--faint); font-size: 13px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.shop-label { color: var(--muted); font-size: 13px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .nav { display: flex; gap: 2px; margin-right: auto; flex-wrap: wrap }
 .nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border-radius: 999px; color: var(--muted); text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out }
 .nav a:hover { background: var(--surface); color: var(--text) }
 .nav a[aria-current] { color: var(--text); font-weight: 700 }
 .count { color: var(--faint); font-weight: 400 }
+.app-header .count { color: var(--muted) }
 .theme-toggle { margin-left: auto }
 .nav + .theme-toggle { margin-left: 0 }
 main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-inset-right)) max(64px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)) }
-.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border-radius: var(--radius); font-weight: 700 }
-.message.error { bottom: max(20px, env(safe-area-inset-bottom)); background: var(--bad-bg); color: var(--bad) }
-.message.notice { top: 64px; background: var(--ok-bg); color: var(--ok) }
+.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); color: var(--text); font-weight: 700 }
+/* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
+.message::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok) }
+.message.error { bottom: max(20px, env(safe-area-inset-bottom)) }
+.message.error::before { background: var(--bad) }
+.message.notice { top: 64px }
 .message .text-button { color: inherit; flex: none }
 .demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px }
 
@@ -158,7 +165,7 @@ main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-ins
 .swatches i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--control) }
 .look-wall small { font-weight: 400 }
 
-/* Editor: title row with the one main action, then rail / stage / versions */
+/* Editor: title row, then rail (one group of controls at a time) / stage (the poster and the one main action) / versions */
 .titlerow { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 10px 0 16px }
 .titlerow .what { margin-right: auto; min-width: 0 }
 .meta { color: var(--faint); font-size: 13px; margin: 0 }
@@ -170,16 +177,35 @@ main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-ins
 .undo { display: flex }
 .main-action { display: contents }
 .why { flex-basis: 100%; margin: 0; color: var(--warn); font-size: 13px; text-align: right }
-.card .why, .stage .why, .intake .why { text-align: left; margin-top: 8px }
+.why .text-button, .help .text-button { min-height: 24px; font-size: inherit }
+.why .text-button { color: inherit }
+.look-grid + .help { margin-top: 12px }
+.card .why, .stage .why, .intake .why, .group .why { text-align: left; margin-top: 8px }
 .intake .form-row + .why { margin: -6px 0 12px }
-.work { display: grid; grid-template-columns: 340px minmax(0, 1fr) 156px; gap: 14px; align-items: start }
+.work { display: grid; grid-template-columns: 360px minmax(0, 1fr) 156px; gap: 14px; align-items: start }
 .card { background: var(--surface); border-radius: var(--radius); padding: 20px 22px; min-width: 0 }
-.card > header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--muted) }
-.card > header h2 { color: var(--text) }
-.rail { display: grid; gap: 14px; min-width: 0 }
-details.card { border: 0; margin: 0; padding: 4px 22px }
-details.card[open] { padding-bottom: 20px }
-.card > details:last-child { margin-bottom: -8px }
+.rail { display: grid; align-content: start }
+.rail.card { padding-bottom: 0 }
+.step-count { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--muted) }
+/* Steps and tabs are the same row: steps carry their number and open once visited, tabs are all open. */
+.tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--ground); border-radius: 999px; overflow-x: auto }
+.tabs [role=tablist] { display: flex; gap: 2px; flex: 3 1 auto; min-width: 0 }
+.tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 6px; gap: 5px; border: 0; color: var(--muted); font-size: 13px; font-weight: 400; white-space: nowrap }
+.stepping .tab { flex: 1 1 auto }
+.tab[aria-selected=true], .tab[aria-selected=true]:hover { background: var(--raised); color: var(--text); font-weight: 700 }
+span.tab { display: inline-flex; align-items: center; justify-content: center }
+.tab .n { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--line); font-size: 11px; line-height: 1; font-weight: 700 }
+.tab[aria-selected=true] .n { background: var(--text); color: var(--surface) }
+.panel { min-width: 0; padding-bottom: 20px }
+.lead { margin-bottom: 14px }
+.panel > .check:last-child { margin-bottom: -8px }
+.refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-bg); border-radius: var(--field) }
+.ambiance { margin-top: 16px }
+/* « Retour » and « Continuer » stay in reach at the bottom of the step, however long it is. */
+.main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px; background: var(--surface); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
+.step-nav .primary { margin-left: auto }
+.step-nav .why { margin: 0; text-align: left }
+.step-nav .see, .see-big, .stage .back { display: none }
 
 .look-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
 .look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--muted); font-size: 12px; line-height: 16px; font-weight: 400; text-align: left }
@@ -189,19 +215,26 @@ details.card[open] { padding-bottom: 20px }
 .look.selected { color: var(--text); font-weight: 700 }
 .look.selected img, .look.selected .add { outline: 2px solid var(--text); outline-offset: 2px }
 .look.selected::after { content: ''; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--hue) }
-details.new-look { border: 0; margin-top: 14px; padding: 0 14px; background: var(--ground); border-radius: var(--field) }
+details.new-look { border: 0; margin-top: 4px; padding: 0 14px; background: var(--ground); border-radius: var(--field) }
 details.new-look[open] { padding-bottom: 14px }
-.layer-list { display: flex; flex-wrap: wrap; gap: 6px }
-.layer-list button { min-height: 32px; padding: 0 12px; font-weight: 400; color: var(--muted); border-color: var(--line) }
-.layer-list button.selected { background: var(--raised); border-color: var(--raised); color: var(--text) }
+.layer-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px }
+.layer-list button, .selection .remove { min-height: 32px; padding: 0 12px; font-weight: 400; color: var(--muted); border-color: var(--line) }
+.layer-list button[aria-pressed=true] { background: var(--raised); border-color: var(--raised); color: var(--text) }
+.selection { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px }
+.selection p { margin: 0; text-align: center }
+.selection .remove { color: var(--text); border-color: var(--control) }
 .plan { padding: 14px; background: var(--ground); border-radius: var(--field); margin-top: 14px }
 
-.stage { display: grid; gap: 14px; justify-items: stretch; position: sticky; top: 64px }
+/* The stage is a well darker than the panels, and the poster is the one lifted thing on the screen. */
+.stage { display: grid; gap: 14px; justify-items: stretch; align-content: start; position: sticky; top: 64px; min-width: 0; padding: 14px 20px 20px; border-radius: var(--radius); background: var(--well) }
+.stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-height: 40px }
+.stage-head .coach { flex: 1 1 280px }
+.stage-head .why { margin: 0; text-align: right }
 .proof { display: flex; align-items: flex-end; justify-content: center; gap: 18px; min-width: 0 }
 .proof .photo { margin: 0; display: grid; gap: 8px; flex: none; color: var(--faint); font-size: 12px }
 .proof .photo img { width: 120px; height: 120px; object-fit: contain; background: #fff; border-radius: 12px; display: block }
 .canvas-host { position: relative; display: flex; justify-content: center; flex: 1; min-width: 0; min-height: 240px }
-.poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 4px; overflow: hidden }
+.poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: var(--lift) }
 /* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
 .canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
@@ -209,13 +242,13 @@ details.new-look[open] { padding-bottom: 14px }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
 .coach svg { margin-top: 2px }
 .coach b { color: var(--text) }
-.job-state { padding: 14px 16px; border-radius: var(--field); background: var(--raised); display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap }
+.job-state { padding: 14px 16px; border-radius: var(--field); background: var(--surface); display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap }
 .job-state p { margin: 0; color: var(--muted); font-size: 13px; margin-right: auto }
 .issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-bg); border-radius: var(--field) }
 .issues .text-button { color: var(--warn) }
 .issues .blocking .text-button { color: var(--bad); font-weight: 700 }
 .save-recovery, .polish-preview { padding: 12px 14px; background: var(--warn-bg); color: var(--warn); border-radius: var(--field); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px }
-.stage > .help { margin: 0 }
+.stage > .help { margin: 0; text-align: center }
 
 .versions { display: grid; gap: 12px; align-content: start; min-width: 0 }
 .versions h2 { font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap }
@@ -237,7 +270,7 @@ button.version.new small { font-size: 12px; font-weight: 400 }
 
 /* Confirmation of a paid action, the fidelity check and the final check open in front of the page */
 .confirm-sheet { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--scrim); overflow: auto; overscroll-behavior: contain }
-.confirm { width: min(100%, 440px); background: var(--surface); border-radius: var(--radius); padding: 24px; display: grid; gap: 10px }
+.confirm { width: min(100%, 440px); background: var(--surface); border: 1px solid transparent; border-radius: var(--radius); padding: 24px; display: grid; gap: 10px }
 .confirm p { margin: 0; color: var(--muted) }
 .confirm .cost { color: var(--text); font-weight: 700 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px }
@@ -286,20 +319,38 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding-bottom: 6px }
   .versions h2, .versions > .help { grid-column: 1 / -1 }
   .versions > .version { grid-row: 2 }
-  .why { text-align: left }
-  /* One column: the fields are far below the poster, so the main action and its reason stay at the bottom of the screen. */
-  .editor { padding-bottom: 96px }
-  .main-action { display: grid; gap: 6px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line) }
+  .why, .stage-head .why { text-align: left }
+  /* One column: the main action (or the step's « Retour » and « Continuer ») and its reason stay at the bottom of the screen. */
+  html { scroll-padding-bottom: 150px }
+  .editor { padding-bottom: 150px }
+  .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line); border-radius: 0 }
+  .main-action .primary { flex: 1; margin: 0 }
   .main-action .why { margin: 0 }
-  .message.error { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 84px) }
+  .step-nav .see { display: inline-flex }
+  .message.error { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 130px) }
+  /* During the steps the step comes first: the poster is a small proof beside what to do, and opens in front on demand. */
+  .stepping .versions { order: 1 }
+  .stepping .stage:not(.peek) { grid-template-columns: 104px minmax(0, 1fr); gap: 4px 14px; padding: 14px }
+  .stepping .stage:not(.peek) > * { grid-column: 1 / -1 }
+  .stepping .stage:not(.peek) > .proof { grid-column: 1; grid-row: 1 / span 2 }
+  .stepping .stage:not(.peek) > .stage-head { grid-column: 2; grid-row: 1; align-self: end }
+  .stepping .stage:not(.peek) > .see-big { display: inline-flex; grid-column: 2; grid-row: 2; justify-self: start; align-self: start }
+  .stepping .stage:not(.peek) :is(.selection, .photo), .stepping .stage:not(.peek) > .help { display: none }
+  .stepping .stage:not(.peek) .canvas-host { min-height: 0 }
+  .stage.peek { position: fixed; inset: 0; z-index: 25; overflow: auto; overscroll-behavior: contain; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: var(--ground) }
+  .stage.peek .back { display: inline-flex; justify-self: start }
+  .stage.peek :is(.help, figcaption) { color: var(--muted) }
 }
 @media (max-width: 720px) {
   .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)) }
   .shop-label { display: none }
   main { padding: 4px max(12px, env(safe-area-inset-right)) max(56px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)) }
   .intake, .sign-in { padding: 20px }
+  html { scroll-padding-top: 112px }
+  /* The title and the two undo buttons share one row: the step below starts higher. */
+  .titlerow { flex-wrap: nowrap; align-items: flex-start; padding: 6px 0 12px }
+  .titlerow .what { flex: 1 }
   .card { padding: 18px 16px }
-  details.card { padding: 4px 16px }
   .proof { flex-direction: column; align-items: center }
   .proof .photo img { width: 72px; height: 72px }
   .canvas-host { width: 100% }
@@ -322,14 +373,39 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   input, textarea, select { font-size: 16px }
   .theme-toggle, .nav + .theme-toggle { order: 1; margin-left: auto }
   .nav { order: 2; flex-basis: 100% }
+  /* The three destinations stay on one row at 360 px, and a notice clears the two rows of the header. */
+  .nav a { padding: 0 8px; gap: 6px }
+  .message.notice { top: 108px }
   /* The format and the file type never change: on a phone only the price is worth a row before the points. */
   .facts div:not(:last-child) { display: none }
   .facts div + div { border: 0 }
 }
 @media (pointer: coarse) {
-  button.text-button, .version .text-button, .layer-list button, .nav a { min-height: 44px }
+  button, .download-button, label.check, summary, select, textarea, input:not([type=checkbox]) { min-height: 44px }
+  button.text-button, .version .text-button, .why .text-button, .help .text-button, .layer-list button, .selection .remove, .tab, .row-actions button, .nav a { min-height: 44px }
+  button.icon { width: 44px }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
   .canvas-host.generating::after { animation: none }
+}
+
+/* Glass (R-POSTER-EDITOR-006): only what floats above content, namely the header, the fixed action bar of one-column
+   screens, the confirmation dialog, the poster sheet of the steps, notices. The three large panels (fidelity, final
+   file, a style) stay solid: colours are judged there, and a tint from the page behind would mislead. The solid colours set above are the fallback. --glass is opaque enough that
+   --text, --muted and --warn keep 4.5:1 over the lightest and the darkest content; --faint does not, so it is not
+   used on these surfaces. One switch turns it all off: the two tokens below. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-header, .message, .stage.peek { background: var(--glass); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
+  .confirm { background: var(--glass) }  /* its sheet already blurs the page behind */
+  .app-header { border-bottom-color: var(--glass-line) }
+  .message, .confirm { border-color: var(--glass-line) }
+  .confirm-sheet { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px) }
+  @media (max-width: 1080px) {
+    .main-action, .main-action.step-nav { background: var(--glass); border-top-color: var(--glass-line); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
+  :root:root { --glass: var(--surface); --glass-line: var(--line) }
+  .app-header, .message, .confirm-sheet, .stage.peek, .main-action, .main-action.step-nav { -webkit-backdrop-filter: none; backdrop-filter: none }
 }
