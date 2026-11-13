@@ -1,5 +1,13 @@
 # DECISIONS
 
+## ADR-070 — 2026-11-13 — Maizina's files for Affiche IA: made in a local copy that was older than the box (user: "maizina project is cloned in the pc, make the necessary changes")
+
+- The local `../maizina` has no `.git` and its `deploy/compose.yml` and `deploy/maizina.caddy` had neither the `ppn` network nor the `buy.miorantsoa.app` block. Both exist in the files that run on the box (read there on 2026-11-13; the box's compose file carries a mangled comment, so it looks edited by hand). A deploy from the local copy as it was would have taken PPN Market offline.
+- Claude's choice: make the local files equal to the box's live files plus the Affiche IA parts (network `affiche_ia_edge`, site `affiches.miorantsoa.app`), rather than add only the Affiche IA parts to an old tree. Nothing else in Maizina was touched: no documents (its ADR and task numbers cannot be trusted in an old copy), no commit (not a repository), nothing on the box.
+- The whole Caddy file was validated with the box's Caddy version in a throwaway container there (`docker run --rm --pull=never --network none`): "Valid configuration". No image was pulled and the running Caddy was not touched.
+- `affiches.miorantsoa.app` is still Claude's proposal for the name.
+- Later the same day the user initialised git in `../maizina` and added the remote. The working tree equalled the remote's `master` except for these two files and three missing dot-files; the local branch was attached to the remote's `master` without touching the files (`git reset` to it, dot-files restored), and the change was committed there with Maizina's own T-086 and ADR-051. The remote's `master` confirms that PPN Market's parts were never committed. Pushed on the user's "push" the same day.
+
 ## ADR-069 — 2026-11-13 — Hosted pilot phase B: round 2 fixes applied, built without Docker (Claude, under the autonomy grant)
 
 - Round 2 on phase B: APPROVE WITH FIXES, five P1 (reviews/hosted-pilot-design-r2-2026-11-13.md). All applied as design v3.1, not reviewed again.

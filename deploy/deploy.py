@@ -19,8 +19,10 @@ Needs Maizina deployed with the affiche_ia_edge network and the affiches.miorant
   6. daily.sh once (a backup of the running revision), then verify.sh.
 """
 
+import atexit
 import os
 import subprocess
+import tempfile
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -200,7 +202,10 @@ if running.strip() == f"running {REV}":
     print(f"affiche-ia {REV[:12]} already running: no upload, no build, no restart.")
 else:
     archive_name = f"build-{REV}-{RUN}.tar.gz"  # per invocation: no concurrent deploy touches it
-    archive = REPO / "deploy" / archive_name
+    # Outside the repository (an untracked file under deploy/ would make the next deploy refuse), and removed
+    # when pyinfra exits, not here: this file only queues operations, the upload itself runs after it ends.
+    archive = Path(tempfile.gettempdir()) / archive_name
+    atexit.register(lambda: archive.unlink(missing_ok=True))
     # core.autocrlf=false: LF files on the box whatever this machine's git setting.
     archived = git("-c", "core.autocrlf=false", "archive", "--format=tar.gz", "-o", str(archive), "HEAD", "--",
                    *IMAGE_PATHS)
@@ -229,7 +234,6 @@ fi"""
         dest=f"{REMOTE_DIR}/{archive_name}",
         _sudo=True,
     )
-    archive.unlink()
     server.shell(
         name=f"Build, check, back up and start revision {REV[:12]}",
         commands=[

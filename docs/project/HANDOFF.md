@@ -15,8 +15,9 @@ Phase A is built and verified (T-HOST-001 to 003; backend 722 passed / 3 deselec
 **Exact next steps, all the user's:**
 1. Done on the user's "commit and push" of 2026-11-13: the work of that day is committed on `main` and pushed (the deploy ships only what is on `origin/main`; check with `git status -sb`).
 2. Either the phone session through the tunnel (T-HOST-004: install `cloudflared`, then from `backend/`: `uv run python ../deploy/phone_session.py ../outputs/phone-session-password.txt`, record in a copy of [reviews/phone-session-TEMPLATE.md](reviews/phone-session-TEMPLATE.md)), or straight to the box.
-3. The box (T-HOST-009): follow `deploy/README.md` "First rollout": DNS `affiches.miorantsoa.app` (name to confirm), the two Maizina changes and a Caddy recreate, the pilot's provider keys, `uv tool install pyinfra`, the deploy, then the checks. Open decision: Hetzner's backup option or a pull.
-4. To close T-HOST-008 before the box: one local `docker build` (the commands are in TODO).
+3. Maizina (ADR-070): the change is committed and pushed in `../maizina` (branch `master`; the remote is named `master`; Maizina's T-086 and ADR-051). It makes the repository equal to the box (PPN Market's network and site block were live but never committed) and adds Affiche IA; the whole Caddy file is validated with the box's Caddy 2.11.4. Pushed on the user's "push"; not deployed: the user deploys Maizina by its own workflow (Caddy is recreated: a few seconds without HTTPS for the four sites).
+4. The box (T-HOST-009): follow `deploy/README.md` "First rollout": DNS `affiches.miorantsoa.app` (name to confirm), the two Maizina changes and a Caddy recreate, the pilot's provider keys, `uv tool install pyinfra`, the deploy, then the checks. Open decision: Hetzner's backup option or a pull.
+5. To close T-HOST-008 before the box: one local `docker build` (the commands are in TODO).
 
 After that: the four later audit items (T-REQ-AFTER-PILOT).
 

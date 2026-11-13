@@ -236,8 +236,8 @@ backup that the release took just before starting.
 ## Not proven yet (2026-11-13)
 
 - The image build, its size, and Chromium starting inside the hardened container (`verify.sh` checks the last).
-- `deploy.py` itself: its Python compiles and its shell text parses, but pyinfra has not run it.
-- What the Caddy error block answers while the container is down (its syntax is validated; rollout step 6).
+- `deploy.py` beyond its prechecks. Its first run (2026-11-13) created the folders, the secrets, `daily.sh`, `verify.sh` and the cron entry, passed the prechecks, then stopped at the upload: the script deleted its archive before pyinfra sent it (fixed: the archive now lives in the temporary folder and is removed when pyinfra exits). Build, start and verification have not run.
+- (Proven 2026-11-13, before the first container existed: Maizina is deployed with the new network and block, the certificate for `affiches.miorantsoa.app` is issued, `/` answers the French line and `/api/session` the `service_down` envelope, both 503, and the three other sites answer 200.)
 - Memory on the box during a build and during a real render.
 - The restore procedure on the box (the backup and a restore are tested on temporary data in
   `backend/tests/test_backup.py`).

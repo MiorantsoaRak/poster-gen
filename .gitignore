@@ -26,6 +26,7 @@ dist/
 coverage/
 
 # Local review copies, scratch files and OS metadata
+pyinfra-debug.log
 /outputs/
 /work/
 *.log
