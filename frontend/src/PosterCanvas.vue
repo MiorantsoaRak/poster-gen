@@ -2,7 +2,7 @@
 import { computed, nextTick, shallowRef, ref, watch } from 'vue'
 import Konva from 'konva'
 import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Path as VPath, Circle as VCircle, Transformer as VTransformer } from 'vue-konva'
-import { FORMATS, type Format, type Layer, type PosterDocument } from './document'
+import { drawOrder, FORMATS, type Format, type Layer, type PosterDocument } from './document'
 import { loadFonts } from './fonts'
 import { badgeConfig, iconLine, inspectLayout, textRuns, type LayoutIssue } from './canvas'
 
@@ -17,7 +17,7 @@ const cache = new Map<string, Promise<HTMLImageElement>>()
 let sequence = 0
 const dimensions = computed(() => FORMATS[props.format])
 const layout = computed(() => props.document.formats[props.format]!)
-const layers = computed(() => [...layout.value.layers].filter(layer => layer.visible).sort((a, b) => a.z - b.z))
+const layers = computed(() => drawOrder(layout.value.layers))
 const sceneImage = computed(() => images.value[`scene:${layout.value.scene.visual_id}`])
 
 async function imageFor(url: string) {

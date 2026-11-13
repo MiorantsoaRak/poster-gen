@@ -9,7 +9,8 @@
 | R-POSTER-EDITOR-003 | Manual and prompted text/effect editing | P0 | Approved |
 | R-POSTER-EDITOR-004 | Guided creation in steps, one group of controls at a time | P0 | Approved 2026-11-13 (ADR-072) |
 | R-POSTER-EDITOR-005 | Remove an element from the poster | P1 | Approved 2026-11-13 (ADR-072) |
-| R-POSTER-EDITOR-006 | Visual language: the poster first, glass only on floating chrome | P2 | Approved 2026-11-13 (ADR-072) |
+| R-POSTER-EDITOR-006 | Visual language: the poster first, glass only on floating chrome | P2 | Approved 2026-11-13 (ADR-072); amended the same day (ADR-075) |
+| R-POSTER-EDITOR-007 | Phone-first editor: the poster stays in view | P0 | Approved 2026-11-13 under the autonomy grant (ADR-075) |
 
 ## R-POSTER-EDITOR-001 — A complete, editable first draft
 
@@ -109,3 +110,37 @@ Acceptance criteria:
 - [ ] No new dependency and no image or font downloaded from another site.
 
 Out of scope: a new brand, illustration or logo; the look of the posters themselves.
+
+### Amendment to R-POSTER-EDITOR-006 (2026-11-13, ADR-075)
+
+From the second UI review and its mockup (https://claude.ai/artifact/6JoS82gMXkucaat4FKvUia), which the user called "promising". **Waiting for the user's choices** (ADR-075): the theme by default, Figtree. Until he answers, dark stays the default. These criteria add to the ones above once chosen.
+
+- [ ] The application follows the device's light or dark setting until the person picks one with the theme button; that choice is remembered on the device and wins afterwards. The browser's bar colour (`theme-color`) matches the theme in use.
+- [ ] Light theme: warm off-white ground, white panels, ink-black main buttons, the brand amber as the only accent (current step, selection). Dark theme: as today.
+- [ ] Interface type: Figtree, bundled with the application with its licence file; nothing is requested from another site. The poster's own fonts and the renderer are unchanged.
+- [ ] Choices that change the poster at once (logo, shop name, contact, outline, shadow, moving the elements) look like switches; their keyboard and screen-reader behaviour stays that of a checkbox. Choices that only change the next version (what the image draws, the round seal) stay checkboxes under a heading « Pour la prochaine version ». Agreements stay checkboxes.
+- [ ] A selected choice (word chips, colour swatches, styles, steps and tabs) differs from the others in shape as well as in colour.
+- [ ] Main buttons and fields are at least 48 px high, 52 px on touch screens.
+
+## R-POSTER-EDITOR-007 — Phone-first editor: the poster stays in view
+
+**Status:** Approved on 2026-11-13 by Claude under the user's autonomy grant (ADR-075), after the user called the mockup "promising".
+
+**Background, measured on 2026-11-13 at 360 × 740 with a touch pointer** (reviews/ux-review-opus-2026-11-13.md): in the steps the poster is a 104 × 130 thumbnail; after the first version the poster starts at 479 px, the tabs at 1,289 px and the first field at 1,725 px, so 0 % of the poster is on screen while the owner types a price. On arrival in « Textes », the first field starts at 665 px, behind the bottom bar.
+
+As the owner on my phone, I see my poster change while I type its words, and I reach every control without losing sight of it.
+
+Acceptance criteria (all on one-column screens, measured at 360 × 740 with a touch pointer unless said otherwise). Amended the same day after the design review (ADR-075): the draft poster before the first version shows only the title and the price, so during the steps the chrome is cut rather than the draft pinned.
+
+- [ ] On arrival in « Textes », the first field starts in the upper 60 % of the screen.
+- [ ] During the steps, the poster is a thumbnail beside the step; « Voir l’affiche » shows it large.
+- [ ] Once a version exists, the poster stays on screen while the controls scroll under it, at least 200 px tall when no field has the focus. When a text field has the focus, the poster collapses to a strip of about 96 px and the bottom bar hides; both come back when the focus leaves. The focused field is never under the poster.
+- [ ] « Voir l’affiche » shows the poster large in tabs too.
+- [ ] The editor has one bar at the top: back to « Mes affiches », the poster's name and its save state, undo, redo. The application's header is not shown in the editor on phones.
+- [ ] After the first version, the versions are a horizontal strip under the poster, each with its state in words, and the groups (« Textes », « Boutique », « Style », « Réglages ») are a row of tools with an icon and a label each; the main action stays at the bottom of the screen.
+- [ ] The fidelity review shows one image at a time, at full width, with a « Votre photo / La version » choice; « La version » first. Its decision stays at the bottom of the screen (done in T-UI-REVIEW-2).
+- [ ] If the user agrees: outside the editor, « Créer », « Mes affiches » and « Styles » are a bar at the bottom of the screen, each with an icon and its label; the current one is marked.
+- [ ] Nothing scrolls sideways at 360 px; touch targets are at least 44 px; the smoke's contrast check passes on these screens in both themes.
+- [ ] Every rule that exists today still holds: steps and tabs (R-POSTER-EDITOR-004), removal from the poster (005), the paid confirmation, the small-photo agreement, the reasons beside a blocked action, the fidelity review, the stale-text notices, autosave and its recovery.
+
+Out of scope: the desktop layout (a later task: tools in a vertical rail, versions under the poster); « Mes affiches » as a grid of cards with status filters (a later task); the share sheet; the owner's vocabulary (no dollars).

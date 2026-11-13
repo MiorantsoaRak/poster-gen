@@ -166,6 +166,8 @@ def run():
                         page.get_by_role("button", name="Réessayer").click()
                         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
                         check_contrast(page, "sign-in")
+                        # Dark by default, and the browser's bar says so (it took the light colour before T-THEME-COLOR).
+                        assert page.evaluate("document.querySelector('meta[name=theme-color]').content") == "#0e0d0c"
                         # The home-screen manifest and its icons are served.
                         manifest = page.request.get(f"{ORIGIN}/manifest.webmanifest").json()
                         assert manifest["display"] == "standalone" and manifest["lang"] == "fr", manifest
@@ -186,8 +188,12 @@ def run():
                         assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
                         check_contrast(page, "intake, solid chrome")
                         page.emulate_media(reduced_motion="no-preference")
+                        # The browser's own file control (« Choose Files ») is not shown: the label shows a French button.
+                        expect(page.locator(".upload-zone .pick-button")).to_have_text("Ajouter des photos")
+                        assert page.locator("#champ-photos").evaluate("e => getComputedStyle(e).opacity") == "0"
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
+                        expect(page.locator(".upload-zone .pick-button")).to_have_text("Changer les photos")
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i")
                         page.get_by_label("Variante confirmée").fill("Noir · écouteurs et boîtier")
                         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
@@ -636,6 +642,14 @@ def run():
                         thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
                         check_contrast(page, "Mes affiches")
+                        # At 360 px the list's title row wraps instead of squeezing its subtitle to one word per line under the checkbox.
+                        page.set_viewport_size({"width": 360, "height": 740})
+                        heading = page.get_by_role("heading", name="Mes affiches", exact=True).bounding_box()
+                        removed = page.locator("label.check", has_text="Afficher les affiches retirées").bounding_box()
+                        assert heading["y"] + heading["height"] <= removed["y"] + 1, (heading, removed)
+                        assert page.locator(".gallery .titlerow .meta").bounding_box()["width"] > 300
+                        shot(page, "mes-affiches-360.png", full_page=False)
+                        page.set_viewport_size({"width": 1440, "height": 1000})
                         page.get_by_role("button", name="Passer au thème clair").click()
                         check_contrast(page, "Mes affiches, light theme")
                         page.get_by_role("button", name="Passer au thème sombre").click()
@@ -728,7 +742,7 @@ def run():
                         expect(generate).to_be_in_viewport()
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         shot(page, "step-style-mobile.png", full_page=False)
-                        page.set_viewport_size({"width": 1440, "height": 1000})
+                        # Generated from the phone's bottom bar, confirmed and reviewed at 360 px (the bar was never used at phone width).
                         sent = []
                         page.on("request", lambda request: sent.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
                         generate.click()
@@ -736,8 +750,14 @@ def run():
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         assert sent[-1]["headline"]["logo_seal"] is True and sent[-1]["headline"]["signature_align"] == "right", sent[-1]
                         expect(page.get_by_text("Un disque blanc vide est prévu pour le logo", exact=False)).to_be_visible()
-                        page.get_by_role("button", name="Tout est conforme, approuver").click()
+                        # The review is two screens tall on a phone: its decision stays at the bottom of the screen, without scrolling.
+                        approve = page.get_by_role("button", name="Tout est conforme, approuver")
+                        expect(approve).to_be_in_viewport()
+                        expect(page.get_by_role("button", name="Signaler un problème")).to_be_in_viewport()
+                        shot(page, "review-mobile.png", full_page=False)
+                        approve.click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        page.set_viewport_size({"width": 1440, "height": 1000})
                         sealed = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]
                         disc = page.request.get(f"{ORIGIN}/api/visuals/{sealed['formats']['feed']['scene']['visual_id']}").json()["logo_disc"]
                         seal = footer("logo")
@@ -810,10 +830,12 @@ def run():
                         expect(page.get_by_text("Photo petite", exact=False)).to_be_visible()
                         page.get_by_label("Nom du produit", exact=True).fill("Petite photo")
                         page.get_by_label("Variante confirmée").fill("Gris")
-                        page.get_by_label("Prix en ariary", exact=True).fill("10 000")
+                        # A price written as in Madagascar: « 10.000 Ar » is 10 000 ariary.
+                        page.get_by_label("Prix en ariary", exact=True).fill("10.000 Ar")
                         page.get_by_label("Les photos correspondent").check()
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
+                        assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["offer"]["price_ar"] == 10000
                         # A title the image model cannot draw is said at the field, then beside the main button on the last step,
                         # before the paid step, with the reason; from there the reason opens the step that holds the title.
                         page.get_by_label("Titre", exact=True).fill('Petite photo 32"')

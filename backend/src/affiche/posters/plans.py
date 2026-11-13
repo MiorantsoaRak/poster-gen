@@ -390,6 +390,9 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         if footer and not refinement:
             lines[-1] += (f" Hard limit: the whole price label, outline included, stays above {min(footer):.0%} of "
                           "the frame height, because other elements are placed below it.")
+        if not refinement:  # the pill is always in the foreground (user, 2026-11-13, ADR-076)
+            lines[-1] += (" The price label is in the foreground: fully visible, in front of everything, and nothing "
+                          "overlaps it, not the product, its shadow or any other element.")
     quiet = "; ".join(f"{field}: {_band(box)}" for field, box in boxes.items()
                       if not (headline and field == "title") and field not in signature
                       and not (price_ar is not None and field == "price"))
@@ -405,7 +408,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                         if align == "left" else "at the bottom left of the frame, level with the contact line. ")
                      + "The disc is completely empty: no writing, no icon, no pattern and no outline inside it, "
                      "because the shop's logo is printed on it later. It is a discreet seal, clearly smaller than "
-                     "the price label. "
+                     "the price label. It is in the foreground too: fully visible, and nothing overlaps it, not the "
+                     "product or its shadow. "
                      + ("The price label keeps the left, the contact line the right, and neither touches the disc."
                         if align == "left" else "Neither the price label nor the contact line touches the disc."))
     lines.append(("Constraints: the only writing is the headline, the price label"

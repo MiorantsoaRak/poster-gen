@@ -42,11 +42,13 @@ button, a, input, select, textarea, summary, label { touch-action: manipulation 
 button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 18px; border-radius: 999px;
   border: 1px solid var(--control); background: none; color: var(--text); font-weight: 700; cursor: pointer;
   transition: background-color .15s ease-out, border-color .15s ease-out, opacity .15s ease-out, transform .1s ease-out }
-button:hover:not(:disabled) { background: var(--raised) }
+/* Hover looks only where there is a hovering pointer: on a touch screen the finger stays where the next button is
+   drawn and the look sticks to it (« Générer l’affiche » appeared under « Continuer » and read as disabled). */
+@media (hover: hover) { button:hover:not(:disabled) { background: var(--raised) } }
 button:active:not(:disabled) { transform: scale(.98) }
 button:disabled { color: var(--faint); border-color: var(--line); cursor: not-allowed }
 button.primary, .download-button { background: var(--invert); border-color: var(--invert); color: var(--invert-ink) }
-button.primary:hover:not(:disabled), .download-button:hover { background: var(--invert); opacity: .86 }
+@media (hover: hover) { button.primary:hover:not(:disabled), .download-button:hover { background: var(--invert); opacity: .86 } }
 button.primary:disabled { background: var(--raised); border-color: var(--raised); color: var(--faint); opacity: 1 }
 button.ghost { border-color: transparent; color: var(--muted); font-weight: 400; padding: 0 12px }
 button.ghost:hover:not(:disabled) { color: var(--text) }
@@ -107,7 +109,7 @@ details[open] > summary { color: var(--text) }
 .shop-label { color: var(--muted); font-size: 13px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .nav { display: flex; gap: 2px; margin-right: auto; flex-wrap: wrap }
 .nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border-radius: 999px; color: var(--muted); text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out }
-.nav a:hover { background: var(--surface); color: var(--text) }
+@media (hover: hover) { .nav a:hover { background: var(--surface); color: var(--text) } }
 .nav a[aria-current] { color: var(--text); font-weight: 700 }
 .count { color: var(--faint); font-weight: 400 }
 .app-header .count { color: var(--muted) }
@@ -133,6 +135,14 @@ main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-ins
 .upload-zone:hover { border-color: var(--text) }
 .upload-zone span { font-size: 13px; font-weight: 400; color: var(--faint) }
 .upload-zone input { border: 0; padding: 0; background: none; min-height: 0 }
+/* The browser's own file control writes in the browser's language (« Choose Files ») with a small button. It stays
+   in its label, over the whole area and transparent, for touch, keyboard and screen readers; the label shows a
+   button in French instead. */
+.file-pick { position: relative }
+.file-pick input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; min-height: 0; padding: 0; border: 0 }
+.file-pick:focus-within { outline: 2px solid var(--text); outline-offset: 2px }
+.file-pick .pick-button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); color: var(--text); font-size: 14px; font-weight: 700 }
+.file-pick:has(input:disabled) .pick-button { color: var(--faint); border-color: var(--line) }
 .photo-strip { display: flex; gap: 10px; margin: 10px 0 16px }
 .photo-strip:empty { display: none }
 .photo-strip .mini { display: grid; justify-items: center }
@@ -148,7 +158,7 @@ main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-ins
 .library-item { display: grid; align-items: center;grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: var(--surface); color: var(--text); text-align: left; justify-content: stretch }
 /* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
 .library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
-.library-item:hover:not(:disabled) { background: var(--raised) }
+@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--raised) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item span { color: var(--faint); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item svg { color: var(--faint); justify-self: center }
@@ -236,7 +246,8 @@ details.new-look[open] { padding-bottom: 14px }
 .canvas-host { position: relative; display: flex; justify-content: center; flex: 1; min-width: 0; min-height: 240px }
 .poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: var(--lift) }
 /* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
-.canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
+/* A pill over the poster is always in front of it (user, 2026-11-13, ADR-076): an explicit order, not the DOM's. */
+.canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; z-index: 1; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
 @keyframes pulse { 50% { opacity: .55 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
@@ -350,6 +361,18 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   /* The title and the two undo buttons share one row: the step below starts higher. */
   .titlerow { flex-wrap: nowrap; align-items: flex-start; padding: 6px 0 12px }
   .titlerow .what { flex: 1 }
+  /* The lists' title rows keep wrapping: at 360 px « Mes affiches » was squeezed to one word per line under its checkbox. */
+  .gallery .titlerow { flex-wrap: wrap; align-items: center }
+  .gallery .titlerow .what { flex: 1 1 100% }
+  .intake .form-row { grid-template-columns: 1fr }
+  /* The review and the final check are two screens tall on a phone: their decision stays at the bottom of the screen. */
+  .review-panel { padding-bottom: calc(176px + env(safe-area-inset-bottom)) }
+  .review-panel .actions { position: fixed; z-index: 1; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line) }
+  /* Side by side, « Tout est conforme, approuver » wrapped on three lines at 360 px: one full-width button per row,
+     the decision that moves forward on top. */
+  .review-panel .actions .count { flex-basis: 100%; order: -2 }
+  .review-panel .actions button { flex: 1 1 100% }
+  .review-panel .actions button.primary { order: -1 }
   .card { padding: 18px 16px }
   .proof { flex-direction: column; align-items: center }
   .proof .photo img { width: 72px; height: 72px }

@@ -225,6 +225,22 @@ def test_price_label_comes_only_from_the_integer_amount():
         Headline(subtitle="Seulement 899 000 Ar")
 
 
+def test_the_price_pill_and_the_badge_are_asked_in_the_foreground():
+    ctx = context(field_sizes=context().field_sizes | {"contact": {"w": .9, "h": .036}})
+    plan = fixed_plan(ctx)
+    drawn = dict(price=True, signature=True, signature_align="right")
+    def compiled(**extra):
+        return compile_scene(plan, ctx, photo_count=1, title="JBL Flip 7", signature={"contact": "034 00 000 00"},
+                             price_ar=190000, **extra)
+    scene = compiled(headline=Headline(**drawn, logo_seal=True))
+    price = next(line for line in scene.split("\n") if line.startswith("Price label,"))
+    badge = next(line for line in scene.split("\n") if line.startswith("Shop badge:"))
+    assert "The price label is in the foreground" in price and "not the product, its shadow" in price
+    assert "in the foreground too" in badge and "nothing overlaps it" in badge
+    # A refinement of a stored scene keeps the prompt that scene was made with.
+    assert "in the foreground" not in compiled(headline=Headline(**drawn), refinement=True).split("Shop badge:")[0]
+
+
 def test_context_has_no_commercial_value_channel():
     for field in ("price_ar", "contact", "logo", "facts"):
         with pytest.raises(ValidationError):

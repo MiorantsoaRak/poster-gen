@@ -88,6 +88,35 @@ def test_compact_contact_is_one_line_with_a_handset_at_a_readable_size(engine, s
         image()
 
 
+def test_the_price_pill_stays_in_front_of_a_layer_with_a_higher_z(engine, settings, input_id):
+    document = draft(engine, settings.data_dir, input_id)["document"]
+    layers = document["formats"]["feed"]["layers"]
+    price = next(layer for layer in layers if layer["role"] == "price")
+    price.update(font_id="montserrat-black-italic", weight=900, font_size=96, fill="#15171A",
+                 x=240, y=900, width=600, height=150, align="center",
+                 price_badge={"fill": "#FFFFFF", "border_start": "#009FE3", "border_end": "#1853BD"})
+    document["offer"]["price_ar"] = 90000
+    # A red contact line crossing the pill, with a z above it (added after the price, as a ticked box does).
+    contact = dict(price, id="22222222-2222-4222-8222-222222222222", role="contact", z=price["z"] + 5, visible=False,
+                   x=60, y=950, width=960, height=48, font_id="noto-sans", weight=700, font_size=32, fill="#FF0000",
+                   align="left", price_badge=None, icon=None)
+    layers.append(contact)
+    document["include"]["contact"] = True
+    document["brand_snapshot"]["contact"] = "038 93 028 00 038 93 028 00 038 93 028 00"
+    build = rendering.bundle()
+
+    def image():
+        result = asyncio.run(rendering.render(document, "feed", {}, build))
+        return Image.open(io.BytesIO(rendering.png_bytes(result["png"], "feed"))).convert("RGB")
+
+    without = image()
+    contact["visible"] = True
+    crossing = image()
+    changed = ImageChops.difference(without, crossing)
+    assert changed.crop((60, 950, 230, 998)).getbbox(), "the contact line must be drawn where it is clear of the pill"
+    assert changed.crop((320, 920, 760, 1030)).getbbox() is None, "the contact line was drawn over the price pill"
+
+
 def test_reference_price_capsule_is_isolated_exact_and_checks_overflow(engine, settings, input_id):
     document = draft(engine, settings.data_dir, input_id)["document"]
     price = next(layer for layer in document["formats"]["feed"]["layers"] if layer["role"] == "price")

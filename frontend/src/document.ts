@@ -30,9 +30,21 @@ export interface Visual { id: string; status: 'pending_review' | 'approved' | 'r
 // Documents are JSON values; this also accepts Vue proxies, unlike structuredClone.
 export const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 
+// A price as a shop owner writes it: « 90000 », « 90 000 », « 90.000 » (common in Madagascar), with or without « Ar »
+// and stray spaces from a phone keyboard. Groups of three digits only, one kind of separator in a number. The comma
+// is refused: in French it marks decimals, and an amount is never guessed.
+// The price pill and the shop's badge are always in the foreground (user, 2026-11-13, ADR-076): drawn after every
+// other layer whatever their z, the price last so that it stays readable if the two meet. z orders the rest.
+const FOREGROUND: Partial<Record<string, number>> = { logo: 1, price: 2 }
+export function drawOrder<T extends { role: string; z: number; visible: boolean }>(layers: T[]): T[] {
+  return layers.filter(layer => layer.visible).sort((a, b) => (FOREGROUND[a.role] ?? 0) - (FOREGROUND[b.role] ?? 0) || a.z - b.z)
+}
+
 export function parsePrice(value: string): number {
-  if (!/^(?:[0-9]+|[0-9]{1,3}(?:[ \u00a0\u202f][0-9]{3})+)$/.test(value)) throw new Error('Saisissez un montant entier en ariary.')
-  const result = Number(value.replace(/[ \u00a0\u202f]/g, ''))
+  // All kinds of space look the same to the owner: they count as one separator.
+  const text = value.replace(/[\u00a0\u202f]/g, ' ').trim().replace(/\s*(?:ar|ariary|mga)\.?$/i, '')
+  if (!/^(?:[0-9]+|[0-9]{1,3}([ .])[0-9]{3}(?:\1[0-9]{3})*)$/.test(text)) throw new Error('Écrivez le prix en ariary, sans virgule : par exemple 90 000 ou 90.000.')
+  const result = Number(text.replace(/[ .]/g, ''))
   if (!Number.isSafeInteger(result) || result < 0) throw new Error('Montant trop élevé ou invalide.')
   return result
 }

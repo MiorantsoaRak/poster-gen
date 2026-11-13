@@ -142,3 +142,49 @@ Verification: pure document/schema/price/layout tests; manual/prompt changes wit
 **Edge cases:** a reopened poster with versions opens on tabs, never on steps. A poster whose only version was rejected is in steps again (it has no usable version) but keeps its values. Keyboard: steps and tabs are buttons in a `tablist`; arrow keys move between tabs.
 
 **Tests:** the browser smoke walks a new poster through the three steps on empty data without touching anything outside the visible step, checks the tabs after the first version, removes the logo from the poster and undoes it, checks that the title offers no removal, and keeps its contrast check on every screen in both themes. Vitest stays as it is (no logic moved out of the component).
+
+## D-POSTER-EDITOR-005 — Phone-first editor (v2) and the look (waiting) (covers R-POSTER-EDITOR-007, the amendment to 006)
+
+**Status:** v2, 2026-11-13, after a fresh review and a devil's advocate on v1 (reviews/phone-first-design-r1-2026-11-13.md, ADR-075). Part A (structure) approved under the autonomy grant, to be built after the current fixes are released. Part B (look) waits for the user's choices. v2 was not reviewed again; its build gets a fresh code review.
+
+**What changed from v1:** no sticky draft poster during the steps (the draft shows only title and price; the rest is drawn later by the image model), no `visualViewport` tracking, no `scroll-margin`, a smaller sticky area, the large view also in tabs, switches only where the change is immediate, the look separated and waiting.
+
+**Approach:** presentation only. No change to the server, the saved document, the renderer or the poster's fonts.
+
+### Part A — structure on one-column screens (task T-PF-STRUCT)
+
+1. **Editor top bar (≤ 720 px).** While a poster is open, the application's header is hidden (a class `editing` bound on `<main>` and the header, since the component has several roots). The editor's title row is a sticky bar of about 56 px: « Retour à Mes affiches » (to `#affiches`), the poster's name on one line, the save state on one line, undo, redo; in demonstration mode a small « Démo » badge replaces the long notice. The phase list and the short phase text leave this bar. The 112 px `scroll-padding-top` rule for the old two-row header goes.
+2. **Steps (≤ 1080 px): less chrome, same thumbnail.** The step count joins the row of steps (`.step-count` stays, the smoke reads it), the lead line is hidden on phones, the rail's paddings are tightened, the coach card is hidden (the bottom bar names the action). The poster stays the thumbnail with « Voir l'affiche », which opens the large view. Target: the first field of « Textes » above 444 px at 360 × 740. Tapping the thumbnail opens the large view instead of selecting an element (the selection and « Retirer » live in the large view and in « Boutique »).
+3. **Tabs (≤ 1080 px): the real image on top.** Once a version exists, `.stage:not(.peek)` is sticky under the top bar and holds only the poster and one horizontally scrolling row of elements. The other blocks of the stage (head, job state, polish preview, save recovery, issues, the selection and its removal text) follow the stage: they sit in a wrapper that is `display: contents` on one column, so `.stage` stays the element of the large view. The poster's height is `posterHeight(visibleHeight)`: about 34 % of the visible height, at most 420 px, at least 96 px, in its own module with Vitest cases; the scale is `min(hostWidth / W, posterHeight / H)` when not peeking, the current rule when peeking. The canvas host loses its 240 px minimum on one column.
+4. **Typing with the poster on top.** When a text field of the panel takes the focus, the sticky poster collapses to a strip of about 96 px and the bottom bar hides; both come back when the focus leaves the panel's fields. `<meta name="viewport">` gains `interactive-widget=resizes-content`, so on Chrome for Android the existing resize handler sees the keyboard; a rescale happens at most once per frame and ignores height changes under 100 px (the address bar). The offset under the sticky area is one variable, `--sticky-top`, measured by a `ResizeObserver` that ignores entries while peeking, applied as `scroll-padding-top` inside the editor only, and used by `go()` instead of its fixed 56/200.
+5. **Large view in tabs.** « Voir l'affiche » exists in tabs too (the `stepping` condition leaves `peeking`); `.main-action` is hidden inside the large view.
+6. **Versions strip (tabs, ≤ 1080 px).** One horizontal row of thumbnails about 56 × 70 under the poster, each with its state word in small type (not a dot alone), « Choisie pour l'export » under the chosen one, « Comparer » kept, then the « Nouvelle version » tile.
+7. **Tools row.** The four groups as a row of tools (icon and label: add `store` and `sliders` to the icons), not sticky; the active one marked by a pill behind its icon.
+8. **Notices in the editor** sit above the bottom bar on one column, not at `top: 108px` over the poster.
+8b. **Pills and badges over the poster are always in front** (user, 2026-11-13: "make sure that pill and badge is always at the first plan", then "I am talking about the « Aperçu » pill too"; ADR-076). The generation chip, a small « Aperçu » pill on the draft poster during the steps (the draft is a preview: the scene comes at generation), and the version's state badge on the poster in tabs carry an explicit `z-index` above the canvas and are never covered by the sticky bars, the tools row or a panel. The tools row and the bottom bar stay visible above anything that opens under them. The smoke checks the topmost element at the pill's centre (`document.elementFromPoint`) is the pill.
+9. **One image at a time in the review (≤ 720 px).** `compareSide` (« La version » first), reset in `resetChecks()`; a two-button choice « Votre photo / La version »; « Votre photo » shows the owner's photos one under the other; wide screens keep the two sides.
+10. **Bottom navigation (≤ 720 px), if the user agrees.** One `.nav` element (the smoke clicks `.nav a`); at 720 px and below the header loses its `backdrop-filter` and the nav, fixed at the bottom with its own blur, shows « Créer », « Mes affiches », « Styles » with icons, labels, counts and `aria-current`; hidden while `editing`; `main` gets its height as bottom padding.
+
+**Never** put `backdrop-filter`, `filter`, `transform` or `will-change` on `.stage` or `.app-header` children that hold fixed elements: they become the containing block of `position: fixed` descendants.
+
+### Part B — the look (task T-PF-LOOK, waits for the user)
+
+- Theme default: if the user chooses "follow the phone": a one-line inline script in the head of `index.html` sets `data-theme` before the first paint, two `theme-color` metas with `media`, the `theme` ref follows a device change while no choice is stored, `toggleTheme` reads the colour from the tokens; the smoke pins `color_scheme="dark"` where it toggles. If he keeps dark: only the light tokens change.
+- Light tokens as in v1, with faint `#67605A` (4.5:1 on the well) and the off switch track outlined in `--muted` (3:1).
+- Figtree (if chosen): variable woff2, Latin, checked with fontTools for U+202F and tabular figures; licence file alongside; replaces the two Noto Sans preloads.
+- Switches only for immediate changes: Logo, Nom de la boutique, Contact, Contour, Ombre, Déplacer les éléments. « Laisser l'IA composer le titre », « Dessiner aussi le prix », « Dessiner aussi le contact », « Écrire la marque en texte simple » and « Logo en sceau rond » stay checkboxes under a heading « Pour la prochaine version ». `forced-colors` restores the native control.
+- Selection by shape, 48/52 px controls, larger radii, as in v1.
+
+**Data model, API:** none.
+
+**Failure modes & handling:**
+
+| Failure | Detection | Behaviour |
+|---|---|---|
+| The keyboard on a browser without `interactive-widget` (Safari, perhaps Samsung Internet) | — | the poster still collapses on focus and the bottom bar hides; the field stays reachable by scrolling. Checked on the owner's phone (T-HOST-004) |
+| The address bar shows and hides during scrolling | height change under 100 px | ignored: no rescale under the finger |
+| A short screen (landscape) | `posterHeight` | 96 px floor, never more than about 40 % |
+| The large view opened from tabs | smoke | full size, no bottom bar inside, the page behind inert |
+| A smoke assertion loses its target | smoke | kept or retargeted; changes listed in the code review |
+
+**Tests:** Vitest for `posterHeight`. Smoke at 360 × 740 with a touch pointer: first field of « Textes » above 444 px; in tabs the poster is on screen and at least 200 px tall with nothing focused, collapses when « Prix » takes the focus and comes back after; the large view in tabs; the editor's top bar and back button; the review's choice shows one side at a time; the bottom navigation if built; contrast in both themes. The measurement walk rerun at 360 px.
