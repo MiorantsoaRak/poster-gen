@@ -1,7 +1,7 @@
 # Affiche IA — deploy to affiches.miorantsoa.app
 
 **State on 2026-11-13: written, never run.** Nothing is deployed. The image has not been built anywhere (the
-development machine has no access to Docker), and the Caddy block below has not been validated. The first rollout
+development machine has no access to Docker), and no part of it has run on the box. The first rollout
 is where these files are proven; read "Not proven yet" at the end before it.
 
 Box: Hetzner `mx1`, `89.167.56.26`, Ubuntu 26.04, 2 vCPU, 3.8 GB memory without swap, SSH user `deploy`. It
@@ -79,10 +79,18 @@ observed session. It does not touch the box.
    }
    ```
 
-   The box runs Caddy 2.11.4 (read on 2026-11-13), which accepts status codes on `handle_errors`. The block is
-   written from the documentation's syntax as remembered and **has not been validated**: before recreating
-   Caddy, run `sudo docker exec maizina-caddy-1 caddy validate --config /etc/caddy/Caddyfile` on a copy that
-   holds the new block, or expect to correct it.
+   **Validated on 2026-11-13:** the whole file (Maizina, Trap Duel, PPN Market and this block) answers "Valid
+   configuration" to `caddy validate` in a throwaway `caddy:2` container on the box (2.11.4, the version that
+   runs there; no network, no image pull). What the error block actually answers is checked in step 6.
+
+   **Both changes are committed in the Maizina repository on the Linux machine** (`../maizina`, branch
+   `master`: T-086 and ADR-051 there) and pushed on 2026-11-13. They are not deployed. The remote's `master` had neither the `ppn` network nor the `buy.miorantsoa.app` block, although
+   both run on the box (edited there, never committed): **a deploy from the old `master` would have taken PPN
+   Market offline.** The commit makes the repository equal to the box, then adds Affiche IA.
+
+   Because the list of Caddy's networks changes, Maizina's `docker compose up -d` recreates Caddy by itself
+   (a few seconds of downtime for the four sites); the manual recreate below is only needed after a change of
+   the Caddy file alone.
 
    As for PPN Market, a Caddyfile-only change is not picked up by Maizina's deploy; recreate Caddy after 2b (a
    few seconds of downtime for Maizina, Trap Duel and PPN Market; certificates persist):
@@ -92,7 +100,7 @@ observed session. It does not touch the box.
    prints the `service_down` line with status 503 and a valid certificate (the application is not running yet);
    the three other sites still answer 200.
 3. **Affiche IA deploy** (below), with the first-deploy variables set. Deploy at a quiet time, and keep
-   `ssh deploy@89.167.56.26 'watch -n 5 free -m'` open in another window: the image build is the heaviest thing
+   `ssh -t deploy@89.167.56.26 'TERM=xterm watch -n 5 free -m'` open in another window (`-t` gives `watch` a terminal; without it: "cannot initialize terminal type"): the image build is the heaviest thing
    this box has been asked to do (the frontend's type check alone peaks near 480 MB), and there is no swap.
    All verification checks must pass.
 4. **In the application, once:** sign in, enter the shop's name and contact, upload the logo. Make the saved
@@ -229,7 +237,7 @@ backup that the release took just before starting.
 
 - The image build, its size, and Chromium starting inside the hardened container (`verify.sh` checks the last).
 - `deploy.py` itself: its Python compiles and its shell text parses, but pyinfra has not run it.
-- The Caddy block.
+- What the Caddy error block answers while the container is down (its syntax is validated; rollout step 6).
 - Memory on the box during a build and during a real render.
 - The restore procedure on the box (the backup and a restore are tested on temporary data in
   `backend/tests/test_backup.py`).
