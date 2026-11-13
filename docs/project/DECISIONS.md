@@ -1,5 +1,12 @@
 # DECISIONS
 
+## ADR-071 — 2026-11-13 — Every refusal the owner can cause has its own sentence; a test reads the source to keep it so (Claude, after the user's remark on the hidden box)
+
+- Context: the first poster on the live pilot failed on a box hidden in a closed section, with "Vérifiez les informations saisies.". Three audits had missed it. A scripted audit found 39 refusal codes of 75 without a sentence, and rules on the drawn title that no screen stated.
+- Decision: the sentences live in one table (`MESSAGES`, api.py). A test collects every `Refused("code")` in the source and fails when a code has neither a sentence nor a place in a short list of codes that only a programming error can produce. Refusals caused by what the owner types get their own code and field. Rules that can be checked without a second copy of server logic (length, quote) are also said in the editor before the paid step; the word list is not copied into the editor.
+- Because: a missing sentence is invisible in review and in a smoke that follows the happy path; only a check over the code finds it every time.
+- Open: the word list (`promo`, `gratuit`, `%`, `ar`, `livr…`, `sold…`, `prix…`, `garanti…`) refuses some ordinary product names. Kept as it is; the user decides whether to loosen it.
+
 ## ADR-070 — 2026-11-13 — Maizina's files for Affiche IA: made in a local copy that was older than the box (user: "maizina project is cloned in the pc, make the necessary changes")
 
 - The local `../maizina` has no `.git` and its `deploy/compose.yml` and `deploy/maizina.caddy` had neither the `ppn` network nor the `buy.miorantsoa.app` block. Both exist in the files that run on the box (read there on 2026-11-13; the box's compose file carries a mangled comment, so it looks edited by hand). A deploy from the local copy as it was would have taken PPN Market offline.

@@ -33,7 +33,7 @@ Affiche IA helps Original Phone Mada turn a product photo, verified information 
 | Database | SQLite + SQLAlchemy/Alembic for phase 1 | Phase-2 local persistence approved; hosting remains open. |
 | Background processing | Durable SQLite queue in one FastAPI process | Approved design; implementation queued. |
 | Asset storage | Existing content-addressed local files | Immutable originals/scenes/textures/exports, with database ownership. |
-| Infra / deploy | One rented Linux server, Caddy in front, systemd, SQLite (designs/hosted-pilot.md) | Requirements approved 2026-11-13 (ADR-064). The server, the DNS name and the pilot's provider keys are the administrator's actions; nothing is deployed yet. |
+| Infra / deploy | One container (API, built frontend, Chromium, SQLite) on the shared Hetzner box, behind Maizina's Caddy; pyinfra releases (designs/hosted-pilot.md) | Requirements approved 2026-11-13 (ADR-064). Deployed on 2026-11-13 at https://affiches.miorantsoa.app, on the shared Hetzner box `mx1` behind Maizina's Caddy (ADR-066 to ADR-070); runbook in deploy/README.md. |
 
 The canonical project location is `C:/Users/M Rakotozafy/Documents/Miorantsoa/Vite/affiche-ia`, alongside `tsena_scan`. The independent Git repository is on `main`; since 2026-11-13 it has the remote `origin`, the private GitHub repository `MiorantsoaRak/poster-gen`. The installed backend and verified CLI commands are documented in AGENTS.md. The authenticated API and Vue editor exist; deployment remains unconfigured.
 

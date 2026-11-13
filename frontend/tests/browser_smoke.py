@@ -581,6 +581,45 @@ def run():
                         page.screenshot(path=str(OUTPUT / "styles.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
+                        # A small product photo (first thing met on the live pilot, 2026-11-13: a 474 px picture). It is said at the
+                        # upload, and the paid confirmation asks for the agreement itself instead of failing with a vague message.
+                        page.locator(".nav a", has_text="Créer").click()
+                        Image.new("RGB", (474, 474), (200, 200, 205)).save(OUTPUT / "small.png")
+                        page.get_by_label("Photos du produit").set_input_files(OUTPUT / "small.png")
+                        expect(page.get_by_text("Photo petite", exact=False)).to_be_visible()
+                        page.get_by_label("Nom du produit", exact=True).fill("Petite photo")
+                        page.get_by_label("Variante confirmée").fill("Gris")
+                        page.get_by_label("Prix en ariary", exact=True).fill("10 000")
+                        page.get_by_label("Les photos correspondent").check()
+                        page.get_by_role("button", name="Préparer mon affiche").click()
+                        expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
+                        # A title the image model cannot draw is said under the main button, before the paid step, with the reason.
+                        page.get_by_label("Titre", exact=True).fill('Petite photo 32"')
+                        expect(page.get_by_role("button", name="Générer l’affiche")).to_be_disabled()
+                        expect(page.get_by_text("contient un guillemet droit", exact=False)).to_be_visible()
+                        page.get_by_label("Titre", exact=True).fill("Petite photo")
+                        expect(page.get_by_role("button", name="Générer l’affiche")).to_be_enabled()
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        agree = page.get_by_role("dialog").get_by_label("J’accepte une qualité réduite", exact=False)
+                        page.get_by_role("button", name="Générer l’affiche").click()
+                        expect(agree).to_be_visible()
+                        expect(page.get_by_role("button", name="Lancer la génération")).to_be_disabled()
+                        page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
+                        # After a reload the editor no longer knows the photo is small: the server refuses, and the same dialog
+                        # comes back with the agreement. No generation starts without it.
+                        page.reload()
+                        expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
+                        before = len(sent)
+                        page.get_by_role("button", name="Générer l’affiche").click()
+                        expect(agree).to_have_count(0)
+                        page.get_by_role("button", name="Lancer la génération").click()
+                        expect(agree).to_be_visible()
+                        expect(page.get_by_role("button", name="Lancer la génération")).to_be_disabled()
+                        assert sent[before]["acknowledged_warnings"] == [], sent[before]
+                        agree.check()
+                        page.get_by_role("button", name="Lancer la génération").click()
+                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        assert sent[-1]["acknowledged_warnings"] == ["low_resolution"], sent[-1]
                         # A poster's address opened without a session: after the sign-in the owner is on that poster.
                         other = browser.new_page(viewport={"width": 390, "height": 844})
                         other.goto(f"{ORIGIN}/#{copy_id}")

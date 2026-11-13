@@ -36,8 +36,40 @@ from affiche.visuals.gateway import usd_to_micros
 log = logging.getLogger(__name__)
 
 
-def error_response(request: Request, error: store.Refused):
-    messages = {
+# What the owner reads when the server refuses something. Every refusal he can cause has a sentence that says what
+# to do; tests/test_api.py fails when a new refusal code has neither a sentence here nor a place in its list of
+# codes that only a programming error can produce.
+MESSAGES = {
+        "title_too_long": "Le titre dépasse 60 caractères : l’IA ne peut pas le dessiner dans l’image. Raccourcissez le titre.",
+        "title_unsupported": "Le titre contient un guillemet droit (\") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».",
+        "title_commercial_text": "Le titre contient un mot de prix, de promotion ou de garantie (par exemple « promo », « gratuit », « % », « Ar »). Le prix a son propre champ : retirez ce mot du titre.",
+        "contact_unsupported": "Le contact est trop long ou contient un guillemet : l’IA ne peut pas le dessiner. Raccourcissez-le, ou décochez « Dessiner aussi le contact dans l’image ».",
+        "invalid_headline": "Ces réglages de texte ne peuvent pas être dessinés ensemble dans l’image. Rechargez la page, puis générez de nouveau.",
+        "validation_error": "Une valeur saisie n’est pas acceptée. Marque et sous-titre : 60 caractères au plus, sans guillemet droit, sans mot de prix, de promotion ni de garantie.",
+        "invalid_image": "Ce fichier n’est pas une image lisible. Choisissez une photo JPEG, PNG ou WebP.",
+        "animated_image": "Les images animées ne sont pas acceptées. Choisissez une photo fixe (JPEG, PNG ou WebP).",
+        "unsupported_colour": "Les couleurs de cette image ne sont pas prises en charge (profil d’impression). Enregistrez-la en JPEG ou PNG standard, puis réessayez.",
+        "invalid_crop": "Ce cadrage sort de la photo. Ajustez-le et réessayez.",
+        "plan_stale": "L’affiche a changé depuis la préparation de cette génération. Relancez « Générer l’affiche ».",
+        "headline_stale": "Le titre, le prix ou le contact a changé depuis cette version : ils sont dessinés dans l’image. Générez une nouvelle version.",
+        "title_missing": "Le titre dessiné dans l’image ne correspond plus au titre de l’affiche. Générez une nouvelle version, ou remettez le titre d’origine.",
+        "price_stale": "Le prix dessiné dans l’image ne correspond plus au prix de l’affiche. Générez une nouvelle version, ou remettez le prix d’origine.",
+        "signature_missing": "Le contact dessiné dans l’image ne correspond plus à celui de la boutique. Générez une nouvelle version.",
+        "creation_abandoned": "Cette affiche a été retirée de la liste : elle ne peut plus être modifiée. Remettez-la dans la liste depuis « Mes affiches », ou dupliquez-la.",
+        "base_not_selected": "Choisissez d’abord la version à ajuster.",
+        "review_decided": "Cette version a déjà été approuvée ou refusée. Rechargez la page pour voir son état.",
+        "proposal_decided": "Cette proposition a déjà été appliquée ou refusée. Rechargez la page.",
+        "effect_decided": "Cet effet a déjà été appliqué ou refusé. Rechargez la page.",
+        "unsupported_visual": "Cette version ne peut pas servir à cette action. Choisissez une autre version.",
+        "unsupported_font": "Cette police n’est pas disponible pour le fichier final. Choisissez une autre police dans les réglages avancés.",
+        "render_invalid": "Le fichier final n’a pas pu être produit correctement. Relancez « Vérifier l’aperçu final ».",
+        "render_inputs_changed": "L’affiche a changé pendant la préparation du fichier final. Relancez « Vérifier l’aperçu final ».",
+        "layout_not_plannable": "Les éléments choisis ne tiennent pas ensemble sur l’affiche. Décochez un élément de la boutique (logo, nom ou contact) ou raccourcissez le titre.",
+        "invalid_plan": "Cette composition n’est pas valable (un élément sort de l’affiche ou en recouvre un autre). Annulez le dernier déplacement et réessayez.",
+        "invalid_reference": "L’image de référence choisie n’est plus utilisable. Choisissez-en une autre.",
+        "input_changed": "Le produit de cette affiche a changé pendant la génération. Relancez la génération.",
+        "provider_unavailable": "Le service d’images n’est pas disponible pour le moment. Réessayez dans quelques minutes.",
+        "format_unavailable": "Ce format n’est pas encore disponible : seul le format publication (1080 × 1350) peut être exporté.",
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
         "revision_conflict": "Une version plus récente existe. Vos modifications restent à récupérer.",
         "idempotency_reused": "Cette référence de demande a déjà été utilisée avec un autre contenu.",
@@ -57,6 +89,7 @@ def error_response(request: Request, error: store.Refused):
         "unsupported_target": "Sélectionnez le titre ou le prix pour ajuster sa typographie.",
         "stale_proposal": "Le brouillon a changé depuis cette proposition. Demandez un nouvel ajustement.",
         "stale_effect": "Le texte a changé depuis cet effet. Demandez un nouvel effet.",
+        "acknowledgement_required": "La photo du produit est petite (moins de 800 px) : l’affiche peut manquer de netteté. Acceptez la qualité réduite pour continuer, ou choisissez une photo plus grande.",
         "content_acknowledgement_required": "Vérifiez et acceptez explicitement le nouveau titre ou prix.",
         "effect_unapproved": "Cet effet doit être approuvé avant de l’utiliser.",
         "unsupported_effect": "Cet effet ne peut pas être représenté. Utilisez les réglages de police, couleur, contour ou ombre.",
@@ -74,8 +107,13 @@ def error_response(request: Request, error: store.Refused):
         "invalid_brief": "Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image.",
         "attempt_limit": "Douze scènes ont déjà été demandées pour cette affiche. Conservez une version ou créez une copie pour continuer.",
         "planner_unavailable": "La préparation par Claude n’est pas disponible. La composition simple reste disponible.",
-    }
-    body = {"code": error.code, "message_fr": messages.get(error.code, "Vérifiez les informations saisies."),
+}
+
+
+def error_response(request: Request, error: store.Refused):
+    # A refusal without a sentence is a programming error, not something the owner typed: say so, with the code.
+    fallback = f"Cette action a été refusée (code : {error.code}). Rechargez la page et réessayez ; si cela se répète, donnez ce code à l’administrateur."
+    body = {"code": error.code, "message_fr": MESSAGES.get(error.code, fallback),
             "retryable": error.status in (429, 503)}
     if error.field:
         body["field"] = error.field

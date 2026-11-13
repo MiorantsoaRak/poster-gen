@@ -227,8 +227,13 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
                                      headline=request.headline, title=title, signature=signature, **price, **style)
-        except ValueError:
-            raise store.Refused("invalid_headline") from None
+        except ValueError as refusal:
+            # The owner can cause these four by what he typed: each gets its own sentence and its field.
+            code, field = {"headline_title_too_long": ("title_too_long", "offer.title"),
+                           "headline_title_unsupported": ("title_unsupported", "offer.title"),
+                           "headline_contains_commercial_or_instruction_text": ("title_commercial_text", "offer.title"),
+                           "signature_unsupported": ("contact_unsupported", "contact")}.get(str(refusal), ("invalid_headline", None))
+            raise store.Refused(code, field=field) from None
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
                    "quality": "high", "prompt": compiled, "photo_assets": product["photo_assets"],
                    "base_visual_id": None, "low_res_ack": low_res,

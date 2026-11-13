@@ -128,6 +128,29 @@ def test_hidden_title_requires_scene_headline_with_the_current_title(engine, set
             base_visual_id=renamed["document"]["formats"]["feed"]["scene"]["visual_id"], instruction_fr="Plus de lumière"))
 
 
+@pytest.mark.parametrize("title, code", [
+    ("Téléviseur intelligent grand écran avec barre de son et support mural inclus", "title_too_long"),
+    ('Smart TV 43"', "title_unsupported"),
+    ("Écouteurs sans fil promo", "title_commercial_text"),
+    ("Coque 100 % silicone", "title_commercial_text"),
+])
+def test_a_title_the_image_model_cannot_draw_is_refused_with_its_own_reason_and_field(engine, settings, input_id, title, code):
+    original = draft(engine, settings.data_dir, input_id)
+    document = Document.model_validate(original["document"])
+    document.offer.title = title
+    changed = store.save_creation(engine, settings.data_dir, 1, key(), original["id"], document, original["revision"])[1]
+    plan = fixed(engine, settings, changed)
+    with pytest.raises(store.Refused) as refusal:
+        visuals.request_scene(engine, settings, 1, key(), changed["id"], changed["revision"], visuals.SceneRequest(
+            plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline()))
+    assert (refusal.value.code, refusal.value.field) == (code, "offer.title")
+    with engine.connect() as conn:  # refused before any job or reservation
+        assert conn.execute(text("SELECT count(*) FROM poster_jobs")).scalar_one() == 0
+    # The same title is fine when the renderer writes it instead of the image model.
+    visuals.request_scene(engine, settings, 1, key(), changed["id"], changed["revision"], visuals.SceneRequest(
+        plan_id=plan["id"], acknowledged_warnings=["low_resolution"]))
+
+
 def test_shop_signature_drawn_by_the_scene_must_match_the_poster_profile(engine, settings, input_id):
     contact = "038 93 028 00 / 034 93 028 00"
     store.save_profile(engine, settings.data_dir, 1, key(), Profile(name="Original Phone Mada", contact=contact), 1)

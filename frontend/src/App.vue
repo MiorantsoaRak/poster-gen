@@ -23,6 +23,8 @@ watch(notice, value => { clearTimeout(noticeTimer); if (value) noticeTimer = set
 const intake = reactive({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
 // The logo identifies the shop, and without one the footer carries the contact only (ADR-053): the name starts unticked.
 const include = reactive({ logo: false, shop_name: false, contact: true })
+// A contact typed for the first time is put on the poster, as an uploaded logo is; its box can still be unticked.
+watch(() => !!profile.contact?.trim(), filled => { include.contact = filled })
 let pendingInput: { signature: string; id: string } | null = null
 const photos = ref<{ asset: string; warnings: string[] }[]>([])
 const creation = ref<Creation | null>(null), doc = shallowRef<PosterDocument | null>(null), selected = ref<string | null>(null)
@@ -273,6 +275,7 @@ const vModal = {
 const paid = ref<{ title: string; text: string; cost: string; label: string; run: () => Promise<void> } | null>(null)
 const costLine = (micros?: number) => micros ? `Coût estimé : au plus ${dollars(micros)}.` : 'Mode de démonstration : aucune dépense.'
 function askScene() {
+  if (whyNoHeadline.value) { error.value = whyNoHeadline.value; return }  // also for « Nouvelle version »
   paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: costLine(caps.value?.scene_estimate_micros),
     text: visuals.value.length ? 'Mêmes textes et même style, un autre essai. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. Cela prend environ une minute.', run: createScene }
 }
@@ -343,13 +346,20 @@ const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.v
 // A title or price that the image model is drawing right now must not change under it: the scene would arrive stale.
 const drawingTexts = computed(() => !!job.value && ['scene', 'refine'].includes(job.value.kind) && headline.value.on)
 const stage = computed(() => !currentVisual.value ? (job.value && ['scene', 'refine'].includes(job.value.kind) ? 1 : 0) : currentVisual.value.status === 'approved' ? 3 : 2)
+// The image model draws these words, and the server refuses what it cannot draw. Said here, before the paid step.
+const whyNoHeadline = computed(() => {
+  if (!headline.value.on || !doc.value) return ''
+  const check = (label: string, value: string) => value.length > 60 ? `${label} dépasse 60 caractères (${value.length}) : l’IA ne peut pas le dessiner dans l’image. Raccourcissez-le.`
+    : /["\r\n]/.test(value) ? `${label} contient un guillemet droit (") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».` : ''
+  return check('Le titre', doc.value.offer.title.trim()) || check('La marque', headline.value.brand.trim()) || check('Le sous-titre', headline.value.subtitle.trim())
+})
 const mainAction = computed(() => {
   const visual = currentVisual.value
-  if (!visual || visual.status === 'rejected') return { label: 'Générer l’affiche', icon: 'spark', disabled: busy.value || !!job.value, run: askScene }
+  if (!visual || visual.status === 'rejected') return { label: 'Générer l’affiche', icon: 'spark', disabled: busy.value || !!job.value || !!whyNoHeadline.value, run: askScene }
   if (visual.status === 'pending_review') return { label: 'Vérifier la fidélité', icon: 'check', disabled: false, run: () => { review.value = visual; resetChecks() } }
   return { label: 'Vérifier l’aperçu final', icon: 'eye', disabled: exportBlocked.value, run: () => { perform(renderFinal) } }
 })
-const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.value?.status === 'approved' ? whyNoExport.value : whyBusy.value)
+const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.value?.status === 'approved' ? whyNoExport.value : busy.value || job.value ? whyBusy.value : whyNoHeadline.value || whyBusy.value)
 const textChecks = computed(() => {
   const drawn = review.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return []
@@ -397,6 +407,14 @@ const dollars = (micros = 0) => new Intl.NumberFormat('fr-FR', { style: 'currenc
 
 // An error already written beside its field is not repeated in the general message.
 class Shown extends Error {}
+// Why a generation failed, in the owner's words: what he can do differs with the cause.
+function jobFailure(code: string | null) {
+  const kept = ' Vos images et votre affiche sont conservées.'
+  if (code === 'refused') return 'Le service d’images a refusé cette demande (photo ou texte non accepté). Essayez une autre photo, ou changez le titre ou l’ambiance.' + kept
+  if (['timeout', 'provider_error', 'rate_limited', 'invalid_response'].includes(code ?? '')) return 'Le service d’images n’a pas répondu correctement. Réessayez dans une minute.' + kept
+  if (['quota', 'auth', 'budget_exhausted'].includes(code ?? '')) return 'Le compte du service d’images doit être vérifié par l’administrateur (quota, clé ou budget). Vous pouvez encore modifier et télécharger vos affiches.'
+  return `La tâche n’a pas abouti${code ? ` (code : ${code})` : ''}.${kept} Vous pouvez réessayer.`
+}
 function checkedPrice(text: string, field?: string) {
   try { const value = parsePrice(text); priceError.value = ''; return value }
   catch (reason) { priceError.value = (reason as Error).message; if (field) document.getElementById(field)?.focus(); throw new Shown() }
@@ -449,6 +467,7 @@ async function createPoster() {
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
+  if (photos.value.some(photo => photo.warnings.includes('low_resolution'))) smallPhotoOf.value = result.id
   if (doc.value?.include.contact) edit(document => {
     compactContact(document, defaultAlign(document))
     // The seal is the default for the footer it was designed for: a logo and a contact, no shop name.
@@ -622,11 +641,21 @@ async function savePlan() {
 }
 async function generateScene() {
   await savePlan()
-  // The explicit low-resolution checkbox below is required even after reopening a draft.
-  const result = await mutation<any>(`/api/creations/${creation.value!.id}/scenes`, { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }, saver!.revision)
+  let result: any
+  try { result = await mutation<any>(`/api/creations/${creation.value!.id}/scenes`, { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }, saver!.revision) }
+  catch (reason) {
+    // A reopened poster does not know its photo is small until the server says so: ask in the same dialog.
+    if (!(reason instanceof ApiError && reason.code === 'acknowledgement_required')) throw reason
+    smallPhotoOf.value = creation.value!.id; askScene(); throw new Shown()
+  }
   follow({ id: result.job_id, kind: 'scene', status: 'queued', result_ref: null, error_code: null })
 }
-const lowResAccepted = ref(false)
+// A product photo under the server's minimum needs an explicit agreement before a paid generation. Both flags
+// hold the id of the poster they were set for, so an agreement never carries over to another poster.
+const smallPhotoOf = ref(''), lowResAcceptedOf = ref('')
+const smallPhoto = computed(() => !!creation.value && smallPhotoOf.value === creation.value.id)
+const lowResAccepted = computed({ get: () => !!creation.value && lowResAcceptedOf.value === creation.value.id,
+  set: (agreed: boolean) => { lowResAcceptedOf.value = agreed ? creation.value?.id ?? '' : '' } })
 async function refineScene() {
   await flush()
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/refinements`, { base_visual_id: currentVisual.value!.id, instruction_fr: refinement.value, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}) }, saver!.revision)
@@ -683,7 +712,7 @@ async function poll() {
       return
     }
     if (['failed', 'interrupted', 'cancelled'].includes(job.value.status)) {
-      error.value = job.value.status === 'interrupted' ? 'La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.' : job.value.kind === 'look' ? 'Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.' : 'La tâche n’a pas abouti. Vos images et votre affiche sont conservées. Vous pouvez réessayer.'
+      error.value = job.value.status === 'interrupted' ? 'La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.' : job.value.kind === 'look' ? 'Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.' : jobFailure(job.value.error_code)
       job.value = null; return
     }
     pollTimer = setTimeout(poll, 2000)
@@ -833,6 +862,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Ajoutez vos photos, votre titre et le prix. Vous pourrez ensuite ajuster chaque élément.</p>
         <label class="upload-zone">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
         <div class="photo-strip"><span v-for="(photo, index) in photos" :key="photo.asset" class="mini"><img :src="`/api/assets/${photo.asset}`" width="76" height="76" alt="Photo originale du produit" /><button type="button" class="text-button" :aria-label="`Retirer la photo ${index + 1}`" @click="photos.splice(index, 1)">Retirer</button></span></div>
+        <p v-if="photos.some(photo => photo.warnings.includes('low_resolution'))" class="help" role="status">Photo petite (moins de 800 px de côté) : l’affiche peut manquer de netteté. Si vous avez une photo plus grande, préférez-la.</p>
         <label>Nom du produit<input v-model="intake.name" name="product" autocomplete="off" maxlength="160" required placeholder="Ex. Soundcore R50i…" /></label>
         <div class="form-row"><label>Variante confirmée<input v-model="intake.variant" name="variant" autocomplete="off" maxlength="160" required /></label><label>Prix en ariary<input id="prix-nouveau" v-model="intake.price" name="price" autocomplete="off" inputmode="numeric" required placeholder="90 000…" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="priceError = ''" /></label></div>
         <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
@@ -889,7 +919,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez. Claude décrit son style (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label>Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
             <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="headline.accent_colour.toLowerCase() === value" :disabled="busy || !!job" @click="headline.accent_colour = value" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === headline.accent_colour.toLowerCase()) }">Autre…<input v-model="headline.accent_colour" type="color" aria-label="Autre couleur d’accent" :disabled="busy || !!job" /></label></div></div>
-            <details><summary>Ambiance et qualité</summary><label>{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label><label class="check"><input v-model="lowResAccepted" type="checkbox" />J’accepte une qualité réduite si la photo source est petite.</label></details>
+            <details><summary>Ambiance</summary><label>{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label></details>
           </section>
           <details class="card advanced"><summary><Icon n="sliders" />Réglages avancés</summary><p class="help">Retoucher un texte resté en calque, recadrer la scène ou déplacer un élément.</p>
             <label class="check"><input v-model="dragEnabled" type="checkbox" />Déplacer les éléments</label>
@@ -934,7 +964,8 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
     </div>
     <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" @keydown.esc="paid = null"><div class="confirm">
       <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paid.cost" class="cost">{{ paid.cost }}</p>
-      <div class="row"><button class="primary" :disabled="busy" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">Annuler</button></div>
+      <label v-if="smallPhoto && paid.run === createScene" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
+      <div class="row"><button class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">Annuler</button></div>
     </div></div>
     <section v-if="finalPreview" v-modal class="review-panel final-preview" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ confirmedDownload ? 'Votre affiche est prête' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ confirmedDownload ? 'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>

@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 import os
 import socket
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from uuid import uuid4
 
 import httpx2
@@ -14,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from affiche import assets, backup
+from affiche import api as affiche_api, assets, backup
 from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
 from affiche.db import write_tx
@@ -117,6 +119,32 @@ def test_status_tells_the_administrator_what_runs_and_how_old_the_backup_is(clie
     assert client.get("/api/status").json()["backup"] == {"finished_at": old, "age_hours": 49.0, "late": True}
     marker.write_text("not json", encoding="utf-8")
     assert client.get("/api/status").json()["backup"] is None
+
+
+# Refusals that only a programming error in the editor can produce: the owner cannot cause them by what he types
+# or taps. Each of them answers with the fallback sentence, which carries the code for the administrator.
+DEVELOPER_ONLY = {"call_already_dispatched", "format_missing", "generated_reference_unavailable", "input_immutable",
+                  "invalid_cursor", "invalid_idempotency_key", "invalid_job_state", "invalid_revision", "invalid_role",
+                  "provider_mode_mismatch", "replacement_identity_mismatch", "replacement_requires_new_input",
+                  "unknown_asset"}
+
+
+def test_every_refusal_the_owner_can_meet_has_its_own_french_sentence(client):
+    source = Path(affiche_api.__file__).parent
+    raised = set()
+    for file in [*(source / "posters").glob("*.py"), source / "api.py"]:
+        raised |= set(re.findall(r'Refused\(\s*"([a-z_]+)"', file.read_text(encoding="utf-8")))
+    assert len(raised) > 70
+    unexplained = raised - set(affiche_api.MESSAGES) - DEVELOPER_ONLY
+    assert not unexplained, f"add a sentence to MESSAGES in api.py (or to DEVELOPER_ONLY here) for: {sorted(unexplained)}"
+    assert not DEVELOPER_ONLY & set(affiche_api.MESSAGES)
+    # A small product photo: the refusal says what is wrong and what to do (first finding of the live pilot).
+    assert "petite" in affiche_api.MESSAGES["acknowledgement_required"]
+    # The fallback names the code; it never blames the form.
+    answer = client.get("/api/creations?before=not-a-cursor")
+    login(client)
+    answer = client.get("/api/creations?before=not-a-cursor")
+    assert answer.status_code == 422 and "invalid_cursor" in answer.json()["error"]["message_fr"]
 
 
 def test_cookie_is_opaque_hash_only_and_logout_revokes(client):

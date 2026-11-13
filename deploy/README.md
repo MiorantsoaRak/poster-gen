@@ -1,8 +1,9 @@
 # Affiche IA — deploy to affiches.miorantsoa.app
 
-**State on 2026-11-13: written, never run.** Nothing is deployed. The image has not been built anywhere (the
-development machine has no access to Docker), and no part of it has run on the box. The first rollout
-is where these files are proven; read "Not proven yet" at the end before it.
+**State on 2026-11-13: deployed.** `https://affiches.miorantsoa.app` runs revision `7f4fa6d` since 15:24 UTC:
+container healthy, no restart, no published port, 222 MiB of its 1 GiB at rest, image 2.26 GB, first backup
+taken, Chromium starts in the container, the three neighbours answer 200, and the administrator signed in from
+a browser. What is still open is under "Not proven yet" at the end.
 
 Box: Hetzner `mx1`, `89.167.56.26`, Ubuntu 26.04, 2 vCPU, 3.8 GB memory without swap, SSH user `deploy`. It
 already runs Maizina, Trap Duel and PPN Market. Affiche IA is its own compose project (`affiche-ia`,
@@ -233,11 +234,19 @@ backup that the release took just before starting.
   taking Maizina or PPN Market with it.
 - Builder cache is shared with the other projects and is not pruned; the 5 GB precheck fails first.
 
-## Not proven yet (2026-11-13)
+## Not proven yet (2026-11-13, after the first deploy)
 
-- The image build, its size, and Chromium starting inside the hardened container (`verify.sh` checks the last).
-- `deploy.py` beyond its prechecks. Its first run (2026-11-13) created the folders, the secrets, `daily.sh`, `verify.sh` and the cron entry, passed the prechecks, then stopped at the upload: the script deleted its archive before pyinfra sent it (fixed: the archive now lives in the temporary folder and is removed when pyinfra exits). Build, start and verification have not run.
-- (Proven 2026-11-13, before the first container existed: Maizina is deployed with the new network and block, the certificate for `affiches.miorantsoa.app` is issued, `/` answers the French line and `/api/session` the `service_down` envelope, both 503, and the three other sites answer 200.)
-- Memory on the box during a build and during a real render.
-- The restore procedure on the box (the backup and a restore are tested on temporary data in
-  `backend/tests/test_backup.py`).
+- **Memory during a real render and a real generation** (step 5): nobody has made a poster on the box yet.
+- **The restore** (step 8), on the box or on a development machine. The backup and a restore are tested on
+  temporary data only (`backend/tests/test_backup.py`).
+- **Backups off the box:** not decided. Everything is on `mx1` only.
+- **The owner's phone** (step 9), and the home-screen icon on a real phone.
+- **A second release:** the stop, backup and start of an existing container, and a rollback, have never run.
+- Disk: 7.9 GB free after the first build (13 GB before). The deploy needs 5 GB; watch it before each release.
+
+Proven on 2026-11-13: the image builds on the box; the hardened container starts and stays healthy; Chromium
+starts in it; the Caddy block (valid, and the French 503 answers while no container existed); HTTP redirects to
+HTTPS; HSTS is sent; the page and its manifest are public and `/api/*` answers 401 without a session; a foreign
+Origin is refused (403); **a forged `X-Forwarded-For` does not fool the sign-in limit** (a wrong password sent
+with `X-Forwarded-For: 203.0.113.9` was recorded under the caller's real public address); the settings in the
+container are the hosted ones (`openai`, `/data`, cap 15 since 2026-11-13, planner key present).
