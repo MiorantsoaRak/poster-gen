@@ -241,6 +241,18 @@ def test_the_price_pill_and_the_badge_are_asked_in_the_foreground():
     assert "in the foreground" not in compiled(headline=Headline(**drawn), refinement=True).split("Shop badge:")[0]
 
 
+def test_the_accent_word_is_asked_to_stay_readable():
+    ctx = context()
+    plan = fixed_plan(ctx)
+    def compiled(**extra):
+        return compile_scene(plan, ctx, photo_count=1, title="CMF Buds 2a",
+                             headline=Headline(accent_word="2a", accent_colour="#DCEBFA"), **extra)
+    assert 'only "2a" in the colour #DCEBFA, and that word as easy to read' in compiled()
+    assert "as easy to read" not in compile_scene(plan, ctx, photo_count=1, title="CMF Buds 2a", headline=Headline())
+    # A refinement of a stored scene keeps the prompt that scene was made with.
+    assert "as easy to read" not in compiled(refinement=True)
+
+
 def test_context_has_no_commercial_value_channel():
     for field in ("price_ar", "contact", "logo", "facts"):
         with pytest.raises(ValidationError):

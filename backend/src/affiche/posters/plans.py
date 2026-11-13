@@ -324,6 +324,9 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         if headline.accent_word:
             text += f', with only "{headline.accent_word}" in ' + (
                 f"the colour {headline.accent_colour}" if headline.accent_colour else "the palette's accent colour")
+            if not refinement:  # a pale accent on a pale backdrop came out unreadable (benchmark 2026-11-13, ADR-077)
+                text += (", and that word as easy to read as the rest of the name: if the colour is too close "
+                         "to the backdrop, use a deeper or lighter shade of the same hue")
         text += "."
         if headline.subtitle and headline_style:
             text += (f' Below it, small, the only subtitle: "{headline.subtitle}", in the subtitle lettering that '
