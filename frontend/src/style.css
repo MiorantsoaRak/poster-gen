@@ -25,6 +25,8 @@
 
 * { box-sizing: border-box }
 html { scroll-behavior: smooth; scroll-padding: 64px 0 80px; -webkit-tap-highlight-color: transparent }
+/* In the editor a focused field is never under what stays at the top (measured in App.vue: top bar, and the poster in the tabs). */
+html:has(main.editing) { scroll-padding-top: calc(var(--sticky-top, 56px) + 8px) }
 body { margin: 0; background: var(--ground) }
 h1, h2, h3, p { margin-top: 0 }
 h1 { font-size: 20px; line-height: 26px; font-weight: 700; margin-bottom: 2px; text-wrap: balance }
@@ -115,7 +117,7 @@ details[open] > summary { color: var(--text) }
 .app-header .count { color: var(--muted) }
 .theme-toggle { margin-left: auto }
 .nav + .theme-toggle { margin-left: 0 }
-main { max-width: 1480px; margin: auto; padding: 8px max(20px, env(safe-area-inset-right)) max(64px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)) }
+main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, env(safe-area-inset-right)); max-width: 1480px; margin: auto; padding: 8px var(--gutter-r) max(64px, env(safe-area-inset-bottom)) var(--gutter-l) }
 .message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
 .message::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok) }
@@ -215,7 +217,7 @@ span.tab { display: inline-flex; align-items: center; justify-content: center }
 .main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px; background: var(--surface); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
 .step-nav .primary { margin-left: auto }
 .step-nav .why { margin: 0; text-align: left }
-.step-nav .see, .see-big, .stage .back { display: none }
+.see, .see-big, .stage .back, .back-link, .demo-badge, .side-choice, .tab .tool, .panel-theme { display: none }
 
 .look-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
 .look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--muted); font-size: 12px; line-height: 16px; font-weight: 400; text-align: left }
@@ -243,11 +245,18 @@ details.new-look[open] { padding-bottom: 14px }
 .proof { display: flex; align-items: flex-end; justify-content: center; gap: 18px; min-width: 0 }
 .proof .photo { margin: 0; display: grid; gap: 8px; flex: none; color: var(--faint); font-size: 12px }
 .proof .photo img { width: 120px; height: 120px; object-fit: contain; background: #fff; border-radius: 12px; display: block }
+.pin { display: grid; gap: 14px; min-width: 0 }
 .canvas-host { position: relative; display: flex; justify-content: center; flex: 1; min-width: 0; min-height: 240px }
+.frame { position: relative; max-width: 100%; line-height: 0 }
 .poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: var(--lift) }
 /* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
-/* A pill over the poster is always in front of it (user, 2026-11-13, ADR-076): an explicit order, not the DOM's. */
-.canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; z-index: 1; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
+/* A pill or badge over the poster is always in front of it (user, 2026-11-13, ADR-076): an explicit order, not the
+   DOM's. The « Aperçu » pill says the draft is a preview (the scene comes at generation); the badge names the version.
+   Only on one column, where the poster is small: on a wide screen and in the large view it would hide the corner of
+   the poster from the pointer. */
+.frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; margin: 0; padding: 3px 10px; border-radius: 999px; background: var(--raised); color: var(--text); font-size: 12px; line-height: 18px; font-weight: 700; white-space: nowrap }
+.tap-open { position: absolute; inset: 0; z-index: 1; cursor: zoom-in }
+.canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; z-index: 3; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
 @keyframes pulse { 50% { opacity: .55 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
@@ -298,7 +307,6 @@ button.version.new small { font-size: 12px; font-weight: 400 }
 .comparison.zoomed { grid-template-columns: 1fr }
 .comparison.zoomed img { height: auto }
 .comparison.zoomed a { cursor: zoom-out }
-.step-short { display: none }
 .review-checks.groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px }
 .group { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; min-width: 0 }
 .group h3 svg { color: var(--muted) }
@@ -325,8 +333,11 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
 .download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 18px; border: 1px solid var(--invert); border-radius: 999px; font-weight: 700; text-decoration: none; transition: opacity .15s ease-out }
 
 @media (max-width: 1080px) {
-  .work { grid-template-columns: 1fr }
+  /* A column, not a one-column grid: a grid item can only stick inside its own row, and the poster of the tabs must
+     stay on top while the controls scroll under it. */
+  .work { display: flex; flex-direction: column; align-items: stretch }
   .stage { order: -2; position: static }
+  .canvas-host { min-height: 0 }
   .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding-bottom: 6px }
   .versions h2, .versions > .help { grid-column: 1 / -1 }
   .versions > .version { grid-row: 2 }
@@ -337,30 +348,72 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line); border-radius: 0 }
   .main-action .primary { flex: 1; margin: 0 }
   .main-action .why { margin: 0 }
-  .step-nav .see { display: inline-flex }
+  .main-action .see { display: inline-flex }
   .message.error { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 130px) }
-  /* During the steps the step comes first: the poster is a small proof beside what to do, and opens in front on demand. */
+  /* In the editor a notice sits above the bottom bar, not over the poster at the top. */
+  main.editing .message.notice { top: auto; bottom: calc(max(20px, env(safe-area-inset-bottom)) + 130px) }
+  main.editing .message.error + .message.notice { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 196px) }
+  .rail.card { padding: 14px 16px 0 }
+  /* During the steps the step comes first: the poster is a small proof beside what to do, and opens in front on demand.
+     The bottom bar names the action, so the coach line goes; the step count joins the row of steps. */
+  .steps-row { display: flex; align-items: center; gap: 4px 10px; min-width: 0; margin-bottom: 14px }
+  .steps-row .step-count { flex: none; margin: 0 }
+  .steps-row .tabs { flex: 1; min-width: 0; margin: 0 }
   .stepping .versions { order: 1 }
   .stepping .stage:not(.peek) { grid-template-columns: 104px minmax(0, 1fr); gap: 4px 14px; padding: 14px }
   .stepping .stage:not(.peek) > * { grid-column: 1 / -1 }
-  .stepping .stage:not(.peek) > .proof { grid-column: 1; grid-row: 1 / span 2 }
-  .stepping .stage:not(.peek) > .stage-head { grid-column: 2; grid-row: 1; align-self: end }
-  .stepping .stage:not(.peek) > .see-big { display: inline-flex; grid-column: 2; grid-row: 2; justify-self: start; align-self: start }
-  .stepping .stage:not(.peek) :is(.selection, .photo), .stepping .stage:not(.peek) > .help { display: none }
-  .stepping .stage:not(.peek) .canvas-host { min-height: 0 }
+  .stepping .stage:not(.peek) > .pin { grid-column: 1; grid-row: 1 }
+  .stepping .stage:not(.peek) > .see-big { display: inline-flex; grid-column: 2; grid-row: 1; justify-self: start; align-self: center }
+  .stepping .stage:not(.peek) :is(.stage-head, .selection, .photo, .layer-list), .stepping .stage:not(.peek) > .help { display: none }
+  /* Once a version exists the real image stays on top (D-POSTER-EDITOR-005): the stage dissolves into the column, so
+     that only the poster and its row of elements stick under the top bar; its other blocks follow, then the versions,
+     then the tools. The large view is still the stage itself. */
+  .editor:not(.stepping) .stage:not(.peek) { display: contents }
+  .editor:not(.stepping) .stage:not(.peek) > * { order: -4 }
+  .editor:not(.stepping) .stage:not(.peek) > .pin { order: -5; position: sticky; top: var(--bar-h, 0px); z-index: 4; gap: 8px; margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: 8px var(--gutter-r) 8px var(--gutter-l); background: var(--ground); border-bottom: 1px solid var(--line) }
+  .editor:not(.stepping) .stage:not(.peek) > :is(.stage-head, .help) { order: -2 }
+  .editor:not(.stepping) .versions { order: -3 }
+  .editor:not(.stepping) .stage:not(.peek) .photo { display: none }
+  .editor:not(.stepping) .stage:not(.peek) .layer-list { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none }
+  .editor:not(.stepping) .stage:not(.peek) .layer-list > * { flex: none }
+  /* Typing: the poster is a strip, its elements and the bottom bar make room for the field and the keyboard. */
+  .editor.typing .pin :is(.layer-list, .badge), .editor.typing .main-action { display: none }
+  /* Versions: one row of small thumbnails, each with its state in words. */
+  .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
+  .editor:not(.stepping) :is(.version img, button.version.new .add) { width: 56px; height: 70px }
+  .editor:not(.stepping) .version.new small { display: none }
+  /* Tools: the four groups as a row of icons with their labels, the active one marked by a pill behind its icon. */
+  .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 0; margin-bottom: 10px; background: none; border-radius: 0 }
+  .editor:not(.stepping) .tab { flex-direction: column; gap: 2px; min-height: 56px; padding: 4px 2px; font-size: 12px; line-height: 16px }
+  .editor:not(.stepping) .tab[aria-selected=true] { background: none }
+  .tab .tool { display: block; width: 52px; height: 28px; padding: 6px 18px; border-radius: 999px; transition: background-color .15s ease-out }
+  .tab[aria-selected=true] .tool { background: var(--raised) }
   .stage.peek { position: fixed; inset: 0; z-index: 25; overflow: auto; overscroll-behavior: contain; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: var(--ground) }
   .stage.peek .back { display: inline-flex; justify-self: start }
+  .stage.peek .main-action { display: none }
+  .frame .badge { display: inline-flex }
+  .stage.peek .frame .badge { display: none }
   .stage.peek :is(.help, figcaption) { color: var(--muted) }
 }
 @media (max-width: 720px) {
   .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)) }
   .shop-label { display: none }
-  main { padding: 4px max(12px, env(safe-area-inset-right)) max(56px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)) }
+  main { --gutter-l: max(12px, env(safe-area-inset-left)); --gutter-r: max(12px, env(safe-area-inset-right)); padding: 4px var(--gutter-r) max(56px, env(safe-area-inset-bottom)) var(--gutter-l) }
   .intake, .sign-in { padding: 20px }
-  html { scroll-padding-top: 112px }
-  /* The title and the two undo buttons share one row: the step below starts higher. */
-  .titlerow { flex-wrap: nowrap; align-items: flex-start; padding: 6px 0 12px }
-  .titlerow .what { flex: 1 }
+  /* While a poster is open the editor has one bar at the top (D-POSTER-EDITOR-005): back to « Mes affiches », the
+     poster's name and its save state, undo, redo. The application's header and the long demo notice leave. */
+  .app-header.editing, main.editing .demo-notice { display: none }
+  main.editing { padding-top: 0 }
+  .titlerow.bar { position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; gap: 4px; min-height: calc(56px + env(safe-area-inset-top)); margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left)); background: var(--ground); border-bottom: 1px solid var(--line) }
+  .bar .what { flex: 1 }
+  .bar h1 { font-size: 16px; line-height: 22px; margin: 0 }
+  .bar :is(h1, .meta) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .bar .format { display: none }
+  .back-link { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; border-radius: 999px; color: var(--text) }
+  .demo-badge { display: inline-block; flex: none; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 700 }
+  /* At 360 px the count, which already says which step this is, leaves no room for the done « Produit » or the numbers. */
+  .stepping .lead, .steps-row span.tab.done, .tab .n { display: none }
+  .panel-theme { display: inline-flex; margin-top: 18px }
   /* The lists' title rows keep wrapping: at 360 px « Mes affiches » was squeezed to one word per line under its checkbox. */
   .gallery .titlerow { flex-wrap: wrap; align-items: center }
   .gallery .titlerow .what { flex: 1 1 100% }
@@ -379,7 +432,13 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .canvas-host { width: 100% }
   .review-panel { inset: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)) }
   .comparison, .final-grid { grid-template-columns: 1fr }
-  .comparison img { height: 240px }
+  /* One image at a time, at full width, « La version » first; « Votre photo » shows the owner's photos one under the other. */
+  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface); border-radius: 999px }
+  .side-choice button { border: 0; font-weight: 400; color: var(--muted) }
+  .side-choice button[aria-pressed=true] { background: var(--raised); color: var(--text); font-weight: 700 }
+  .comparison.side-version figure:first-child, .comparison.side-photo figure:last-child, .zoom-hint { display: none }
+  .comparison figure { padding: 8px }
+  .comparison img { height: auto }
   .facts { grid-template-columns: 1fr }
   .facts div + div { border-left: 0; border-top: 1px solid var(--line) }
   .library-row { grid-template-columns: 1fr }
@@ -390,15 +449,16 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .library-item span { grid-column: 2; grid-row: 2; white-space: normal }
   .library-item > :last-child { grid-column: 3; grid-row: 1 / span 2 }
   .progress { display: none }
-  .step-short { display: inline }
-  .comparison.zoomed img { height: auto }
   /* iOS zooms the page on a field under 16px. */
   input, textarea, select { font-size: 16px }
-  .theme-toggle, .nav + .theme-toggle { order: 1; margin-left: auto }
-  .nav { order: 2; flex-basis: 100% }
-  /* The three destinations stay on one row at 360 px, and a notice clears the two rows of the header. */
-  .nav a { padding: 0 8px; gap: 6px }
-  .message.notice { top: 108px }
+  .nav + .theme-toggle { margin-left: auto }
+  /* Outside the editor the three destinations are a bar at the bottom of the screen (R-POSTER-EDITOR-007). It stays in
+     the header's markup, so the header must not blur here: a blurred ancestor becomes the containing block of a fixed bar. */
+  .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; padding: 4px max(8px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--ground); border-top: 1px solid var(--line) }
+  .nav a { flex-direction: column; justify-content: center; gap: 2px; min-height: 56px; padding: 0 4px; border-radius: var(--field); font-size: 12px; line-height: 16px; text-align: center }
+  .nav .i { width: 52px; height: 28px; padding: 6px 18px; border-radius: 999px }
+  .nav a[aria-current] .i { background: var(--raised) }
+  main:not(.editing) { padding-bottom: calc(84px + env(safe-area-inset-bottom)) }
   /* The format and the file type never change: on a phone only the price is worth a row before the points. */
   .facts div:not(:last-child) { display: none }
   .facts div + div { border: 0 }
@@ -427,8 +487,13 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   @media (max-width: 1080px) {
     .main-action, .main-action.step-nav { background: var(--glass); border-top-color: var(--glass-line); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
   }
+  /* On phones the header holds the fixed navigation bar: it stays solid and the bar blurs instead. */
+  @media (max-width: 720px) {
+    .app-header { background: var(--ground); -webkit-backdrop-filter: none; backdrop-filter: none }
+    .nav { background: var(--glass); border-top-color: var(--glass-line); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
+  }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
   :root:root { --glass: var(--surface); --glass-line: var(--line) }
-  .app-header, .message, .confirm-sheet, .stage.peek, .main-action, .main-action.step-nav { -webkit-backdrop-filter: none; backdrop-filter: none }
+  .app-header, .message, .confirm-sheet, .stage.peek, .main-action, .main-action.step-nav, .nav { -webkit-backdrop-filter: none; backdrop-filter: none }
 }

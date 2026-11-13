@@ -5,6 +5,7 @@ import { api, ApiError, mutation, upload } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, parsePrice, setIdentity, type Creation, type FontId, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
+import { POSTER_STRIP, posterHeight } from './viewport'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number }
@@ -260,14 +261,16 @@ const ICONS: Record<string, string> = {
   undo: 'M6 4L3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H7', redo: 'M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H9',
   pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2',
   box: 'M3 3h10v10H3zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z', sun: 'M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1',
-  moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z',
+  moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z', back: 'M10 3.5L5.5 8l4.5 4.5',
+  store: 'M2.5 6.5l1-3.5h9l1 3.5zM3.5 6.5V13h9V6.5M6.5 13V9.5h3V13',
+  sliders: 'M2.5 4.5h6M11.5 4.5h2M2.5 8h2M7.5 8h6M2.5 11.5h7M12.5 11.5h1M10 3v3M6 6.5v3M11 10v3',
 }
 const Icon = (props: { n: string }) => h('svg', { class: 'i', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, [h('path', { d: ICONS[props.n] })])
 Icon.props = ['n']
 // The editor shows one group of controls at a time (R-POSTER-EDITOR-004): steps while the poster has no usable
 // version, tabs afterwards. Presentation only: nothing here is saved or put in the address.
 type Group = 'textes' | 'boutique' | 'style' | 'reglages'
-const GROUPS: [Group, string][] = [['textes', 'Textes'], ['boutique', 'Boutique'], ['style', 'Style'], ['reglages', 'Réglages']]
+const GROUPS: [Group, string, string][] = [['textes', 'Textes', 'text'], ['boutique', 'Boutique', 'store'], ['style', 'Style', 'palette'], ['reglages', 'Réglages', 'sliders']]
 const groupNames = Object.fromEntries(GROUPS) as Record<Group, string>
 const PHASES = ['Préparation', 'Génération', 'Fidélité', 'Téléchargement']
 const IDENTITY = ['logo', 'shop_name', 'contact'] as const
@@ -285,7 +288,7 @@ function go(target: Group, focus = true) {
   if (focus) nextTick(() => {
     panel.value?.focus({ preventScroll: true })
     const top = rail.value?.getBoundingClientRect().top ?? 0
-    if (top < 56 || top > window.innerHeight - 200) rail.value?.scrollIntoView()
+    if (top < stickyTop.value || top > window.innerHeight - 200) rail.value?.scrollIntoView()
   })
 }
 watch(stepping, on => { if (on && group.value === 'reglages') group.value = 'style' })
@@ -295,10 +298,50 @@ function tabKey(event: KeyboardEvent) {
   const target = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : move ? tabs[(tabs.indexOf(event.target as HTMLElement) + move + tabs.length) % tabs.length] : undefined
   if (target) { event.preventDefault(); target.focus(); target.click() }
 }
-// On one column the poster is small during the steps; this opens it in front of the step, which stays as it was.
+// On one column the poster is small (a thumbnail in the steps, a strip on top in the tabs); this opens it large in
+// front of the step or tab, which stays as it was.
 const peek = ref(false)
-const peeking = computed(() => peek.value && !!doc.value && stepping.value && viewportWidth.value <= 1080)
-watch(peeking, on => { if (!on) peek.value = false })
+const peeking = computed(() => peek.value && !!doc.value && viewportWidth.value <= 1080)
+watch(peeking, on => { if (!on) { peek.value = false; nextTick(measureSticky) } })
+// In the steps the draft shows only title and price: a tap on the thumbnail opens it large instead of selecting.
+const tapToOpen = computed(() => stepping.value && !peeking.value && viewportWidth.value <= 1080)
+// Once a version exists the real image stays on top of the controls on one column; a text field of the panel
+// shrinks it to a strip and hides the bottom bar while it has the focus (D-POSTER-EDITOR-005).
+const pinned = computed(() => !stepping.value && !peeking.value && viewportWidth.value <= 1080)
+const typing = ref(false)
+const panelField = (target: EventTarget | null) => (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'color', 'file'].includes(target.type))) && !!panel.value?.contains(target)
+// A tap below the poster takes the focus before it lands: the poster grows back once the tap is over, otherwise the
+// button under the finger moves away and the tap is lost. Only on a touch screen: a mouse has no keyboard to make room for.
+let pressing = false, restoring: ReturnType<typeof setTimeout> | undefined, released: AbortController | undefined
+const press = (event: PointerEvent) => { pressing = event.type === 'pointerdown' }
+function panelFocus(event: FocusEvent) {
+  clearTimeout(restoring); released?.abort()
+  if (panelField(event.type === 'focusin' ? event.target : event.relatedTarget)) { typing.value = matchMedia('(pointer: coarse)').matches; return }
+  const restore = () => { released?.abort(); restoring = setTimeout(() => { if (!panelField(document.activeElement)) typing.value = false }) }
+  if (!pressing) return restore()
+  released = new AbortController()
+  for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, restore, { signal: released.signal })
+}
+watch(pinned, on => { if (!on) typing.value = false })
+// What stays at the top of the editor (the top bar, and in the tabs the poster): the poster sits under the bar, the
+// scroll padding and go() keep fields out from under both. Not measured while the large view is open.
+const appHeader = ref<HTMLElement>(), bar = ref<HTMLElement>(), pin = ref<HTMLElement>(), stickyTop = ref(0)
+let stickyObserver: ResizeObserver | undefined
+function measureSticky() {
+  if (peeking.value) return
+  const sticky = (element?: HTMLElement) => element && getComputedStyle(element).position === 'sticky' ? element.offsetHeight : 0
+  const top = sticky(appHeader.value) + sticky(bar.value)
+  stickyTop.value = top + sticky(pin.value)
+  document.documentElement.style.setProperty('--bar-h', `${top}px`)
+  document.documentElement.style.setProperty('--sticky-top', `${stickyTop.value}px`)
+}
+function watchSticky() {
+  stickyObserver?.disconnect()
+  stickyObserver = new ResizeObserver(measureSticky)
+  for (const element of [appHeader.value, bar.value, pin.value]) if (element) stickyObserver.observe(element)
+}
+const versionStates = { approved: 'approuvée', pending_review: 'à vérifier', rejected: 'refusée' }
+const versionNumber = computed(() => currentVisual.value ? visuals.value.length - visuals.value.indexOf(currentVisual.value) : 0)
 let peekFrom: HTMLElement | null = null
 function setPeek(on: boolean) {
   if (on) peekFrom = document.activeElement as HTMLElement | null
@@ -485,7 +528,11 @@ function removeFromPoster() {
   const role = removal.value?.role
   if (role && role !== 'title' && role !== 'price') edit(document => toggleIdentity(document, role, false))
 }
-const scale = computed(() => Math.min(canvasWidth.value / FORMATS[format.value][0], viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / FORMATS[format.value][1]) : .62, .62))
+const scale = computed(() => {
+  const [width, height] = FORMATS[format.value]
+  if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
+  return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / height) : .62, .62)
+})
 const sources = computed(() => Object.fromEntries([
   ...Object.entries(effectSources.value).map(([id, url]) => [id, `${url}?prepared=true`]),
   ...visuals.value.map(item => [`scene:${item.id}`, `${item.image_url}?prepared=true`]),
@@ -598,6 +645,7 @@ async function adopt(result: Creation) {
   if (opening) window.scrollTo(0, 0)
   observer?.disconnect()
   if (canvasHost.value) { observer = new ResizeObserver(entries => { canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }
+  watchSticky()
   const jobs = await api<{ items: Job[] }>(`/api/creations/${result.id}/jobs`)
   const previousRender = jobs.items.find(item => item.kind === 'render' && item.status === 'succeeded')
   if (previousRender) openFinalPreview(await api(`/api/renders/${previousRender.result_ref}`))
@@ -904,7 +952,9 @@ function chooseVisual(visual: Visual) {
   })
   selected.value = null
 }
-function resetChecks() { rejection.value = ''; rejecting.value = false; zoomed.value = false }
+// On a phone the review shows one image at a time, the version first (R-POSTER-EDITOR-007).
+const compareSide = ref<'photo' | 'version'>('version')
+function resetChecks() { rejection.value = ''; rejecting.value = false; zoomed.value = false; compareSide.value = 'version' }
 async function decide(action: 'approve' | 'reject') {
   await mutation(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
   await refreshVisuals(); review.value = null
@@ -930,7 +980,17 @@ function panScene(axis: 'x' | 'y', event: Event) {
   const [w, h] = currentVisual.value.size.split('x').map(Number), fraction = Number((event.target as HTMLInputElement).value)
   edit(document => { const crop = document.formats[format.value]!.scene.crop!; crop[axis] = fraction * (axis === 'x' ? w - crop.w : h - crop.h) }, 'pan')
 }
-function resized() { viewportHeight.value = window.innerHeight; viewportWidth.value = window.innerWidth }
+// At most one rescale per frame; on one column a height change under 100 px is the address bar showing or hiding,
+// not a new screen.
+let resizeFrame = 0
+function resized() {
+  if (resizeFrame) return
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0; viewportWidth.value = window.innerWidth
+    if (window.innerWidth > 1080 || Math.abs(window.innerHeight - viewportHeight.value) >= 100) viewportHeight.value = window.innerHeight
+    nextTick(measureSticky)
+  })
+}
 const theme = ref(document.documentElement.dataset.theme === 'clair' ? 'clair' : 'sombre')
 function toggleTheme() {
   theme.value = theme.value === 'clair' ? 'sombre' : 'clair'
@@ -949,17 +1009,18 @@ async function start() {
 }
 onMounted(() => {
   window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   return start()
 })
-onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.disconnect(); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
+onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
 </script>
 
 <template>
   <button class="skip" type="button" @click="($refs.main as HTMLElement).focus()">Aller au contenu</button>
-  <header class="app-header" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Atelier</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
-    <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" />Créer</a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" />Mes affiches <span class="count">{{ activeTotal }}</span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" />Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
+  <header ref="appHeader" class="app-header" :class="{ editing: !!doc }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Atelier</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
+    <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
-  <main ref="main" tabindex="-1">
+  <main ref="main" tabindex="-1" :class="{ editing: !!doc }">
     <p v-if="checking" role="status">Ouverture de l’atelier…</p>
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
@@ -994,18 +1055,20 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
-    <div v-if="doc" class="editor" :class="{ stepping }" :inert="modalOpen">
-      <div class="titlerow" :inert="peeking">
-        <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="step-short">{{ PHASES[stage] }} · </span>Publication · 1080 × 1350 · <span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
+    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned }" :inert="modalOpen">
+      <div ref="bar" class="titlerow bar" :inert="peeking">
+        <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
+        <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">Publication · 1080 × 1350 · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
+        <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
         <div class="undo"><button class="ghost icon" :disabled="!history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="!history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
-          <p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
+          <div class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
           <div class="tabs"><span v-if="stepping" class="tab done"><Icon n="check" />Produit</span>
-            <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span>{{ name }}</button></div></div>
-          <div id="panneau" ref="panel" class="panel" role="tabpanel" tabindex="-1" :aria-labelledby="`onglet-${group}`">
+            <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name, icon], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span><Icon v-else :n="icon" class="tool" />{{ name }}</button></div></div></div>
+          <div id="panneau" ref="panel" class="panel" role="tabpanel" tabindex="-1" :aria-labelledby="`onglet-${group}`" @focusin="panelFocus" @focusout="panelFocus">
             <p v-if="fieldError?.group === group" class="why refusal" role="alert">{{ fieldError.text }}</p>
             <template v-if="group === 'textes'">
             <p class="help lead">Les mots de l’affiche. Seuls le titre et le prix sont obligatoires.</p>
@@ -1058,6 +1121,8 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
             </div>
             <div v-else-if="currentVisual"><p class="sub">Cadrage de la scène</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !refinement.trim()" @click="askRefine">Ajuster la scène</button><small>Appel image estimé : {{ dollars(caps?.scene_estimate_micros) }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
             <p v-else class="help">Choisissez un élément sous l’affiche pour le régler.</p>
+            <!-- On a phone the editor's bar has no room for it: the application's theme is switched here. -->
+            <button type="button" class="secondary panel-theme" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" />{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</button>
             </template>
           </div>
           <div v-if="stepping" class="main-action step-nav">
@@ -1069,17 +1134,21 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           </div>
         </aside>
         <section class="stage" :class="{ peek: peeking }" aria-label="Affiche" :role="peeking ? 'dialog' : undefined" :aria-modal="peeking || undefined" @keydown.esc="peeking && setPeek(false)">
-          <button v-if="peeking" id="fermer-affiche" type="button" class="secondary back" @click="setPeek(false)"><Icon n="close" />Revenir à l’étape</button>
+          <button v-if="peeking" id="fermer-affiche" type="button" class="secondary back" @click="setPeek(false)"><Icon n="close" />{{ stepping ? 'Revenir à l’étape' : 'Revenir aux réglages' }}</button>
           <div class="stage-head"><p class="coach" role="status"><Icon n="clock" /><span><b>À faire :</b> {{ nextStep }}</span></p>
-            <div v-if="!stepping" class="main-action"><button type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
+            <div v-if="!stepping" class="main-action"><button type="button" class="ghost icon see" aria-label="Voir l’affiche" title="Voir l’affiche" @click="setPeek(true)"><Icon n="image" /></button><button type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
             <p v-if="mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p></div></div>
-          <div class="proof">
-            <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
-            <div ref="canvasHost" class="canvas-host" :class="{ generating: !!job && ['scene', 'refine'].includes(job.kind) }"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasReady = $event" @error="error = $event" /></div>
+          <!-- On one column with a version, only this stays on top of the controls; the blocks after it follow the stage. -->
+          <div ref="pin" class="pin">
+            <div class="proof">
+              <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
+              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!job && ['scene', 'refine'].includes(job.kind) }"><div class="frame" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasReady = $event" @error="error = $event" />
+                <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status">Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
+            </div>
+            <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
           </div>
           <button type="button" class="text-button see-big" @click="setPeek(true)">Voir l’affiche en grand</button>
-          <div class="selection">
-            <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
+          <div v-if="removal" class="selection">
             <p v-if="removal?.fixed" class="help">{{ removal.role === 'title' ? 'Le titre' : 'Le prix' }} ne se retire pas : une affiche annonce toujours le produit et son prix.</p>
             <template v-else-if="removal && !removal.drawn">
               <button v-if="removal.on" type="button" class="remove" @click="removeFromPoster"><Icon n="close" />Retirer de l’affiche</button>
@@ -1101,7 +1170,7 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
           <p v-if="!visuals.length" class="help">Chaque génération crée une version. Vous choisirez celle à exporter.</p>
           <article v-for="visual in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
-            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir cette version (${ { approved:'approuvée', pending_review:'à vérifier', rejected:'refusée' }[visual.status] })`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" height="130" loading="lazy" alt="Version générée de la scène" /></button>
+            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir cette version (${ versionStates[visual.status] })`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" height="130" loading="lazy" alt="Version générée de la scène" /></button>
             <span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
             <button class="text-button" @click="review = visual; resetChecks()">Comparer</button>
@@ -1143,8 +1212,9 @@ onBeforeUnmount(() => { saver?.dispose(); clearTimeout(pollTimer); observer?.dis
       </div>
     </section>
     <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid" @keydown.esc="review = null">
-      <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Regardez les deux images côte à côte et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
-      <div class="comparison" :class="{ zoomed }"><figure><a v-for="(url, index) in review.original_urls" :key="url" :href="url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="url" width="540" height="380" :alt="`Photo originale ${index + 1} à comparer`" /></a><figcaption>Votre photo · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</figcaption></figure><figure><a :href="review.image_url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="review.image_url" width="540" height="380" alt="Version générée à vérifier" /></a><figcaption>Version générée · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</figcaption></figure></div>
+      <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
+      <div class="side-choice" role="group" aria-label="Image affichée"><button type="button" :aria-pressed="compareSide === 'photo'" @click="compareSide = 'photo'">Votre photo</button><button type="button" :aria-pressed="compareSide === 'version'" @click="compareSide = 'version'">La version</button></div>
+      <div class="comparison" :class="[{ zoomed }, `side-${compareSide}`]"><figure><a v-for="(url, index) in review.original_urls" :key="url" :href="url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="url" width="540" height="380" :alt="`Photo originale ${index + 1} à comparer`" /></a><figcaption>Votre photo<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure><figure><a :href="review.image_url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="review.image_url" width="540" height="380" alt="Version générée à vérifier" /></a><figcaption>Version générée<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure></div>
       <template v-if="review.status === 'pending_review'">
         <div class="review-checks groups">
           <div class="group"><h3><Icon n="box" />Le produit</h3><p class="help">Comparé à votre photo.</p><ul class="points"><li v-for="check in (['colour', 'shape', 'hardware', 'markings'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>

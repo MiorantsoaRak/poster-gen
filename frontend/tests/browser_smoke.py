@@ -123,6 +123,27 @@ def shot(page, name, full_page=True):
     page.screenshot(path=str(OUTPUT / name), full_page=full_page)
 
 
+def toggle_theme(page, name, hidden=False):
+    # A real click on the one visible theme button: the header's, or on a phone in the editor the one in « Réglages »
+    # (D-POSTER-EDITOR-005). During the steps on a phone there is no « Réglages » and the header gives way to the
+    # editor's bar: there, and only where the caller says so, the hidden header button receives the click event itself,
+    # so that the contrast of the steps can still be measured in both themes.
+    if hidden:
+        button = page.locator(".theme-toggle")
+        expect(button).to_be_hidden()
+        expect(button).to_have_attribute("aria-label", name)
+        button.dispatch_event("click")
+        expect(button).not_to_have_attribute("aria-label", name)
+    else:
+        page.get_by_role("button", name=name, exact=True).click()
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
+
+
+def topmost(locator):
+    # Nothing covers it: the element hit at its centre is the element itself (ADR-076).
+    return locator.evaluate("e => { const r = e.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e }")
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
@@ -469,6 +490,8 @@ def run():
                         assert moved["document"]["formats"]["feed"]["layers"][0]["x"] == saved["document"]["formats"]["feed"]["layers"][0]["x"] + 1
                         page.evaluate("scrollTo(0, 0)")
                         page.screenshot(path=str(OUTPUT / "desktop.png"), full_page=True)
+                        # On a wide screen the version's badge is not over the poster: it would hide its corner from the pointer.
+                        expect(page.locator(".frame .badge")).to_be_hidden()
                         # Each tab holds its own kind of control, and the poster with its main action stays in view.
                         for name, held in (("Boutique", page.get_by_label("Position du contact")), ("Style", page.locator(".look-grid")),
                                            ("Réglages", page.get_by_label("Police", exact=True)), ("Textes", page.get_by_label("Titre", exact=True))):
@@ -488,10 +511,15 @@ def run():
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         page.screenshot(path=str(OUTPUT / "mobile.png"), full_page=True)
                         check_contrast(page, "editor at phone width")
-                        page.get_by_role("button", name="Passer au thème clair").click()
+                        # On a phone the editor's theme button is in « Réglages » (the header gives way to the editor's bar).
+                        open_group("Réglages")
+                        expect(page.locator(".panel .panel-theme")).to_be_visible()
+                        expect(page.locator(".theme-toggle")).to_be_hidden()
+                        toggle_theme(page, "Passer au thème clair")
                         check_contrast(page, "editor at phone width, light theme")
                         shot(page, "mobile-clair.png")
-                        page.get_by_role("button", name="Passer au thème sombre").click()
+                        toggle_theme(page, "Passer au thème sombre")
+                        open_group("Textes")
                         # A second tab changes the saved version. Local work must remain available for a copy.
                         creation_id = page.url.split("#")[1]
                         remote = page.request.get(f"{ORIGIN}/api/creations/{creation_id}").json()
@@ -501,6 +529,9 @@ def run():
                             headers={"Origin": ORIGIN, "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
                         assert response.status == 200
                         page.get_by_label("Titre", exact=True).fill("Mon titre conservé")
+                        # With a mouse there is no on-screen keyboard: the poster does not collapse for a focused field.
+                        assert not page.evaluate("matchMedia('(pointer: coarse)').matches")
+                        expect(page.locator(".editor.typing")).to_have_count(0)
                         expect(page.get_by_role("button", name="Conserver mes modifications dans une copie")).to_be_visible(timeout=10000)
                         page.get_by_role("button", name="Conserver mes modifications dans une copie").click()
                         expect(page.get_by_text("Vos modifications ont été conservées dans une copie.")).to_be_visible()
@@ -733,10 +764,10 @@ def run():
                         expect(page.get_by_role("checkbox", name="Contact", exact=True)).not_to_be_checked()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
                         expect(seal_option).to_be_checked()
-                        page.get_by_role("button", name="Passer au thème clair").click()
+                        toggle_theme(page, "Passer au thème clair", hidden=True)
                         check_contrast(page, "step Boutique at phone width, light theme")
                         shot(page, "step-boutique-mobile-clair.png", full_page=False)
-                        page.get_by_role("button", name="Passer au thème sombre").click()
+                        toggle_theme(page, "Passer au thème sombre", hidden=True)
                         proceed.click()
                         expect(step_count).to_have_text("Étape 4 sur 4")
                         expect(generate).to_be_in_viewport()
@@ -879,6 +910,176 @@ def run():
                         page.get_by_role("button", name="Lancer la génération").click()
                         expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
                         assert sent[-1]["acknowledged_warnings"] == ["low_resolution"], sent[-1]
+                        # The phone-first editor (R-POSTER-EDITOR-007, D-POSTER-EDITOR-005 part A) on a low-end Android
+                        # phone: 360 × 740 with a touch pointer, same session.
+                        phone = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True,
+                                                    storage_state=page.context.storage_state())
+                        mobile = phone.new_page()
+                        mobile.set_default_timeout(10000)
+                        mobile.on("pageerror", lambda error: errors.append(str(error)))
+                        mobile.goto(ORIGIN)
+                        no_sideways = "document.documentElement.scrollWidth <= innerWidth"
+                        assert mobile.evaluate("matchMedia('(pointer: coarse)').matches")
+                        # Outside the editor « Créer », « Mes affiches » and « Styles » are a bar at the bottom, the current
+                        # one marked; the header does not blur (it would hold the bar), the bar does; the page ends above it.
+                        nav = mobile.locator(".nav")
+                        expect(nav).to_be_visible()
+                        expect(mobile.get_by_label("Photos du produit")).to_be_attached()
+                        bottom_bar = nav.bounding_box()
+                        assert abs(bottom_bar["y"] + bottom_bar["height"] - 740) < 1 and bottom_bar["width"] == 360, bottom_bar
+                        expect(nav.locator("a[aria-current=page]")).to_have_text("Créer")
+                        assert all(link.bounding_box()["height"] >= 44 for link in nav.locator("a").all())
+                        assert mobile.evaluate(blur, ".app-header") == "none" and mobile.evaluate(blur, ".nav") != "none"
+                        assert mobile.evaluate("parseFloat(getComputedStyle(document.querySelector('main')).paddingBottom)") >= bottom_bar["height"]
+                        mobile.wait_for_function(no_sideways)
+                        check_contrast(mobile, "intake at 360 px with the bottom navigation")
+                        shot(mobile, "phone-intake.png", full_page=False)
+                        toggle_theme(mobile, "Passer au thème clair")
+                        check_contrast(mobile, "intake at 360 px, light theme")
+                        toggle_theme(mobile, "Passer au thème sombre")
+                        nav.locator("a", has_text="Mes affiches").tap()
+                        expect(nav.locator("a[aria-current=page]")).to_contain_text("Mes affiches")
+                        nav.locator("a", has_text="Créer").tap()
+                        mobile.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+                        expect(mobile.locator(".photo-strip img")).to_have_count(1)
+                        mobile.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i téléphone")
+                        mobile.get_by_label("Prix en ariary", exact=True).fill("90 000")
+                        mobile.get_by_label("Les photos correspondent").check()
+                        mobile.get_by_role("button", name="Préparer mon affiche").tap()
+                        expect(mobile.get_by_role("heading", name="Soundcore R50i téléphone", exact=True)).to_be_visible()
+                        # One bar at the top of the editor: back, name, save state, undo, redo; the header, the bottom
+                        # navigation and the long demo notice leave; the bar stays on top while the step scrolls.
+                        back = mobile.get_by_role("link", name="Retour à Mes affiches")
+                        expect(back).to_be_visible()
+                        expect(mobile.locator(".app-header")).to_be_hidden()
+                        expect(nav).to_be_hidden()
+                        expect(mobile.locator(".demo-notice")).to_be_hidden()
+                        expect(mobile.locator(".titlerow.bar .demo-badge")).to_have_text("Démo")
+                        top_bar = mobile.locator(".titlerow.bar")
+                        assert top_bar.bounding_box()["y"] == 0 and 50 <= top_bar.bounding_box()["height"] <= 64, top_bar.bounding_box()
+                        assert back.bounding_box()["height"] >= 44
+                        # On arrival in « Textes » the first field starts in the upper 60 % of the screen.
+                        expect(mobile.locator(".step-count")).to_have_text("Étape 2 sur 4")
+                        first_field = mobile.get_by_label("Titre", exact=True).bounding_box()
+                        assert first_field["y"] < 444, first_field
+                        mobile.wait_for_function(no_sideways)
+                        check_contrast(mobile, "step Textes at 360 px with a touch pointer")
+                        shot(mobile, "phone-step-textes.png", full_page=False)
+                        # The draft is a preview: its « Aperçu » pill is in front of everything at its centre.
+                        pill = mobile.locator(".frame .badge")
+                        expect(pill).to_have_text("Aperçu")
+                        assert topmost(pill)
+                        mobile.evaluate("scrollTo({ top: 400, behavior: 'instant' })")
+                        assert top_bar.bounding_box()["y"] == 0
+                        mobile.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+                        # A tap on the thumbnail opens the poster large instead of selecting an element.
+                        mobile.locator(".frame").tap()
+                        sheet = mobile.get_by_role("dialog", name="Affiche")
+                        expect(sheet).to_be_visible()
+                        sheet.get_by_role("button", name="Revenir à l’étape").tap()
+                        expect(mobile.get_by_role("dialog")).to_have_count(0)
+                        proceed_phone = mobile.get_by_role("button", name="Continuer", exact=True)
+                        proceed_phone.tap()
+                        proceed_phone.tap()
+                        mobile.get_by_role("button", name="Générer l’affiche").tap()
+                        mobile.get_by_role("button", name="Lancer la génération").tap()
+                        expect(mobile.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        # The review shows one image at a time, at full width, « La version » first.
+                        version_image = mobile.get_by_alt_text("Version générée à vérifier")
+                        photo_image = mobile.get_by_alt_text("Photo originale 1 à comparer")
+                        expect(version_image).to_be_visible()
+                        expect(photo_image).to_be_hidden()
+                        expect(mobile.get_by_role("button", name="La version", exact=True)).to_have_attribute("aria-pressed", "true")
+                        assert version_image.bounding_box()["width"] >= 300
+                        check_contrast(mobile, "review at 360 px, the version")
+                        shot(mobile, "phone-review.png", full_page=False)
+                        mobile.get_by_role("button", name="Votre photo", exact=True).tap()
+                        expect(photo_image).to_be_visible()
+                        expect(version_image).to_be_hidden()
+                        expect(mobile.get_by_role("button", name="Tout est conforme, approuver")).to_be_in_viewport()
+                        mobile.get_by_role("button", name="Tout est conforme, approuver").tap()
+                        expect(mobile.get_by_role("tab")).to_have_count(4)
+                        # Once a version exists the real image stays on screen, at least 200 px tall, while the controls
+                        # scroll under it; its state badge is in front; the versions are a row of small thumbnails under
+                        # it; the groups are a row of tools with icons; nothing scrolls sideways.
+                        canvas_phone = mobile.locator(".poster-canvas canvas").first
+                        poster_box = lambda: canvas_phone.bounding_box()
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        expect(canvas_phone).to_be_in_viewport(ratio=1)
+                        state_badge = mobile.locator(".frame .badge")
+                        expect(state_badge).to_have_text("Version 1 · approuvée")
+                        assert topmost(state_badge)
+                        thumb = mobile.locator(".version img").first.bounding_box()
+                        assert (round(thumb["width"]), round(thumb["height"])) == (56, 70), thumb
+                        assert thumb["y"] > poster_box()["y"] + poster_box()["height"]
+                        expect(mobile.locator(".versions .state").first).to_have_text("Approuvée")
+                        expect(mobile.locator(".tab .tool")).to_have_count(4)
+                        assert all(tool.is_visible() for tool in mobile.locator(".tab .tool").all())
+                        assert all(item.bounding_box()["height"] >= 44 for item in mobile.get_by_role("tab").all())
+                        mobile.wait_for_function(no_sideways)
+                        check_contrast(mobile, "tabs at 360 px")
+                        shot(mobile, "phone-tabs.png", full_page=False)
+                        # The theme is switched from « Réglages » on a phone. (Not from « Style »: its closed section
+                        # « Créer un style… » is not rendered, and its colours would stay in transition after the change.)
+                        mobile.get_by_role("tab", name="Réglages", exact=True).tap()
+                        expect(mobile.locator(".panel .panel-theme")).to_be_visible()
+                        mobile.evaluate("scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
+                        expect(canvas_phone).to_be_in_viewport(ratio=1)
+                        assert poster_box()["height"] >= 200 and poster_box()["y"] >= top_bar.bounding_box()["height"] - 1
+                        toggle_theme(mobile, "Passer au thème clair")
+                        check_contrast(mobile, "tabs at 360 px, light theme")
+                        shot(mobile, "phone-tabs-clair.png", full_page=False)
+                        toggle_theme(mobile, "Passer au thème sombre")
+                        # Typing: « Prix » takes the focus, the poster collapses to a strip and the bottom bar hides; the
+                        # field is not under the poster; both come back when the focus leaves.
+                        main_bar = mobile.locator(".stage-head .main-action")
+                        mobile.get_by_role("tab", name="Textes", exact=True).tap()
+                        expect(main_bar).to_be_visible()
+                        price_field = mobile.get_by_label("Prix en ariary", exact=True)
+                        price_field.tap()
+                        expect(price_field).to_be_focused()
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height <= 100")
+                        expect(main_bar).to_be_hidden()
+                        expect(canvas_phone).to_be_in_viewport(ratio=1)
+                        pin_bottom = mobile.locator(".pin").bounding_box()
+                        assert price_field.bounding_box()["y"] >= pin_bottom["y"] + pin_bottom["height"] - 1, (price_field.bounding_box(), pin_bottom)
+                        shot(mobile, "phone-typing.png", full_page=False)
+                        # The tap that takes the focus away lands where it was aimed, although the poster grows back.
+                        word = mobile.get_by_role("group", name="Mot du titre en couleur").get_by_role("button").first
+                        word.tap()
+                        expect(word).to_have_attribute("aria-pressed", "true")
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        expect(main_bar).to_be_visible()
+                        # And a focus that leaves without a tap brings it back too.
+                        price_field.focus()
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height <= 100")
+                        price_field.blur()
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        expect(main_bar).to_be_visible()
+                        # « Voir l’affiche » shows the poster large in the tabs too: full width, no bottom bar inside,
+                        # the page behind inert.
+                        mobile.get_by_role("button", name="Voir l’affiche", exact=True).tap()
+                        expect(sheet).to_be_visible()
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().width > 300")
+                        expect(sheet.locator(".main-action")).to_be_hidden()
+                        expect(sheet.locator(".frame .badge")).to_be_hidden()
+                        assert mobile.locator(".rail").get_attribute("inert") is not None and top_bar.get_attribute("inert") is not None
+                        check_contrast(mobile, "poster opened large over the tabs")
+                        shot(mobile, "phone-large-tabs.png", full_page=False)
+                        sheet.get_by_role("button", name="Revenir aux réglages").tap()
+                        expect(mobile.get_by_role("dialog")).to_have_count(0)
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        # Back to « Mes affiches » from the bar: the bottom navigation is there again.
+                        back.tap()
+                        expect(mobile.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
+                        assert mobile.url.endswith("#affiches"), mobile.url
+                        expect(nav).to_be_visible()
+                        expect(nav.locator("a[aria-current=page]")).to_contain_text("Mes affiches")
+                        mobile.wait_for_function(no_sideways)
+                        check_contrast(mobile, "Mes affiches at 360 px with the bottom navigation")
+                        shot(mobile, "phone-mes-affiches.png", full_page=False)
+                        phone.close()
+                        assert not errors, errors
                         # A poster's address opened without a session: after the sign-in the owner is on that poster.
                         other = browser.new_page(viewport={"width": 390, "height": 844})
                         other.goto(f"{ORIGIN}/#{copy_id}")
