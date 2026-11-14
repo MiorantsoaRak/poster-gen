@@ -77,6 +77,8 @@ it('retires a card only on a refusal that an earlier delivery of the same reques
   for (const code of ['headline_stale', 'base_not_selected', 'scene_format_mismatch', 'logo_disc_uncovered', 'logo_placement_stale', 'invalid_plan',
     'invalid_reference', 'unsupported_visual', 'format_missing']) expect(final(code), code).toBe(true)
   for (const code of ['asset_missing', 'asset_corrupt', 'unknown_asset', 'provider_mode_mismatch']) expect(final(code), code).toBe(false)
+  // The request's own words against the document at its revision: asking again changes nothing (audit 2026-11-15).
+  for (const code of ['invalid_headline', 'contact_unsupported']) expect(final(code), code).toBe(true)
   // A refusal stores nothing under the key: these may let a delivery still on its way pass later, so the card keeps it.
   for (const code of ['image_job_running', 'budget_exhausted', 'rate_limited', 'provider_unavailable', 'unauthenticated', 'service_down',
     'server_error', 'network', 'timeout', 'invalid_response', 'something_new', '', 'creation_abandoned', 'format_unavailable']) expect(final(code), code).toBe(false)

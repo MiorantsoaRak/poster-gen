@@ -690,6 +690,7 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .pic { position: relative; display: grid; gap: 3px; justify-items: center; width: 68px; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted) }
 .pic img { display: block; width: 68px; height: 68px; object-fit: cover; border-radius: 12px; background: var(--surface); border: 1px solid var(--line) }
 .pic[aria-busy] img { opacity: .45 }
+.chat .pic.reuse { width: 96px; min-height: 0; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-field); color: var(--text); text-align: center }
 .pic[aria-busy]::after { content: ''; position: absolute; top: 26px; left: 26px; width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--text); border-right-color: transparent; animation: spin .7s linear infinite }
 .chat .pic-role { min-height: 28px; padding: 0 8px; border: 1px solid var(--line); font-size: 11px; line-height: 14px; font-weight: 600 }
 .chat .pic-role.inspiration { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink) }

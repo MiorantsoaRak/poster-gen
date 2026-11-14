@@ -13,11 +13,14 @@ from .models import Colour, Format, Id, Model, Name, canonical
 FieldName = Literal["title", "price", "logo", "shop_name", "contact"]
 
 
+def name_words(value: str) -> list[str]:
+    """The words of a name, case and accents ignored."""
+    value = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.category(c).startswith("M"))
+    return re.findall(r"[^\W_]+", value.lower())
+
+
 def brand_in_title(brand: str | None, title: str) -> bool:
-    def words(value):
-        value = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.category(c).startswith("M"))
-        return re.findall(r"[^\W_]+", value.lower())
-    needle, haystack = words(brand or ""), words(title)
+    needle, haystack = name_words(brand or ""), name_words(title)
     return bool(needle) and any(haystack[i:i+len(needle)] == needle for i in range(len(haystack)-len(needle)+1))
 ArtDirection = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)]
 _INSTRUCTIONS = re.compile(r"ignore\b.*\b(?:instructions|rules)|system\s*(?:prompt|:)|<\s*/?\s*(?:system|instructions)|"

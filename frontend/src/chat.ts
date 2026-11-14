@@ -16,7 +16,9 @@ export interface Picture { asset: string; role: Role; warnings?: string[] }
  *  (`price_ar`); `said` is the owner's message, for « Annuler »; `previous` is the price the image shows, kept before
  *  this card's price edit; `whole`: a whole new scene because the drawn words changed, never a price-only change. */
 export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
-  change?: 'scene' | 'price'; instruction_fr?: string; said?: string; previous?: number; whole?: boolean }
+  change?: 'scene' | 'price'; instruction_fr?: string; said?: string; previous?: number; whole?: boolean
+  /** `ask_photo` only: photos this shop already used for the same product (D-TEXT-FIRST-004). */
+  suggestions?: { asset: string; name: string }[] }
 /** `done`: the card has its outcome, or a later card replaced it. A paid card records each step before the next request
  *  leaves: `spent` (tapped), `creation` (its poster's id), `request` (its /scenes or /refinements request exactly as it
  *  left; the card's id is its key), `job` (the job it made). */
@@ -53,6 +55,8 @@ export interface ChatAdapter {
   follow(job: JobRow): void
   review(visual: Visual): void
   download(): void
+  /** The session ended (401): the sign-in form takes the screen; the thread is read again after it. */
+  signedOut(): void
 }
 
 /** The role of the next attached image: the first is the product, the second the inspiration, later ones product photos
@@ -117,6 +121,7 @@ export const nextStep = (item: Item): 'follow' | 'replay' | 'new' => item.job ? 
 // The second line is the refinement route's: each compares the document at the request's own revision with a version or
 // a plan that never changes. asset_missing and asset_corrupt (a file on the disk) are not: they can be repaired.
 const FINAL = ['plan_stale', 'revision_conflict', 'attempt_limit', 'acknowledgement_required', 'validation_error', 'format_locked', 'not_found', 'idempotency_reused',
+  'invalid_headline', 'contact_unsupported',  // the request's own words against the document at its revision
   'headline_stale', 'base_not_selected', 'scene_format_mismatch', 'logo_disc_uncovered', 'logo_placement_stale', 'invalid_plan', 'invalid_reference', 'unsupported_visual', 'format_missing']
 export const final = (code: string) => FINAL.includes(code) || code.startsWith('title_')
 export type Fate = 'running' | 'made' | 'failed'

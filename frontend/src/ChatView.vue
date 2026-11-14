@@ -7,7 +7,7 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read } from './api'
-import { cardButton, CHAT_PREFIX, complete, fate, final, freePrice, limitLine, lines, modifications, movedTo, newPending, nextRole, nextStep, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
+import { cardButton, CHAT_PREFIX, complete, fate, final, freePrice, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style } from './chat'
 import { parsePrice, type Visual } from './document'
 import { staleWords } from './words'
@@ -33,6 +33,8 @@ const mine = (at = token) => !closed && !!owner.value && at === token
 // The /scenes request this card did not send: the tab lost the chat right before it left.
 class Stopped extends Error {}
 
+// A session that ended is not a dead end: the sign-in form comes, and the thread is read again after it.
+const out = (reason: unknown) => { if (reason instanceof ApiError && reason.status === 401) props.adapter.signedOut() }
 const roleNames: Record<Role, string> = { product: 'Produit', inspiration: 'Inspiration' }
 const src = (asset: string) => preparedUrl(`/api/assets/${asset}`)
 const price = (value?: number | null) => `${(value ?? 0).toLocaleString('fr-FR')} Ar`
@@ -166,11 +168,22 @@ function attach(event: Event) {
 async function sendFile(entry: Unsaved) {
   Object.assign(entry, { status: 'sending', error: '', asset: undefined })
   try { Object.assign(entry, await props.adapter.attach(entry.file, entry.role), { status: 'done' }) }
-  catch (reason) { Object.assign(entry, { status: 'failed', error: reason instanceof Error ? reason.message : 'Envoi impossible. Réessayez.' }) }
+  catch (reason) { Object.assign(entry, { status: 'failed', error: reason instanceof Error ? reason.message : 'Envoi impossible. Réessayez.' }); out(reason) }
+}
+// A photo this shop already used for the same product: attached without an upload, and no read is paid for it.
+function reuse(asset: string) {
+  // Not with photos waiting in the tray: they would go with it and the recap would not show them (review r1).
+  if (locked.value || tray.value.length || !/^[a-f0-9]{64}$/.test(asset) || products().length >= PRODUCT_PHOTOS || draft.pictures.some(item => item.asset === asset)) return
+  const picture: Picture = { asset, role: 'product' }
+  supersede(items.value)
+  add({ role: 'owner', pictures: [picture] }); draft.pictures.push(picture)
+  if (complete(draft)) recap(); else app('Photo ajoutée.')
+  save()
 }
 // The server keeps an image under its role: a swapped one is sent again under the other.
 function swap(entry: Unsaved) {
   const next = swapRole(tray.value, entry.id, draft.pictures)
+  if (next === tray.value) { state.notice = 'Trois photos du produit et une image d’inspiration au plus.'; return }
   for (const [index, item] of tray.value.entries()) if (item.role !== next[index].role) { item.role = next[index].role; void sendFile(item) }
 }
 function drop(entry: Unsaved) { URL.revokeObjectURL(entry.url); tray.value = tray.value.filter(item => item !== entry) }
@@ -211,13 +224,17 @@ async function ask() {
     app(text_fr, card.kind === 'change' ? { ...card, said: record.text } : card)
   } catch (reason) {
     if (!mine(at) || key !== from) return
-    const code = reason instanceof ApiError ? reason.code : '', sentence = reason instanceof Error ? reason.message : 'La demande a échoué.'
+    const code = reason instanceof ApiError ? reason.code : ''
+    // The server's sentence for a refused value is the editor's (brand and subtitle): the chat has its own.
+    const sentence = code === 'validation_error' ? 'Ce message ne peut pas être lu tel quel. Écrivez-le plus court : le produit et son prix, ou le changement voulu.'
+      : reason instanceof Error ? reason.message : 'La demande a échoué.'
     if (reason instanceof ApiError && settled(code)) clearPending(record.key)
     if (code === 'budget_exhausted') {  // nothing can be read until the budget is raised: the text goes back to the field
       const at = items.value.map(item => item.role === 'owner' && item.text === record.text).lastIndexOf(true)
       if (at >= 0) items.value.splice(at, 1)
       text.value = record.text; app(sentence)
-    } else app(sentence, { kind: 'failed', code, ...(pending.value || code === 'read_failed' ? { retry: record.text } : {}) })
+    } else app(sentence, { kind: 'failed', code, ...(pending.value || code === 'read_failed' || code === 'unauthenticated' ? { retry: record.text } : {}) })
+    out(reason)
   } finally { if (mine(at)) { reading.value = false; save() } }
 }
 // A failed read is settled: its retry is a new paid read. Any other retry is the record that is still pending.
@@ -273,7 +290,7 @@ async function setPrice(item: Item, value: number, said: string) {
   let failure: unknown
   try { await props.adapter.price(value, () => { if (!mine(at)) throw new Stopped() }) } catch (reason) { failure = reason }
   if (!mine(at)) return
-  if (failure) card.error = failure instanceof Error && failure.message ? failure.message : 'Le prix n’a pas pu être changé. Réessayez.'
+  if (failure) { card.error = failure instanceof Error && failure.message ? failure.message : 'Le prix n’a pas pu être changé. Réessayez.'; out(failure) }
   else { card.error = undefined; item.done = true; app(said) }
   save()
 }
@@ -296,6 +313,7 @@ async function replay(item: Item) {
 // the server's sentence and « Réessayer », the same request. Never kept: never sent, and a new card is offered.
 function conclude(item: Item, failure: unknown) {
   const sentence = failure instanceof Error ? failure.message : '', code = failure instanceof ApiError ? failure.code : ''
+  out(failure)
   if (item.request && !final(code)) { item.card!.error = sentence || 'La demande n’a pas abouti.'; return save() }
   item.done = true
   // The server asks the agreement to a small photo: a new card asks it.
@@ -428,7 +446,7 @@ watch(() => [versions.value, !!openCard()], () => {
   for (const item of items.value) if (item.card?.kind === 'result' && !item.done && versionOf(item)?.status === 'rejected') { item.done = true; recap('Version refusée. Je peux en refaire une.'); save() }
 }, { flush: 'post', immediate: true })
 watch(() => [items.value.length, waitLine.value], () => nextTick(() => { if (thread.value) thread.value.scrollTop = thread.value.scrollHeight }), { flush: 'post' })
-watch(() => [state.height, typing.value, !!shown.value, listed.value], resized)
+watch(() => [state.height, typing.value, !!shown.value, listed.value, state.error, state.notice], resized)
 onMounted(() => window.addEventListener('resize', resized))
 // Ownership goes before the lock: what was on its way when the view closed finds it closed, and does nothing.
 onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTimeout(later); window.removeEventListener('resize', resized); tray.value.forEach(item => URL.revokeObjectURL(item.url)) })
@@ -465,6 +483,9 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           </template>
           <p v-else-if="!working">Cette version n’est plus disponible.</p>
         </template>
+        <div v-if="item.card?.kind === 'ask_photo' && !item.done && item.card.suggestions?.length" class="pics" role="group" aria-label="Photos déjà utilisées pour ce produit">
+          <button v-for="photo in item.card.suggestions" :key="photo.asset" type="button" class="pic reuse" :disabled="locked || tray.length > 0" @click="reuse(photo.asset)"><img :src="src(photo.asset)" width="68" height="68" alt="Photo déjà utilisée" />Reprendre cette photo</button>
+        </div>
         <p v-if="item.card?.error" class="why" role="alert">{{ item.card.error }}</p>
         <template v-for="button in [buttonOf(item)]" :key="button ?? ''">
           <p v-if="button === 'resume'">L’affiche n’a peut-être pas été lancée.</p>

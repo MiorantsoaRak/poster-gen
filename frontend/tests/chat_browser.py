@@ -4,9 +4,11 @@ Pictures: outputs/chat-smoke/."""
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 from uuid import uuid4
 
 from PIL import Image, ImageDraw
@@ -400,10 +402,10 @@ def walk_desktop(browser, errors, product, inspiration):
     return session
 
 
-def walk_changes(browser, errors, session):
+def walk_changes(browser, errors, session, data):
     """An existing poster is changed by message (T-CHAT-004): a new scene of it, a new price, the list of modifications.
     The poster is the first one of walk_desktop: one version, approved and downloaded."""
-    reads, sent = [], {"refinements": [], "scenes": []}
+    reads, sent = [], {"refinements": [], "scenes": [], "api/assets": []}
 
     def seen(request):
         if request.method != "POST":
@@ -428,9 +430,28 @@ def walk_changes(browser, errors, session):
         page.get_by_role("button", name="Fermer").click()  # a confirmed poster opens on its file
     page.goto(smoke.ORIGIN)
     page.wait_for_url("**/#message")
+    thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
+    # Photos already used (D-TEXT-FIRST-004): the same product named again, in other letters and without a photo, is
+    # offered the photo of its first poster. One tap attaches it, with no upload and no second read, and the recap comes.
+    say(page, "sony wh-1000xm6 NOIR, 500 000 Ar")
+    asked = thread.locator(".bubble.bot").last
+    expect(asked).to_contain_text("Il me faut une photo du produit.")
+    offered = asked.get_by_role("button", name="Reprendre cette photo")
+    expect(offered).to_have_count(1)  # the product photo, not the inspiration image
+    expect(asked.get_by_role("button", name="Ajouter une photo")).to_be_visible()
+    assert offered.locator("img").evaluate("e => e.decode().then(() => e.naturalWidth > 0)")
+    looks_right(page, "photos already used", "chat-suggestions-1366.png")
+    offered.click()
+    recap = thread.locator(".bubble.bot", has=page.locator(".recap")).last
+    expect(recap.locator(".recap b")).to_have_text("sony wh-1000xm6 NOIR")
+    expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^500\s000 Ar$"))
+    expect(recap.locator(".pic")).to_have_count(1)
+    expect(offered).to_have_count(0)
+    expect(thread.get_by_role("button", name="Créer l’affiche")).to_be_enabled()
+    assert len(reads) == 1 and not sent["api/assets"], (reads, sent)
+    del reads[:]
     open_poster()
     poster = page.url.split("#message-")[1]
-    thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
     create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
     verify, download = page.get_by_role("button", name="Vérifier", exact=True), page.get_by_role("button", name="Télécharger", exact=True)
     mods, toggle = side.locator(".mod"), side.get_by_role("button", name=re.compile("^Modifications"))
@@ -564,6 +585,12 @@ def walk_changes(browser, errors, session):
         assert refused.get("done") and "job" not in refused and creation()["document"]["offer"]["price_ar"] == 600000 and len(made("scene")) == 2, refused
         if round == "back":
             both_themes(page, "old price still shown, desktop", "chat-old-price-1366")
+            # The download of the old image is refused by the server; in the chat its sentence is in the general message.
+            download.click()
+            refusal = page.locator(".message.error")
+            expect(refusal).to_contain_text("Le prix dessiné dans l’image ne correspond plus au prix de l’affiche.")
+            looks_right(page, "download refused, desktop")
+            refusal.get_by_role("button", name="Fermer").click()
             back.click()
             expect(thread).to_contain_text(re.compile(r"Prix remis : 650\s000 Ar\."))
             expect(back).to_have_count(0)
@@ -699,6 +726,41 @@ def walk_changes(browser, errors, session):
     assert document()["offer"]["price_ar"] == 290000 and document()["formats"]["feed"]["scene"]["visual_id"] == chosen
     assert page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/jobs").json()["items"] == before and len(sent["scenes"]) == 6, sent
     assert not [item for item in page.evaluate(THREAD, other)["items"] if item.get("card", {}).get("change") == "price" and item.get("spent")]
+
+    # The version limit, by the server's rule: jobs are added straight into the temporary database.
+    def seed(count):
+        with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+            source = store.execute("SELECT id FROM poster_jobs WHERE creation_id=? AND kind='scene' AND status='succeeded'", (other,)).fetchone()[0]
+            for _ in range(count):
+                store.execute("INSERT INTO poster_jobs SELECT ?,shop_id,creation_id,origin_revision,input_id,kind,input_json,input_hash,status,result_ref,"
+                              "error_code,created_at,started_at,finished_at,recovery_count FROM poster_jobs WHERE id=?", (str(uuid4()), source))
+    counted = len([job for job in before if job["kind"] in ("scene", "refine") and job["status"] in ("queued", "running", "succeeded")])
+    say(page, "fond plus sombre")
+    card = thread.locator(".bubble.bot").last
+    expect(create).to_be_visible()
+    expect(card).not_to_contain_text("Il reste")
+    for add, line in ((10 - counted, "Il reste 2 versions pour cette affiche."), (1, "Il reste 1 version pour cette affiche.")):
+        seed(add)
+        page.reload()
+        expect(card).to_contain_text(line)
+        expect(create).to_be_enabled()
+    seed(1)
+    page.reload()
+    expect(card).to_contain_text("Douze scènes ont déjà été demandées pour cette affiche.")
+    expect(create).to_have_count(0)
+    expect(cancel).to_be_visible()
+    looks_right(page, "version limit reached", "chat-limit-1366.png")
+
+    # The session ends (401): the sign-in form comes instead of a dead end; after it the thread is there and
+    # « Réessayer » sends the message.
+    context.clear_cookies()
+    say(page, "fond rouge")
+    page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+    page.get_by_role("button", name="Ouvrir l’atelier").click()
+    page.wait_for_url(f"**/#message-{other}")
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Connectez-vous pour continuer.")
+    thread.get_by_role("button", name="Réessayer", exact=True).click()
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Nouvelle version : « fond rouge »")
     state = context.storage_state()
     context.close()
 
@@ -719,8 +781,12 @@ def walk_changes(browser, errors, session):
     expect(toggle).to_have_attribute("aria-expanded", "false")
     expect(mods.first).to_be_hidden()
     looks_right(page, "list folded, 360 px", "chat-mods-folded-360.png")
-    toggle.tap()
+    # The folded list is reached and opened with the keyboard alone.
+    toggle.focus()
+    page.keyboard.press("Enter")
     expect(toggle).to_have_attribute("aria-expanded", "true")
+    page.keyboard.press("Tab")
+    expect(mods.first).to_be_focused()
     expect(mods).to_have_count(5)
     expect(mods.nth(0)).to_have_text(re.compile(r"^V5\s*lumière plus chaude\s*À vérifier$"))
     expect(mods.nth(1)).to_have_text(re.compile(r"^V4\s*Prix : 600\s000 Ar\s*Refusée$"))
@@ -733,6 +799,51 @@ def walk_changes(browser, errors, session):
     composer, nav = page.locator(".composer").bounding_box(), page.locator(".nav").bounding_box()
     assert composer["y"] + composer["height"] <= nav["y"], "the composer stays above the navigation bar with the list open"
     both_themes(page, "list of modifications, 360 px", "chat-mods-360")
+    context.close()
+
+
+def walk_uploads(browser, errors, session, small, broken, animated):
+    """Images the chat cannot take, and a small product photo: each refusal says what to do, nothing is a dead end."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(smoke.ORIGIN)
+    page.wait_for_url("**/#message")
+    thread, picker, send = page.get_by_role("log"), page.locator(".composer input[type=file]"), page.get_by_role("button", name="Envoyer")
+    pics, alert, notice = page.locator(".tray .pic"), page.locator(".composer .why"), page.locator(".message.notice")
+    # Not an image, then an animated one: the server's sentence under the tray, « Envoyer » waits, the image can be removed.
+    for file, sentence in ((broken, "Utilisez une image JPEG, PNG ou WebP fixe."), (animated, "Les images animées ne sont pas acceptées.")):
+        picker.set_input_files(file)
+        expect(alert).to_contain_text(sentence)
+        expect(pics.get_by_role("button", name="Réessayer")).to_be_visible()
+        page.get_by_label("Votre message").fill("Montre Casio F91, 90 000 Ar")
+        expect(send).to_be_disabled()
+        page.get_by_role("button", name="Retirer cette image").click()
+        expect(pics).to_have_count(0)
+        expect(alert).to_have_count(0)
+    # A fifth image is not taken, and a role that has no room is not given: both are said.
+    picker.set_input_files(small)
+    expect(pics).to_have_count(4)
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    expect(notice).to_contain_text("Trois photos du produit et une image d’inspiration au plus.")
+    looks_right(page, "fifth image refused", "chat-fifth-image-1366.png")
+    notice.get_by_role("button", name="Fermer").click()
+    pics.nth(1).locator(".pic-role").click()  # the inspiration as a fourth product photo
+    expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
+    expect(notice).to_be_visible()
+    notice.get_by_role("button", name="Fermer").click()
+    for _ in range(3):
+        page.get_by_role("button", name="Retirer cette image").last.click()
+    expect(pics).to_have_count(1)
+    # A small product photo: the recap asks the agreement before the paid tap.
+    send.click()
+    create, agree = page.get_by_role("button", name="Créer l’affiche"), thread.get_by_label(re.compile("^La photo du produit est petite"))
+    expect(create).to_be_disabled()
+    looks_right(page, "small photo", "chat-small-photo-1366.png")
+    agree.check()
+    create.click()
+    expect(page.get_by_role("button", name="Vérifier", exact=True)).to_be_visible(timeout=30000)
     context.close()
 
 
@@ -919,7 +1030,7 @@ def walk_slow_read(browser, errors, session):
     context.close()
 
 
-def walk_failed(browser, errors):
+def walk_failed(browser, errors, product):
     """The reader fails (STUB_FAIL): the bubble stays, « Réessayer » pays a new read, « Pas à pas » is one tap away."""
     reads = []
     context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="light")
@@ -947,6 +1058,23 @@ def walk_failed(browser, errors):
     expect(page.get_by_label("Photos du produit")).to_be_attached()
     expect(page.locator(".chat")).to_have_count(0)
     assert page.evaluate(START) == "steps"
+    # The image job fails at the provider (not a refusal). The form gives the product without a read; back in the chat the recap is
+    # there, the tap pays, and the failure is said with a new card: never a new attempt by itself.
+    page.get_by_label("Photos du produit").set_input_files(product)
+    page.get_by_label("Nom du produit", exact=True).fill("Sony WH-1000XM6 noir")
+    page.get_by_label("Prix en ariary", exact=True).fill("700000")
+    expect(page.locator(".photo-strip img")).to_have_count(1)
+    page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Message").tap()
+    create = page.get_by_role("button", name="Créer l’affiche")
+    create.tap()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    expect(thread).to_contain_text("La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.", timeout=30000)
+    expect(create).to_have_count(1)
+    expect(create).to_be_enabled()
+    expect(page.get_by_role("button", name="Vérifier", exact=True)).to_have_count(0)
+    jobs = page.request.get(f"{smoke.ORIGIN}/api/creations/{page.url.split('#message-')[1]}/jobs").json()["items"]
+    assert [(job["kind"], job["status"]) for job in jobs if job["kind"] == "scene"] == [("scene", "interrupted")], jobs  # a provider error may have been billed: not retried
+    looks_right(page, "image job failed, 360 px", "chat-job-failed-360.png")
     context.close()
 
 
@@ -978,6 +1106,12 @@ def run():
     ImageDraw.Draw(photo).rounded_rectangle((250, 160, 750, 840), 50, fill="#202020")
     photo.save(product)
     inspiration = smoke.ROOT / "frontend/public/styles/sombre.jpg"
+    small = [OUT / f"small-{index}.png" for index in range(5)]
+    for index, file in enumerate(small):  # under the server's 800 px, each its own file
+        Image.new("RGB", (600, 600), (40 * index, 90, 160)).save(file)
+    broken, animated = OUT / "broken.png", OUT / "animated.webp"
+    broken.write_bytes(b"not an image")
+    Image.new("RGB", (64, 64), "red").save(animated, save_all=True, append_images=[Image.new("RGB", (64, 64), "blue")], duration=200)
     errors = []
     with tempfile.TemporaryDirectory(prefix="affiche-chat-") as data, tempfile.TemporaryDirectory(prefix="affiche-chat-fail-") as failing:
         server = smoke.serve(data)
@@ -991,17 +1125,18 @@ def run():
                     try:
                         session = walk_desktop(browser, errors, product, inspiration)
                         walk_phone(browser, errors, session)
-                        walk_changes(browser, errors, session)
                         walk_two_tabs(browser, errors, session, product)
                         walk_lockless(browser, errors, session)
                         walk_slow_read(browser, errors, session)
+                        walk_uploads(browser, errors, session, small, broken, animated)
+                        walk_changes(browser, errors, session, data)  # last of this server: it signs in again
                         walk_choice_phone(browser, errors)
                         smoke.stop(*server)
                         server = smoke.serve(failing, stub_fail="provider_error")
-                        walk_failed(browser, errors)
+                        walk_failed(browser, errors, product)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a price change, its refusal with the old price put back and its retry, two refusals in a row restore the image's price, no second paid card while one waits, a pending read never replaced from another poster, a free price change when the price is a layer, the list of modifications folded at 360 px and open on desktop, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a price change, its refusal with the old price put back and its retry, two refusals in a row restore the image's price, no second paid card while one waits, a pending read never replaced from another poster, a free price change when the price is a layer, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

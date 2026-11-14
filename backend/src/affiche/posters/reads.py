@@ -19,7 +19,7 @@ from affiche.visuals.gateway import usd_to_micros
 from . import jobs
 from .models import MAX_PRICE, Id, Model, Name, Offer, canonical, format_price
 from .planner import ClaudePlanner, PlannerError
-from .plans import screen_headline, wire_schema
+from .plans import name_words, screen_headline, wire_schema
 from .store import Refused, _owned, _sha, check_key
 from .visuals import RefinementRequest
 
@@ -220,6 +220,26 @@ def build(fields: Fields | None, request: ReadRequest, messages: dict) -> dict:
     return card("recap", name=draft["name"], price_ar=draft["price_ar"], style=draft["style"])
 
 
+def suggestions(engine, shop, name: str) -> list[dict]:
+    """Photos this shop already used for the same product (D-TEXT-FIRST-004): up to three, newest first. The name is
+    compared without case or accents; a removed poster's photos are still the shop's."""
+    wanted, found = name_words(name), {}
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT name,photo_assets_json FROM product_inputs WHERE shop_id=:shop"
+                                 " ORDER BY confirmed_at DESC, rowid DESC"), {"shop": shop}).all()
+        for row in rows:
+            if name_words(row.name) != wanted:
+                continue
+            for sha in json.loads(row.photo_assets_json):
+                if sha not in found and conn.execute(text(
+                        "SELECT 1 FROM asset_access WHERE shop_id=:shop AND asset_sha=:sha AND role='original'"),
+                        {"shop": shop, "sha": sha}).first():
+                    found[sha] = {"asset": sha, "name": row.name}
+                    if len(found) == 3:
+                        return list(found.values())
+    return list(found.values())
+
+
 def _spec(settings) -> jobs.CallSpec:
     try:
         spec = jobs.call_spec(settings, "plan")  # the planner's own rule: mode, pinned model, key
@@ -331,6 +351,12 @@ async def read(engine, settings, shop, key, request: ReadRequest, messages: dict
     try:
         fields, usage, cost, request_id = await asyncio.wait_for(_ask(settings, spec, request, transport), TIMEOUT_S)
         body, status = build(fields, request, messages), "succeeded"
+        if body["card"]["kind"] == "ask_photo":
+            try:
+                if found := await asyncio.to_thread(suggestions, engine, shop, body["draft"]["name"]):
+                    body["card"]["suggestions"] = found
+            except Exception:  # the card goes without them: the paid read is not lost for a convenience
+                log.exception("read %s: photo suggestions failed", id)
     except PlannerError as error:
         log.warning("read %s: %s", id, error.code)
         usage, request_id = error.usage, error.request_id

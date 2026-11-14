@@ -2,13 +2,34 @@
 
 **Two tracks share this checkout.** Claude's track (the deployed editor) is the next block. Codex's track (text-first generation: research and an isolated mockup, nothing built) follows it, newest first; its files are the only uncommitted ones.
 
-## Creation by message — state on 2026-11-14, late (READ FIRST)
+## Creation by message — handoff of 2026-11-15 (READ FIRST)
 
-Committed locally, not pushed: research, requirements and design v2; T-CHAT-001 (backend reading, migration 0012); T-CHAT-002 (paid reading test and fixes); T-CHAT-003 (chat screen for a first request). Migration 0012 is applied to `backend/data-probe` (backup `backups/before-chat-reads-2026-11-14.db`). Spend for this feature: about USD 0.19 (0.138 on the ledger). The user gave full autonomy for this feature, paid calls included (ADR-093); push and deploy stay his word.
+**State:** the feature is built and committed locally on `main`, **not pushed and not deployed**: T-CHAT-001 to 005 are done (TODO.md). Requirements R-TEXT-FIRST-001 to 005, [design v2](designs/text-first-generation.md), decisions ADR-091 to ADR-098. The user gave full autonomy for this feature, paid calls included (ADR-093); push and deploy stay his word. Nothing is in progress.
 
-T-CHAT-004 (changes and the list of modifications from the chat) is committed too (ADR-098). **Exact next step: T-CHAT-005** (TODO.md): photos already used on the « no photo » card, failure-path audit on empty data, the free demo, one paid poster through the chat with the real providers, the offline price read-back measurement, a report. Read ADR-097 and ADR-098 before touching `ChatView.vue`: the chat never guesses what a paid request became. Free look at the chat: from `backend/`, `uv run python ../outputs/serve_demo.py ../outputs/demo-password.txt` (check first that it sets the planner to `stub`, or the chat is not offered). Chat browser test: from `backend/`, `uv run python ../frontend/tests/chat_browser.py`.
+**What exists:** a choice screen and a switch « Message » / « Pas à pas »; a chat that reads each message with a paid Claude call (`POST /api/reads`, ledger `chat_reads`, migration 0012), shows one recap with its cost, makes the poster through the editor's own functions, hands the check and the download to the editor's dialogs, changes a scene or a price from a message, and lists the modifications. Reports: [reading test](reviews/chat-read-eval-2026-11-14.md), [failure audit](reviews/chat-failure-audit-2026-11-15.md), [first real poster and read-back measurement](reviews/chat-paid-run-2026-11-15.md).
 
-**Landmines added:** every fresh browser context of the smokes presets `affiche.start=steps` (otherwise it lands on the choice screen); the chat must never mount `PosterCanvas` or load `fonts.ts`; `ClaudePlanner.structured` accepts a reasoning block, and a read asks for none (ADR-096). Codex's old `docs/project/mockups/text-first/` is untracked and superseded by `mockups/chat-first/`.
+**Verified on Linux at the last commit:** backend 940 passed / 3 deselected; 179 Vitest; build; `browser_smoke.py`; `chat_browser.py`; `editor_refinements_browser.py` (before the last one-line fix; the chat smoke, Vitest and build were rerun after it). One real poster and one change through the chat on `backend/data-probe` with `gpt-image-2.5-flare`. **Never verified:** a real phone, a screen reader, the hosted pilot.
+
+```sh
+cd backend && uv run pytest -q
+cd frontend && corepack npm@10 test && corepack npm@10 run build
+cd backend && uv run python ../frontend/tests/browser_smoke.py && uv run python ../frontend/tests/chat_browser.py
+# free look at the chat (simulated images, no spend); password in outputs/demo-password.txt
+cd backend && uv run python ../outputs/serve_demo.py ../outputs/demo-password.txt
+```
+
+**Exact next step:** the user's look at the chat on the free demo; on his word, push and deploy (the release applies migration 0012 to the pilot's database: take the backup first, as the runbook says; the pilot already has `PLANNER_PROVIDER: claude`, so the chat is offered there as soon as it is deployed). Then T-CHAT-FOLLOW-UPS in TODO.md, each on his word.
+
+**Landmines of this feature:**
+- Read ADR-097 and ADR-098 before touching `frontend/src/ChatView.vue`: the chat never guesses what a paid request became. Five review rounds were lost to time-based and order-based inference.
+- Every fresh browser context of the smokes presets `affiche.start=steps`; without it a test lands on the choice screen.
+- The chat must never mount `PosterCanvas` or load `fonts.ts`.
+- `ClaudePlanner.structured` accepts a reasoning block beside the text; a read asks for none (`thinking: between_tools`, ADR-096). `claude-sonnet-5-5` refuses `disabled`.
+- The price read from a message is an allowlist of whole digit tokens (ADR-095); do not relax it without the adversarial cases of `backend/tests/test_reads.py`.
+- Migration 0012 is applied to `backend/data-probe` (backup `backups/before-chat-reads-2026-11-14.db`). Spend of the feature: about USD 0.34, of which 0.21 on that ledger.
+- Paid scripts of this feature are in `outputs/chat-read-eval-2026-11-14/`, `outputs/chat-paid-2026-11-15/` and `outputs/price-readback-2026-11-15/` (git-ignored); the last one pays outside the ledger. Do not rerun them to look at results.
+
+**Uncommitted:** only Codex's old `docs/project/mockups/text-first/` (untracked, superseded by `mockups/chat-first/`; about 1.7 MB of images).
 
 ## Creation by message — Claude, 2026-11-14 (later session; T-CHAT-MOCKUP, ADR-091)
 

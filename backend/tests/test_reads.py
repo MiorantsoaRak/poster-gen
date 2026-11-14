@@ -6,6 +6,7 @@ from uuid import uuid4
 import httpx2
 import pytest
 from alembic import command
+from sqlalchemy import text
 
 from affiche.api import MESSAGES
 from affiche.config import load_settings
@@ -18,7 +19,7 @@ from test_api import client, create_draft, login, password_hash, post, settings 
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
 from test_db import engine  # noqa: F401
-from test_poster_drafts import draft, input_id  # noqa: F401
+from test_poster_drafts import draft, input_id, photo  # noqa: F401
 
 ESTIMATE = 20_000  # ESTIMATE_READ_USD 0.02
 REAL = 1200 * 2 + 150 * 10  # the usage of reply() at the pinned rate card
@@ -498,3 +499,43 @@ def test_creation_must_be_the_shops_and_active(engine, claude, tmp_path, input_i
     with pytest.raises(Refused) as refused:
         read(1)
     assert (refused.value.code, refused.value.status, rows(engine)) == ("creation_abandoned", 409, [])
+
+
+def test_photos_already_used_are_offered_for_the_same_product(stub, client, monkeypatch):
+    login(client)
+    engine = client.app.state.engine
+
+    def used(name, colour):
+        upload = client.post("/api/assets", files={"file": ("p.png", photo(colour=colour), "image/png")}, data={"role": "original"})
+        source = post(client, "/api/product-inputs", {"name": name, "variant": "-", "photo_assets": [upload.json()["asset"]]})
+        assert source.status_code == 201, source.text
+        return upload.json()["asset"], source.json()["id"]
+
+    def ask(message, **draft):
+        answer = post(client, "/api/reads", body(message, **{"product_photos": 0} | draft))
+        assert answer.status_code == 201, answer.text
+        return answer.json()["card"]
+
+    assert ask("Casque Été, 700 000 Ar") == {"kind": "ask_photo", "text_fr": MESSAGES["card_ask_photo"]}  # nothing used yet
+    first, input_id = used("Casque Été", "navy")
+    used("Autre produit", "red")
+    # The same name, case and accents ignored; another product's photo is not offered.
+    assert ask("casque ete, 700 000 Ar")["suggestions"] == [{"asset": first, "name": "Casque Été"}]
+    assert "suggestions" not in ask("Casque Hiver, 700 000 Ar")
+    assert "suggestions" not in ask("Casque Été, 700 000 Ar", product_photos=1)  # a photo is there: the recap
+    # A removed poster's photo is still the shop's.
+    creation = post(client, "/api/creations", {"input_id": input_id, "offer": {"title": "Casque Été", "price_ar": 700000},
+                                               "brand_selection": {"logo": False, "shop_name": False, "contact": False}}).json()
+    store.abandon_creation(engine, 1, str(uuid4()), creation["id"], creation["revision"])
+    assert ask("CASQUE ÉTÉ 700 000 Ar")["suggestions"] == [{"asset": first, "name": "Casque Été"}]
+    # Three at most, newest first.
+    newer = [used("casque été", colour)[0] for colour in ("green", "gold", "purple")]
+    assert [item["asset"] for item in ask("Casque Été, 700 000 Ar")["suggestions"]] == newer[::-1]
+    # Only what the shop may read.
+    with write_tx(engine) as conn:
+        conn.execute(text("DELETE FROM asset_access WHERE asset_sha=:sha"), {"sha": newer[2]})
+    assert [item["asset"] for item in ask("Casque Été, 700 000 Ar")["suggestions"]] == [newer[1], newer[0], first]
+    # A failed lookup costs the owner nothing: the card comes without suggestions and the read is kept.
+    monkeypatch.setattr(reads, "suggestions", lambda *_: 1 / 0)
+    assert ask("Casque Été, 700 000 Ar") == {"kind": "ask_photo", "text_fr": MESSAGES["card_ask_photo"]}
+    assert all(row["status"] == "succeeded" for row in rows(engine))

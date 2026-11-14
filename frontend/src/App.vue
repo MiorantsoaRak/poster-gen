@@ -819,7 +819,8 @@ async function perform(action: () => Promise<void>) {
   if (working) markWorking(working)
   try { await action() } catch (reason) {
     // Behind an open dialog the groups are inert: there the refusal goes to the message above the dialog.
-    const held = doc.value && !modalOpen.value && reason instanceof ApiError ? refusalGroup(reason) : undefined
+    // In the chat no group is on screen either: the refusal goes to the general message.
+    const held = doc.value && !modalOpen.value && !chatting.value && reason instanceof ApiError ? refusalGroup(reason) : undefined
     if (held) { fieldError.value = { group: held, text: (reason as ApiError).message }; go(held) }
     else if (!(reason instanceof Shown)) error.value = reason instanceof Error ? reason.message : 'La demande a échoué. Réessayez ; si l’erreur persiste, rechargez la page.'
   }
@@ -1384,6 +1385,7 @@ const chat: ChatAdapter = {
   follow: found => follow(found as Job, true),
   review: visual => { review.value = visual; resetChecks() },
   download: () => { void perform(renderFinal) },
+  signedOut: () => { authenticated.value = false },
 }
 function zoomScene(event: Event) {
   if (!currentVisual.value) return
