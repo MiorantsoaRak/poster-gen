@@ -421,6 +421,11 @@ def walk_wait(browser, session, errors):
     device.get_by_role("button", name="Générer l’affiche").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
     expect(words).to_contain_text("Votre demande est en attente.")
+    # The polls are background requests: once the request that started the job has its answer, the top progress line
+    # never shows for them (D-POSTER-EDITOR-007).
+    expect(device.locator(".load-line")).to_have_count(0)
+    device.evaluate(LINE_SEEN_JS)
+    polls_before = len(polls)
     expect(pill).to_have_text("En attente")
     expect(badge).to_have_text("Aperçu")
     expect(block.locator("li[aria-current=step]")).to_contain_text("Demande enregistrée")
@@ -441,6 +446,7 @@ def walk_wait(browser, session, errors):
     assert re.fullmatch(r"Temps écoulé : \d+:\d\d", shown), shown
     expect(elapsed).not_to_have_text(shown)
     check_still(device, still, "while the first generation runs at 360 px", samples=6)
+    assert len(polls) > polls_before and not device.evaluate("window.lineSeen"), (len(polls), polls_before)
     waiting_checks(device, "first generation at 360 px", "sombre", "dark")
     check_targets(device, "first generation at 360 px")
     shot(device, "wait-360-sombre-premiere.png", full_page=False)
@@ -568,6 +574,120 @@ def walk_wait(browser, session, errors):
     # The elapsed time rests on what the real answers carried: UTC stamps with their offset, the server's Date header.
     assert stamps and all(re.search(r"\+00:00$", created) and (started is None or re.search(r"\+00:00$", started)) and date
                           for created, started, date in stamps), stamps
+
+
+# Records whether the top progress line was ever on screen from now on.
+LINE_SEEN_JS = "() => { window.lineSeen = !!document.querySelector('.load-line'); new MutationObserver(() => { if (document.querySelector('.load-line')) window.lineSeen = true }).observe(document.body, { childList: true, subtree: true }) }"
+# A control answers a press at once and shows it is working (R-POSTER-EDITOR-009): aria-busy, the spinner after 120 ms,
+# the top line after 300 ms of waiting. Times are taken in the page from the press.
+PRESSED_JS = "() => { window.pressedAt = null; addEventListener('pointerdown', () => { window.pressedAt ??= performance.now() }, { capture: true, once: true }) }"
+WORKING_JS = """e => e.getAttribute('aria-busy') === 'true' && getComputedStyle(e, '::after').opacity === '1' && !!document.querySelector('.load-line')
+  && performance.now() - window.pressedAt"""
+LAYOUT_JS = "e => [e.offsetWidth, e.offsetHeight]"
+
+
+def check_working(page, control, held, posts, where, picture, *also, sized=True):
+    """With the request held: the control works within 300 ms (the line from 300 ms on, so 450 ms for it), a second tap
+    sends nothing, nothing changes size; once released no control is still working and the line is gone."""
+    sizes = [item.evaluate(LAYOUT_JS) for item in ((control,) if sized else ()) + also]
+    page.evaluate(PRESSED_JS)
+    control.tap()
+    page.wait_for_function("() => document.querySelector('[aria-busy=true]:is(button, a)')", polling=10, timeout=300)
+    took = page.wait_for_function(WORKING_JS, arg=control.element_handle(), polling=10, timeout=1000).json_value()
+    assert took < 450, f"{where}: working after {took:.0f} ms"
+    assert page.locator(".load-line").get_attribute("role") == "progressbar"
+    page.screenshot(path=str(OUTPUT / picture))  # not shot(): the spinner's start never settles while it works
+    count = len(posts)
+    control.tap(force=True)  # disabled, or the same address: nothing new is asked
+    page.wait_for_timeout(300)
+    assert len(posts) == count, f"{where}: a second tap sent {posts[count:]}"
+    assert [item.evaluate(LAYOUT_JS) for item in ((control,) if sized else ()) + also] == sizes, f"{where}: a size changed"
+    while held:
+        held.pop().continue_()
+    expect(page.locator("[aria-busy=true]:is(button, a)")).to_have_count(0)
+    expect(page.locator(".load-line")).to_have_count(0)
+
+
+def pressed_look(page, cdp, selector, reduced=False):
+    """The computed look of an element with :active forced through the DevTools protocol."""
+    page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
+    root = cdp.send("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+    node = cdp.send("DOM.querySelector", {"nodeId": root, "selector": selector})["nodeId"]
+    assert node, selector
+    cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": ["active"]})
+    page.wait_for_timeout(300)  # past the 160 ms ease
+    look = page.eval_on_selector(selector, "e => [getComputedStyle(e).transform, getComputedStyle(e).opacity, getComputedStyle(e).backgroundColor]")
+    cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": []})
+    page.emulate_media(reduced_motion="no-preference")
+    return look
+
+
+def walk_tap(browser, session, errors):
+    """Every tap answers at once, a slow action shows it is working (R-POSTER-EDITOR-009, D-POSTER-EDITOR-007), at 360 px
+    on a touch screen: « Dupliquer », opening a poster, a bottom navigation link, each with its request held; the press
+    itself through a forced :active. Pictures tap-*.png."""
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark", storage_state=session)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    held, posts = [], []
+    page.on("request", lambda request: posts.append(request.url) if "/api/" in request.url and not re.search("/api/(assets|thumbnails)/", request.url) else None)
+    page.goto(f"{ORIGIN}/#affiches")
+    rows = page.locator(".library-row")
+    expect(rows.first).to_be_visible()
+    count = rows.count()
+    # « Dupliquer » (the user's report): its POST held.
+    page.route("**/api/creations/*/copies", lambda route: held.append(route))
+    duplicate = rows.first.get_by_role("button", name=re.compile("^Dupliquer"))
+    check_working(page, duplicate, held, posts, "« Dupliquer »", "tap-360-sombre-dupliquer.png", rows.first, page.locator(".rows"))
+    page.unroute("**/api/creations/*/copies")
+    assert sum(url.endswith("/copies") for url in posts) == 1, posts
+    expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+    # The header's navigation link on a wide screen, from an open poster: the list's loading held, through the shop's
+    # capabilities asked with it. (At 360 px the bottom navigation shows only outside the editor, where changing screen
+    # asks the server nothing: there it is the press alone, checked below. The editor's back link leaves with the editor.)
+    page.set_viewport_size({"width": 1366, "height": 768})
+    page.route("**/api/capabilities", lambda route: held.append(route))
+    # The link is marked current at once (bold, so wider) as before this change: its size is not compared.
+    check_working(page, page.locator(".nav a", has_text="Mes affiches"), held, posts, "the header's navigation link at 1366 px", "tap-1366-sombre-navigation.png", sized=False)
+    page.unroute("**/api/capabilities")
+    expect(rows).to_have_count(count + 1)
+    page.set_viewport_size({"width": 360, "height": 740})
+    # Opening a poster from « Mes affiches »: its GET held.
+    opened = rows.nth(1).locator(".library-item")
+    page.route(re.compile(r"/api/creations/[0-9a-f-]{36}$"), lambda route: held.append(route) if route.request.method == "GET" else route.continue_())
+    check_working(page, opened, held, posts, "a row of « Mes affiches »", "tap-360-sombre-ouvrir.png", page.locator(".rows"))
+    page.unroute(re.compile(r"/api/creations/[0-9a-f-]{36}$"))
+    expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+    shot(page, "tap-360-sombre-ouverte.png", full_page=False)
+    # The press: scale .97 at once on a button, a link, a tab; a row of the list takes a colour step instead; nothing on a
+    # disabled button; with reduced motion a change of opacity, not of size.
+    cdp = context.new_cdp_session(page)
+    cdp.send("DOM.enable")
+    cdp.send("CSS.enable")
+    scaled = "matrix(0.97, 0, 0, 0.97, 0, 0)"
+    tab = ".rail [role=tab][aria-selected=false]"
+    expect(page.locator(tab).first).to_be_visible()
+    undo = "button[aria-label=Annuler]"
+    expect(page.locator(undo)).to_be_disabled()
+    assert pressed_look(page, cdp, undo)[0] == "none"
+    for where in ("editor", "list"):
+        if where == "list":
+            page.locator(".back-link").tap()
+            expect(rows).to_have_count(count + 1)
+        for selector in ((tab,) if where == "editor" else (".nav a:not([aria-current])", ".row-actions button")):
+            assert pressed_look(page, cdp, selector)[0] == scaled, selector
+            resting = page.eval_on_selector(selector, "e => getComputedStyle(e).backgroundColor")
+            reduced = pressed_look(page, cdp, selector, reduced=True)
+            assert reduced[0] == "none" and reduced[2] != resting, (selector, reduced, resting)  # a colour step, no size
+    resting = page.eval_on_selector(".library-item", "e => getComputedStyle(e).backgroundColor")
+    row = pressed_look(page, cdp, ".library-item")
+    assert row[0] == "none" and row[2] != resting, (row, resting)
+    for scheme, theme in (("dark", "sombre"), ("light", "clair")):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+        check_contrast(page, f"Mes affiches at 360 px after the taps, {theme}")
+    context.close()
 
 
 def walk_words(browser, session, errors):
@@ -1633,7 +1753,7 @@ def run():
                         page.get_by_role("button", name="Passer au thème sombre").click()
                         expect(thumbnail).to_be_visible()
                         # A small resized image of the 1080 x 1350 preview, not the full file.
-                        page.wait_for_function("image => image.complete && image.naturalWidth === 192 && image.naturalHeight === 240", arg=thumbnail.element_handle())
+                        page.wait_for_function("image => image.complete && image.naturalWidth === 320 && image.naturalHeight === 400", arg=thumbnail.element_handle())
                         assert len(page.request.get(ORIGIN + thumbnail.get_attribute("src")).body()) < 40_000
                         page.screenshot(path=str(OUTPUT / "mes-affiches.png"))
                         # Managing the list (R-CREATION-LIBRARY-003): state in words, copy, remove with confirmation, restore.
@@ -2067,6 +2187,7 @@ def run():
                         walk_look(browser, session, "dark", errors)
                         walk_wait(browser, session, errors)
                         walk_words(browser, session, errors)
+                        walk_tap(browser, session, errors)
                         desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
                         screen = desk.new_page()
                         screen.set_default_timeout(10000)

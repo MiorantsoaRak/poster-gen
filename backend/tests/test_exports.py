@@ -420,7 +420,13 @@ def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settin
                     {"action": "approve", "checks": {check: True for check in visuals.CHECKS}})
     assert approved.json()["status"] == "approved"
     assert listed()["state"] == "approved"
-    assert listed()["thumbnail_url"] == visual["image_url"].replace("/api/assets/", "/api/thumbnails/")
+    assert listed()["thumbnail_url"] == visual["image_url"].replace("/api/assets/", "/api/thumbnails/") + "?v=1"
+    immutable = "private, max-age=31536000, immutable"  # content-addressed images are kept by the browser (ADR-087)
+    shown = client.get(listed()["thumbnail_url"])
+    assert shown.headers["content-type"] == "image/jpeg" and shown.headers["cache-control"] == immutable
+    lighter = client.get(visual["image_url"] + "?prepared=true&display=true&v=1")
+    assert lighter.headers["cache-control"] == immutable  # the stub's flat scene: its PNG is already the smaller
+    assert len(lighter.content) <= len(client.get(visual["image_url"] + "?prepared=true").content)
     render = client.get(f'/api/renders/{wait_job(client, act("renders", {"format": format}, 2)["status_url"], 60)}').json()
     preview = client.get(render["preview_url"]).content
     assert (render["width"], render["height"]) == Image.open(io.BytesIO(preview)).size == (width, height)
@@ -430,7 +436,9 @@ def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settin
     download = client.get(confirmed["download_url"])
     assert download.content == preview and f'filename="affiche-{format}-' in download.headers["content-disposition"]
     item = listed()
-    assert item["state"] == "confirmed" and item["thumbnail_url"] == f'/api/thumbnails/{render["png_sha256"]}'
+    assert item["state"] == "confirmed" and item["thumbnail_url"] == f'/api/thumbnails/{render["png_sha256"]}?v=1'
+    assert client.get(item["thumbnail_url"]).headers["cache-control"] == immutable
+    assert client.get(item["thumbnail_url"].split("?")[0]).headers["cache-control"] == "no-store"  # no version: not kept
     thumbnail = Image.open(io.BytesIO(client.get(item["thumbnail_url"]).content))
     assert thumbnail.format == "JPEG" and abs(thumbnail.width / thumbnail.height - width / height) < .01
 

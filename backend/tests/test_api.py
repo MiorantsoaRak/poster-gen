@@ -1,4 +1,5 @@
 import hashlib
+import io
 import re
 from datetime import UTC, datetime, timedelta
 import os
@@ -14,6 +15,7 @@ from uuid import uuid4
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import SecretStr
 
 from affiche import api as affiche_api, assets, backup
@@ -369,7 +371,8 @@ def test_http_draft_roundtrip_replay_conflict_history_and_copy(client):
     assert len(listed["items"]) == 1 and listed["items"][0]["name"] == "JBL"
     assert isinstance(listed["items"][0]["price_ar"], int) and listed["items"][0]["title"]
     assert listed["items"][0]["thumbnail_url"] is None  # no scene and no final preview yet: nothing is invented
-    assert client.get("/api/thumbnails/" + "0" * 64).status_code == 404  # not a preview or scene of this shop
+    unknown = client.get("/api/thumbnails/" + "0" * 64)
+    assert unknown.status_code == 404 and unknown.headers["cache-control"] == "no-store"  # not a preview or scene of this shop
     next_page = client.get("/api/creations", params={"limit": 1, "before": listed["next_cursor"]}).json()
     assert next_page["items"][0]["id"] != listed["items"][0]["id"]
     with client.app.state.engine.connect() as conn:
@@ -397,11 +400,63 @@ def test_private_assets_and_corruption(client, settings):
     client.post("/api/assets", files={"file": ("photo.png", photo())}, data={"role": "original"})
     response = client.get(f"/api/assets/{sha}")
     assert response.content == photo() and response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["cache-control"] == "no-store"
+    # Its address is its content (ADR-087): kept by this browser only; access is still checked on each request.
+    assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
     assets.path(settings.data_dir, sha, "png").write_bytes(b"corrupt")
-    assert client.get(f"/api/assets/{sha}").status_code == 409
+    corrupt = client.get(f"/api/assets/{sha}")
+    assert corrupt.status_code == 409 and corrupt.headers["cache-control"] == "no-store"
     assets.path(settings.data_dir, sha, "png").unlink()
-    assert client.get(f"/api/assets/{sha}").status_code == 404
+    missing = client.get(f"/api/assets/{sha}")
+    assert missing.status_code == 404 and missing.headers["cache-control"] == "no-store"
+    assert client.get("/api/creations").headers["cache-control"] == "no-store"  # JSON is never kept
+
+
+def test_display_copy_is_a_jpeg_of_opaque_images_encoded_once_with_fallback(client, settings, monkeypatch, caplog):
+    """D-POSTER-EDITOR-007 6c: the editor's lighter copy; the prepared PNG and the original stay as they were."""
+    login(client)
+    noisy = io.BytesIO()  # like a photographed scene: a flat test image is smaller as PNG and would stay PNG
+    Image.merge("RGB", [Image.effect_noise((40, 80), 40)] * 3).save(noisy, "PNG")
+    opaque = client.post("/api/assets", files={"file": ("photo.png", noisy.getvalue())}, data={"role": "original"}).json()["asset"]
+    see_through = io.BytesIO()
+    image = Image.new("RGBA", (40, 80), "navy")
+    image.putpixel((0, 0), (0, 0, 0, 0))
+    image.save(see_through, "PNG")
+    logo = client.post("/api/assets", files={"file": ("logo.png", see_through.getvalue())}, data={"role": "logo"}).json()["asset"]
+    encoded = []
+    real = affiche_api.rendering.canvas_image
+    monkeypatch.setattr(affiche_api.rendering, "canvas_image", lambda data: encoded.append(1) or real(data))
+    immutable = "private, max-age=31536000, immutable"
+    prepared = client.get(f"/api/assets/{opaque}?prepared=true&v=1")
+    assert prepared.headers["content-type"] == "image/png" and prepared.headers["cache-control"] == immutable
+    encoded.clear()
+    first = client.get(f"/api/assets/{opaque}?prepared=true&display=true&v=1")
+    assert first.headers["content-type"] == "image/jpeg" and first.headers["cache-control"] == immutable
+    assert Image.open(io.BytesIO(first.content)).size == (40, 80) and len(encoded) == 1
+    assert (settings.data_dir / "display" / "v1" / opaque[:2] / f"{opaque}.jpeg").read_bytes() == first.content
+    second = client.get(f"/api/assets/{opaque}?prepared=true&display=true&v=1")
+    assert second.content == first.content and len(encoded) == 1  # kept on disk: not encoded again
+    # Another encoder version: the current encoding, never kept (a later change of encoding must reach the browser).
+    for other in ("?prepared=true", "?prepared=true&v=0", "?prepared=true&display=true&v=0"):
+        assert client.get(f"/api/assets/{opaque}{other}").headers["cache-control"] == "no-store", other
+    kept = client.get(f"/api/assets/{logo}?prepared=true&display=true&v=1")
+    assert kept.headers["content-type"] == "image/png" and Image.open(io.BytesIO(kept.content)).getpixel((0, 0))[3] == 0
+    # The copy cannot be made: the prepared PNG is sent, and the next request tries again.
+    fresh = client.post("/api/assets", files={"file": ("other.png", photo(colour="teal"))}, data={"role": "original"}).json()["asset"]
+    real_copy = affiche_api._display_copy
+    monkeypatch.setattr(affiche_api, "_display_copy", lambda png: (_ for _ in ()).throw(OSError("disk")))
+    fallback = client.get(f"/api/assets/{fresh}?prepared=true&display=true&v=1")
+    assert fallback.status_code == 200 and fallback.headers["content-type"] == "image/png"
+    assert not list((settings.data_dir / "display").rglob(f"{fresh}.*"))
+    # The copy cannot be kept (its folder is a file): it is still sent, the failure is logged, nothing is left behind.
+    monkeypatch.setattr(affiche_api, "_display_copy", real_copy)
+    other = io.BytesIO()
+    Image.merge("RGB", [Image.effect_noise((40, 80), 50)] * 3).save(other, "PNG")
+    unkept = client.post("/api/assets", files={"file": ("noisy.png", other.getvalue())}, data={"role": "original"}).json()["asset"]
+    (settings.data_dir / "display" / "v1" / unkept[:2]).write_bytes(b"not a folder")
+    caplog.clear()
+    sent = client.get(f"/api/assets/{unkept}?prepared=true&display=true&v=1")
+    assert sent.status_code == 200 and sent.headers["content-type"] == "image/jpeg"
+    assert any("could not be kept" in record.getMessage() for record in caplog.records)
 
 
 def test_abandon_readonly_can_copy_and_replay_prior_save(client):
@@ -553,3 +608,10 @@ def test_actual_uvicorn_http_session(settings, env):
         proc.communicate(timeout=10)
     with sqlite3.connect(settings.data_dir / "affiche.db") as conn:
         assert conn.execute("SELECT ip FROM login_failures").fetchall() == [("203.0.113.9",)]
+
+
+def test_the_frontend_builds_image_addresses_at_the_encoders_versions():
+    """A version bumped on one side only would keep old images a year (ADR-087), or never keep new ones."""
+    source = (Path(__file__).resolve().parents[2] / "frontend/src/api.ts").read_text(encoding="utf-8")
+    assert (f"{{ prepared: '{rendering.CANVAS_IMAGE_VERSION}', display: '{affiche_api.DISPLAY_VERSION}', "
+            f"thumbnail: '{affiche_api.THUMBNAIL_VERSION}' }}") in source

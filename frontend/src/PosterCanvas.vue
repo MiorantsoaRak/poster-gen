@@ -19,6 +19,16 @@ const dimensions = computed(() => FORMATS[props.format])
 const layout = computed(() => props.document.formats[props.format]!)
 const layers = computed(() => drawOrder(layout.value.layers))
 const sceneImage = computed(() => images.value[`scene:${layout.value.scene.visual_id}`])
+// While another scene loads, the one drawn before stays, with its own crop, and so do the layers once drawn: nothing
+// blinks out when a version is chosen (R-POSTER-EDITOR-009). The first drawing still waits for every image and font.
+const drawnOnce = ref(false)
+// Only within one format: another format's crop would draw the old scene stretched.
+let shownScene: { image: HTMLImageElement; crop: NonNullable<typeof layout.value.scene.crop>; format: Format } | undefined
+const scene = computed(() => {
+  const image = sceneImage.value, crop = layout.value.scene.crop
+  if (image && crop) return shownScene = { image, crop, format: props.format }
+  return layout.value.scene.visual_id && shownScene?.format === props.format ? shownScene : undefined
+})
 
 async function imageFor(url: string) {
   if (!cache.has(url)) cache.set(url, (async () => {
@@ -48,7 +58,7 @@ watch(() => [props.document, props.format, props.sources], async () => {
     if (current !== sequence) return
     images.value = Object.fromEntries(entries)
     emit('issues', inspectLayout(props.document, props.format))
-    ready.value = true; await nextTick(); attach(); emit('ready', true)
+    ready.value = drawnOnce.value = true; await nextTick(); attach(); emit('ready', true)
   } catch (error) { if (current === sequence) emit('error', error instanceof Error ? error.message : 'Affichage impossible.') }
 }, { deep: true, immediate: true })
 
@@ -118,8 +128,8 @@ defineExpose({ exportPng, issues: () => inspectLayout(props.document, props.form
     <VStage ref="stage" :config="{ width: dimensions[0] * scale, height: dimensions[1] * scale, scaleX: scale, scaleY: scale }">
       <VLayer>
         <VRect :config="{ width: dimensions[0], height: dimensions[1], fill: '#17324D' }" @click="emit('select', null)" @tap="emit('select', null)" />
-        <VImage v-if="sceneImage && layout.scene.crop" :config="{ image: sceneImage, width: dimensions[0], height: dimensions[1], crop: { x: layout.scene.crop.x, y: layout.scene.crop.y, width: layout.scene.crop.w, height: layout.scene.crop.h }, listening: false }" />
-        <template v-if="ready">
+        <VImage v-if="scene" :config="{ image: scene.image, width: dimensions[0], height: dimensions[1], crop: { x: scene.crop.x, y: scene.crop.y, width: scene.crop.w, height: scene.crop.h }, listening: false }" />
+        <template v-if="ready || drawnOnce">
           <VGroup v-for="layer in layers" :key="layer.id" :config="{ id: layer.id, x: layer.x, y: layer.y, draggable: !readonly && dragEnabled && selected === layer.id, listening: !readonly }"
             @click="select($event, layer.id)" @tap="select($event, layer.id)" @dragend="moved($event, layer)" @transformend="transformed($event, layer)">
             <VRect :config="{ width: layer.width, height: layer.height, fill: 'rgba(0,0,0,0)' }" />

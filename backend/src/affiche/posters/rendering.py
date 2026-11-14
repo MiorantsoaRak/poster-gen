@@ -34,6 +34,10 @@ def data_url(data, mime="image/png"):
     return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
 
 
+# Bump when canvas_image's output changes (and api.DISPLAY_VERSION with it): browsers keep these images a year (ADR-087).
+CANVAS_IMAGE_VERSION = "1"
+
+
 def canvas_image(data: bytes) -> bytes:
     with Image.open(io.BytesIO(data)) as source:
         if source.width * source.height > 40_000_000 or getattr(source, "n_frames", 1) != 1:

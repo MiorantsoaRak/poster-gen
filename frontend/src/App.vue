@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import PosterCanvas from './PosterCanvas.vue'
-import { api, ApiError, clockSkew, mutation, upload } from './api'
+import { api, ApiError, clockSkew, displayUrl, mutation, preparedUrl, progress, thumbnailUrl, upload } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
@@ -79,7 +79,7 @@ async function loadProductPalette(reset = false) {
   try {
     const source = await api<{ photo_assets: string[] }>(`/api/product-inputs/${poster.document.input_id}`, { signal: controller.signal })
     if (!source.photo_assets[0]) throw new Error('Cette affiche n’a pas de photo à analyser.')
-    const palette = await samplePhoto(`/api/assets/${source.photo_assets[0]}?prepared=true`, controller.signal)
+    const palette = await samplePhoto(preparedUrl(`/api/assets/${source.photo_assets[0]}`), controller.signal)
     if (epoch === paletteEpoch) productPalette.value = palette
   } catch (reason) {
     if (epoch === paletteEpoch) paletteFailure.value = reason instanceof Error ? reason.message : 'Analyse impossible : choisissez une couleur.'
@@ -593,7 +593,7 @@ const modalOpen = computed(() => !!(paid.value || review.value || finalPreview.v
 const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
 const opened = computed(() => {
   const own = savedLooks.value.find(item => item.id === openedId.value)
-  if (own) return { id: own.id, name: own.name, image: `/api/assets/${own.reference_asset}?prepared=true`, direction: own.brief.direction_fr, brief: own.brief, own: true }
+  if (own) return { id: own.id, name: own.name, image: preparedUrl(`/api/assets/${own.reference_asset}`), direction: own.brief.direction_fr, brief: own.brief, own: true }
   const given = LOOKS.find(item => item.id === openedId.value && item.image)
   return given ? { id: given.id as string, name: given.label as string, image: given.image as string, direction: given.direction as string, brief: null, own: false } : null
 })
@@ -722,10 +722,12 @@ const scale = computed(() => {
   // (T-WAIT-DEFORM). Under it, the block's state, time and rail are in view; its steps may need a scroll on a short screen.
   return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / height) : .62, .62)
 })
+// Scenes in the editor come from the server's lighter copy, kept by the browser (D-POSTER-EDITOR-007 6c); exports never use it.
+const display = (visual: Visual) => displayUrl(visual.image_url)
 const sources = computed(() => Object.fromEntries([
-  ...Object.entries(effectSources.value).map(([id, url]) => [id, `${url}?prepared=true`]),
-  ...visuals.value.map(item => [`scene:${item.id}`, `${item.image_url}?prepared=true`]),
-  ...Object.values(doc.value?.formats ?? {}).flatMap(layout => layout.layers.filter(layer => layer.kind !== 'text').map(layer => [(layer as any).asset, `/api/assets/${(layer as any).asset}?prepared=true`])),
+  ...Object.entries(effectSources.value).map(([id, url]) => [id, preparedUrl(url)]),
+  ...visuals.value.map(item => [`scene:${item.id}`, display(item)]),
+  ...Object.values(doc.value?.formats ?? {}).flatMap(layout => layout.layers.filter(layer => layer.kind !== 'text').map(layer => [(layer as any).asset, preparedUrl(`/api/assets/${(layer as any).asset}`)])),
 ]))
 const saveState = computed(() => { savingTick.value; return saver?.state ?? 'saved' })
 const saveLabel = computed(() => ({ saved: 'Enregistré', dirty: 'Modifications en attente', saving: 'Enregistrement…', failed: 'Échec de l’enregistrement', conflict: 'Une autre version existe' }[saveState.value]))
@@ -753,16 +755,40 @@ function checkedPrice(text: string, field?: string) {
     throw new Shown()
   }
 }
+// The control that started a slow action shows it is working (D-POSTER-EDITOR-007 point 2): the last one pressed, if
+// pressed just before. Set on the element itself: perform has many callers and the element is not reactive state.
+let started: { element: HTMLElement; at: number } | null = null
+function starter(event: Event) {
+  if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return
+  const element = (event.target as Element | null)?.closest?.<HTMLElement>('button, a[href]')
+  started = element ? { element, at: performance.now() } : null
+}
+function markWorking(element: HTMLElement) {
+  element.setAttribute('aria-busy', 'true')
+  // The spinner takes the icon's place: its centre, measured without the press's scale.
+  const icon = element.querySelector(':scope > svg.i:last-of-type'), box = element.getBoundingClientRect()
+  if (!icon || !box.width) return
+  const mark = icon.getBoundingClientRect(), ratio = element.offsetWidth / box.width
+  element.style.setProperty('--spin-x', `${(mark.left + mark.width / 2 - box.left) * ratio}px`)
+  element.style.setProperty('--spin-y', `${(mark.top + mark.height / 2 - box.top) * ratio}px`)
+}
 async function perform(action: () => Promise<void>) {
+  // Forgotten even when refused: a tap ignored while busy must not mark a control in the next action.
+  const working = started && performance.now() - started.at < 600 ? started.element : null
+  started = null
   if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''; fieldError.value = null
+  if (working) markWorking(working)
   try { await action() } catch (reason) {
     // Behind an open dialog the groups are inert: there the refusal goes to the message above the dialog.
     const held = doc.value && !modalOpen.value && reason instanceof ApiError ? refusalGroup(reason) : undefined
     if (held) { fieldError.value = { group: held, text: (reason as ApiError).message }; go(held) }
     else if (!(reason instanceof Shown)) error.value = reason instanceof Error ? reason.message : 'La demande a échoué. Réessayez ; si l’erreur persiste, rechargez la page.'
   }
-  finally { busy.value = false; if (reloadDue) runReload(); else if (routeDue) { routeDue = false; onHash() } }
+  finally {
+    working?.removeAttribute('aria-busy'); working?.style.removeProperty('--spin-x'); working?.style.removeProperty('--spin-y')
+    busy.value = false; if (reloadDue) runReload(); else if (routeDue) { routeDue = false; onHash() }
+  }
 }
 async function loadShop() {
   const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<Listing>('/api/creations?limit=50')])
@@ -852,7 +878,7 @@ async function adopt(result: Creation) {
     Object.assign(headline.value, readWords(stored, result.document.offer.title))
   }
   history = new History(); plan.value = null; styleReference.value = null
-  saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT').catch(reason => {
+  saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT', true).catch(reason => {
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
     throw reason
   }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
@@ -930,10 +956,10 @@ function askRemove(item: LibraryItem) {
     run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
 }
 async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
-async function refreshVisuals() {
+async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
-  const result = await api<{ items: Visual[] }>(`/api/creations/${id}/visuals`)
+  const result = await api<{ items: Visual[] }>(`/api/creations/${id}/visuals`, { quiet })
   if (creation.value?.id === id) visuals.value = result.items
 }
 async function discardAndReload() { await adopt(await api<Creation>(`/api/creations/${creation.value!.id}`)) }
@@ -1095,7 +1121,7 @@ async function poll() {
   const stale = () => creation.value?.id !== creationId || job.value?.id !== jobId || round !== mine
   polling++
   try {
-    const response = await api<Job>(`/api/jobs/${jobId}`)
+    const response = await api<Job>(`/api/jobs/${jobId}`, { quiet: true })
     if (stale()) return
     offline.value = false
     if (response.status === 'running' && runningSince.value === null) runningSince.value = localTime(response.started_at, clockSkew, Date.now())
@@ -1103,12 +1129,12 @@ async function poll() {
     if (job.value.status === 'succeeded') {
       const completed = job.value
       if (completed.kind === 'render') {
-        const result = await api(`/api/renders/${completed.result_ref}`)
+        const result = await api(`/api/renders/${completed.result_ref}`, { quiet: true })
         if (stale()) return
         openFinalPreview(result)
       }
       else if (completed.kind === 'text_patch' || completed.kind === 'text_texture') {
-        const result: any = await api(`/api/${completed.kind === 'text_patch' ? 'text-proposals' : 'text-effects'}/${completed.result_ref}`)
+        const result: any = await api(`/api/${completed.kind === 'text_patch' ? 'text-proposals' : 'text-effects'}/${completed.result_ref}`, { quiet: true })
         if (stale()) return
         if (completed.kind === 'text_patch') { proposal.value = result; effect.value = null; acknowledgeContent.value = false }
         else { effect.value = result; effectSources.value[`effect:${result.id}`] = result.image_url }
@@ -1116,28 +1142,28 @@ async function poll() {
         notice.value = 'Aperçu de l’ajustement : vérifiez-le avant de l’appliquer.'
       }
       else if (completed.kind === 'look') {
-        const made = await api<SavedLook>(`/api/looks/${completed.result_ref}`)
+        const made = await api<SavedLook>(`/api/looks/${completed.result_ref}`, { quiet: true })
         if (stale()) return
         savedLooks.value = [made, ...savedLooks.value.filter(item => item.id !== made.id)]
         chooseLook(made.id); lookName.value = ''; lookReference.value = null
         notice.value = `Style « ${made.name} » enregistré. Il est sélectionné et restera disponible pour vos prochaines affiches.`
       }
       else if (completed.kind === 'plan') {
-        const result = await api(`/api/plans/${completed.result_ref}`)
+        const result = await api(`/api/plans/${completed.result_ref}`, { quiet: true })
         if (stale()) return
         acceptPlan(result)
       }
       else {
-        await refreshVisuals()
+        await refreshVisuals(true)
         if (stale()) return
         // « Réception » until the image is decoded here. One that cannot be is still shown the usual way: the version exists.
         const made = visuals.value.find(item => item.id === completed.result_ref)
-        const shown = !made || await decodes(`${made.image_url}?prepared=true`)
+        const shown = !made || await decodes(display(made))
         if (stale()) return
         if (!shown) notice.value = 'La nouvelle version est enregistrée, mais son image tarde à se charger sur cet appareil.'
         decoded.value = true; arrived = completed.result_ref ?? ''
         if (!saver?.unsaved) {
-          const saved = await api<Creation>(`/api/creations/${creation.value.id}`)
+          const saved = await api<Creation>(`/api/creations/${creation.value.id}`, { quiet: true })
           if (stale()) return
           if (saved.revision !== saver?.revision && !saver?.unsaved) await adopt(saved)
         }
@@ -1171,6 +1197,7 @@ async function cancelJob() { await mutation(`/api/jobs/${job.value!.id}/cancel`,
 // The new version fades in once drawn, not while its image was still on its way.
 function canvasDrawn(ready: boolean) {
   canvasReady.value = ready
+  if (ready) choosing.value = null
   if (!ready || !arrived || layout.value?.scene.visual_id !== arrived) return
   arrived = ''
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) canvasHost.value?.querySelector('.poster-canvas')?.animate({ opacity: [0, 1] }, { duration: 200, easing: 'ease-out' })
@@ -1224,7 +1251,10 @@ async function confirmFinal() {
   }, saver!.revision)
   confirmedDownload.value = result.download_url
 }
+// The chosen version's thumbnail works until its scene is drawn; the canvas keeps the previous one meanwhile.
+const choosing = ref<string | null>(null)
 function chooseVisual(visual: Visual) {
+  const before = layout.value?.scene.visual_id
   const [width, height] = visual.size.split('x').map(Number)
   edit(document => {
     document.formats[format.value]!.scene = { visual_id: visual.id, crop: fitCrop(width, height, format.value) }
@@ -1250,6 +1280,7 @@ function chooseVisual(visual: Visual) {
     if (logo?.kind === 'logo' && box) { delete logo.shape; Object.assign(logo, box); logo.visible = document.include.logo }
   })
   selected.value = null
+  if (before !== visual.id && layout.value?.scene.visual_id === visual.id) choosing.value = visual.id
 }
 // On a phone the review shows one image at a time, the version first (R-POSTER-EDITOR-007).
 const compareSide = ref<'photo' | 'version'>('version')
@@ -1320,6 +1351,7 @@ async function start() {
 onMounted(() => {
   window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.visualViewport?.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
+  for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, starter, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
   document.addEventListener('visibilitychange', onVisibility)
   return start()
@@ -1328,6 +1360,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
 </script>
 
 <template>
+  <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
   <button class="skip" type="button" @click="($refs.main as HTMLElement).focus()">Aller au contenu</button>
   <header ref="appHeader" class="app-header" :class="{ editing: !!doc }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
     <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
@@ -1364,7 +1397,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     </section>
     <section v-if="authenticated && !doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
-      <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
+      <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
     <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
@@ -1419,13 +1452,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p class="help lead">L’allure de l’affiche : choisissez un style, ou décrivez l’ambiance vous-même.</p>
             <div v-if="formatsShown.length > 1" class="choice format-choice"><span id="format-label">Format</span><div class="chips" role="radiogroup" aria-labelledby="format-label" :aria-describedby="formatFixed ? 'format-lock' : undefined"><label v-for="item in formatsShown" :key="item" class="chip"><input v-model="formatChoice" type="radio" name="format" :value="item" :disabled="formatHeld" />{{ FORMAT_NAMES[item][0] }} {{ FORMAT_NAMES[item][1] }}</label></div>
               <template v-if="formatFixed"><p id="format-lock" class="help">Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.</p><div class="row"><button v-for="item in otherFormats" :key="item" type="button" class="secondary" :disabled="busy || !!job" @click="perform(() => remakeIn(item)).then(focusFormat)">Refaire en {{ FORMAT_NAMES[item][0] }}</button></div></template></div>
-            <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
+            <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
             <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="group" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
             <div v-if="formatQuestion?.where === 'look'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div>
             <p v-if="look === 'couleur' && !styleAccent" class="help">Ce style est teinté de la couleur d’accent choisie dans « Textes ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p><p v-if="styleAccent" class="help" role="status">Ce style propose sa couleur d’accent ; la vôtre est conservée. <button type="button" class="text-button" @click="useStyleAccent">Utiliser la couleur du style</button></p>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
             <label class="ambiance">{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label>
-            <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
+            <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="preparedUrl(`/api/assets/${lookReference}`)" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             </template>
             <template v-else>
             <p class="help lead">Choisissez l’élément à régler, ici ou sous l’affiche.</p>
@@ -1464,7 +1497,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div v-if="!stepping && !peeking" class="preview-tools"><button v-if="shortViewport" type="button" @click="setPeek(true)">Aperçu plein écran</button><button v-else type="button" :aria-expanded="previewVisible" aria-controls="poster-proof" @click="previewVisible = !previewVisible">{{ previewVisible ? 'Masquer l’aperçu' : 'Afficher l’aperçu' }}</button><button type="button" :aria-expanded="versionsOpen" aria-controls="poster-versions" @click="versionsOpen = !versionsOpen">Versions ({{ visuals.length }})</button></div>
             <div id="poster-proof" class="proof">
               <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
-              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event" />
+              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event; choosing = null" />
                 <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob"><span v-if="viewportWidth <= 720" aria-hidden="true">Version {{ versionNumber }}</span><span :class="{ 'visually-hidden': viewportWidth <= 720 }">Version précédente conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
             </div>
             <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
@@ -1501,7 +1534,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
           <p v-if="!visuals.length" class="help">Chaque génération crée une version. Vous choisirez celle à exporter.</p>
           <article v-for="(visual, index) in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
-            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir la version ${visuals.length - index} (${versionStates[visual.status]})`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
+            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-busy="choosing === visual.id || undefined" :aria-label="`Choisir la version ${visuals.length - index} (${versionStates[visual.status]})`" @click="chooseVisual(visual)"><img :src="thumbnailUrl(visual.image_url)" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
             <strong class="version-number">Version {{ visuals.length - index }}</strong><span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
             <button class="text-button" :aria-label="`Comparer la version ${visuals.length - index}`" @click="review = visual; resetChecks()">Comparer</button>

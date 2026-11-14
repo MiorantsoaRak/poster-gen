@@ -12,6 +12,7 @@
 | R-POSTER-EDITOR-006 | Visual language: the poster first, glass only on floating chrome | P2 | Approved 2026-11-13 (ADR-072); amended the same day (ADR-075) |
 | R-POSTER-EDITOR-007 | Phone-first editor: the poster stays in view | P0 | Approved 2026-11-13 under the autonomy grant (ADR-075) |
 | R-POSTER-EDITOR-008 | Honest waiting while a poster is generated | P1 | Approved 2026-11-14 under the autonomy grant (ADR-079) |
+| R-POSTER-EDITOR-009 | Every tap answers at once; a slow action shows it is working | P1 | Approved 2026-11-14 under the autonomy grant (ADR-087) |
 
 ## R-POSTER-EDITOR-001 — A complete, editable first draft
 
@@ -159,3 +160,15 @@ Out of scope: the desktop layout (a later task: tools in a vertical rail, versio
 - [ ] The new image appears only once loaded, with a short fade; it still needs the owner's fidelity check. A failure says so, keeps the previous version and adds none.
 - [ ] Motion is calm (a thin moving rail, a pulsing dot); with reduced motion nothing repeats and the state stays clear. Screen readers hear state changes, not every second. Works at 360 px and on wide screens, both themes.
 - **Out of scope:** the server, the job queue, streaming partial images, any change to what is paid or when.
+
+## R-POSTER-EDITOR-009 — Every tap answers at once; a slow action shows it is working
+
+- **Status:** Approved 2026-11-14 under the autonomy grant (ADR-087). User, after the deploy, on his phone: "when we click on an element (navigation, button, tab), there is no feedback on the screen telling us that the touch was registered. Eg: I clicked on duplicate, but since there is no feedback, I clicked several time on the button before it created the duplicate and opened the detailed scene. Add a loading indicator when the element is taking time to load."
+- [ ] Every pressable element (buttons, the bottom navigation and the header links, tabs and steps, style tiles, version thumbnails, rows of « Mes affiches », chips and swatches, switches) visibly answers the press at the moment of the touch, on Android and on iPhone, before any network answer.
+- [ ] An action that waits on the server marks the element that started it as working (a small spinner in it, `aria-busy`) while the others stay disabled as today; it starts at once and never flashes for an action that ends within about a tenth of a second.
+- [ ] When the app waits on the server for more than about a third of a second (opening a poster, changing screen, saving a choice, a copy), a thin progress line shows at the top of the screen until the answer arrives. Background checks (the generation's polling, the autosave) do not show it.
+- [ ] A second tap on a working element never sends a second request (as today), and says nothing alarming.
+- [ ] With reduced motion, the press answer is a change of colour, not of size, and the progress line does not move.
+- [ ] Works at 360 px and on wide screens, both themes; the controls panel does not change size when a spinner appears.
+- [ ] Added the same day (user: "the saved version take time to load in the scene too, see what we can improve"): opening a poster or choosing another version downloads much less than today (measured: each version thumbnail loaded the full 1.4–2.4 MB image; the poster image was re-encoded by the server on every request; nothing was cached). Thumbnails are small images; the editor shows a lighter copy of the scene; images whose address is their own fingerprint are kept by the browser, so a second opening downloads nothing again. While a chosen version's image is still loading, the previous one stays on screen and the chosen thumbnail shows it is working. The exported file and the server's final preview are unchanged (they never use the editor's copy).
+

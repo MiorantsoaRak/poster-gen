@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -144,8 +144,11 @@ class AccessBoundary:
             nonlocal started
             if message["type"] == "http.response.start":
                 started = True
-                # Shop data is never cached. The built frontend is public: hashed files for a year, the rest revalidated.
-                caching = (b"no-store" if api_path else b"public, max-age=31536000, immutable"
+                # Shop data is never cached, except images whose address is their own SHA-256 (ADR-087): their route
+                # says so on a 200 only. The built frontend is public: hashed files for a year, the rest revalidated.
+                own = dict(message["headers"]).get(b"cache-control")
+                caching = ((own if own == IMMUTABLE and message["status"] == 200 else b"no-store") if api_path
+                           else b"public, max-age=31536000, immutable"
                            if scope["path"].startswith("/assets/") and message["status"] == 200 else b"no-cache")
                 message["headers"] = [pair for pair in message["headers"] if pair[0] != b"cache-control"] + [
                     (b"cache-control", caching), (b"x-content-type-options", b"nosniff"),
@@ -258,15 +261,80 @@ def result_response(result):
     return JSONResponse(body, status_code=status, headers={"ETag": f'"{body["revision"]}"'} if "revision" in body else {})
 
 
+# Images made by code are kept by the browser for a year (ADR-087): their address carries the encoder's version
+# (`v`), so bump the constant whenever its output changes. A request with another version gets the current encoding,
+# never cached. The frontend builds the same addresses (frontend/src/api.ts, IMAGE_VERSIONS).
+THUMBNAIL_VERSION = "1"
+DISPLAY_VERSION = "1"  # also bump with rendering.CANVAS_IMAGE_VERSION: the display copy is made from that image
+
+
 @lru_cache(maxsize=256)
 def _thumbnail(path: str) -> bytes:
-    """A small JPEG of a stored image. Files are content-addressed, so a path always means the same bytes."""
+    """A small JPEG of a stored image, at least 3x for a 104 px wide version tile in every format (a Story is 9:16).
+    Files are content-addressed, so a path always means the same bytes."""
     with Image.open(path) as image:
         small = image.convert("RGB")
-        small.thumbnail((192, 240))
+        small.thumbnail((320, 568))
         out = io.BytesIO()
         small.save(out, "JPEG", quality=82)
         return out.getvalue()
+
+
+IMMUTABLE = b"private, max-age=31536000, immutable"
+
+
+# The editor's copy of a scene (D-POSTER-EDITOR-007 6c): a prepared PNG of 1.4 to 2.4 MB re-encoded on every request
+# made opening a poster slow on a phone. Exports and the server's previews read the stored bytes, never this copy.
+def _display_path(data_dir, sha: str, ext: str):
+    return data_dir / "display" / f"v{DISPLAY_VERSION}" / sha[:2] / f"{sha}.{ext}"
+
+
+def _cached_display(data_dir, sha: str) -> tuple[bytes, str] | None:
+    for ext in ("jpeg", "png"):
+        try:
+            return _display_path(data_dir, sha, ext).read_bytes(), f"image/{ext}"
+        except FileNotFoundError:
+            continue
+        except OSError:  # unreadable: made again below
+            log.warning("display copy of %s could not be read; it is encoded again", sha, exc_info=True)
+            return None
+    return None
+
+
+def _display_copy(png: bytes) -> tuple[bytes, str]:
+    """A JPEG of an opaque prepared image. An image with any transparent pixel stays PNG, and so does a flat one whose
+    PNG is already the smaller (the stub's scenes)."""
+    with Image.open(io.BytesIO(png)) as image:
+        if image.mode in ("RGBA", "LA") and image.getchannel("A").getextrema()[0] < 255:
+            return png, "png"
+        out = io.BytesIO()
+        image.convert("L" if image.mode in ("L", "LA") else "RGB").save(out, "JPEG", quality=85)
+        return (out.getvalue(), "jpeg") if out.tell() < len(png) else (png, "png")
+
+
+def _display(data_dir, sha: str, png: bytes) -> tuple[bytes, str]:
+    """Encoded once per SHA and kept on disk (derived, not backed up). Failing to encode sends the prepared PNG;
+    failing to keep it sends the copy and encodes again next time. Both are logged."""
+    try:
+        data, ext = _display_copy(png)
+    except (OSError, ValueError):
+        log.warning("display copy of %s could not be encoded; the prepared PNG is sent", sha, exc_info=True)
+        return png, "image/png"
+    target = _display_path(data_dir, sha, ext)
+    tmp = target.with_name(f"{target.name}.{uuid4().hex}.tmp")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError:
+        log.warning("display copy of %s could not be kept", sha, exc_info=True)
+        with suppress(OSError):  # already logged; a leftover temporary file is only disk space
+            tmp.unlink(missing_ok=True)
+    return data, f"image/{ext}"
+
+
+def _kept(current: bool) -> dict:
+    return {"Cache-Control": IMMUTABLE.decode()} if current else {}
 
 
 def _backup_state(folder) -> dict | None:
@@ -533,7 +601,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                            data, form["role"], min_short_edge=settings.min_source_short_edge)
 
     @protected.get("/api/thumbnails/{sha}")
-    def thumbnail(sha: Sha, request: Request):
+    def thumbnail(sha: Sha, request: Request, v: str | None = None):
         # Only this shop's final previews and scenes have thumbnails.
         with app.state.engine.connect() as conn:
             row = conn.execute(text(
@@ -547,10 +615,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             data = _thumbnail(str(assets.path(settings.data_dir, sha, assets.extension(row[0]))))
         except (OSError, ValueError):  # missing, unreadable or not an image: the list falls back to its icon
             raise store.Refused("not_found", 404) from None
-        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+        return Response(data, media_type="image/jpeg", headers=_kept(v == THUMBNAIL_VERSION))
 
     @protected.get("/api/assets/{sha}")
-    def asset(sha: Sha, request: Request, prepared: bool = False):
+    def asset(sha: Sha, request: Request, prepared: bool = False, display: bool = False, v: str | None = None):
         with app.state.engine.connect() as conn:
             row = conn.execute(text("SELECT a.mime FROM assets a WHERE a.sha256=:sha AND ("
                                     "EXISTS (SELECT 1 FROM asset_access r WHERE r.asset_sha=a.sha256 AND r.shop_id=:shop) OR "
@@ -565,12 +633,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise store.Refused("not_found", 404) from None
         if hashlib.sha256(data).hexdigest() != sha:
             raise store.Refused("asset_corrupt", 409)
+        # The stored file is its own address; a prepared or display image is kept only at its encoder's version.
+        cached = _kept(not prepared or v == (DISPLAY_VERSION if display else rendering.CANVAS_IMAGE_VERSION))
+        if prepared and display:
+            shown = _cached_display(settings.data_dir, sha)
+            if shown:
+                return Response(shown[0], media_type=shown[1], headers=cached)
         if prepared:
             try:
-                return Response(rendering.canvas_image(data), media_type="image/png")
+                png = rendering.canvas_image(data)
             except (ValueError, OSError):
                 raise store.Refused("invalid_image") from None
-        return Response(data, media_type=row.mime)
+            if display:
+                shown = _display(settings.data_dir, sha, png)
+                return Response(shown[0], media_type=shown[1], headers=cached)
+            return Response(png, media_type="image/png", headers=cached)
+        return Response(data, media_type=row.mime, headers=cached)
 
     @protected.post("/api/product-inputs", status_code=201)
     def new_input(body: ProductInput, request: Request, key: Key):
@@ -634,7 +712,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   # The one state that asks the owner to act comes first; "confirmed" means the file is this revision.
                   "state": "to_review" if r["waiting"] or r["scene_status"] == "pending_review" else
                            "confirmed" if r["confirmed"] else "approved" if r["scene_status"] == "approved" else "draft",
-                  "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}'
+                  "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}?v={THUMBNAIL_VERSION}'
                   if r["render_sha"] or r["scene_asset"] else None,
                   **{key: json.loads(r["document_json"])["offer"][key] for key in ("title", "price_ar")}} for r in rows[:limit]]
         return {"items": items, "total": total, "next_cursor": f'{rows[limit-1]["created_at"]}|{rows[limit-1]["id"]}' if len(rows)>limit else None}
