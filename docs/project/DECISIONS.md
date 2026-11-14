@@ -1,5 +1,21 @@
 # DECISIONS
 
+## ADR-086 — 2026-11-14 — Editor refinements: code-review fixes, footer logo restore, keyboard strip
+
+- Independent code review found saved-profile opt-in and implicit seal defaults; remove both. Restore historical footer logo geometry via optional visual `logo_footer_box`, separate from strict corner reservations. Below 500 CSS px of visual viewport height, replace pinned preview with the existing fullscreen action so keyboard/landscape controls remain reachable. No paid or release authorization added.
+- Editor verification follow-up: compact mobile generation badge shows its version number while assistive text says the previous version is preserved. Explicit `logo_disc: null` remains a missing-disc state and never falls back to footer placement. Browser smoke coverage completed in sections after a terminated combined run; final verification report distinguishes completed sections from a monolithic pass and records one transient renderer failure.
+- User decision (2026-11-14), superseding the hidden preview above: below 500 px of visual viewport height and while a text field has the focus, the sticky poster shrinks to the ~96 px strip (D-POSTER-EDITOR-005 part A item 4) instead of disappearing; the 163 px poster at 360 × 740 and the folded « Versions (n) » row stay (T-EDITOR-REFINEMENTS-FIXES).
+
+## ADR-085 — 2026-11-14 — Autonomous audit fixes with legacy composition compatibility
+
+- User: “go for the fix autonomously, and test on live browser too”. Requirements and design editor-refinements.md passed independent Codex reviews with documented fixes before implementation. Reuse current document/plan/job JSON; no migration or dependency. Palette suggestions are local, visible and overridable; brand-in-title marker preserves refinement behaviour; original logo overlays use reserved corners and unchanged framing. Legacy seals require a fresh-composition copy to switch. Profile import fills missing values only. The compact preview supersedes the earlier 200 px minimum while retaining full-screen view.
+- No paid test or shared-server change inferred. Build and browser-test everything before any release permission is needed. Existing model/rates/reserves unchanged; reservation wording corrected.
+
+## ADR-084 — 2026-11-14 — Deployed-editor audit; corner placement means the boutique logo
+
+- User requests: avoid brand/title duplication; fix clipped mobile versions and hard-to-reach controls; boutique identity off by default; make “Aux couleurs du produit” respect product colours; top-left/top-right logo placement. Explicit clarification: **the boutique's uploaded logo**, not the product brand. Price remains drawn in the composition.
+- Scope this session: browser audit and recommendations only, with read-only live navigation and temporary stub-provider scenarios; no paid generation or product implementation. Findings: [ux-audit-2026-11-14.md](reviews/ux-audit-2026-11-14.md). Mobile visuals use the identical deployed frontend assets with isolated data because the Edge desktop tool cannot capture/resize its window. The proposed compact collapsible preview and visible tabs remain recommendations, not an approved design.
+
 ## ADR-081 — 2026-11-14 — While a poster is made, nothing else moves: no waiting sentence under disabled buttons, the poster keeps its size (T-WAIT-DEFORM; user report on the pilot; Claude)
 - User: "When the generation animation is playing, the panel with the controls is deforming." Measured at six sizes (360 to 1920 px): the animations move nothing; the controls changed when a wait started and ended. « Une tâche est en cours : patientez quelques instants. » was added under each disabled button (bottom bar +26 px; on a wide screen the rail +28 px through its step bar; at 360 px the « Réglages » panel +20 px), and on a wide screen the poster shrank (374 × 468 to 270 × 338 at 1366 × 768) to fit the waiting block.
 - Decided: during a scene or scene-adjustment wait, those reasons stay what they were before it (the waiting block and the pill over the poster say why); other job kinds keep the sentence. The wide-screen poster keeps its size: under it the block's state, time and rail are in view at 1366 × 768 and 1920 × 1080, its steps (and « Annuler la demande », which lasts only while queued) may need a scroll.

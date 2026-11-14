@@ -1,6 +1,7 @@
 """Creation-bound planning, integrated scene admission and immutable fidelity decisions."""
 import hashlib
 import json
+import math
 import re
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -14,7 +15,7 @@ from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
 from affiche.visuals.prompts import ReasonCode
 from . import jobs, looks, store
 from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, Sha, canonical
-from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, compile_scene, seal_place, fixed_plan, screen_art, validate_plan
+from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, seal_place, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
 # Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
@@ -113,8 +114,11 @@ def context_for(document, product, direction, format):
              # A seal is printed on a disc of the scene, outside the plan (ADR-057).
              and not (layer.role == "logo" and getattr(layer, "shape", None) == "circle")}
     try:
+        logo = next((layer for layer in document.formats[format].layers if layer.role == "logo" and layer.visible
+                     and getattr(layer, "shape", None) != "circle" and layer.y < height / 2), None)
         return PlanContext(name=product["name"], variant=product["variant"], direction=direction,
-                           format=format, field_sizes=sizes)
+                           format=format, field_sizes=sizes,
+                           logo_corner=("left" if logo.x < width / 2 else "right") if logo else None)
     except ValueError:
         raise store.Refused("layout_not_plannable") from None
 
@@ -230,7 +234,7 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
-                                     headline=request.headline, title=title, signature=signature, **price, **style)
+                                     headline=request.headline, title=title, signature=signature, deduplicate_brand=True, **price, **style)
         except ValueError as refusal:
             # The owner can cause these four by what he typed: each gets its own sentence and its field.
             code, field = {"headline_title_too_long": ("title_too_long", "offer.title"),
@@ -245,6 +249,8 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                    "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
         if request.headline:
             payload["headline"] = request.headline.model_dump() | {"title": title} | signature | price
+            if brand_in_title(request.headline.brand, title):
+                payload["headline"]["brand_in_title"] = True
         if seal:
             payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]), style.get("align", "centre"))
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "scene", payload)
@@ -258,6 +264,7 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
         if document.formats[request.format].scene.visual_id != request.base_visual_id:
             raise store.Refused("base_not_selected", 409)
         base, _ = read_visual_bytes(conn, settings.data_dir, shop, request.base_visual_id, product["id"])
+        check_logo_placement(conn, shop, base, document, request.format)
         plan = store._owned(conn, "scene_plans", shop, base["plan_id"])
         if plan["format"] != request.format:  # a paid refinement at another size would cut the drawn words
             raise store.Refused("scene_format_mismatch", 409)
@@ -279,6 +286,7 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
                                      headline=Headline(**{k: v for k, v in baked.items() if k in Headline.model_fields}) if baked else None,
                                      title=baked["title"] if baked else None, signature=signature,
                                      price_ar=baked.get("price_ar") if baked else None,
+                                     deduplicate_brand=bool(baked and baked.get("brand_in_title")),
                                      **look_style(conn, shop, baked.get("look_id") if baked else None))
         except ValueError:
             raise store.Refused("invalid_plan") from None
@@ -315,6 +323,32 @@ def baked_headline(conn, shop, visual) -> dict | None:
     return json.loads(store._owned(conn, "poster_jobs", shop, visual["job_id"])["input_json"]).get("headline")
 
 
+def logo_region(conn, shop, visual):
+    plan = store._owned(conn, "scene_plans", shop, visual["plan_id"])
+    box = next((item["box"] for item in json.loads(plan["plan_json"])["overlay_regions"] if item["field"] == "logo"), None)
+    if box is None:
+        return {}
+    field = "logo_box" if json.loads(plan["context_json"]).get("logo_corner") else "logo_footer_box"
+    width, height = FORMATS[plan["format"]]
+    return {field: dict(x=box["x"]*width, y=box["y"]*height, width=box["w"]*width, height=box["h"]*height)}
+
+
+def check_logo_placement(conn, shop, visual, document, format):
+    layout = document.formats[format]
+    logo = next((layer for layer in layout.layers if layer.role == "logo" and layer.visible), None)
+    disc = (json.loads(visual["placement_json"]) if visual["placement_json"] else {}).get("logo_disc")
+    if disc and (logo is None or math.hypot(logo.x+logo.width/2-disc["x"], logo.y+logo.height/2-disc["y"])
+                 + disc["d"]/2 > min(logo.width, logo.height)/2+2):
+        raise store.Refused("logo_disc_uncovered", 409)
+    reserved = logo_region(conn, shop, visual).get("logo_box")
+    if logo and (reserved or (logo.shape != "circle" and logo.y < FORMATS[format][1]/2)):
+        width, height = map(int, visual["size"].split("x"))
+        crop = layout.scene.crop
+        if (not reserved or logo.shape == "circle" or any(abs(getattr(logo, key)-value) > 2 for key, value in reserved.items())
+                or (crop and any(abs(a-b) > 2 for a, b in zip((crop.x, crop.y, crop.w, crop.h), (0, 0, width, height))))):
+            raise store.Refused("logo_placement_stale", 409)
+
+
 def get_visual(conn, shop, id):
     row = store._owned(conn, "poster_visuals", shop, id)
     payload = json.loads(store._owned(conn, "poster_jobs", shop, row["job_id"])["input_json"])
@@ -323,7 +357,7 @@ def get_visual(conn, shop, id):
         "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
         "original_urls": [f"/api/assets/{sha}" for sha in json.loads(row["source_assets_json"])],
         "checks": json.loads(row["checks_json"]), "reasons": json.loads(row["rejection_reasons_json"] or "[]"),
-        "note": row["rejection_note"]} | (
+        "note": row["rejection_note"]} | logo_region(conn, shop, row) | (
         # Present only when a disc was asked for the logo seal: its place in poster pixels, or null if not found.
         {"logo_disc": json.loads(row["placement_json"])["logo_disc"]} if row["placement_json"] else {})
 

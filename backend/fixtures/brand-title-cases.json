@@ -1,0 +1,13 @@
+[
+  ["Bose", "Bose QuietComfort", true],
+  ["BOSE", "bose quietcomfort", true],
+  ["Bose", "Boseman speaker", false],
+  ["Bowers & Wilkins", "Casque BOWERS & WILKINS PX8", true],
+  ["Élan", "Élan Studio", true],
+  ["Sony", "WH-1000XM6", false],
+  ["CMF", "CMF-Buds 2a", true],
+  ["Straße", "STRASSE speaker", false],
+  ["Straße", "STRAẞE speaker", true],
+  ["", "Casque", false],
+  ["Bose Sony", "Bose QuietComfort Sony", false]
+]

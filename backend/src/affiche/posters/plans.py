@@ -1,6 +1,7 @@
 """Validated composition proposals; commercial values never enter the planning contract."""
 import json
 import re
+import unicodedata
 from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
@@ -10,6 +11,14 @@ from affiche.visuals.prompts import find_commercial_terms
 from .models import Colour, Format, Id, Model, Name, canonical
 
 FieldName = Literal["title", "price", "logo", "shop_name", "contact"]
+
+
+def brand_in_title(brand: str | None, title: str) -> bool:
+    def words(value):
+        value = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.category(c).startswith("M"))
+        return re.findall(r"[^\W_]+", value.lower())
+    needle, haystack = words(brand or ""), words(title)
+    return bool(needle) and any(haystack[i:i+len(needle)] == needle for i in range(len(haystack)-len(needle)+1))
 ArtDirection = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)]
 _INSTRUCTIONS = re.compile(r"ignore\b.*\b(?:instructions|rules)|system\s*(?:prompt|:)|<\s*/?\s*(?:system|instructions)|"
                            r"(?:add|write|print|render|ajoute|écri)\w*\s+(?:the\s+|du\s+|le\s+)?(?:text|price|prix|logo)", re.I)
@@ -89,6 +98,7 @@ class PlanContext(Model):
     direction: ArtDirection
     format: Format
     field_sizes: dict[FieldName, Footprint]
+    logo_corner: Literal["left", "right"] | None = Field(None, exclude_if=lambda value: value is None)
 
     _screen = field_validator("direction")(screen_art)
 
@@ -96,6 +106,8 @@ class PlanContext(Model):
     def required_fields(self):
         if not {"title", "price"} <= self.field_sizes.keys():
             raise ValueError("missing_required_fields")
+        if self.logo_corner and "logo" not in self.field_sizes:
+            raise ValueError("missing_logo_field")
         return self
 
 
@@ -149,6 +161,12 @@ def validate_plan(plan: ScenePlan, context: PlanContext) -> ScenePlan:
         measured = context.field_sizes[region.field]
         if measured.w > region.box.w + 1e-9 or measured.h > region.box.h + 1e-9:
             raise ValueError("overlay_too_small")
+    if context.logo_corner:
+        logo = next(region.box for region in plan.overlay_regions if region.field == "logo")
+        size = context.field_sizes["logo"]
+        expected = (.05 if context.logo_corner == "left" else .95-size.w, MARGINS[context.format][0], size.w, size.h)
+        if any(abs(a-b) > 1e-9 for a, b in zip((logo.x, logo.y, logo.w, logo.h), expected)):
+            raise ValueError("logo_corner_mismatch")
     return plan
 
 
@@ -164,6 +182,9 @@ def fixed_plan(context: PlanContext) -> ScenePlan:
     top, bottom = MARGINS[context.format]
     sizes = context.field_sizes
     logo = sizes.get("logo")
+    corner_logo = logo if context.logo_corner else None
+    if corner_logo:
+        logo = None
     text_x = .05 + (logo.w + .025 if logo else 0)
     footer_fields = [field for field in ("shop_name", "contact") if field in sizes]
     footer_height = max(logo.h if logo else 0,
@@ -172,14 +193,18 @@ def fixed_plan(context: PlanContext) -> ScenePlan:
     price_height = max(.09, sizes["price"].h)
     price_y = footer_y - (.03 if footer_height else 0) - price_height
     title_height = max(.15, sizes["title"].h)
-    product_y = top + title_height + .04
+    title_y = top + (corner_logo.h + .025 if corner_logo else 0)
+    product_y = title_y + title_height + .04
     product_height = price_y - .04 - product_y
     if product_height < .20:
         raise ValueError("composition_does_not_fit")
-    boxes = {"title": Box(x=.05, y=top, w=.90, h=title_height),
+    boxes = {"title": Box(x=.05, y=title_y, w=.90, h=title_height),
              "price": Box(x=.05, y=price_y, w=.90, h=price_height)}
     if logo:
         boxes["logo"] = Box(x=.05, y=footer_y, w=logo.w, h=logo.h)
+    if corner_logo:
+        boxes["logo"] = Box(x=.05 if context.logo_corner == "left" else .95-corner_logo.w,
+                            y=top, w=corner_logo.w, h=corner_logo.h)
     for field in footer_fields:
         boxes[field] = Box(x=text_x, y=footer_y, w=.95-text_x, h=sizes[field].h)
         footer_y += sizes[field].h + .01
@@ -235,7 +260,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                   refinement: bool = False, style_reference: bool = False, refinement_note: str | None = None,
                   headline: Headline | None = None, title: str | None = None,
                   signature: dict[str, str] | None = None, price_ar: int | None = None,
-                  headline_style: str | None = None, align: Literal["left", "centre"] = "centre") -> str:
+                  headline_style: str | None = None, align: Literal["left", "centre"] = "centre",
+                  deduplicate_brand: bool = False) -> str:
     """Order follows the provider's guidance: use, references, scene, subject, light, layout, constraints.
 
     With `headline`, the image model sets brand, product name and subtitle itself (ADR-042), optionally the
@@ -322,11 +348,12 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                 "on a light backdrop, white on a dark one): ")
         if headline.brand_text and not headline.brand:
             raise ValueError("brand_text_requires_brand")
-        if headline.brand and headline.brand_text:
-            text += (f'first the brand name "{headline.brand}", small, in plain capitals of the headline '
+        brand = None if deduplicate_brand and brand_in_title(headline.brand, title) else headline.brand
+        if brand and headline.brand_text:
+            text += (f'first the brand name "{brand}", small, in plain capitals of the headline '
                      "lettering: do not imitate a logo or a trademark shape; below it ")
-        elif headline.brand:
-            text += f'first the brand name "{headline.brand}", small, written as on the product; below it '
+        elif brand:
+            text += f'first the brand name "{brand}", small, written as on the product; below it '
         text += f'the product name "{title}" ' + (f"set in this typographic style: {headline_style.rstrip('.')}"
                                                    if headline_style else "in a heavy, modern geometric sans-serif")
         if headline.accent_word:
@@ -344,7 +371,7 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "horizontal rule on each side.")
         # A look's style phrase can describe a second line of its reference poster. Given a described line
         # with no words, the model wrote its own (live run 6, ADR-051), so the quoted strings are counted.
-        count = sum(1 for part in (headline.brand, title, headline.subtitle) if part)
+        count = sum(1 for part in (brand, title, headline.subtitle) if part)
         text += (f" The headline is exactly the {count} quoted string{'s' if count > 1 else ''} above and nothing "
                  "more: never add a tagline, a slogan or any line whose words are not quoted here.")
         if headline_style and not headline.subtitle:

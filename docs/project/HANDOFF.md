@@ -1,5 +1,56 @@
 # HANDOFF
 
+**Latest implementation, 2026-11-14 (Codex; T-EDITOR-REFINEMENTS-001…003, ADR-085/086).** User authorized autonomous fixes after the deployed audit. Implemented brand/title deduplication for new scenes with legacy-compatible refinement behavior; local photo palette with visible override/retry and async race protection; boutique identity off on every new form/profile load; explicit missing-detail import; original boutique logo top-left/top-right reserved above the title; historical footer/seal restoration and pre-export/pre-refinement guards; compact/collapsible mobile preview, sticky tools, accessible numbered versions, short-viewport fullscreen preview and focused-field visibility; truthful drawn-text/reservation copy. Price remains in the generated composition. Existing posters/confirmed PNGs are preserved. No new dependencies or migrations.
+
+**Current state:** T-EDITOR-REFINEMENTS-001…003 complete, verified and independently reviewed; no implementation task remains in progress. Requirements/design gates passed independent reviews under the autonomy grant. Code r1's four findings fixed; r2 APPROVE WITH NITS, both nits fixed. See [verification report](reviews/editor-refinements-verification.md), [requirements](requirements/editor-refinements.md), [design](designs/editor-refinements.md), and code reviews r1/r2.
+
+**Verified:** full backend 793 passed / 3 opt-in cutout tests deselected; extended all-format/both-corner original-logo rendering and compatibility checks 21 passed; frontend 150 passed; production build passed; focused production-build Chromium flow passed, including profile conflict without draft loss, delayed decoder/manual override, failure recovery, exact submitted neutral palette, corner/footer transitions and 360×282 keyboard-sized viewport with the focused field below sticky tabs. Browser smoke coverage completed in sections: the combined run completed the main flow, waiting/words/theme/redirect checks then terminated during formats; standalone waiting and complete format helpers passed. One isolated format attempt returned render_unavailable, not reproduced on the stable-build rerun. This is documented as section coverage, not a clean monolithic command pass. Final focused build check also covers explicit missing-disc compatibility. Artifacts: ignored `outputs/editor-refinements/` and `outputs/editor-smoke/`. API/browser tests explicitly use `_env_file=None`, temporary data, no keys and stub providers. No paid generation.
+
+**Exact next step:** owner reviews the local changes and performs the commit/push/release under the existing release workflow; after release, verify these controls on the deployed app and physical phone. Work is uncommitted on local main based on `4e39373`; nothing was pushed/deployed and production does not yet contain these fixes. The user's Edge window was on another site when checked, so it was left alone; changed UI was exercised in real local Chromium.
+
+**Landmines/limits:** `logo_box` means a strict corner reservation; `logo_footer_box` only restores historical footer geometry. Corner-logo export/refinement requires original scene framing. Legacy `brand_in_title` absence deliberately preserves prior prompt behavior. New product palette is an edge-background heuristic, not segmentation; ambiguous photos need visible manual correction. No new paid-image fidelity/collision test and no physical-phone keyboard/screen-reader-speech test; final composite review is still required. Do not read backend/.env. Codex transmission was initially rejected by automatic approval review, then explicitly approved by the user; independent reviews completed. No Postman CLI installed; existing HTTP/browser suites used.
+
+**Uncommitted files for this session (including the preceding audit):**
+
+- `backend/api/README.md`
+- `backend/fixtures/brand-title-cases.json`
+- `backend/src/affiche/api.py`
+- `backend/src/affiche/posters/exports.py`
+- `backend/src/affiche/posters/plans.py`
+- `backend/src/affiche/posters/visuals.py`
+- `backend/tests/test_editor_refinements.py`
+- `docs/project/DECISIONS.md`
+- `docs/project/HANDOFF.md`
+- `docs/project/TODO.md`
+- `docs/project/designs/_INDEX.md`
+- `docs/project/requirements/_INDEX.md`
+- `frontend/src/App.vue`
+- `frontend/src/composition.ts`
+- `frontend/src/document.ts`
+- `frontend/src/palette.ts`
+- `frontend/src/style.css`
+- `frontend/src/viewport.ts`
+- `frontend/tests/browser_smoke.py`
+- `frontend/tests/composition.test.ts`
+- `frontend/tests/editor_refinements_browser.py`
+- `frontend/tests/viewport.test.ts`
+- `docs/project/designs/editor-refinements.md`
+- `docs/project/requirements/editor-refinements.md`
+- `docs/project/reviews/editor-refinements-code-r1.md`
+- `docs/project/reviews/editor-refinements-code-r2.md`
+- `docs/project/reviews/editor-refinements-design-r1.md`
+- `docs/project/reviews/editor-refinements-requirements-r1.md`
+- `docs/project/reviews/editor-refinements-verification.md`
+- `docs/project/reviews/ux-audit-2026-11-14.md`
+
+Prior handoffs follow; their older next-action/deployment statements are historical.
+
+**Latest audit, 2026-11-14 (Codex; T-UX-AUDIT-20261114, ADR-084).** User reported six deployed-editor issues and requested a browser audit. Completed [report](reviews/ux-audit-2026-11-14.md). Main was `4e39373`, clean before audit. Live signed-in Edge inspected Create, library, first QuietComfort's Textes/Style/Boutique and a generation confirmation; cancelled the confirmation and verified it closed. No paid call or intentional production document edit. The live dialog still estimates USD 0.40. User clarification: top-left/top-right is for the **boutique's uploaded logo**; price remains drawn.
+
+**Audit verification:** deployed and local production frontend referenced identical JS/CSS assets. Existing smoke server reused with `_env_file=None`, no keys, stub providers and temporary data; Chromium desktop, 390/360/320 px touch, reduced layout space at 200%-equivalent width, dark/reduced-motion state. 34 settled screenshots/measurements, no JS errors or page overflow, measured text contrast and touch targets passed, dialog focus/Escape and tab arrow key worked. Confirmed mobile tabs below fold/covered by sticky preview; first selected thumbnail outline clipped by the scroll container. Source confirms duplicated quoted brand/title and product-colour style actually driven by remembered accent. Extra findings: editability promises, immutable missing shop details, unnumbered version controls, missing error associations and cost wording. Full limits in report, including no real phone or paid accuracy check. The tool's Edge display-session environment read was rejected by automatic approval review; not retried or bypassed.
+
+**Exact next step after audit:** present findings to the owner, then carry selected fixes through matching requirements/design/tasks; do not silently implement the proposed mobile redesign. Recommended compact collapsible preview + visible tabs, truthful text/palette preparation, identity-off defaults, original-logo corner placement. No app source changed. Local audit servers were stopped; Edge was left on the existing poster with the paid dialog closed. Ignored artifacts: `outputs/ux-audit-2026-11-14/` (one-off walk.py, results.json, 34 PNGs, filtered live trees). The title-error screenshot's save conflict came from the audit's multiple contexts touching the same temporary fixture, not a newly established single-user defect; the brand-error artifact did not trigger an error. **Uncommitted audit files:** this HANDOFF, TODO.md, DECISIONS.md, reviews/ux-audit-2026-11-14.md. No commit/push/deploy. Prior historical handoff below is preserved; statements that the latest main is not deployed are superseded by today's frontend asset parity and the user's deployment report.
+
 **Session date:** 2026-11-12 (Indian/Mauritius), still open when this was written
 **Work order:** none (no ClickUp ticket; personal project for the shop Original Phone Mada).
 **State:** nothing in progress. The contact is drawn in the composition again by default (ADR-055, design v3.1 approved in ADR-056); T-SIG-004 and 005 are built, tested and committed. T-SIG-006 is done: live run 8 drew the contact at the right with exact digits and no collision with the price, though beside the pill rather than below it and about 20 px high (details in TODO). "Mes affiches" now uses small resized thumbnails (T-UI-THUMBNAIL-SIZE). Everything up to here was committed with this handoff. Remote `origin` (private GitHub repository `MiorantsoaRak/poster-gen`, added 2026-11-13) tracks `main`; push only on the user's "push". No server is running. Next: ask the user to look at "Mes affiches" and a new poster on the real data, then T-UI-MOCKUP-GAPS, T-PLANNER-CLAUDE-INVALID, T-UI-PHONE-CHECK and T-POSTER-009; the numbered list below predates the drawn-contact work and its items 1 and 2 are done or replaced.

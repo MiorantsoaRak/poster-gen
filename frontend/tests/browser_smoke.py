@@ -229,8 +229,8 @@ def toggle_theme(page, name, hidden=False):
 
 
 def topmost(locator):
-    # Nothing covers it: the element hit at its centre is the element itself (ADR-076).
-    return locator.evaluate("e => { const r = e.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e }")
+    # Its own text/icon children count as visible; an unrelated covering element does not (ADR-076).
+    return locator.evaluate("e => { const r = e.getBoundingClientRect(); return e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) }")
 
 
 def check_targets(page, where):
@@ -306,9 +306,8 @@ def walk_look(browser, session, scheme, errors):
     # Changes that act at once are switches; what acts on the next version stays a checkbox under its heading.
     device.get_by_role("tab", name="Boutique", exact=True).tap()
     expect(device.locator("label.switch")).to_have_count(3)
-    expect(device.get_by_role("checkbox", name="Contact", exact=True)).to_be_checked()
-    expect(device.get_by_text("Pour la prochaine version", exact=True)).to_be_visible()
-    expect(device.locator("label.check:not(.switch)", has_text="Dessiner aussi le contact dans l’image")).to_be_visible()
+    expect(device.get_by_role("checkbox", name="Contact", exact=True)).not_to_be_checked()
+    expect(device.locator("label.check:not(.switch)", has_text="Dessiner aussi le contact dans l’image")).to_have_count(0)
     device.get_by_role("tab", name="Style", exact=True).tap()
     device.get_by_role("button", name="Générer l’affiche").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
@@ -318,7 +317,7 @@ def walk_look(browser, session, scheme, errors):
     shot(device, f"look-360-{theme}-verifier.png", full_page=False)
     device.get_by_role("button", name="Tout est conforme, approuver").tap()
     expect(device.get_by_role("tab")).to_have_count(4)
-    device.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+    device.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
     for name in ("Textes", "Boutique", "Style", "Réglages"):
         device.get_by_role("tab", name=name, exact=True).tap()
         expect(device.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
@@ -482,6 +481,7 @@ def walk_wait(browser, session, errors):
     device.get_by_role("button", name="Tout est conforme, approuver").tap()
     expect(device.get_by_role("tab")).to_have_count(4)
     # A new version once one exists: the version shown is said to be kept, the pills are in front in both themes.
+    device.get_by_role("button", name=re.compile(r"^Versions ")).tap()
     still = device.evaluate(STILL_JS)
     held["status"] = "queued"
     device.get_by_role("button", name="Nouvelle version").tap()
@@ -491,8 +491,8 @@ def walk_wait(browser, session, errors):
     held["status"] = "running"
     expect(words).to_contain_text("Votre affiche prend forme.")
     check_still(device, still, "while a new version runs at 360 px", samples=6)
-    expect(badge).to_have_text("Version précédente conservée")
-    # On a phone the poster is narrow: the badge shows « Version précédente » on one line; screen readers hear it whole.
+    expect(badge).to_contain_text("Version précédente conservée")
+    # The compact phone badge shows its version number on one line; screen readers hear that it is kept.
     assert badge.bounding_box()["height"] <= 30, badge.bounding_box()
     expect(block).to_be_in_viewport()
     assert topmost(pill) and topmost(badge)
@@ -983,10 +983,13 @@ def walk_formats(browser, errors):
                 canvas = screen.locator(".poster-canvas canvas").first
                 check_shape(canvas, ratio, f"poster, {where}")
                 expect(canvas).to_be_in_viewport(ratio=1)
+                if phone:
+                    press(screen.get_by_role("button", name=re.compile(r"^Versions ")))
                 thumb = check_shape(screen.locator(".version img").first, ratio, f"version, {where}")
                 check_shape(screen.locator(".version.new .add"), ratio, f"« Nouvelle version », {where}")
                 assert abs(thumb[1] - 70) < 1 if phone else thumb[1] <= 196, (where, thumb)
                 if phone:
+                    press(screen.get_by_role("button", name=re.compile(r"^Versions ")))
                     # The version's badge stays on the poster, in front, also on a Story's narrow one.
                     badge, poster = screen.locator(".frame .badge").bounding_box(), canvas.bounding_box()
                     assert badge["x"] + badge["width"] <= poster["x"] + poster["width"] + 1, (where, badge, poster)
@@ -1375,8 +1378,9 @@ def run():
                         page.get_by_role("checkbox", name="Logo", exact=True).check()
                         until(lambda: footer("logo") and footer("logo")["visible"])
                         logo, beside = footer("logo"), footer("contact")
-                        assert logo["x"] == 54 and beside["x"] >= logo["x"] + logo["width"] + 20 and beside["x"] + beside["width"] <= 1026.5, (logo, beside)
-                        assert abs(logo["y"] + logo["height"] - beside["y"] - beside["height"]) < 1, (logo, beside)
+                        assert logo["x"] == 896.4 and beside["x"] == 54 and beside["width"] == 972, (logo, beside)
+                        assert logo["y"] == 67.5 and logo["y"] + logo["height"] < beside["y"], (logo, beside)
+                        expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
                         # « Retirer de l’affiche » (R-POSTER-EDITOR-005): the logo is selected on the poster itself and
                         # taken off; its box in « Boutique » follows, and « Annuler » brings it back.
                         canvas = page.locator(".poster-canvas canvas").first.bounding_box()
@@ -1664,11 +1668,13 @@ def run():
                         page.get_by_label("Variante confirmée").fill("Noir")
                         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
                         page.get_by_label("Les photos correspondent").check()
-                        expect(page.get_by_role("checkbox", name="Logo", exact=True)).to_be_checked()
+                        expect(page.get_by_role("checkbox", name="Logo", exact=True)).not_to_be_checked()
+                        page.get_by_role("checkbox", name="Logo", exact=True).check()
+                        page.get_by_role("checkbox", name="Contact", exact=True).check()
                         expect(page.get_by_role("checkbox", name="Nom de la boutique", exact=True)).not_to_be_checked()
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i sceau", exact=True)).to_be_visible()
-                        # This poster goes straight through the steps on its defaults: nothing is ticked, opened or filled.
+                        # The seal is an explicit choice; new posters keep the original rectangular logo by default.
                         # On a phone (360 px) a step fits the width, « Continuer » stays at the bottom of the screen, and
                         # the poster opens in front of the step and gives the step back as it was.
                         expect(step_count).to_have_text("Étape 2 sur 4")
@@ -1681,6 +1687,8 @@ def run():
                         proceed.click()
                         expect(step_count).to_have_text("Étape 3 sur 4")
                         seal_option = page.get_by_label("Logo en sceau rond dans l’image")
+                        expect(seal_option).not_to_be_checked()
+                        seal_option.check()
                         expect(seal_option).to_be_checked()
                         expect(page.get_by_label("Position du contact")).to_be_disabled()
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
@@ -1768,6 +1776,34 @@ def run():
                         expect(page.locator(".final-preview img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "seal-final.png"))
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        # Selecting a historical disc scene repairs even a plain logo moved away from it.
+                        seal_endpoint = f"{ORIGIN}/api/creations/{page.url.split('#')[1]}"
+                        historical = page.request.get(seal_endpoint).json()
+                        altered = copy.deepcopy(historical['document'])
+                        moved_logo = next(l for l in altered['formats']['feed']['layers'] if l['role'] == 'logo')
+                        moved_logo.pop('shape', None)
+                        moved_logo.update(x=54, y=67.5)
+                        response = page.request.put(seal_endpoint, data=altered, headers={"Origin": ORIGIN, "If-Match": f'"{historical["revision"]}"', "Idempotency-Key": str(uuid4())})
+                        assert response.ok, response.text()
+                        page.reload()
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
+                        page.get_by_role("button", name=re.compile(r"^Choisir la version 1")).click()
+                        expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible()
+                        assert next(l for l in page.request.get(seal_endpoint).json()['document']['formats']['feed']['layers'] if l['role'] == 'logo')['shape'] == 'circle'
+                        # Converting an existing seal makes a new composition and preserves its source.
+                        original_seal_id = page.url.split('#')[1]
+                        original_seal = page.request.get(f"{ORIGIN}/api/creations/{original_seal_id}").json()
+                        open_group("Boutique")
+                        page.get_by_role("button", name="Créer une copie avec le logo en haut").click()
+                        expect(page.get_by_role("button", name="En haut à droite", exact=True)).to_have_attribute("aria-pressed", "true")
+                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible()
+                        copied_seal = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert copied_seal['id'] != original_seal_id and copied_seal['document']['input_id'] != original_seal['document']['input_id']
+                        assert copied_seal['document']['formats']['feed']['scene']['visual_id'] is None
+                        assert next(l for l in copied_seal['document']['formats']['feed']['layers'] if l['role'] == 'logo').get('shape') != 'circle'
+                        assert page.request.get(f"{ORIGIN}/api/creations/{original_seal_id}").json() == original_seal
                         # Managing styles (R-CREATION-LIBRARY-004): open, rename with its refusals, remove with confirmation.
                         page.locator(".final-preview").wait_for(state="detached")
                         page.locator(".nav a", has_text="Styles").click()
@@ -1942,20 +1978,22 @@ def run():
                         expect(mobile.get_by_role("button", name="Tout est conforme, approuver")).to_be_in_viewport()
                         mobile.get_by_role("button", name="Tout est conforme, approuver").tap()
                         expect(mobile.get_by_role("tab")).to_have_count(4)
-                        # Once a version exists the real image stays on screen, at least 200 px tall, while the controls
+                        # Once a version exists the real image stays on screen, compact (at least 140 px here), while the controls
                         # scroll under it; its state badge is in front; the versions are a row of small thumbnails under
                         # it; the groups are a row of tools with icons; nothing scrolls sideways.
                         canvas_phone = mobile.locator(".poster-canvas canvas").first
                         poster_box = lambda: canvas_phone.bounding_box()
-                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
                         expect(canvas_phone).to_be_in_viewport(ratio=1)
                         state_badge = mobile.locator(".frame .badge")
                         expect(state_badge).to_have_text("Version 1 · approuvée")
                         assert topmost(state_badge)
+                        mobile.get_by_role("button", name=re.compile(r"^Versions ")).tap()
                         thumb = mobile.locator(".version img").first.bounding_box()
                         assert (round(thumb["width"]), round(thumb["height"])) == (56, 70), thumb
                         assert thumb["y"] > poster_box()["y"] + poster_box()["height"]
                         expect(mobile.locator(".versions .state").first).to_have_text("Approuvée")
+                        mobile.get_by_role("button", name=re.compile(r"^Versions ")).tap()
                         expect(mobile.locator(".tab .tool")).to_have_count(4)
                         assert all(tool.is_visible() for tool in mobile.locator(".tab .tool").all())
                         assert all(item.bounding_box()["height"] >= 44 for item in mobile.get_by_role("tab").all())
@@ -1968,7 +2006,7 @@ def run():
                         expect(mobile.locator(".panel .panel-theme")).to_be_visible()
                         mobile.evaluate("scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
                         expect(canvas_phone).to_be_in_viewport(ratio=1)
-                        assert poster_box()["height"] >= 200 and poster_box()["y"] >= top_bar.bounding_box()["height"] - 1
+                        assert poster_box()["height"] >= 140 and poster_box()["y"] >= top_bar.bounding_box()["height"] - 1
                         toggle_theme(mobile, "Passer au thème clair")
                         check_contrast(mobile, "tabs at 360 px, light theme")
                         shot(mobile, "phone-tabs-clair.png", full_page=False)
@@ -1991,13 +2029,13 @@ def run():
                         word = mobile.get_by_role("group", name="Mot du titre en couleur").get_by_role("button").first
                         word.tap()
                         expect(word).to_have_attribute("aria-pressed", "true")
-                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
                         expect(main_bar).to_be_visible()
                         # And a focus that leaves without a tap brings it back too.
                         price_field.focus()
                         mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height <= 100")
                         price_field.blur()
-                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
                         expect(main_bar).to_be_visible()
                         # « Voir l’affiche » shows the poster large in the tabs too: full width, no bottom bar inside,
                         # the page behind inert.
@@ -2011,7 +2049,7 @@ def run():
                         shot(mobile, "phone-large-tabs.png", full_page=False)
                         sheet.get_by_role("button", name="Revenir aux réglages").tap()
                         expect(mobile.get_by_role("dialog")).to_have_count(0)
-                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 200")
+                        mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
                         # Back to « Mes affiches » from the bar: the bottom navigation is there again.
                         back.tap()
                         expect(mobile.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()

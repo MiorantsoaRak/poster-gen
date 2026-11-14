@@ -315,6 +315,14 @@ details.new-look[open] { padding-bottom: 14px }
 .proof .photo { margin: 0; display: grid; gap: 8px; flex: none; color: var(--faint); font-size: 12px }
 .proof .photo img { width: 120px; height: 120px; object-fit: contain; background: #fff; border-radius: 12px; display: block }
 .pin { display: grid; gap: 14px; min-width: 0 }
+.preview-tools { display: none }
+.product-palette { display: grid; gap: 10px; margin-block: 14px }
+.product-palette .swatches { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px }
+.product-palette .swatches span { display: inline-flex; align-items: center; gap: 5px }
+.product-palette .swatches i { display: inline-block; width: 24px; height: 24px; border: 1px solid var(--muted); border-radius: 50% }
+.palette-manual input { min-width: 52px; min-height: 44px }
+.identity-import { margin-block: 12px }
+.identity-import label { margin-top: 10px }
 .canvas-host { position: relative; display: flex; justify-content: center; flex: 1; min-width: 0; min-height: 240px }
 .frame { position: relative; max-width: 100%; line-height: 0 }
 .poster-canvas { line-height: 0; max-width: 100%; touch-action: pan-y; background: #fff; border-radius: 5px; overflow: hidden; box-shadow: var(--poster-shadow) }
@@ -446,7 +454,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .work { display: flex; flex-direction: column; align-items: stretch }
   .stage { order: -2; position: static }
   .canvas-host { min-height: 0 }
-  .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding-bottom: 6px; --thumb-h: 130px }
+  .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding: 8px; --thumb-h: 130px }
   .versions h2, .versions > .help { grid-column: 1 / -1 }
   .versions > .version { grid-row: 2 }
   .why, .stage-head .why { text-align: left }
@@ -489,13 +497,21 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .stage:not(.peek) > * { order: -4 }
   .editor:not(.stepping) .stage:not(.peek) > .pin { order: -5; position: sticky; top: var(--bar-h, 0px); z-index: 4; gap: 8px; margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: 8px var(--gutter-r) 8px var(--gutter-l);
     background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
-  .editor:not(.stepping) .stage:not(.peek) > :is(.stage-head, .help) { order: -2 }
+  .editor:not(.stepping) .stage:not(.peek) > :is(.stage-head, .help) { order: 2 }
   .editor:not(.stepping) .versions { order: -3 }
+  .editor:not(.stepping):not(.versions-open) .versions { display: none }
+  .preview-tools { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center }
+  .preview-tools button { min-height: 44px; padding: 4px 12px; font-size: 13px }
+  .editor.preview-hidden .stage:not(.peek) .proof, .editor.preview-hidden .stage:not(.peek) .layer-list { display: none }
+  .editor:not(.stepping) .steps-row { position: sticky; top: var(--preview-bottom, 56px); z-index: 5; margin: 0 0 12px; padding: 4px; background: var(--ground); border-radius: 28px }
+  .editor:not(.stepping) .steps-row .tabs { margin-bottom: 0 }
   .editor:not(.stepping) .stage:not(.peek) .photo { display: none }
   .editor:not(.stepping) .stage:not(.peek) .layer-list { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none }
   .editor:not(.stepping) .stage:not(.peek) .layer-list > * { flex: none }
   /* Typing: the poster is a strip, its elements and the bottom bar make room for the field and the keyboard. */
-  .editor.typing .pin :is(.layer-list, .badge, .gen-pill), .editor.typing .main-action { display: none }
+  .editor.typing .pin :is(.layer-list, .badge, .gen-pill, .preview-tools), .editor.typing .main-action { display: none }
+  /* With the keyboard open the tabs scroll away too: only the bar and the strip stay above the field (ADR-086). */
+  .editor.typing:not(.stepping) .steps-row { position: static }
   /* Versions: one row of small thumbnails, each with its state in words. */
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
   .editor:not(.stepping) :is(.version img, button.version.new .add) { width: calc(70px * var(--poster-ratio, .8)); height: 70px }
@@ -511,6 +527,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .stage.peek .back { display: inline-flex; justify-self: start }
   .stage.peek .main-action { display: none }
   .frame .badge { display: inline-flex }
+  .editor:not(.stepping) .frame .badge { left: 4px; max-width: calc(100% - 8px); padding-inline: 4px; font-size: 12px }
   .stage.peek .frame .badge { display: none }
   .stage.peek :is(.help, figcaption) { color: var(--muted) }
 }

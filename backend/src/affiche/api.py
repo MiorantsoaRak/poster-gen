@@ -84,6 +84,7 @@ MESSAGES = {
         "layout_invalid": "Un texte ou un élément est coupé. Corrigez les avertissements avant l’export.",
         "preview_stale": "L’affiche a changé. Créez un nouvel aperçu avant de confirmer.",
         "logo_disc_uncovered": "L’image contient un disque prévu pour le logo : replacez le logo dessus ou générez une nouvelle version.",
+        "logo_placement_stale": "Le logo ou le cadrage ne correspond plus à l’espace réservé : rétablissez sa position et le cadrage, ou générez une nouvelle version.",
         "confirmation_incomplete": "Vérifiez tous les points et les avertissements avant de confirmer.",
         "renderer_unavailable": "Le rendu est indisponible. Vérifiez la compilation de l’éditeur et les polices.",
         "render_unavailable": "Le rendu a échoué. Le brouillon et les exports précédents sont conservés.",

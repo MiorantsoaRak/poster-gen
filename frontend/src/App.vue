@@ -8,6 +8,8 @@ import type { LayoutIssue } from './canvas'
 import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, WORDS_PREFIX } from './words'
+import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
+import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
@@ -25,24 +27,20 @@ let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 watch(notice, value => { clearTimeout(noticeTimer); if (value) noticeTimer = setTimeout(() => { if (notice.value === value) notice.value = '' }, 8000) })
 const blankIntake = () => ({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
 const intake = reactive(blankIntake())
-// The logo identifies the shop, and without one the footer carries the contact only (ADR-053): the name starts unticked.
-const include = reactive({ logo: false, shop_name: false, contact: true })
-// A contact typed for the first time is put on the poster, as an uploaded logo is; its box can still be unticked.
-watch(() => !!profile.contact?.trim(), filled => { include.contact = filled })
+const include = reactive({ logo: false, shop_name: false, contact: false })
 let pendingInput: { signature: string; id: string } | null = null
 const photos = ref<{ asset: string; warnings: string[] }[]>([])
 const creation = ref<Creation | null>(null), doc = shallowRef<PosterDocument | null>(null), selected = ref<string | null>(null)
 const visuals = ref<Visual[]>([]), direction = ref('Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.'), plannerMode = ref<'fixed' | 'claude'>('fixed')
 const styleReference = ref<string | null>(null)
-// The image model sets brand, product name and subtitle itself; the price stays an exact editable layer.
+// The title and exact offer price are drawn together; changes need another reviewed version.
 const blankHeadline = () => ({ on: true, price: true, contact: true, brand_text: false, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
 const headline = ref(blankHeadline())
 const profileValue = (role: 'shop_name' | 'contact') => doc.value?.include[role] ? (role === 'shop_name' ? doc.value.brand_snapshot.name : doc.value.brand_snapshot.contact) ?? undefined : undefined
 // Looks measured on real shop products (docs/project/reviews/style-study-2026-11-11.md): the owner picks a picture, not a prompt.
-const tint = (hex: string) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .14 + 255 * .86).toString(16).padStart(2, '0')).join('').toUpperCase()
 const LOOKS = [
   { id: 'clair', label: 'Studio clair', image: '/styles/clair.jpg', direction: 'Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.', palette: () => ['#FFFFFF', '#E6E7EB', '#55585F'] },
-  { id: 'couleur', label: 'Aux couleurs du produit', image: '/styles/couleur.jpg', direction: 'Studio clair teinté de la couleur d’accent, dégradé doux, grandes courbes discrètes derrière le produit.', palette: () => ['#FFFFFF', tint(headline.value.accent_colour), headline.value.accent_colour.toUpperCase()] },
+  { id: 'couleur', label: 'Aux couleurs du produit', image: '/styles/couleur.jpg', direction: 'Studio aux couleurs proposées depuis la photo, dégradé doux, sans ajouter de couleur étrangère à la palette.', palette: () => productPalette.value! },
   { id: 'sombre', label: 'Luxe sombre', image: '/styles/sombre.jpg', direction: 'Fond noir charbon très sombre, fins arcs de lumière dorée chaude derrière le produit, ambiance luxe, léger reflet au sol.', palette: () => ['#0B0B0D', '#1B1B20', '#C8A45A'] },
   { id: 'libre', label: 'Décrire moi-même', image: null, direction: null, palette: null },
 ] as const
@@ -50,6 +48,54 @@ const LOOKS = [
 interface SavedLook { id: string; name: string; reference_asset: string; reference_width?: number | null; reference_height?: number | null; brief: { direction_fr: string; surface_fr: string; lighting: string; camera: string; palette: string[]; accent_colour: string; alignment: string } }
 const savedLooks = ref<SavedLook[]>([]), lookName = ref(''), lookReference = ref<string | null>(null)
 const look = ref<string>('clair')
+const PALETTE_PREFIX = 'affiche.palette.'
+const productPalette = ref<Palette | null>(null), paletteFailure = ref(''), paletteLoading = ref(false)
+let paletteEpoch = 0, paletteRequest: AbortController | undefined
+const sceneAccent = computed(() => look.value === 'couleur' && productPalette.value ? productPalette.value[2] : headline.value.accent_colour)
+const paletteBlocked = computed(() => look.value === 'couleur' && !productPalette.value ? paletteLoading.value ? 'Les couleurs de la photo sont en cours d’analyse.' : 'Choisissez une couleur ou réessayez l’analyse de la photo.' : '')
+function setProductColour(value: string) {
+  const palette = colourPalette(value)
+  paletteEpoch++; paletteRequest?.abort(); paletteLoading.value = false
+  productPalette.value = palette; paletteFailure.value = ''
+  try {
+    localStorage.setItem(PALETTE_PREFIX + creation.value!.id, JSON.stringify({ colour: value, at: Date.now() }))
+    // Capped like the kept words: the oldest entries go first.
+    const kept = Object.keys(localStorage).filter(key => key.startsWith(PALETTE_PREFIX))
+    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) localStorage.removeItem(key)
+  } catch { notice.value = 'La couleur est utilisée ici, mais ce navigateur ne peut pas la mémoriser après fermeture.' }
+}
+// The colour is kept only until the poster's first version (its plan then holds the palette) or its removal from the list.
+function forgetPalette(id: string) { try { localStorage.removeItem(PALETTE_PREFIX + id) } catch { /* convenience only */ } }
+async function loadProductPalette(reset = false) {
+  const poster = creation.value
+  if (!poster) return
+  if (reset) {
+    try { localStorage.removeItem(PALETTE_PREFIX + poster.id) }
+    catch { notice.value = 'La suggestion sera utilisée ici, mais la couleur mémorisée ne peut pas être effacée.' }
+  }
+  const epoch = ++paletteEpoch
+  paletteRequest?.abort(); const controller = paletteRequest = new AbortController()
+  paletteLoading.value = true; paletteFailure.value = ''; productPalette.value = null
+  try {
+    const source = await api<{ photo_assets: string[] }>(`/api/product-inputs/${poster.document.input_id}`, { signal: controller.signal })
+    if (!source.photo_assets[0]) throw new Error('Cette affiche n’a pas de photo à analyser.')
+    const palette = await samplePhoto(`/api/assets/${source.photo_assets[0]}?prepared=true`, controller.signal)
+    if (epoch === paletteEpoch) productPalette.value = palette
+  } catch (reason) {
+    if (epoch === paletteEpoch) paletteFailure.value = reason instanceof Error ? reason.message : 'Analyse impossible : choisissez une couleur.'
+  } finally { if (epoch === paletteEpoch) paletteLoading.value = false }
+}
+watch(() => creation.value?.id, id => {
+  paletteEpoch++; paletteRequest?.abort(); productPalette.value = null; paletteFailure.value = ''; paletteLoading.value = false
+  if (!id) return
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(PALETTE_PREFIX + id) ?? 'null')?.colour
+    if (validColour(saved)) { productPalette.value = colourPalette(saved); return }
+  } catch { notice.value = 'Les couleurs mémorisées sont indisponibles : une nouvelle suggestion sera proposée.' }
+  void loadProductPalette()
+})
+watch(() => [creation.value?.id, visuals.value.length] as const, ([id, count]) => { if (id && count) forgetPalette(id) })
+onBeforeUnmount(() => { paletteEpoch++; paletteRequest?.abort() })
 // A poster made with a style that was removed since keeps it for its new versions (D-CREATION-LIBRARY-004). It is held
 // apart, for the open poster only: never in the picker, never in the style remembered for the next poster.
 const keptLook = ref<SavedLook | null>(null)
@@ -65,7 +111,7 @@ function pickLook(id: string) {
 // A style brings its own accent colour. It applies when the owner left the colour alone; once he has picked
 // one himself, in « Textes », his stays and the style's is only proposed, one tap away (ADR-073).
 const accentPicked = ref(false), styleAccent = ref('')
-function pickAccent(value: string) { headline.value.accent_colour = value.toLowerCase(); accentPicked.value = true; styleAccent.value = '' }
+function pickAccent(value: string) { if (look.value === 'couleur') setProductColour(value); headline.value.accent_colour = value.toLowerCase(); accentPicked.value = true; styleAccent.value = '' }
 function chooseLook(id: string) {
   const mine = headline.value.accent_colour
   pickLook(id)
@@ -208,8 +254,8 @@ function compactContact(document: PosterDocument, align: Align) {
 }
 // Same footer as the server's first plan: the logo at the left, the texts in the span to its right.
 function placeFooter(document: PosterDocument) {
-  const layers = document.formats[format.value]!.layers, [width] = FORMATS[format.value]
-  const logo = layers.find(layer => layer.role === 'logo' && layer.visible)
+  const layers = document.formats[format.value]!.layers, [width, height] = FORMATS[format.value]
+  const logo = layers.find(layer => layer.role === 'logo' && layer.visible && layer.y >= height / 2)
   const contact = layers.find(layer => layer.role === 'contact')
   const left = width * .05, x = logo ? left + logo.width + width * .025 : left
   for (const layer of layers) if (layer.role === 'shop_name' || layer.role === 'contact') { layer.x = x; layer.width = width * .95 - x }
@@ -228,7 +274,7 @@ function stylePill() {
   const price = layout.value?.layers.find(layer => layer.role === 'price')
   if (!price || price.kind !== 'text' || look.value === 'libre') return
   if (price.price_badge && JSON.stringify(price.price_badge) !== autoPill) return
-  const accent = headline.value.accent_colour.toUpperCase()
+  const accent = sceneAccent.value.toUpperCase()
   const badge = look.value === 'sombre' ? { fill: '#111114', border_start: '#C8A45A', border_end: '#C8A45A' }
     : look.value === 'couleur' ? { fill: shade(accent), border_start: shade(accent), border_end: accent }
     : { fill: '#22262E', border_start: '#22262E', border_end: '#55585F' }
@@ -253,11 +299,11 @@ function stylePill() {
 const accentWord = computed(() => (doc.value?.offer.title ?? '').includes(headline.value.accent_word.trim()) ? headline.value.accent_word.trim() : '')
 const accentWords = computed(() => [...new Set([...(doc.value?.offer.title ?? '').split(/\s+/).filter(Boolean), ...(accentWord.value ? [accentWord.value] : [])])])
 const ACCENTS = [['#1e6fe0', 'Bleu'], ['#1f3250', 'Bleu nuit'], ['#d92b2b', 'Rouge'], ['#f08a1c', 'Orange'], ['#c8a45a', 'Or']] as const
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? headline.value.accent_colour.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
-const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Le titre et le prix sont exacts', identity: 'Les détails de la boutique sont corrects', readability: 'Tous les éléments sont lisibles' }
+const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Le titre et le prix sont exacts', identity: 'Le logo et les détails de la boutique sont corrects, sans chevauchement avec le titre, le produit ou le prix', readability: 'Tous les éléments sont lisibles' }
 const proposal = ref<any>(null), effect = ref<any>(null), polish = ref(''), acknowledgeContent = ref(false), previewPolish = ref(false)
 const effectSources = ref<Record<string, string>>({})
 const previewDoc = computed(() => {
@@ -276,6 +322,31 @@ let saver: DraftSaver | null = null, history = new History(), pollTimer: ReturnT
 const format = computed(() => doc.value?.primary_format ?? 'feed')
 const layout = computed(() => doc.value?.formats[format.value])
 const currentVisual = computed(() => visuals.value.find(item => item.id === layout.value?.scene.visual_id))
+const duplicateBrand = computed(() => brandInTitle(headline.value.brand, doc.value?.offer.title ?? ''))
+const staleLogo = computed(() => !!doc.value && logoPlacementStale(doc.value, format.value, currentVisual.value))
+const logoCorner = computed(() => logoLayer.value && logoLayer.value.y < FORMATS[format.value][1] / 2 && !sealLayer.value ? logoLayer.value.x < FORMATS[format.value][0] / 2 ? 'left' : 'right' : '')
+// A scene made for a footer logo has no corner space: the logo goes back to the footer box, free, and the crop stays
+// (the server checks the crop only for a corner logo).
+const restorableLogo = computed(() => currentVisual.value?.logo_box ?? (!sealLayer.value ? currentVisual.value?.logo_footer_box : undefined))
+// Any crop blocks the export while a corner logo is shown (check_logo_placement): the crop sliders are locked then.
+const cropLocked = computed(() => !!currentVisual.value?.logo_box && !!logoShown.value)
+const logoInFooter = computed(() => { const box = currentVisual.value?.logo_footer_box, logo = logoLayer.value; return !!box && !!logo && (['x', 'y', 'width', 'height'] as const).every(key => Math.abs(logo[key] - box[key]) <= 2) })
+function restoreLogoRegion() {
+  const box = restorableLogo.value, corner = !!currentVisual.value?.logo_box
+  if (!box) return
+  edit(document => {
+    const layout = document.formats[format.value]!, logo = layout.layers.find(layer => layer.kind === 'logo')
+    if (logo?.kind === 'logo') { Object.assign(logo, box); delete logo.shape }
+    if (!corner) return
+    const [width, height] = currentVisual.value!.size.split('x').map(Number)
+    layout.scene.crop = { x: 0, y: 0, w: width!, h: height! }
+  })
+}
+async function copyForCorner() {
+  await remakeIn(format.value)
+  edit(document => { placeLogo(document, 'right') })
+  go('boutique')
+}
 const contactLayer = computed(() => layout.value?.layers.find(layer => layer.role === 'contact'))
 const drawnContact = computed(() => currentVisual.value?.headline?.contact !== undefined)
 const logoShown = computed(() => layout.value?.layers.find(layer => layer.role === 'logo' && layer.visible))
@@ -319,7 +390,9 @@ function sealOnDisc(document: PosterDocument, disc: { x: number; y: number; d: n
   Object.assign(logo, { x: disc.x - size / 2, y: disc.y - size / 2, width: size, height: size })
 }
 function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | 'contact', enabled: boolean) {
+  const existed = document.formats[format.value]!.layers.some(layer => layer.role === role)
   setIdentity(document, role, enabled)
+  if (role === 'logo' && enabled && !existed) placeLogo(document, 'right')
   const seal = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo' && layer.shape === 'circle')
   // A seal goes back on its disc; it has no place in the footer. A plain logo takes the footer's left.
   if (role === 'logo' && seal) { if (enabled && currentVisual.value?.logo_disc) sealOnDisc(document, currentVisual.value.logo_disc) }
@@ -379,6 +452,11 @@ function tabKey(event: KeyboardEvent) {
 // On one column the poster is small (a thumbnail in the steps, a strip on top in the tabs); this opens it large in
 // front of the step or tab, which stays as it was.
 const peek = ref(false)
+const previewVisible = ref(true), versionsOpen = ref(false)
+const availableHeight = ref(window.visualViewport?.height ?? window.innerHeight)
+// A keyboard-sized screen keeps the poster as the 96 px strip rather than hiding it (user decision 2026-11-14, ADR-086).
+const shortViewport = computed(() => availableHeight.value < 500)
+watch(() => creation.value?.id, () => { previewVisible.value = true; versionsOpen.value = false })
 const peeking = computed(() => peek.value && !!doc.value && viewportWidth.value <= 1080)
 watch(peeking, on => { if (!on) { peek.value = false; nextTick(measureSticky) } })
 // In the steps the draft shows only title and price: a tap on the thumbnail opens it large instead of selecting.
@@ -394,7 +472,7 @@ let pressing = false, restoring: ReturnType<typeof setTimeout> | undefined, rele
 const press = (event: PointerEvent) => { pressing = event.type === 'pointerdown' }
 function panelFocus(event: FocusEvent) {
   clearTimeout(restoring); released?.abort()
-  if (panelField(event.type === 'focusin' ? event.target : event.relatedTarget)) { typing.value = matchMedia('(pointer: coarse)').matches; return }
+  if (panelField(event.type === 'focusin' ? event.target : event.relatedTarget)) { typing.value = matchMedia('(pointer: coarse)').matches; nextTick(revealFocusedField); return }
   const restore = () => { released?.abort(); restoring = setTimeout(() => { if (!panelField(document.activeElement)) typing.value = false }) }
   if (!pressing) return restore()
   released = new AbortController()
@@ -403,20 +481,29 @@ function panelFocus(event: FocusEvent) {
 watch(pinned, on => { if (!on) typing.value = false })
 // What stays at the top of the editor (the top bar, and in the tabs the poster): the poster sits under the bar, the
 // scroll padding and go() keep fields out from under both. Not measured while the large view is open.
-const appHeader = ref<HTMLElement>(), bar = ref<HTMLElement>(), pin = ref<HTMLElement>(), stageBox = ref<HTMLElement>(), stickyTop = ref(0)
+const appHeader = ref<HTMLElement>(), bar = ref<HTMLElement>(), pin = ref<HTMLElement>(), toolsRow = ref<HTMLElement>(), stageBox = ref<HTMLElement>(), stickyTop = ref(0)
 let stickyObserver: ResizeObserver | undefined
+function revealFocusedField() {
+  const field = document.activeElement
+  if (!pinned.value || !panelField(field)) return
+  const bounds = (field as HTMLElement).getBoundingClientRect(), top = stickyTop.value + 8
+  if (bounds.top < top || bounds.bottom > availableHeight.value - 8) window.scrollBy({ top: bounds.top - top, behavior: 'instant' })
+}
+watch(stickyTop, () => nextTick(revealFocusedField))
 function measureSticky() {
   if (peeking.value) return
   const sticky = (element?: HTMLElement) => element && getComputedStyle(element).position === 'sticky' ? element.offsetHeight : 0
   const top = sticky(appHeader.value) + sticky(bar.value)
-  stickyTop.value = top + sticky(pin.value)
+  const previewBottom = top + sticky(pin.value)
+  stickyTop.value = previewBottom + sticky(toolsRow.value)
   document.documentElement.style.setProperty('--bar-h', `${top}px`)
+  document.documentElement.style.setProperty('--preview-bottom', `${previewBottom}px`)
   document.documentElement.style.setProperty('--sticky-top', `${stickyTop.value}px`)
 }
 function watchSticky() {
   stickyObserver?.disconnect()
   stickyObserver = new ResizeObserver(measureSticky)
-  for (const element of [appHeader.value, bar.value, pin.value]) if (element) stickyObserver.observe(element)
+  for (const element of [appHeader.value, bar.value, pin.value, toolsRow.value]) if (element) stickyObserver.observe(element)
 }
 const versionStates = { approved: 'approuvée', pending_review: 'à vérifier', rejected: 'refusée' }
 const versionNumber = computed(() => currentVisual.value ? visuals.value.length - visuals.value.indexOf(currentVisual.value) : 0)
@@ -436,6 +523,21 @@ const fieldError = ref<{ group: Group; text: string } | null>(null)
 watch(() => [headline.value.brand, headline.value.subtitle], () => { if (fieldError.value?.group === 'textes') fieldError.value = null })
 // The shop's details are copied into the poster when it is made: one that was empty then cannot be ticked here.
 const identitySource = (role: typeof IDENTITY[number]) => role === 'logo' ? doc.value?.brand_snapshot.logo_asset : role === 'shop_name' ? doc.value?.brand_snapshot.name : doc.value?.brand_snapshot.contact
+// The form below works on a copy: the shop's profile changes only through « Ajouter à cette affiche », and comes back
+// as it was if that save is refused.
+const missingDraft = reactive<Pick<Profile, 'name' | 'contact' | 'logo_asset'>>({ name: null, contact: null, logo_asset: null })
+watch(() => creation.value?.id, () => Object.assign(missingDraft, { name: profile.name, contact: profile.contact, logo_asset: profile.logo_asset }))
+async function importMissingProfile() {
+  const before = { name: profile.name, contact: profile.contact, logo_asset: profile.logo_asset }
+  Object.assign(profile, missingDraft)
+  try { await saveProfile() } catch (reason) { Object.assign(profile, before); throw reason }
+  edit(document => {
+    for (const key of ['name', 'contact', 'logo_asset'] as const) if (!document.brand_snapshot[key]) document.brand_snapshot[key] = profile[key]
+    document.brand_snapshot.profile_revision = profile.revision
+  })
+  await flush()
+  notice.value = 'Informations ajoutées. Activez uniquement celles à afficher sur cette affiche.'
+}
 const view = ref<'create' | 'posters' | 'styles'>('create')
 // The address says where the owner is: '' new poster, 'affiches', 'styles', or an open poster's id. Reload,
 // back and a new tab then work, and the navigation is made of real links.
@@ -460,11 +562,11 @@ const vModal = {
 }
 // A paid call is never one tap: the owner sees what it does and what it costs, then confirms.
 const paid = ref<{ title: string; text: string; cost: string; label: string; run: () => Promise<void> } | null>(null)
-const costLine = (micros?: number) => micros ? `Coût estimé : au plus ${dollars(micros)}.` : 'Mode de démonstration : aucune dépense.'
+const costLine = (micros?: number) => micros ? `Réserve de budget : ${dollars(micros)}. Le coût réel est comptabilisé après le traitement ; cette réserve n’est pas une facture ni un plafond du fournisseur.` : 'Mode de démonstration : aucune dépense.'
 function askScene() {
   if (whyNoHeadline.value) { error.value = whyNoHeadline.value; go('textes'); return }  // also for « Nouvelle version »
   paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: costLine(caps.value?.scene_estimate_micros),
-    text: visuals.value.length ? 'Mêmes textes et même style, un autre essai. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
+    text: visuals.value.length ? 'Une nouvelle image avec vos textes et réglages actuels. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
 }
 function askLook() {
   paid.value = { title: 'Créer un style depuis cette affiche ?', label: 'Créer le style', cost: costLine(caps.value?.plan_estimate_micros),
@@ -530,7 +632,7 @@ function changePriceLater() {
   group.value = 'textes'
   nextTick(() => document.getElementById('champ-prix')?.focus())
 }
-const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || currentVisual.value?.status !== 'approved' || staleHeadline.value || discUncovered.value || issues.value.some(issue => issue.blocking))
+const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || currentVisual.value?.status !== 'approved' || staleHeadline.value || staleLogo.value || discUncovered.value || issues.value.some(issue => issue.blocking))
 // A title or price that the image model is drawing right now must not change under it: the scene would arrive stale.
 const drawingTexts = computed(() => !!job.value && ['scene', 'refine'].includes(job.value.kind) && headline.value.on)
 const stage = computed(() => !currentVisual.value ? (job.value && ['scene', 'refine'].includes(job.value.kind) ? 1 : 0) : currentVisual.value.status === 'approved' ? 3 : 2)
@@ -541,7 +643,7 @@ const headlineFaults = computed(() => {
     : /["\r\n]/.test(value) ? `${label} contient un guillemet droit (") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».` : ''
   return { title: check('Le titre', doc.value.offer.title.trim()), brand: check('La marque', headline.value.brand.trim()), subtitle: check('Le sous-titre', headline.value.subtitle.trim()) }
 })
-const whyNoHeadline = computed(() => headlineFaults.value.title || headlineFaults.value.brand || headlineFaults.value.subtitle)
+const whyNoHeadline = computed(() => paletteBlocked.value || headlineFaults.value.title || headlineFaults.value.brand || headlineFaults.value.subtitle)
 const mainAction = computed(() => {
   const visual = currentVisual.value
   if (!visual || visual.status === 'rejected') return { label: 'Générer l’affiche', icon: 'spark', disabled: busy.value || !!job.value || !!whyNoHeadline.value, run: askScene }
@@ -552,13 +654,13 @@ const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.v
 // The group that holds the control which unblocks the main action: its reason opens it.
 const mainFix = computed<Group | null>(() => {
   if (!mainWhy.value || busy.value || job.value) return null
-  if (currentVisual.value?.status !== 'approved') return whyNoHeadline.value ? 'textes' : null
-  return staleTitle.value || stalePrice.value ? 'textes' : staleSignature.value || discUncovered.value ? 'boutique' : null
+  if (currentVisual.value?.status !== 'approved') return paletteBlocked.value ? 'style' : whyNoHeadline.value ? 'textes' : null
+  return staleTitle.value || stalePrice.value ? 'textes' : staleSignature.value || discUncovered.value || staleLogo.value ? 'boutique' : null
 })
 const textChecks = computed(() => {
   const drawn = review.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return []
-  const items = [{ key: 'text_title', label: drawn.brand ? 'Marque, titre et sous-titre' : 'Titre et sous-titre', value: [drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
+  const items = [{ key: 'text_title', label: drawn.brand ? 'Marque, titre et sous-titre' : 'Titre et sous-titre', value: [drawn.brand_in_title ? null : drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
   if (drawn.price_ar !== undefined) items.push({ key: 'text_price', label: 'Prix', value: `${Number(drawn.price_ar).toLocaleString('fr-FR')}\u00a0AR` })
   if (drawn.shop_name !== undefined || drawn.contact !== undefined) items.push({ key: 'text_signature', label: drawn.shop_name !== undefined ? 'Boutique et contact' : 'Contact', value: [drawn.shop_name, drawn.contact].filter(Boolean).join(' · ') })
   return items
@@ -571,7 +673,7 @@ const waiting = 'Une tâche est en cours : patientez quelques instants.'
 const otherJob = computed(() => !!job.value && !waitJob.value)
 const whyBusy = computed(() => otherJob.value ? waiting : '')
 const whyNoText = computed(() => otherJob.value ? waiting : !polish.value.trim() ? 'Écrivez d’abord votre consigne ci-dessus.' : '')
-const whyNoRefine = computed(() => otherJob.value ? waiting : !refinement.value.trim() ? 'Décrivez d’abord l’ajustement souhaité ci-dessus.' : '')
+const whyNoRefine = computed(() => otherJob.value ? waiting : staleLogo.value || discUncovered.value ? 'Rétablissez le logo et le cadrage ou générez une nouvelle version.' : staleHeadline.value ? 'Les textes ont changé : générez une nouvelle version.' : !refinement.value.trim() ? 'Décrivez d’abord l’ajustement souhaité ci-dessus.' : '')
 const whyNoLook = computed(() => otherJob.value ? waiting : !lookReference.value ? 'Choisissez d’abord une affiche modèle ci-dessus.' : '')
 const whyNoDraft = computed(() => !photos.value.length ? 'Ajoutez au moins une photo du produit.' : !intake.confirmed ? 'Cochez la case « Les photos correspondent… » pour continuer.' : '')
 const whyNoExport = computed(() => otherJob.value ? waiting
@@ -579,6 +681,7 @@ const whyNoExport = computed(() => otherJob.value ? waiting
   : currentVisual.value.status === 'pending_review' ? 'Comparez d’abord la version à votre photo et approuvez la fidélité du produit.'
   : currentVisual.value.status === 'rejected' ? 'Cette version a été refusée : choisissez une autre version ou générez-en une nouvelle.'
   : staleHeadline.value ? 'Un texte dessiné dans l’image a changé : générez une nouvelle version.'
+  : staleLogo.value ? restorableLogo.value ? 'Le logo ou le cadrage a changé : rétablissez gratuitement sa position dans « Boutique », ou générez une nouvelle version.' : 'Le logo est placé en haut mais cette version n’a pas d’espace prévu pour lui : générez une nouvelle version.'
   : discUncovered.value ? 'L’image contient un disque prévu pour le logo : replacez le logo dessus (activez « Logo ») ou générez une nouvelle version.'
   : issues.value.some(issue => issue.blocking) ? 'Corrigez d’abord les éléments signalés sous l’affiche.'
   : previewPolish.value ? 'Appliquez ou refusez d’abord l’ajustement en cours.' : '')
@@ -612,7 +715,7 @@ function removeFromPoster() {
 }
 const scale = computed(() => {
   const [width, height] = FORMATS[format.value]
-  if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
+  if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value || shortViewport.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
   // The steps' thumbnail is never taller than a Publication's (130 px): a Story would push the step's first field down.
   if (tapToOpen.value) return Math.min(canvasWidth.value / width, 130 / height)
   // The poster keeps its size while a scene is made: shrinking it to fit the waiting block moved and resized the stage
@@ -667,7 +770,7 @@ async function loadShop() {
   savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
   // The remembered style may be one of the shop's own looks, known only now.
   try { const remembered = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
-  include.shop_name = false; include.contact = !!saved.contact; include.logo = !!saved.logo_asset
+  Object.assign(include, { logo: false, shop_name: false, contact: false })
 }
 async function signIn() {
   await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: password.value }) })
@@ -685,9 +788,9 @@ async function choosePhotos(event: Event) {
   for (const file of files) uploaded.push(await upload(file, 'original'))
   photos.value = uploaded
 }
-async function chooseLogo(event: Event) {
+async function chooseLogo(event: Event, target: { logo_asset: string | null } = profile) {
   const file = (event.target as HTMLInputElement).files?.[0]
-  if (file) { profile.logo_asset = (await upload(file, 'logo')).asset; include.logo = true }
+  if (file) { target.logo_asset = (await upload(file, 'logo')).asset }
 }
 async function chooseStyle(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
@@ -703,16 +806,12 @@ async function createPoster() {
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
+  if (doc.value?.include.logo) edit(document => placeLogo(document, 'right'))
   pendingInput = null  // kept only for a retry of this creation: the same product typed again gets its own input
   if (photos.value.some(photo => photo.warnings.includes('low_resolution'))) smallPhotoOf.value = result.id
   // The form now waits for the next product: this one's photos, name, variant, price and agreement must not carry over.
-  Object.assign(intake, blankIntake()); photos.value = []
-  if (doc.value?.include.contact) edit(document => {
-    compactContact(document, defaultAlign(document))
-    // The seal is the default for the footer it was designed for: a logo and a contact, no shop name.
-    const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
-    if (logo?.kind === 'logo' && document.include.logo && !document.include.shop_name) logo.shape = 'circle'
-  })
+  Object.assign(intake, blankIntake()); photos.value = []; Object.assign(include, { logo: false, shop_name: false, contact: false })
+  if (doc.value?.include.contact) edit(document => compactContact(document, defaultAlign(document)))
 }
 // Until a version carries them, the typed words live only here: they are kept in the browser, per poster, so that a reload
 // or a later visit on the same device does not lose them (ADR-083). Without storage (private mode) nothing is kept, as before.
@@ -766,7 +865,7 @@ async function adopt(result: Creation) {
   // A jump, not the page's smooth scroll: for a moment the new poster sat under the top bar, scrolled from the intake form.
   if (opening) window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   observer?.disconnect()
-  if (canvasHost.value) { observer = new ResizeObserver(entries => { canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }
+  if (canvasHost.value) { observer = new ResizeObserver(entries => { if (entries[0].contentRect.width > 0) canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }
   watchSticky()
   const jobs = await api<{ items: Job[] }>(`/api/creations/${result.id}/jobs`)
   const previousRender = jobs.items.find(item => item.kind === 'render' && item.status === 'succeeded')
@@ -828,7 +927,7 @@ const restore = (item: LibraryItem) => perform(() => onRow(() => mutation(`/api/
 function askRemove(item: LibraryItem) {
   paid.value = { title: `Retirer « ${item.title} » de la liste ?`, label: 'Retirer de la liste', cost: '',
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
-    run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id) }) }
+    run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
 }
 async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
 async function refreshVisuals() {
@@ -898,6 +997,7 @@ let planSignature = ''
 // One tap for the simple composition. An unchanged request reuses its plan, so a retry after a lost
 // response sends the same scene body and key instead of paying for a second image.
 async function createScene() {
+  if (paletteBlocked.value) throw new Error(paletteBlocked.value)
   stylePill()
   // A seal whose footer conditions are not met cannot be asked for: it becomes a plain logo before the plan is made,
   // so that the plan keeps a place for it.
@@ -906,7 +1006,7 @@ async function createScene() {
     if (logo?.kind === 'logo') { delete logo.shape; placeFooter(document) }
   })
   await flush()
-  const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, headline.value.accent_colour, format.value])
+  const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, sceneAccent.value, productPalette.value, format.value])
   if (!plan.value || planSignature !== signature) { await prepareScene(); planSignature = signature }
   rememberStyle()
   await generateScene()
@@ -1142,10 +1242,12 @@ function chooseVisual(visual: Visual) {
     if (contact?.kind === 'text' && contact.visible && !contact.icon) compactContact(document, defaultAlign(document))
     // A seal follows the disc of the chosen version; without a disc nothing is printed at a guessed place.
     const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
-    if (logo?.kind === 'logo' && logo.shape === 'circle') {
+    if (logo?.kind === 'logo' && ((logo.shape === 'circle' && !visual.logo_box && !visual.logo_footer_box) || 'logo_disc' in visual)) {
       document.include.logo = logo.visible = !!visual.logo_disc
-      if (visual.logo_disc) sealOnDisc(document, visual.logo_disc)
+      if (visual.logo_disc) { logo.shape = 'circle'; sealOnDisc(document, visual.logo_disc) }
     }
+    const box = visual.logo_box ?? (!('logo_disc' in visual) ? visual.logo_footer_box : undefined)
+    if (logo?.kind === 'logo' && box) { delete logo.shape; Object.assign(logo, box); logo.visible = document.include.logo }
   })
   selected.value = null
 }
@@ -1183,7 +1285,7 @@ let resizeFrame = 0
 function resized() {
   if (resizeFrame) return
   resizeFrame = requestAnimationFrame(() => {
-    resizeFrame = 0; viewportWidth.value = window.innerWidth
+    resizeFrame = 0; viewportWidth.value = window.innerWidth; availableHeight.value = window.visualViewport?.height ?? window.innerHeight
     if (window.innerWidth > 1080 || Math.abs(window.innerHeight - viewportHeight.value) >= 100) viewportHeight.value = window.innerHeight
     nextTick(measureSticky)
   })
@@ -1216,13 +1318,13 @@ async function start() {
   finally { checking.value = false }
 }
 onMounted(() => {
-  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
+  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.visualViewport?.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
   document.addEventListener('visibilitychange', onVisibility)
   return start()
 })
-onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
+onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
 </script>
 
 <template>
@@ -1239,20 +1341,20 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous pour retrouver les visuels de la boutique.</p><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button></form>
     <div v-if="authenticated && !doc && view === 'create'" class="intake-layout">
       <form class="intake" @submit.prevent="perform(createPoster)">
-        <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Ajoutez vos photos, votre titre et le prix. Vous pourrez ensuite ajuster chaque élément.</p>
+        <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
         <div class="photo-strip"><span v-for="(photo, index) in photos" :key="photo.asset" class="mini"><img :src="`/api/assets/${photo.asset}`" width="76" height="76" alt="Photo originale du produit" /><button type="button" class="text-button" :aria-label="`Retirer la photo ${index + 1}`" @click="photos.splice(index, 1)">Retirer</button></span></div>
         <p v-if="photos.some(photo => photo.warnings.includes('low_resolution'))" class="help" role="status">Photo petite (moins de 800 px de côté) : l’affiche peut manquer de netteté. Si vous avez une photo plus grande, préférez-la.</p>
         <label>Nom du produit<input v-model="intake.name" name="product" autocomplete="off" maxlength="160" required placeholder="Ex. Soundcore R50i…" /></label>
-        <div class="form-row"><label>Variante confirmée<input v-model="intake.variant" name="variant" autocomplete="off" maxlength="160" required /></label><label>Prix en ariary<input id="prix-nouveau" v-model="intake.price" name="price" autocomplete="off" inputmode="numeric" required placeholder="90 000…" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="priceError = ''" /></label></div>
+        <div class="form-row"><label>Variante confirmée<input v-model="intake.variant" name="variant" autocomplete="off" maxlength="160" required aria-describedby="aide-variante" /></label><label>Prix en ariary<input id="prix-nouveau" v-model="intake.price" name="price" autocomplete="off" inputmode="numeric" required placeholder="90 000…" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="priceError = ''" /></label></div>
         <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
-        <label class="check"><input id="champ-conforme" v-model="intake.confirmed" type="checkbox" />Les photos correspondent au produit et à la variante indiqués.</label>
+        <p id="aide-variante" class="help">Variante : précisez la couleur ou le modèle exact, par exemple « Noir · 128 Go ».</p><label class="check"><input id="champ-conforme" v-model="intake.confirmed" type="checkbox" />Les photos correspondent au produit et à la variante indiqués.</label>
         <details open><summary>Identité de la boutique</summary><label>Nom de la boutique<input v-model="profile.name" name="shop" autocomplete="off" maxlength="160" /></label><label>Contact<textarea v-model="profile.contact" name="contact" autocomplete="off" rows="2" maxlength="500" placeholder="Téléphone, adresse ou WhatsApp…" /></label><label class="file-pick">Logo<input :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLogo(event))" /><span class="pick-button"><Icon n="plus" />{{ profile.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label><img v-if="profile.logo_asset" class="logo-preview" :src="`/api/assets/${profile.logo_asset}`" width="120" height="80" alt="Logo de la boutique" /><div class="checks-row"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input v-model="include[role]" type="checkbox" />{{ roleNames[role] }}</label></div></details>
         <button class="primary wide" :disabled="busy">{{ busy ? 'Préparation…' : 'Préparer mon affiche' }}</button><p v-if="whyNoDraft" class="why" role="status">{{ whyNoDraft }}</p>
       </form>
     </div>
     <section v-if="authenticated && !doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour la modifier, changer son prix ou la télécharger à nouveau</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
         <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openCreation(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
@@ -1265,7 +1367,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
-    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
+    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
         <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
@@ -1275,21 +1377,22 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
-          <div class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
+          <div ref="toolsRow" class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
           <div class="tabs"><span v-if="stepping" class="tab done"><Icon n="check" />Produit</span>
             <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name, icon], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span><Icon v-else :n="icon" class="tool" />{{ name }}</button></div></div></div>
           <div id="panneau" ref="panel" class="panel" role="tabpanel" tabindex="-1" :aria-labelledby="`onglet-${group}`" @focusin="panelFocus" @focusout="panelFocus">
             <p v-if="fieldError?.group === group" class="why refusal" role="alert">{{ fieldError.text }}</p>
             <template v-if="group === 'textes'">
             <p class="help lead">Les mots de l’affiche. Seuls le titre et le prix sont obligatoires.</p>
-            <label>Titre<textarea :value="doc.offer.title" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" :aria-invalid="!!headlineFaults.title || undefined" @input="event => edit(d => { d.offer.title = (event.target as HTMLTextAreaElement).value }, 'title')" /></label>
-            <p v-if="headlineFaults.title" class="why" role="status">{{ headlineFaults.title }}</p>
+            <label>Titre<textarea :value="doc.offer.title" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" @input="event => edit(d => { d.offer.title = (event.target as HTMLTextAreaElement).value }, 'title')" /></label>
+            <p v-if="headline.on" id="limite-titre" class="help">{{ doc.offer.title.length }} / 60 caractères pour un titre dessiné.</p><p v-if="headlineFaults.title" id="erreur-titre" class="why" role="status">{{ headlineFaults.title }}</p>
             <p v-if="staleTitle" class="why" role="status">Le titre est dessiné dans l’image<template v-if="currentVisual?.headline"> (« {{ currentVisual.headline.title }} »)</template>. Pour le changer, générez une nouvelle version, ou remettez l’ancien titre.</p>
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" name="price" autocomplete="off" inputmode="numeric" :disabled="drawingTexts && headline.price" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="changePrice" @blur="tidyPrice" /></span></label>
             <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
+            <p v-if="headline.on" id="next-version-words" class="help">Ces réglages servent à la prochaine version. Le titre et le prix restent dessinés ensemble dans l’image.</p>
             <p v-if="stalePrice" class="why" role="status">Le prix est dessiné dans l’image<template v-if="currentVisual?.headline?.price_ar !== undefined"> ({{ currentVisual.headline.price_ar.toLocaleString('fr-FR') }} AR)</template>. Pour le changer, générez une nouvelle version.</p>
-            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" :aria-invalid="!!headlineFaults.brand || undefined" /></label><p v-if="headlineFaults.brand" class="why" role="status">{{ headlineFaults.brand }}</p><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" :aria-invalid="!!headlineFaults.subtitle || undefined" /></label><p v-if="headlineFaults.subtitle" class="why" role="status">{{ headlineFaults.subtitle }}</p><div class="choice"><span id="accent-word-label">Mot du titre en couleur</span><div class="chips" role="group" aria-labelledby="accent-word-label"><button v-for="word in accentWords" :key="word" type="button" class="chip" translate="no" :aria-pressed="accentWord === word" :disabled="busy || !!job" @click="headline.accent_word = word">{{ word }}</button><button type="button" class="chip" :aria-pressed="!accentWord" :disabled="busy || !!job" @click="headline.accent_word = ''">Aucun</button></div></div></template>
-            <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="headline.accent_colour.toLowerCase() === value" :disabled="busy || !!job" @click="pickAccent(value)" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === headline.accent_colour.toLowerCase()) }">Autre…<input :value="headline.accent_colour" type="color" aria-label="Autre couleur d’accent" @input="pickAccent(($event.target as HTMLInputElement).value)" :disabled="busy || !!job" /></label></div></div>
+            <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" aria-describedby="erreur-marque aide-marque" :aria-invalid="!!headlineFaults.brand || undefined" /></label><p id="aide-marque" class="help">60 caractères maximum.<template v-if="duplicateBrand"> La marque est déjà dans le titre : elle ne sera pas répétée au-dessus.</template></p><p v-if="headlineFaults.brand" id="erreur-marque" class="why" role="status">{{ headlineFaults.brand }}</p><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" aria-describedby="erreur-sous-titre aide-sous-titre" :aria-invalid="!!headlineFaults.subtitle || undefined" /></label><p id="aide-sous-titre" class="help">60 caractères maximum.</p><p v-if="headlineFaults.subtitle" id="erreur-sous-titre" class="why" role="status">{{ headlineFaults.subtitle }}</p><div class="choice"><span id="accent-word-label">Mot du titre en couleur</span><div class="chips" role="group" aria-labelledby="accent-word-label"><button v-for="word in accentWords" :key="word" type="button" class="chip" translate="no" :aria-pressed="accentWord === word" :disabled="busy || !!job" @click="headline.accent_word = word">{{ word }}</button><button type="button" class="chip" :aria-pressed="!accentWord" :disabled="busy || !!job" @click="headline.accent_word = ''">Aucun</button></div></div></template>
+            <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="sceneAccent.toLowerCase() === value" :disabled="busy || !!job" @click="pickAccent(value)" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === sceneAccent.toLowerCase()) }">Autre…<input :value="sceneAccent" type="color" aria-label="Autre couleur d’accent" @input="pickAccent(($event.target as HTMLInputElement).value)" :disabled="busy || !!job" /></label></div></div>
             <p class="sub">Pour la prochaine version</p><p class="help">Par défaut, l’IA compose le titre et le prix avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant d’approuver la version ; pour corriger, générez une nouvelle version.</p>
             <label class="check"><input v-model="headline.on" type="checkbox" :disabled="busy || !!job" /> Laisser l’IA composer le titre dans l’image</label>
             <label v-if="headline.on" class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le prix dans l’image</label>
@@ -1297,13 +1400,15 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             </template>
             <template v-else-if="group === 'boutique'">
             <p class="help lead">Ce qui identifie votre boutique sur l’affiche.</p>
-            <div class="checks-row switches"><label v-for="role in IDENTITY" :key="role" class="check switch"><input :checked="doc.include[role]" type="checkbox" :disabled="!identitySource(role)" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
-            <p v-if="IDENTITY.some(role => !identitySource(role))" class="help">Un réglage grisé : cette information n’était pas enregistrée à la création de cette affiche. Renseignez-la sur l’écran « Créer », puis préparez une nouvelle affiche.</p>
+            <div class="checks-row switches"><label v-for="role in IDENTITY" :key="role" class="check switch"><input :checked="doc.include[role]" type="checkbox" :disabled="busy || !!job || !identitySource(role)" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
+            <details v-if="IDENTITY.some(role => !identitySource(role))" class="identity-import"><summary>Ajouter les informations manquantes</summary><p class="help">Enregistrez vos détails, puis ajoutez les informations manquantes à cette affiche. Les informations déjà présentes et vos versions précédentes sont conservées.</p><label>Nom de la boutique<input v-model="missingDraft.name" :disabled="busy || !!job" maxlength="160" /></label><label>Contact<textarea v-model="missingDraft.contact" :disabled="busy || !!job" maxlength="500" /></label><label class="file-pick">Logo<input type="file" accept="image/jpeg,image/png,image/webp" :disabled="busy || !!job" @change="event => perform(() => chooseLogo(event, missingDraft))" /><span class="pick-button">{{ missingDraft.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label><button type="button" :disabled="busy || !!job" @click="perform(importMissingProfile)">Ajouter à cette affiche</button></details>
+            <div v-if="doc.include.logo && logoLayer" class="choice"><span id="logo-position-label">Position du logo de la boutique</span><template v-if="sealLayer && currentVisual"><p class="help">Cette version contient un sceau. Créez une copie pour placer le logo dans un coin, sans modifier cette affiche.</p><button type="button" :disabled="busy || !!job" @click="perform(copyForCorner)">Créer une copie avec le logo en haut</button></template><template v-else><div class="chips" role="group" aria-labelledby="logo-position-label"><button v-for="side in (['left', 'right'] as const)" :key="side" type="button" class="chip" :aria-pressed="logoCorner === side" :disabled="busy || !!job" @click="edit(d => placeLogo(d, side))">{{ side === 'left' ? 'En haut à gauche' : 'En haut à droite' }}</button><button v-if="currentVisual?.logo_footer_box && !currentVisual.logo_box" type="button" class="chip" :aria-pressed="logoInFooter" :disabled="busy || !!job" @click="restoreLogoRegion">En bas, comme cette version</button></div><p class="help">Votre fichier original est placé au-dessus du titre. Une nouvelle version réserve cet espace ; vérifiez le résultat complet avant de télécharger.</p></template></div>
+            <p v-if="staleLogo" class="why" role="status">{{ restorableLogo ? 'Le logo ou le cadrage ne correspond plus à l’espace réservé. Rétablissez-les gratuitement, ou générez une nouvelle version.' : 'Le logo ou le cadrage ne correspond plus à l’espace réservé. Générez une nouvelle version.' }}<button v-if="restorableLogo" type="button" class="text-button" @click="restoreLogoRegion">{{ currentVisual?.logo_box ? 'Rétablir la position et le cadrage' : 'Remettre le logo en bas' }}</button></p>
             <p v-if="staleSignature" class="why" role="status">{{ currentVisual?.headline?.shop_name !== undefined ? 'Le nom de la boutique ou le contact' : 'Le contact' }} est dessiné dans l’image. Pour le changer ou le retirer, générez une nouvelle version.</p>
             <label v-if="doc.include.contact && contactLayer?.kind === 'text'">Position du contact<select aria-label="Position du contact" :value="sealOn ? 'right' : chosenAlign" :disabled="sealOn" @change="moveContact"><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>
             <p v-if="doc.include.contact && sealOn" class="help">Avec le sceau, le contact est à droite.</p>
             <p v-else-if="doc.include.contact && drawnContact" class="help">Le contact est dessiné dans l’image : la position s’applique à la prochaine version.<template v-if="logoShown && !sealLayer"> Gardez le logo à l’écart du contact, ou générez une nouvelle version.</template></p>
-            <p v-else-if="doc.include.contact && doc.include.logo && !sealLayer" class="help">Le contact se place dans l’espace à droite du logo.</p>
+            <p v-else-if="doc.include.contact && doc.include.logo && !sealLayer" class="help">Le contact reste dans le pied de l’affiche, séparé du logo.</p>
             <p v-if="(doc.include.logo && logoLayer) || (headline.on && doc.include.contact)" class="sub">Pour la prochaine version</p>
             <label v-if="doc.include.logo && logoLayer" class="check"><input type="checkbox" :checked="layout?.scene.visual_id ? !!sealLayer : sealOn" :disabled="busy || !!job || !!whyNoSeal" @change="setSeal" />Logo en sceau rond dans l’image</label>
             <p v-if="doc.include.logo && whyNoSeal" class="why" role="status">{{ whyNoSeal }} <button v-if="sealNeedsTexts" type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p>
@@ -1315,6 +1420,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div v-if="formatsShown.length > 1" class="choice format-choice"><span id="format-label">Format</span><div class="chips" role="radiogroup" aria-labelledby="format-label" :aria-describedby="formatFixed ? 'format-lock' : undefined"><label v-for="item in formatsShown" :key="item" class="chip"><input v-model="formatChoice" type="radio" name="format" :value="item" :disabled="formatHeld" />{{ FORMAT_NAMES[item][0] }} {{ FORMAT_NAMES[item][1] }}</label></div>
               <template v-if="formatFixed"><p id="format-lock" class="help">Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.</p><div class="row"><button v-for="item in otherFormats" :key="item" type="button" class="secondary" :disabled="busy || !!job" @click="perform(() => remakeIn(item)).then(focusFormat)">Refaire en {{ FORMAT_NAMES[item][0] }}</button></div></template></div>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
+            <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="group" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
             <div v-if="formatQuestion?.where === 'look'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div>
             <p v-if="look === 'couleur' && !styleAccent" class="help">Ce style est teinté de la couleur d’accent choisie dans « Textes ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p><p v-if="styleAccent" class="help" role="status">Ce style propose sa couleur d’accent ; la vôtre est conservée. <button type="button" class="text-button" @click="useStyleAccent">Utiliser la couleur du style</button></p>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
@@ -1334,7 +1440,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <div v-if="effect?.status === 'proposed' && effect.layer_id === selected" class="plan"><p>Vérifiez la matière dans l’aperçu. Les lettres et le montant restent exacts.</p><button :disabled="busy" @click="perform(() => decideEffect('apply'))">Appliquer la matière</button><button class="quiet" :disabled="busy" @click="perform(() => decideEffect('reject'))">Refuser la matière</button></div>
               </template>
             </div>
-            <div v-else-if="currentVisual"><p class="sub">Cadrage de la scène</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !refinement.trim()" @click="askRefine">Ajuster la scène</button><small>Appel image estimé : {{ dollars(caps?.scene_estimate_micros) }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
+            <div v-else-if="currentVisual"><p class="sub">Cadrage de l’image complète</p><p v-if="cropLocked" class="help">Le cadrage est verrouillé : le logo en haut utilise l’espace réservé de cette version, et un autre cadrage bloquerait le téléchargement.</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" :disabled="cropLocked" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" :disabled="cropLocked" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" :disabled="cropLocked" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !!whyNoRefine" @click="askRefine">Ajuster la scène</button><small>Appel image estimé : {{ dollars(caps?.scene_estimate_micros) }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
             <p v-else class="help">Choisissez un élément sous l’affiche pour le régler.</p>
             <!-- On a phone the editor's bar has no room for it: the application's theme is switched here. -->
             <button type="button" class="secondary panel-theme" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" />{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</button>
@@ -1355,10 +1461,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p v-if="mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p></div></div>
           <!-- On one column with a version, only this stays on top of the controls; the blocks after it follow the stage. -->
           <div ref="pin" class="pin">
-            <div class="proof">
+            <div v-if="!stepping && !peeking" class="preview-tools"><button v-if="shortViewport" type="button" @click="setPeek(true)">Aperçu plein écran</button><button v-else type="button" :aria-expanded="previewVisible" aria-controls="poster-proof" @click="previewVisible = !previewVisible">{{ previewVisible ? 'Masquer l’aperçu' : 'Afficher l’aperçu' }}</button><button type="button" :aria-expanded="versionsOpen" aria-controls="poster-versions" @click="versionsOpen = !versionsOpen">Versions ({{ visuals.length }})</button></div>
+            <div id="poster-proof" class="proof">
               <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
               <div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event" />
-                <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob">Version précédente<span :class="{ 'visually-hidden': viewportWidth <= 720 }"> conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
+                <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob"><span v-if="viewportWidth <= 720" aria-hidden="true">Version {{ versionNumber }}</span><span :class="{ 'visually-hidden': viewportWidth <= 720 }">Version précédente conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
             </div>
             <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
           </div>
@@ -1390,16 +1497,16 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <ul v-if="issues.length" class="issues"><li v-for="issue in issues" :key="issue.id" :class="{ blocking: issue.blocking }"><button class="text-button" @click="pick(issue.layer_id)">{{ issue.message }}</button></li></ul>
           <p v-if="currentVisual" class="help">{{ currentVisual.status === 'approved' ? 'Fidélité du produit approuvée.' : currentVisual.status === 'rejected' ? 'Cette version a été refusée. Choisissez une autre version ou générez-en une nouvelle.' : 'Comparez le produit avec la photo originale avant d’approuver sa fidélité.' }}</p>
         </section>
-        <aside class="versions" aria-labelledby="titre-versions" :inert="peeking">
+        <aside id="poster-versions" class="versions" aria-labelledby="titre-versions" :inert="peeking">
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
           <p v-if="!visuals.length" class="help">Chaque génération crée une version. Vous choisirez celle à exporter.</p>
-          <article v-for="visual in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
-            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir cette version (${ versionStates[visual.status] })`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
-            <span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
+          <article v-for="(visual, index) in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
+            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir la version ${visuals.length - index} (${versionStates[visual.status]})`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
+            <strong class="version-number">Version {{ visuals.length - index }}</strong><span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
-            <button class="text-button" @click="review = visual; resetChecks()">Comparer</button>
+            <button class="text-button" :aria-label="`Comparer la version ${visuals.length - index}`" @click="review = visual; resetChecks()">Comparer</button>
           </article>
-          <button v-if="visuals.length && visuals.length < 12" type="button" class="version new" :disabled="busy || !!job" @click="askScene"><span class="add"><Icon n="plus" /></span>Nouvelle version<small>Même produit, autre essai</small></button>
+          <button v-if="visuals.length && visuals.length < 12" type="button" class="version new" :disabled="busy || !!job || !!whyNoHeadline" @click="askScene"><span class="add"><Icon n="plus" /></span>Nouvelle version<small>Même produit, autre essai</small></button>
           <p v-else-if="visuals.length" class="help">Douze versions au plus par affiche. Pour d’autres essais, dupliquez l’affiche depuis « Mes affiches ».</p>
         </aside>
       </div>

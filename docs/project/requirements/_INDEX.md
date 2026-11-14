@@ -4,6 +4,7 @@
 
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
+| [editor-refinements.md](editor-refinements.md) | R-EDITOR-REFINEMENTS-001 … 004 | Approved autonomously after independent review, 2026-11-14 | [editor-refinements](../designs/editor-refinements.md) |
 | [product-visuals.md](product-visuals.md) | R-PRODUCT-VISUALS-001 … 011 | 001–008: phase-1 baseline; 009–011: approved normal-poster amendments | [product-visuals](../designs/product-visuals.md) |
 | [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001 … 005 | 001–004: Approved (003–004 on 2026-11-12, ADR-052; 003 amended by ADR-053 then ADR-055; design D-004 v3.1 approved, ADR-056); 005 (logo seal): Approved 2026-11-12 with its design (ADR-057) | [catalogue-brand](../designs/catalogue-brand.md) |
 | [generation-jobs.md](generation-jobs.md) | R-GENERATION-JOBS-001 … 002 | Approved | [generation-jobs](../designs/generation-jobs.md) |

@@ -1,6 +1,5 @@
 """Saved revision -> authoritative PNG -> immutable confirmation and exact download."""
 import json
-import math
 from typing import Literal
 from uuid import uuid4
 
@@ -40,6 +39,7 @@ def effective_snapshot(conn, settings, shop, document, format, build):
     # Words the image model drew cannot be edited: they must still say what the poster says, and a hidden
     # layer must be replaced by them. Showing the layer again never excuses stale words in the image.
     baked = visuals.baked_headline(conn, shop, visual) or {}
+    visuals.check_logo_placement(conn, shop, visual, document, format)
     shown = {layer.role: layer.visible for layer in layout.layers}
     if baked.get("title", document.offer.title) != document.offer.title or not (shown["title"] or "title" in baked):
         raise store.Refused("title_missing", 409)
@@ -51,13 +51,6 @@ def effective_snapshot(conn, settings, shop, document, format, build):
         if role in baked and signature.get(role) != baked[role] or (
                 role in signature and role not in baked and not shown[role]):
             raise store.Refused("signature_missing", 409)
-    # A scene made with a disc for the logo seal must not be exported with that disc left empty.
-    disc = (json.loads(visual["placement_json"]) if visual["placement_json"] else {}).get("logo_disc")
-    if disc:
-        logo = next((layer for layer in layout.layers if layer.role == "logo" and layer.visible), None)
-        if logo is None or (math.hypot(logo.x + logo.width / 2 - disc["x"], logo.y + logo.height / 2 - disc["y"])
-                            + disc["d"] / 2 > min(logo.width, logo.height) / 2 + 2):
-            raise store.Refused("logo_disc_uncovered", 409)
     manifest, sources, layers, fonts = {}, {}, [], {}
     def source(key, sha, data):
         prepared = rendering.canvas_image(data)
