@@ -27,6 +27,9 @@ services:
       # gpt-image-2 / high by restoring these two lines and deploying.
       OPENAI_IMAGE_MODEL: gpt-image-2.5-flare
       OPENAI_IMAGE_QUALITY: medium
+      # Carré and Story after one good paid scene each on 2026-11-14 (ADR-082, ADR-083). Back to Publication
+      # only by setting "feed"; posters already made in another format then stay readable but cannot be exported.
+      FORMATS_ENABLED: feed,square,story
       PLANNER_PROVIDER: claude
       SERVE_FRONTEND: "true"
       API_HOST: 0.0.0.0

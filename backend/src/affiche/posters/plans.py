@@ -423,6 +423,15 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "product or its shadow. "
                      + ("The price label keeps the left, the contact line the right, and neither touches the disc."
                         if align == "left" else "Neither the price label nor the contact line touches the disc."))
+    top, bottom = MARGINS[context.format]
+    if (top, bottom) != MARGINS["feed"] and not refinement:
+        # The first paid Story scene drew the whole footer 5 % lower than its bands (ADR-082): the bands alone do not
+        # hold the model, so the covered zones are named, with the reason.
+        lines.append(f"Safe zones: the top {top:.0%} and the bottom {1 - bottom:.0%} of the frame are covered by the "
+                     "interface of the application that shows this image. They show only the calm backdrop: no "
+                     "writing, no label, no disc and no part of the product. The lowest element of the composition "
+                     f"ends above {bottom:.0%} of the frame height and the highest starts below {top:.0%}; measure "
+                     "from the frame's edges, and move the composition towards the centre rather than towards an edge.")
     lines.append(("Constraints: the only writing is the headline, the price label"
                   + (f", {drawn_signature}" if signature else "") + " and the markings already printed on the "
                   "product. No other numbers, badges or watermarks. " if price_ar is not None else

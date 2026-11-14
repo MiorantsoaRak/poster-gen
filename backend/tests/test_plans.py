@@ -243,6 +243,18 @@ def test_the_price_pill_and_the_badge_are_asked_in_the_foreground():
     assert "in the foreground" not in compiled(headline=Headline(**drawn), refinement=True).split("Shop badge:")[0]
 
 
+@pytest.mark.parametrize("format, zones", [("feed", False), ("square", False), ("story", True)])
+def test_story_names_the_zones_the_interface_covers(format, zones):
+    ctx = context(format=format)
+    plan = fixed_plan(ctx)
+    prompt = compile_scene(plan, ctx, photo_count=1, title="CMF Buds 2a", price_ar=190000, headline=Headline(price=True))
+    assert ("Safe zones: the top 13% and the bottom 13% of the frame" in prompt) is zones
+    assert ("ends above 87% of the frame height" in prompt) is zones
+    # A refinement of a stored scene keeps the prompt that scene was made with.
+    assert "Safe zones" not in compile_scene(plan, ctx, photo_count=1, title="CMF Buds 2a", price_ar=190000,
+                                             headline=Headline(price=True), refinement=True)
+
+
 def test_the_accent_word_is_asked_to_stay_readable():
     ctx = context()
     plan = fixed_plan(ctx)
