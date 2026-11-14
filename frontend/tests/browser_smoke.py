@@ -543,7 +543,8 @@ def walk_wait(browser, session, errors):
 def walk_words(browser, session, errors):
     """One poster's words never reach the next one (T-BLANK-WORDS, user report 2026-11-14): poster A is made with a brand,
     a subtitle and an accent word; poster B, made next from the form, starts blank and its scene request carries none of
-    them; A reopened shows its own words again."""
+    them; A reopened shows its own words again. Typed before the first version, the words survive a reload (T-KEEP-WORDS):
+    they are kept in the browser under the poster's own id until its version carries them."""
     context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
     page = context.new_page()
     page.set_default_timeout(10000)
@@ -572,14 +573,29 @@ def walk_words(browser, session, errors):
         page.get_by_role("button", name="Tout est conforme, approuver").click()
         expect(page.get_by_role("tab")).to_have_count(4)
 
+    kept = "id => JSON.parse(localStorage.getItem('affiche.words.' + id))"
+
     page.goto(ORIGIN)
     make("Casque Alpha", "120 000")
     brand.fill("MarqueAlpha")
     subtitle.fill("SOUS-TITRE ALPHA")
     words.filter(has_text="Casque").click()
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
-    generate()
     poster_a = page.url.split("#")[1]
+    # Not generated yet: the words are in the browser, under this poster's id, with nothing else of the poster.
+    page.wait_for_function("id => localStorage.getItem('affiche.words.' + id)?.includes('Casque')", arg=poster_a)
+    entry = page.evaluate(kept, poster_a)
+    assert (entry["brand"], entry["subtitle"], entry["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), entry
+    assert sorted(entry) == ["accent_colour", "accent_word", "at", "brand", "brand_text", "contact", "on", "price", "subtitle"], entry
+    assert not re.search("120|034|phone-noir", json.dumps(entry | {"at": 0})), entry
+    page.reload()
+    expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
+    expect(brand).to_have_value("MarqueAlpha")
+    expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
+    expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
+    assert not scenes, scenes
+    generate()
+    assert len(scenes) == 1, scenes
     assert (scenes[-1]["headline"]["brand"], scenes[-1]["headline"]["subtitle"], scenes[-1]["headline"]["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), scenes[-1]
     # The form waits for the next product: nothing of A's photos, name, price or agreement is left in it.
     page.locator(".nav a", has_text="Créer").click()
@@ -588,6 +604,8 @@ def walk_words(browser, session, errors):
     expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("")
     expect(page.get_by_label("Variante confirmée")).to_have_value("Conforme à la photo")
     expect(page.get_by_label("Les photos correspondent")).not_to_be_checked()
+    # The version carries A's words now: its entry is gone.
+    assert page.evaluate(kept, poster_a) is None, page.evaluate(kept, poster_a)
     make("Enceinte Beta", "80 000")
     expect(brand).to_have_value("")
     expect(subtitle).to_have_value("")
@@ -603,6 +621,14 @@ def walk_words(browser, session, errors):
     expect(brand).to_have_value("MarqueAlpha")
     expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
+    # The same after a reload, from the version alone: nothing of A is in the browser's storage.
+    page.reload()
+    expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
+    expect(brand).to_have_value("MarqueAlpha")
+    expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
+    expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
+    assert not page.evaluate("() => Object.keys(localStorage).some(key => key.startsWith('affiche.words.') && /Alpha|ALPHA|Casque/.test(localStorage.getItem(key)))")
+    assert page.evaluate(kept, poster_a) is None
     context.close()
 
 

@@ -7,6 +7,7 @@ import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, s
 import type { LayoutIssue } from './canvas'
 import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
+import { readWords, staleWords, WORDS_PREFIX } from './words'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
@@ -713,6 +714,22 @@ async function createPoster() {
     if (logo?.kind === 'logo' && document.include.logo && !document.include.shop_name) logo.shape = 'circle'
   })
 }
+// Until a version carries them, the typed words live only here: they are kept in the browser, per poster, so that a reload
+// or a later visit on the same device does not lose them (ADR-083). Without storage (private mode) nothing is kept, as before.
+function forgetWords(id: string) { try { localStorage.removeItem(WORDS_PREFIX + id) } catch { /* convenience only */ } }
+function keepWords(id: string) {
+  const { on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour } = headline.value
+  try {
+    localStorage.setItem(WORDS_PREFIX + id, JSON.stringify({ on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour, at: Date.now() }))
+    const kept = Object.keys(localStorage).filter(key => key.startsWith(WORDS_PREFIX))
+    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) localStorage.removeItem(key)
+  } catch { /* convenience only: the words hold for this visit */ }
+}
+// Once the poster's version records its words, `restoreHeadline()` is the source and the entry goes.
+watch(() => [creation.value?.id, !!currentVisual.value?.headline, JSON.stringify(headline.value)], () => {
+  const id = creation.value?.id
+  if (id) currentVisual.value?.headline ? forgetWords(id) : keepWords(id)
+})
 async function adopt(result: Creation) {
   // Steps or tabs depend on the versions: for another poster they are read before the editor shows it.
   const opening = creation.value?.id !== result.id
@@ -729,6 +746,12 @@ async function adopt(result: Creation) {
   clearTimeout(pollTimer); job.value = null; review.value = null; proposal.value = null; effect.value = null; previewPolish.value = false
   saver?.dispose(); creation.value = result; visuals.value = known; doc.value = copy(result.document); priceText.value = shownPrice(result.document.offer.price_ar)
   selected.value = result.document.formats[result.document.primary_format]!.layers.find(layer => layer.role === 'title')?.id ?? null
+  // This poster's own entry only, and before anything waits: the watcher above would first write the blank words over it.
+  if (opening && !currentVisual.value?.headline) {
+    let stored: string | null = null
+    try { stored = localStorage.getItem(WORDS_PREFIX + result.id) } catch { /* private mode: nothing was kept */ }
+    Object.assign(headline.value, readWords(stored, result.document.offer.title))
+  }
   history = new History(); plan.value = null; styleReference.value = null
   saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT').catch(reason => {
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
@@ -805,7 +828,7 @@ const restore = (item: LibraryItem) => perform(() => onRow(() => mutation(`/api/
 function askRemove(item: LibraryItem) {
   paid.value = { title: `Retirer « ${item.title} » de la liste ?`, label: 'Retirer de la liste', cost: '',
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
-    run: () => onRow(() => mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID())) }
+    run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id) }) }
 }
 async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
 async function refreshVisuals() {
