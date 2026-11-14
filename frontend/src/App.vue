@@ -1102,9 +1102,13 @@ const smallPhotoOf = ref(''), lowResAcceptedOf = ref('')
 const smallPhoto = computed(() => !!creation.value && smallPhotoOf.value === creation.value.id)
 const lowResAccepted = computed({ get: () => !!creation.value && lowResAcceptedOf.value === creation.value.id,
   set: (agreed: boolean) => { lowResAcceptedOf.value = agreed ? creation.value?.id ?? '' : '' } })
-async function refineScene() {
+// key and sending: the chat's, as for createScene.
+async function refineScene(key?: string, sending?: (request: SceneRequest) => void) {
   await flush()
-  const result = await mutation<any>(`/api/creations/${creation.value!.id}/refinements`, { base_visual_id: currentVisual.value!.id, instruction_fr: refinement.value, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}) }, saver!.revision)
+  const path = `/api/creations/${creation.value!.id}/refinements`, revision = saver!.revision
+  const body = { base_visual_id: currentVisual.value!.id, instruction_fr: refinement.value, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}) }
+  sending?.({ path, body, revision })
+  const result = await mutation<any>(path, body, revision, key)
   follow({ id: result.job_id, kind: 'refine', status: 'queued', result_ref: null, error_code: null })
 }
 // Waiting for a scene or an adjustment of the scene (D-POSTER-EDITOR-006): the phase comes from the job's real state,
@@ -1334,6 +1338,8 @@ async function decide(action: 'approve' | 'reject') {
 // What the chat is handed (D-TEXT-FIRST-003): this editor's own refs and functions, so the routes, guards and retries are
 // the same. A failure goes back to the card that asked instead of the general message.
 // It settles once perform() is over, so that the chat goes on with the editor free again.
+// A price as typed in the editor's own field; flush() refuses to go on if the field did not take it.
+const typePrice = (value: number) => { priceText.value = shownPrice(value); changePrice() }
 const told = (action: () => Promise<void>) => new Promise<void>((done, fail) => {
   if (busy.value) return fail(new Error(waiting))
   let failure: unknown
@@ -1354,6 +1360,26 @@ const chat: ChatAdapter = {
     if (paletteBlocked.value) pickLook('clair')
     await createScene(key, sending)
   }),
+  change: (key, instruction, sending) => told(async () => {
+    if (!currentVisual.value) throw new Error('Choisissez d’abord la version à ajuster.')
+    refinement.value = instruction  // the editor's own field: the request is the one of « Ajuster la scène »
+    await refineScene(key, sending)
+  }),
+  reprice: (key, price, smallPhotoAccepted, owned, sending) => told(async () => {
+    // Earlier saves first: the price edit is queued only by the tab that still holds the chat, and leaves at once.
+    await flush(); owned()
+    typePrice(price)
+    if (smallPhotoAccepted) lowResAccepted.value = true
+    await createScene(key, sending)
+  }),
+  price: (value, owned) => told(async () => { await flush(); owned(); typePrice(value); await flush() }),
+  select: id => told(async () => {
+    if (!visuals.value.some(item => item.id === id)) await refreshVisuals(true)
+    const made = visuals.value.find(item => item.id === id)
+    if (made && currentVisual.value?.id !== id) chooseVisual(made)
+    await flush()
+  }),
+  attempts: async () => (await api<{ items: Job[] }>(`/api/creations/${creation.value!.id}/jobs`, { quiet: true })).items,
   job: id => api<Job>(`/api/jobs/${id}`, { quiet: true }),
   follow: found => follow(found as Job, true),
   review: visual => { review.value = visual; resetChecks() },

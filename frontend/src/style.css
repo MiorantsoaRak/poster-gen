@@ -701,16 +701,31 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
 .chat-state { font-weight: 700 }
 .chat-state.approved { color: var(--ok) }
-.chat-state.rejected { color: var(--bad) }
+/* « Refusée » keeps the text colour: --bad on the dark glass of a bubble is under 4.5:1 (4.29). The word says it. */
 .chat .chat-poster { display: block; width: 100%; min-height: 0; aspect-ratio: 4 / 5; padding: 0; border: 0; border-radius: 14px; overflow: hidden; background: #14110e; cursor: zoom-in }
 .chat-poster img { display: block; width: 100%; height: 100%; object-fit: cover }
 .chat .chat-poster.small { width: 168px }
-.chat-side { grid-area: side; display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 20px }
+.chat-side { grid-area: side; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px; border-radius: 20px }
 .chat .chat-side .chat-poster { flex: none; width: 60px; border-radius: 10px }
-.chat-side p { display: grid; min-width: 0; margin: 0 }
+.chat-side p { display: grid; flex: 1; min-width: 0; margin: 0 }
 .chat-side span { color: var(--muted); font-size: 13px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+/* The list of modifications: folded behind its button beside the small poster, open in the wide column. */
+.chat .mods-toggle { flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); background: var(--glass-field); font-size: 13px; font-weight: 600 }
+.mods { display: none; flex-basis: 100%; gap: 2px; max-height: 34vh; overflow-y: auto; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line) }
+.mods.open { display: grid }
+.mods h2 { display: none; margin: 0; padding: 0 8px 4px; font-size: 13px; line-height: 18px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
+.chat .mod { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; border: 0; border-radius: 12px; background: none; text-align: left; font-size: 14px; line-height: 20px; font-weight: 500 }
+.chat .mod[aria-current=true] { background: var(--bubble) }
+.mod i { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 9px; background: var(--glass-field); font-style: normal; font-size: 12px; font-weight: 800 }
+.mod span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text) }
+.mod small { flex: none }
+.chat .mod small.approved { color: var(--ok) }
+.chat .mod small.rejected { color: var(--text) }
+.chat-limit { font-weight: 600 }
 .composer { grid-area: composer; display: grid; gap: 8px; padding: 8px; border-radius: 22px }
 .composer:focus-within { border-color: var(--text) }
+.chat-elsewhere-read { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 4px 6px 0; font-size: 13px; line-height: 18px }
+.chat .chat-elsewhere-read button { min-height: 36px; font-size: 13px }
 .tray { padding: 6px 6px 0 }
 .style-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none }
 .chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 3px 12px 3px 3px; border: 1px solid var(--line); background: var(--glass-field); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
@@ -725,8 +740,12 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 @media (min-width: 880px) {
   /* Wide: the poster has its own column on the right. */
   .chat.has-poster { max-width: 1080px; grid-template: "thread side" minmax(0, 1fr) "composer side" auto / minmax(0, 1fr) 340px; column-gap: 24px }
-  .chat.has-poster .chat-side { flex-direction: column; align-items: stretch; align-self: start; max-height: 100%; overflow-y: auto; gap: 10px; padding: 12px }
+  .chat.has-poster .chat-side { flex-direction: column; flex-wrap: nowrap; align-items: stretch; align-self: start; max-height: 100%; overflow-y: auto; gap: 10px; padding: 12px }
   .chat.has-poster .chat-side .chat-poster { width: 100%; border-radius: 14px }
+  .chat.has-poster .chat-side p { flex: none }
+  .chat.has-poster .mods-toggle { display: none }
+  .chat.has-poster .mods { display: grid; flex: none; max-height: none; overflow: visible; margin: 0; padding-top: 10px }
+  .chat.has-poster .mods h2 { display: block }
 }
 @media (max-width: 720px) {
   .seg { margin-left: auto }

@@ -293,6 +293,7 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
                    "quality": settings.openai_image_quality or "high", "prompt": compiled, "photo_assets": product["photo_assets"],
                    "base_visual_id": base["id"], "low_res_ack": bool(base["low_res_ack"]),
+                   "instruction_fr": request.instruction_fr,  # shown in the chat's list of modifications
                    "style_reference_asset": request.style_reference_asset,
                    "reference_roles": ["base"] + ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
         if baked:
@@ -355,6 +356,8 @@ def get_visual(conn, shop, id):
     return {key: row[key] for key in ("id", "input_id", "base_visual_id", "status", "model", "quality", "size", "created_at", "decided_at")} | {
         "image_url": f'/api/assets/{row["image_asset"]}',
         "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
+        # The owner's words for a refinement; null for a scene, and for a refinement older than this field.
+        "instruction_fr": payload.get("instruction_fr"),
         "original_urls": [f"/api/assets/{sha}" for sha in json.loads(row["source_assets_json"])],
         "checks": json.loads(row["checks_json"]), "reasons": json.loads(row["rejection_reasons_json"] or "[]"),
         "note": row["rejection_note"]} | logo_region(conn, shop, row) | (

@@ -136,6 +136,14 @@ def test_approved_base_survives_rejected_refinement_and_identity_roles(engine, s
     assert "Images 2 are the original" in prepared["payload"]["prompt"]
     assert len(prepared["images"]) == 2
     revised_id = execute(engine, settings)
+    # The chat's list of modifications names a refinement by the owner's words; a scene has none.
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, revised_id)["instruction_fr"] == "Une lumière plus chaude"
+        assert base["instruction_fr"] is None
+        # A refinement made before the field was kept: null, never a guess from the prompt.
+        conn.execute(text("UPDATE poster_jobs SET input_json=json_remove(input_json,'$.instruction_fr') WHERE id=:id"), {"id": job["id"]})
+        assert visuals.get_visual(conn, 1, revised_id)["instruction_fr"] is None
+        conn.rollback()
     visuals.decide(engine, 1, key(), revised_id, visuals.Decision(action="reject", reasons=["coloris"]))
     with engine.connect() as conn:
         assert visuals.get_visual(conn, 1, base_id) == base

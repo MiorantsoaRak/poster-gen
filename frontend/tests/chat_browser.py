@@ -1,4 +1,4 @@
-"""Creation by message in a real browser (T-CHAT-003, D-TEXT-FIRST-001 and 003): stub providers, temporary data, zero
+"""Creation by message in a real browser (T-CHAT-003 and 004, D-TEXT-FIRST-001 and 003): stub providers, temporary data, zero
 spend. From backend/: uv run python ../frontend/tests/chat_browser.py (ports 8000 and 5173 must be free).
 Pictures: outputs/chat-smoke/."""
 import json
@@ -212,9 +212,6 @@ def walk_desktop(browser, errors, product, inspiration):
     # The chat never mounted the canvas nor loaded a poster font.
     expect(page.locator(".poster-canvas, .konvajs-content")).to_have_count(0)
     assert not fonts, fonts
-    # An existing poster: no paid read for a change the chat cannot carry out yet, and the way to the steps is offered.
-    say(page, "fond plus sombre")
-    expect(thread).to_contain_text("Pour changer cette affiche, passez par Pas à pas.")
     assert len(reads) == 1, reads
 
     # « Mes affiches » opens a poster in the chat when the chat is the start view; the switch shows the same poster in the editor.
@@ -401,6 +398,342 @@ def walk_desktop(browser, errors, product, inspiration):
     session = context.storage_state()
     context.close()
     return session
+
+
+def walk_changes(browser, errors, session):
+    """An existing poster is changed by message (T-CHAT-004): a new scene of it, a new price, the list of modifications.
+    The poster is the first one of walk_desktop: one version, approved and downloaded."""
+    reads, sent = [], {"refinements": [], "scenes": []}
+
+    def seen(request):
+        if request.method != "POST":
+            return
+        if request.url.endswith("/api/reads"):
+            reads.append(request.headers["idempotency-key"])
+        for path in sent:
+            if request.url.endswith("/" + path):
+                sent[path].append(request.headers["idempotency-key"])
+
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    context.on("request", seen)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
+
+    def open_poster():
+        page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+        page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
+        page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+        page.get_by_role("button", name="Fermer").click()  # a confirmed poster opens on its file
+    page.goto(smoke.ORIGIN)
+    page.wait_for_url("**/#message")
+    open_poster()
+    poster = page.url.split("#message-")[1]
+    thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
+    create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
+    verify, download = page.get_by_role("button", name="Vérifier", exact=True), page.get_by_role("button", name="Télécharger", exact=True)
+    mods, toggle = side.locator(".mod"), side.get_by_role("button", name=re.compile("^Modifications"))
+    items = lambda: page.evaluate(THREAD, poster)["items"]
+    spent = lambda: [item for item in items() if item.get("spent")][-1]
+    creation = lambda: page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}").json()
+    versions = lambda: page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/visuals").json()["items"]
+    made = lambda kind: [job for job in page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/jobs").json()["items"] if job["kind"] == kind]
+
+    def selected(visual):  # the choice is saved by the editor's own saver
+        for _ in range(50):
+            if creation()["document"]["formats"]["feed"]["scene"]["visual_id"] == visual:
+                return
+            page.wait_for_timeout(200)
+        raise AssertionError("the new version is not the poster's selected one")
+
+    def approve():
+        verify.click()
+        expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
+        page.get_by_role("button", name="Tout est conforme, approuver").click()
+        expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+        expect(verify).to_have_count(0)
+        expect(download).to_have_count(1)  # on the selected version only
+
+    expect(thread).to_contain_text("Dites ce qu’il faut changer")
+    # Wide: the list of modifications is open under the poster, without its button.
+    expect(toggle).to_be_hidden()
+    expect(mods).to_have_count(1)
+    expect(mods.first).to_have_text(re.compile(r"^V1\s*Première affiche\s*Confirmée$"))
+
+    # A message on a poster is read for it; the answer is a card that says what will happen and what it costs.
+    say(page, "fond plus sombre")
+    card = thread.locator(".bubble.bot").last
+    expect(card).to_contain_text("Nouvelle version : « fond plus sombre ». L’actuelle reste gardée.")
+    expect(card).to_contain_text("Mode de démonstration : aucune dépense.")
+    assert len(reads) == 1, reads
+    both_themes(page, "change card, desktop", "chat-change-1366")
+    # « Annuler »: the words go back to the field, the card goes, nothing was asked for the poster.
+    cancel.click()
+    expect(create).to_have_count(0)
+    expect(field).to_have_value("fond plus sombre")
+    expect(field).to_be_focused()
+    assert not sent["refinements"] and not sent["scenes"], sent
+    page.get_by_role("button", name="Envoyer").click()
+    expect(create).to_be_visible()
+    assert len(reads) == 2 and reads[0] != reads[1], reads
+    # The tap; the answer is lost and the page reloaded before the job is known. Nothing is sent by itself: « Reprendre »
+    # sends the kept /refinements request again with the same key, and the server answers what it stored. One job.
+    stuck = []
+
+    def lose_answer(route):
+        route.fetch()
+        stuck.append(route)
+    context.route("**/refinements", lose_answer)
+    create.click()
+    for _ in range(100):
+        if stuck:
+            break
+        page.wait_for_timeout(100)
+    kept = spent()
+    assert kept["card"]["change"] == "scene" and kept["request"]["path"] == f"/api/creations/{poster}/refinements" and "job" not in kept, kept
+    assert kept["request"]["body"]["instruction_fr"] == "fond plus sombre", kept
+    page.reload()
+    context.unroute("**/refinements")
+    page.get_by_role("button", name="Fermer").click()
+    resume = thread.get_by_role("button", name="Reprendre")
+    expect(resume).to_be_visible()
+    expect(resume.locator("xpath=../..")).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()  # the waiting card comes first
+    page.wait_for_timeout(500)
+    assert sent["refinements"] == [kept["id"]], sent
+    resume.click()
+    expect(verify).to_be_visible(timeout=30000)
+    assert sent["refinements"] == [kept["id"]] * 2 and len(made("refine")) == 1, sent
+    # The new version is a result card like the first, and it is the poster's selected one.
+    expect(thread).to_contain_text("Version 2 prête.")
+    expect(side).to_contain_text("Version 2 · à vérifier")
+    second = versions()[0]
+    assert second["instruction_fr"] == "fond plus sombre" and versions()[1]["instruction_fr"] is None, second
+    selected(second["id"])
+    expect(download).to_have_count(0)  # the first version is no longer the selected one
+    expect(mods).to_have_text([re.compile(r"^V2\s*fond plus sombre\s*À vérifier$"), re.compile(r"^V1\s*Première affiche\s*Confirmée$")])
+    # A line of the list shows its version. Looking is free: the poster's choice does not move.
+    mods.nth(1).click()
+    expect(side).to_contain_text("Version 1 · approuvée")
+    expect(mods.nth(1)).to_have_attribute("aria-current", "true")
+    page.wait_for_timeout(1500)
+    assert creation()["document"]["formats"]["feed"]["scene"]["visual_id"] == second["id"]
+    mods.nth(0).click()
+    expect(side).to_contain_text("Version 2 · à vérifier")
+    both_themes(page, "second version, desktop", "chat-version2-1366")
+    approve()
+    expect(mods.first).to_contain_text("Confirmée")
+
+    # A new price: the editor's price edit, then a new scene with the card's key; the new version is selected.
+    old = creation()["document"]["offer"]["price_ar"]
+    say(page, "prix 650 000 Ar")
+    card = thread.locator(".bubble.bot").last
+    expect(card).to_contain_text(re.compile(r"Le prix est dessiné dans l’image : je refais l’affiche avec 650\s000 Ar"))
+    expect(cancel).to_be_visible()
+    create.click()
+    expect(verify).to_be_visible(timeout=30000)
+    priced = spent()
+    assert priced["card"]["previous"] == old == 700000 and sent["scenes"] == [priced["id"]] and priced["request"]["path"].endswith("/scenes"), (priced, sent)
+    expect(thread).to_contain_text("Version 3 prête.")
+    third = versions()[0]
+    assert creation()["document"]["offer"]["price_ar"] == 650000 and third["headline"]["price_ar"] == 650000, third
+    selected(third["id"])
+    expect(side).to_contain_text(re.compile(r"Version 3 · à vérifier.*650\s000 Ar"))
+    expect(mods.first).to_have_text(re.compile(r"^V3\s*Prix : 650\s000 Ar\s*À vérifier$"))
+    approve()
+
+    # The new scene is refused for good after the price edit was saved (here the server's own plan_stale: the request is
+    # delivered with the plan of an older revision). The card is retired; the thread says that the image shows the old
+    # price, and offers a new card with its cost, or the old price back.
+    def stale_plan(route):
+        body = route.request.post_data_json
+        route.continue_(post_data=json.dumps(body | {"plan_id": priced["request"]["body"]["plan_id"]}))
+    retry, back = thread.get_by_role("button", name="Réessayer", exact=True), thread.get_by_role("button", name="Remettre l’ancien prix")
+    for round in ("back", "retry"):
+        context.route("**/scenes", stale_plan)
+        say(page, "prix 600 000 Ar")
+        create.click()
+        stale = thread.locator(".bubble.bot").last
+        expect(stale).to_contain_text("L’affiche montre encore l’ancien prix.")
+        expect(stale).to_contain_text("Mode de démonstration : aucune dépense.")
+        expect(retry).to_have_count(1)
+        expect(create).to_have_count(0)
+        context.unroute("**/scenes")
+        refused = spent()
+        assert refused.get("done") and "job" not in refused and creation()["document"]["offer"]["price_ar"] == 600000 and len(made("scene")) == 2, refused
+        if round == "back":
+            both_themes(page, "old price still shown, desktop", "chat-old-price-1366")
+            back.click()
+            expect(thread).to_contain_text(re.compile(r"Prix remis : 650\s000 Ar\."))
+            expect(back).to_have_count(0)
+            expect(retry).to_have_count(0)
+            for _ in range(50):
+                if creation()["document"]["offer"]["price_ar"] == 650000:
+                    break
+                page.wait_for_timeout(200)
+            assert creation()["document"]["offer"]["price_ar"] == 650000
+            expect(download).to_have_count(1)  # the approved version shows the poster's price again
+    # « Réessayer » is the new card: its own key, one more scene, the fourth version with the new price.
+    retry.click()
+    expect(verify).to_be_visible(timeout=30000)
+    again = spent()
+    assert again["id"] != refused["id"] and sent["scenes"][-1] == again["id"] and sent["scenes"].count(again["id"]) == 1 and len(made("scene")) == 3, (again, sent)
+    fourth = versions()[0]
+    assert fourth["headline"]["price_ar"] == 600000, fourth
+    selected(fourth["id"])
+    expect(mods).to_have_text([re.compile(r"^V4\s*Prix : 600\s000 Ar\s*À vérifier$"), re.compile(r"^V3\s*Prix : 650\s000 Ar\s*Confirmée$"),
+                               re.compile(r"^V2\s*fond plus sombre\s*Confirmée$"), re.compile(r"^V1\s*Première affiche\s*Confirmée$")])
+    looks_right(page, "four versions, desktop", "chat-mods-1366.png")
+    # Two refused price changes in a row: the document holds the first refused price when the second is asked, and
+    # « Remettre l’ancien prix » still gives the price the image shows (review r1, finding 5).
+    for amount in ("550 000", "500 000"):
+        context.route("**/scenes", stale_plan)
+        say(page, f"prix {amount} Ar")
+        create.click()
+        expect(thread.locator(".bubble.bot").last).to_contain_text("L’affiche montre encore l’ancien prix.")
+        context.unroute("**/scenes")
+    assert creation()["document"]["offer"]["price_ar"] == 500000 and spent()["card"]["previous"] == 600000, spent()
+    back.click()
+    expect(thread).to_contain_text(re.compile(r"Prix remis : 600\s000 Ar\."))
+    for _ in range(50):
+        if creation()["document"]["offer"]["price_ar"] == 600000:
+            break
+        page.wait_for_timeout(200)
+    assert creation()["document"]["offer"]["price_ar"] == 600000 and len(made("scene")) == 3
+
+    # One unresolved paid card at a time (finding 1). A refinement's answer is lost; the version it started from is then
+    # refused in the review. No new paid card is offered while the first waits: its « Reprendre » only. Once it has
+    # its version, the card for the refused one comes.
+    stuck.clear()
+    context.route("**/refinements", lose_answer)
+    say(page, "lumière plus chaude")
+    create.click()
+    for _ in range(100):
+        if stuck:
+            break
+        page.wait_for_timeout(100)
+    waiting = spent()
+    page.reload()
+    context.unroute("**/refinements")
+    page.get_by_role("button", name="Fermer").click()
+    expect(resume).to_be_enabled()
+    verify.click()  # the fourth version, still to check
+    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
+    page.get_by_role("button", name="Signaler un problème").click()
+    page.locator("textarea[name=rejection]").fill("Le fond ne va pas")
+    page.get_by_role("button", name="Refuser cette version").click()
+    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+    expect(thread.locator(".chat-state.rejected")).to_have_count(1)
+    page.wait_for_timeout(500)
+    paid_buttons = thread.get_by_role("button", name=re.compile("^(Créer|Créer l’affiche|Réessayer)$"))
+    expect(paid_buttons).to_have_count(0)
+    expect(thread).not_to_contain_text("Version refusée.")
+    expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()
+    resume.click()
+    expect(verify).to_be_visible(timeout=30000)
+    expect(thread).to_contain_text("Version refusée. Je peux en refaire une.")
+    expect(thread.get_by_role("button", name="Créer l’affiche")).to_have_count(1)
+    assert sent["refinements"].count(waiting["id"]) == 2 and len(made("refine")) == 2 and len(made("scene")) == 3, sent
+    fifth = versions()[0]
+    selected(fifth["id"])
+    # What the chat cannot do on a poster is said by the server's card, with the way to the steps.
+    say(page, "change le titre")
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Dites ce qu’il faut changer")
+    expect(thread.locator(".bubble.bot").last.get_by_role("button", name="Pas à pas")).to_be_visible()
+
+    # The one pending read is never replaced (finding 2). Its answer is lost on this poster; on another poster nothing
+    # can be sent, the composer says why and leads back; there « Réessayer » is the same request, with the same key.
+    send = page.get_by_role("button", name="Envoyer")
+    context.route("**/api/reads", lambda route: route.abort("failed"))
+    say(page, "fond bleu nuit")
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Connexion interrompue")
+    lost = page.evaluate(PENDING)
+    assert lost == reads[-1]
+
+    def open_other():
+        page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+        page.get_by_role("button", name=re.compile("Casque JBL")).first.click()
+        page.wait_for_url(re.compile(r"#message-(?!%s)[a-f0-9-]{36}$" % poster))
+    open_other()
+    other = page.url.split("#message-")[1]
+    field.fill("prix 290 000 Ar")
+    expect(send).to_be_disabled()
+    waits = page.locator(".chat-elsewhere-read")
+    expect(waits).to_contain_text("Un message attend encore sur une autre affiche.")
+    looks_right(page, "a message waits on another poster", "chat-read-elsewhere-1366.png")
+    count = len(reads)
+    waits.get_by_role("button", name="Ouvrir cette affiche").click()
+    page.wait_for_url(f"**/#message-{poster}")
+    page.get_by_role("button", name="Fermer").click()
+    expect(waits).to_have_count(0)
+    context.unroute("**/api/reads")
+    thread.get_by_role("button", name="Réessayer", exact=True).click()
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Nouvelle version : « fond bleu nuit »")
+    assert len(reads) == count + 1 and reads[-1] == lost and page.evaluate(PENDING) is None, reads
+    cancel.click()
+
+    # A price that is a layer of the poster changes for free (finding 3). The other poster's selected version was made
+    # through the API without drawn words: the card has no cost, « Changer le prix » is the editor's price edit, no job.
+    open_other()
+    expect(waits).to_have_count(0)
+    before = page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/jobs").json()["items"]
+    document = lambda: page.request.get(f"{smoke.ORIGIN}/api/creations/{other}").json()["document"]
+    chosen = document()["formats"]["feed"]["scene"]["visual_id"]
+    drawn = [item for item in page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/visuals").json()["items"] if item["id"] == chosen][0]["headline"]
+    assert drawn is None, drawn
+    say(page, "prix 290 000 Ar")
+    card = thread.locator(".bubble.bot").last
+    expect(card).to_contain_text(re.compile(r"Je change le prix sur l’affiche : 290\s000 Ar\."))
+    expect(card).not_to_contain_text("Mode de démonstration")
+    expect(card).not_to_contain_text("dessiné dans l’image")
+    expect(create).to_have_count(0)
+    looks_right(page, "free price change", "chat-free-price-1366.png")
+    card.get_by_role("button", name="Changer le prix").click()
+    expect(thread).to_contain_text(re.compile(r"Prix changé sur l’affiche : 290\s000 Ar\."))
+    expect(card.get_by_role("button")).to_have_count(0)
+    for _ in range(50):
+        if document()["offer"]["price_ar"] == 290000:
+            break
+        page.wait_for_timeout(200)
+    assert document()["offer"]["price_ar"] == 290000 and document()["formats"]["feed"]["scene"]["visual_id"] == chosen
+    assert page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/jobs").json()["items"] == before and len(sent["scenes"]) == 6, sent
+    assert not [item for item in page.evaluate(THREAD, other)["items"] if item.get("card", {}).get("change") == "price" and item.get("spent")]
+    state = context.storage_state()
+    context.close()
+
+    # 360 px: the list is folded behind « Modifications (n) » beside the small poster.
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark", storage_state=state)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(smoke.ORIGIN)
+    page.wait_for_url("**/#message")
+    page.get_by_role("link", name=re.compile("Mes affiches")).tap()
+    page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.tap()
+    page.wait_for_url(f"**/#message-{poster}")
+    page.get_by_role("button", name="Fermer").tap()
+    side = page.locator(".chat-side")
+    mods, toggle = side.locator(".mod"), side.get_by_role("button", name="Modifications (5)")
+    expect(side).to_contain_text("Version 5 · à vérifier")
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    expect(mods.first).to_be_hidden()
+    looks_right(page, "list folded, 360 px", "chat-mods-folded-360.png")
+    toggle.tap()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    expect(mods).to_have_count(5)
+    expect(mods.nth(0)).to_have_text(re.compile(r"^V5\s*lumière plus chaude\s*À vérifier$"))
+    expect(mods.nth(1)).to_have_text(re.compile(r"^V4\s*Prix : 600\s000 Ar\s*Refusée$"))
+    expect(mods.nth(3)).to_have_text(re.compile(r"^V2\s*fond plus sombre\s*Confirmée$"))
+    box = mods.nth(3).bounding_box()
+    assert box["height"] >= 44 and box["x"] >= 0 and box["x"] + box["width"] <= 360, box
+    mods.nth(3).tap()
+    expect(side).to_contain_text("Version 2 · approuvée")
+    expect(mods.nth(3)).to_have_attribute("aria-current", "true")
+    composer, nav = page.locator(".composer").bounding_box(), page.locator(".nav").bounding_box()
+    assert composer["y"] + composer["height"] <= nav["y"], "the composer stays above the navigation bar with the list open"
+    both_themes(page, "list of modifications, 360 px", "chat-mods-360")
+    context.close()
 
 
 def walk_phone(browser, errors, session):
@@ -658,6 +991,7 @@ def run():
                     try:
                         session = walk_desktop(browser, errors, product, inspiration)
                         walk_phone(browser, errors, session)
+                        walk_changes(browser, errors, session)
                         walk_two_tabs(browser, errors, session, product)
                         walk_lockless(browser, errors, session)
                         walk_slow_read(browser, errors, session)
@@ -667,7 +1001,7 @@ def run():
                         walk_failed(browser, errors)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a price change, its refusal with the old price put back and its retry, two refusals in a row restore the image's price, no second paid card while one waits, a pending read never replaced from another poster, a free price change when the price is a layer, the list of modifications folded at 360 px and open on desktop, read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

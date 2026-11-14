@@ -11,11 +11,15 @@ export const PRODUCT_PHOTOS = 3
 
 export interface Picture { asset: string; role: Role; warnings?: string[] }
 /** A card is the server's answer to a message (`kind` and its data), or one the chat adds: `result` (a version to check)
- *  and `failed` (a message that could not be read; `retry` is its text). `error` is a paid tap that did not start. */
-export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean }
+ *  and `failed` (a message that could not be read; `retry` is its text). `error` is a paid tap that did not start.
+ *  A `change` card (an existing poster) holds a new scene of the same poster (`instruction_fr`) or a new price
+ *  (`price_ar`); `said` is the owner's message, for « Annuler »; `previous` is the price the image shows, kept before
+ *  this card's price edit; `whole`: a whole new scene because the drawn words changed, never a price-only change. */
+export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
+  change?: 'scene' | 'price'; instruction_fr?: string; said?: string; previous?: number; whole?: boolean }
 /** `done`: the card has its outcome, or a later card replaced it. A paid card records each step before the next request
- *  leaves: `spent` (tapped), `creation` (its poster's id), `request` (its /scenes request exactly as it left; the card's id
- *  is its key), `job` (the job it made). */
+ *  leaves: `spent` (tapped), `creation` (its poster's id), `request` (its /scenes or /refinements request exactly as it
+ *  left; the card's id is its key), `job` (the job it made). */
 export interface Item { id: string; role: 'owner' | 'app'; text: string; at: number; card?: Card; done?: boolean; pictures?: Picture[]
   spent?: boolean; creation?: string; request?: SceneRequest; job?: string }
 export interface SceneRequest { path: string; body: unknown; revision: number }
@@ -32,8 +36,19 @@ export interface ChatAdapter {
     intake: { name: string; price: string; confirmed: boolean }; photos: { asset: string; warnings: string[] }[]; styleReference: string | null
   }
   attach(file: File, role: Role): Promise<{ asset: string; warnings: string[] }>
-  /** `sending` runs right before the editor's /scenes request leaves, nothing awaited in between; a throw there stops it. */
+  /** `sending` runs right before the editor's paid request leaves, nothing awaited in between; a throw there stops it. */
   start(card: string, style: Style, smallPhotoAccepted: boolean, sending: (request: SceneRequest) => void): Promise<void>
+  /** The editor's « Ajuster la scène » on the selected version. */
+  change(card: string, instruction: string, sending: (request: SceneRequest) => void): Promise<void>
+  /** The editor's price edit, then its « Nouvelle version »: look, brand and contact stay the poster's.
+   *  `owned` runs once earlier saves are over, right before the price edit is queued; a throw there stops it. */
+  reprice(card: string, price: number, smallPhotoAccepted: boolean, owned: () => void, sending: (request: SceneRequest) => void): Promise<void>
+  /** The editor's price edit alone, saved. */
+  price(value: number, owned: () => void): Promise<void>
+  /** The editor's choice of a version for the poster, saved. */
+  select(visual: string): Promise<void>
+  /** The poster's jobs, for the version limit. */
+  attempts(): Promise<{ kind: string; status: string }[]>
   job(id: string): Promise<JobRow>
   follow(job: JobRow): void
   review(visual: Visual): void
@@ -84,6 +99,10 @@ export function readPending(raw: string | null): Pending | null {
   return typeof saved?.key === 'string' && typeof saved.body === 'string' && typeof saved.text === 'string' ? Object.freeze({ key: saved.key, body: saved.body, text: saved.text }) : null
 }
 export const newPending = (body: { text: string }): Pending => Object.freeze({ key: crypto.randomUUID(), body: JSON.stringify(body), text: body.text })
+/** The poster a pending read was sent for, as its body says; null: a new poster's thread. */
+export function pendingFor(pending: Pending): string | null {
+  try { const id = JSON.parse(pending.body)?.creation_id; return typeof id === 'string' ? id : null } catch { return null }
+}
 /** Whether a refused read is settled. A lost or unreadable answer, and a read still running, are not: the server may
  *  have read the message, so the record is kept and « Réessayer » sends it again as it is. */
 export const settled = (code: string) => !['network', 'timeout', 'invalid_response', 'server_error', 'read_running'].includes(code)
@@ -91,11 +110,14 @@ export const settled = (code: string) => !['network', 'timeout', 'invalid_respon
 /** What a spent card waits for: its job to follow; its kept request, sent again as it is (the server answers what it
  *  stored, or runs it if it never arrived); or nothing, as no request was kept, so nothing paid left. */
 export const nextStep = (item: Item): 'follow' | 'replay' | 'new' => item.job ? 'follow' : item.request ? 'replay' : 'new'
-/** Whether a refused /scenes request is refused for good: an earlier delivery of the same request, still on its way,
- *  would be refused too, so the card may be retired. A refusal stores nothing under the key, so anything else (busy,
- *  budget, session, 429, 5xx, lost, unlisted) may still let that delivery pass later: the card keeps its request. */
+/** Whether a refused /scenes or /refinements request is refused for good: an earlier delivery of the same request, still
+ *  on its way, would be refused too, so the card may be retired. A refusal stores nothing under the key, so anything else
+ *  (busy, budget, session, 429, 5xx, lost, unlisted) may still let that delivery pass later: the card keeps its request. */
 // Not here on purpose: creation_abandoned and format_unavailable can be undone without a new revision (review r5).
-const FINAL = ['plan_stale', 'revision_conflict', 'attempt_limit', 'acknowledgement_required', 'validation_error', 'format_locked', 'not_found', 'idempotency_reused']
+// The second line is the refinement route's: each compares the document at the request's own revision with a version or
+// a plan that never changes. asset_missing and asset_corrupt (a file on the disk) are not: they can be repaired.
+const FINAL = ['plan_stale', 'revision_conflict', 'attempt_limit', 'acknowledgement_required', 'validation_error', 'format_locked', 'not_found', 'idempotency_reused',
+  'headline_stale', 'base_not_selected', 'scene_format_mismatch', 'logo_disc_uncovered', 'logo_placement_stale', 'invalid_plan', 'invalid_reference', 'unsupported_visual', 'format_missing']
 export const final = (code: string) => FINAL.includes(code) || code.startsWith('title_')
 export type Fate = 'running' | 'made' | 'failed'
 export const fate = (job: { status: string }): Fate => job.status === 'queued' || job.status === 'running' ? 'running' : job.status === 'succeeded' ? 'made' : 'failed'
@@ -113,6 +135,11 @@ export function spend(items: Item[], id: string) {
   if (!item || item.spent) return false
   return item.spent = true
 }
+/** The cards that pay for a version. */
+export const paid = (card?: Card) => card?.kind === 'recap' || card?.kind === 'change'
+/** A price that is a layer of the poster changes without a new image: nothing to pay. `drawn`: the selected version's
+ *  persisted `headline.price_ar` (an integer there: the price is in the image). */
+export const freePrice = (card: Card | undefined, drawn: unknown) => card?.kind === 'change' && card.change === 'price' && !card.whole && card.previous === undefined && !Number.isInteger(drawn)
 /** A new message or card replaces the open questions and recaps before it: only the latest may be tapped. */
 export function supersede(items: Item[]) {
   for (const item of items) if (item.card && item.card.kind !== 'result' && !item.spent) item.done = true
@@ -120,8 +147,9 @@ export function supersede(items: Item[]) {
 
 export type CardButton = 'photo' | 'create' | 'retry' | 'resume' | 'fix' | 'resend' | 'review' | 'download'
 /** The one action a card shows; null when it only shows its text or its outcome. `version` is the state of a result's
- *  version; it is downloaded only while it is the one `selected` in the document (the export renders that one). */
-export function cardButton(item: Item, version?: Visual['status'], selected?: string): CardButton | null {
+ *  version; it is downloaded only while it is the one `selected` in the document (the export renders that one).
+ *  `left`: the versions the poster may still ask for; at none, no card offers a new one. */
+export function cardButton(item: Item, version?: Visual['status'], selected?: string, left: number | null = null): CardButton | null {
   const card = item.card
   if (!card) return null
   if (card.kind === 'result') return version === 'pending_review' ? 'review' : version === 'approved' && card.visual_id === selected ? 'download' : null
@@ -129,7 +157,32 @@ export function cardButton(item: Item, version?: Visual['status'], selected?: st
   if (item.done) return null
   // A spent card whose request may have left without an answer: that same request again, never by itself. « Réessayer »
   // after a refusal seen here, « Reprendre » in a later view (a reload, a return from « Pas à pas »).
-  if (card.kind === 'recap') return !item.spent ? 'create' : item.request && !item.job ? card.error ? 'retry' : 'resume' : null
+  if (paid(card)) return !item.spent ? left !== null && left <= 0 ? null : 'create' : item.request && !item.job ? card.error ? 'retry' : 'resume' : null
   if (card.kind === 'ask_photo') return 'photo'
   return card.kind === 'failed' && card.retry ? 'resend' : null
+}
+
+// ── an existing poster: the version limit and the list of modifications ───────────────────────────────────
+/** The server's rule (jobs.SCENE_LIMIT): twelve scene or refine jobs queued, running or succeeded per poster. */
+export const SCENE_LIMIT = 12
+export const versionsLeft = (jobs: { kind: string; status: string }[]) =>
+  SCENE_LIMIT - jobs.filter(job => ['scene', 'refine'].includes(job.kind) && ['queued', 'running', 'succeeded'].includes(job.status)).length
+/** Under a card that pays for a version: nothing while more than two are left; at none, the server's own `attempt_limit`
+ *  sentence (api.py MESSAGES; copied, as the server only says it in a refusal). null: the count is not known. */
+export const limitLine = (left: number | null) => left === null || left > 2 ? ''
+  : left > 0 ? `Il reste ${left} version${left > 1 ? 's' : ''} pour cette affiche.`
+  : 'Douze scènes ont déjà été demandées pour cette affiche. Conservez une version ou créez une copie pour continuer.'
+
+export interface Modification { id: string; number: number; status: Visual['status']; state: string; label: string }
+const STATES: Record<Visual['status'], string> = { pending_review: 'À vérifier', approved: 'Confirmée', rejected: 'Refusée' }
+/** The list of modifications, from the poster's versions as the server lists them (newest first): the first poster, a
+ *  refinement by the owner's words, a new scene by its drawn price when that differs from the version before. */
+export function modifications(visuals: Visual[]): Modification[] {
+  return visuals.map((visual, index) => {
+    const before = visuals[index + 1], drawn = visual.headline?.price_ar
+    const label = !before ? 'Première affiche' : visual.instruction_fr ? visual.instruction_fr
+      : visual.base_visual_id ? 'Scène ajustée'  // a refinement older than the kept instruction
+      : drawn !== undefined && drawn !== before.headline?.price_ar ? `Prix : ${drawn.toLocaleString('fr-FR')} Ar` : 'Nouvelle version'
+    return { id: visual.id, number: visuals.length - index, status: visual.status, state: STATES[visual.status], label }
+  })
 }

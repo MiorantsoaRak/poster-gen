@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { cardButton, complete, fate, final, nextStep, lines, movedTo, newPending, nextRole, PENDING_KEY, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, complete, fate, final, freePrice, limitLine, modifications, nextStep, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
+import type { Visual } from '../src/document'
 
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
 const item = (extra: Partial<Item> = {}): Item => ({ id: 'i', role: 'app', text: 'x', at: 1, ...extra })
@@ -72,6 +73,10 @@ it('decides what a spent card waits for: its job, its kept request sent again, o
 it('retires a card only on a refusal that an earlier delivery of the same request would meet too', () => {
   for (const code of ['plan_stale', 'revision_conflict', 'attempt_limit', 'acknowledgement_required', 'title_too_long', 'title_commercial_text',
     'title_unsupported', 'validation_error', 'format_locked', 'not_found', 'idempotency_reused']) expect(final(code), code).toBe(true)
+  // The refinement route: the document at the request's revision against a version or a plan that never changes.
+  for (const code of ['headline_stale', 'base_not_selected', 'scene_format_mismatch', 'logo_disc_uncovered', 'logo_placement_stale', 'invalid_plan',
+    'invalid_reference', 'unsupported_visual', 'format_missing']) expect(final(code), code).toBe(true)
+  for (const code of ['asset_missing', 'asset_corrupt', 'unknown_asset', 'provider_mode_mismatch']) expect(final(code), code).toBe(false)
   // A refusal stores nothing under the key: these may let a delivery still on its way pass later, so the card keeps it.
   for (const code of ['image_job_running', 'budget_exhausted', 'rate_limited', 'provider_unavailable', 'unauthenticated', 'service_down',
     'server_error', 'network', 'timeout', 'invalid_response', 'something_new', '', 'creation_abandoned', 'format_unavailable']) expect(final(code), code).toBe(false)
@@ -128,4 +133,61 @@ it('replaces open cards with a new one, leaving spent cards and results as they 
   const thread = [item({ id: 'a', card: { kind: 'recap' } }), item({ id: 'b', card: { kind: 'recap' }, spent: true }), item({ id: 'c', card: { kind: 'result' } }), item({ id: 'd' })]
   supersede(thread)
   expect(thread.map(entry => !!entry.done)).toEqual([true, false, false, false])
+})
+it('gives a change card the paid button of a recap, and none once the poster has its twelve versions', () => {
+  const change = item({ card: { kind: 'change', change: 'scene', instruction_fr: 'fond plus sombre' } })
+  expect(cardButton(change)).toBe('create')
+  expect(cardButton(change, undefined, undefined, 1)).toBe('create')
+  expect(cardButton(change, undefined, undefined, 0)).toBeNull()
+  expect(cardButton(item({ card: { kind: 'recap' } }), undefined, undefined, 0)).toBeNull()
+  expect(cardButton({ ...change, done: true })).toBeNull()
+  const kept = { path: '/api/creations/c/refinements', body: {}, revision: 2 }
+  expect(cardButton({ ...change, spent: true, request: kept }, undefined, undefined, 0)).toBe('resume')  // its request may have left: the limit does not hide it
+  expect(cardButton({ ...change, spent: true, request: kept, card: { ...change.card!, error: 'x' } })).toBe('retry')
+  expect(cardButton({ ...change, spent: true, request: kept, job: 'j' })).toBeNull()
+})
+it('changes a price for free only when the selected version does not draw it', () => {
+  const card = { kind: 'change', change: 'price' as const, price_ar: 650000 }
+  expect(freePrice(card, undefined)).toBe(true)  // the price is a layer of the poster
+  expect(freePrice(card, null)).toBe(true)
+  expect(freePrice(card, 700000)).toBe(false)  // drawn in the image: a new scene, paid
+  expect(freePrice({ ...card, whole: true }, undefined)).toBe(false)  // the drawn words changed: always a whole new scene
+  expect(freePrice({ ...card, previous: 700000 }, undefined)).toBe(false)  // the retry of a paid redraw
+  expect(freePrice({ kind: 'change', change: 'scene' }, undefined)).toBe(false)
+  expect(freePrice({ kind: 'recap' }, undefined)).toBe(false)
+  expect(freePrice(undefined, undefined)).toBe(false)
+})
+it('counts the versions left by the server rule, and says so only near the limit', () => {
+  const jobs = (count: number) => [...Array.from({ length: count }, (_, index) => ({ kind: index % 2 ? 'refine' : 'scene', status: index ? 'succeeded' : 'running' })),
+    { kind: 'scene', status: 'failed' }, { kind: 'refine', status: 'interrupted' }, { kind: 'scene', status: 'cancelled' }, { kind: 'render', status: 'succeeded' }, { kind: 'plan', status: 'succeeded' }]
+  expect(versionsLeft(jobs(0))).toBe(12)
+  expect(versionsLeft(jobs(10))).toBe(2)
+  expect(versionsLeft(jobs(12))).toBe(0)
+  expect(limitLine(null)).toBe('')  // not known: the server's refusal still holds
+  expect(limitLine(3)).toBe('')
+  expect(limitLine(2)).toBe('Il reste 2 versions pour cette affiche.')
+  expect(limitLine(1)).toBe('Il reste 1 version pour cette affiche.')
+  expect(limitLine(0)).toMatch(/^Douze scènes ont déjà été demandées/)
+  expect(limitLine(-1)).toBe(limitLine(0))
+})
+it('lists the modifications from the versions: number, state and what changed', () => {
+  const version = (id: string, extra: Partial<Visual> = {}): Visual => ({ id, status: 'approved', image_url: '', original_urls: [], size: '1080x1350', base_visual_id: null, headline: { title: 'Sony', price_ar: 700000 }, ...extra })
+  const list = modifications([  // newest first, as the server lists them
+    version('e', { status: 'pending_review' }),
+    version('d', { status: 'rejected', headline: { title: 'Sony', price_ar: 650000 } }),
+    version('c', { base_visual_id: 'b' }),
+    version('b', { base_visual_id: 'a', instruction_fr: 'fond plus sombre' }),
+    version('a'),
+  ])
+  expect(list.map(line => [line.id, line.number, line.state])).toEqual([['e', 5, 'À vérifier'], ['d', 4, 'Refusée'], ['c', 3, 'Confirmée'], ['b', 2, 'Confirmée'], ['a', 1, 'Confirmée']])
+  expect(list.map(line => line.label.replace(/\s/g, ' '))).toEqual(['Prix : 700 000 Ar', 'Prix : 650 000 Ar', 'Scène ajustée', 'fond plus sombre', 'Première affiche'])
+  // The same price drawn again, or a price that is a layer: a new version, nothing invented.
+  expect(modifications([version('b'), version('a')])[0].label).toBe('Nouvelle version')
+  expect(modifications([version('b', { headline: null }), version('a')])[0].label).toBe('Nouvelle version')
+  expect(modifications([])).toEqual([])
+})
+it('knows the poster a pending read was sent for', () => {
+  expect(pendingFor(newPending({ text: 'fond plus sombre', creation_id: 'c' } as { text: string }))).toBe('c')
+  expect(pendingFor(newPending({ text: 'Sony' }))).toBeNull()
+  expect(pendingFor({ key: 'k', body: '{nope', text: 'x' })).toBeNull()
 })

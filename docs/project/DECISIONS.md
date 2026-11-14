@@ -1,5 +1,12 @@
 # DECISIONS
 
+## ADR-098 — 2026-11-15 — Changes from the chat: one unresolved paid card, one waiting message, a free price change when the price is not drawn
+
+- While a paid card has no known outcome, no other paid card is admitted (recap, change, replacement after a refused version); its own « Reprendre » / « Réessayer » stay. While a read waits for its answer, no thread sends another one; the composer points to the poster where it waits.
+- A price change redraws the poster (paid) only when the selected version has its price drawn in the image (`headline.price_ar` on the visual). Otherwise it is the editor's price edit, free, and the approved image is kept (the project rule "reuse approved visuals for price-only changes"). « Remettre l’ancien prix » restores the price the image shows.
+- A refinement refused with `headline_stale` becomes a whole-poster card at the document's price, through the editor's scene path, so a poster made in steps keeps its look.
+- New refine jobs store the owner's instruction for the list of modifications; older ones show « Scène ajustée ».
+
 ## ADR-097 — 2026-11-14 — The chat never guesses what a paid request became (after five review rounds)
 
 - One chat tab per device: `ChatView` holds the Web Lock `affiche-chat`; another tab shows « Le chat est ouvert dans un autre onglet. » and « Continuer ici », and sends nothing. Each acquisition has its own token, and work started under an older token stops. Without Web Locks the chat is not offered (« Pas à pas » instead).
