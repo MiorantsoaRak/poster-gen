@@ -490,6 +490,72 @@ def walk_wait(browser, session, errors):
                           for created, started, date in stamps), stamps
 
 
+def walk_words(browser, session, errors):
+    """One poster's words never reach the next one (T-BLANK-WORDS, user report 2026-11-14): poster A is made with a brand,
+    a subtitle and an accent word; poster B, made next from the form, starts blank and its scene request carries none of
+    them; A reopened shows its own words again."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    scenes = []
+    page.on("request", lambda request: scenes.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
+    brand, subtitle = page.get_by_label("Marque (facultative)"), page.get_by_label("Sous-titre (facultatif)")
+    words = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
+    review = page.get_by_role("heading", name="Vérifier la fidélité du produit")
+
+    def make(name, price):
+        page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        expect(page.locator(".photo-strip img")).to_have_count(1)
+        page.get_by_label("Nom du produit", exact=True).fill(name)
+        page.get_by_label("Prix en ariary", exact=True).fill(price)
+        page.get_by_label("Les photos correspondent").check()
+        page.get_by_role("button", name="Préparer mon affiche").click()
+        expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
+
+    def generate():
+        page.get_by_role("button", name="Continuer", exact=True).click()
+        page.get_by_role("button", name="Continuer", exact=True).click()
+        page.get_by_role("button", name="Générer l’affiche").click()
+        page.get_by_role("button", name="Lancer la génération").click()
+        expect(review).to_be_visible(timeout=30000)
+        page.get_by_role("button", name="Tout est conforme, approuver").click()
+        expect(page.get_by_role("tab")).to_have_count(4)
+
+    page.goto(ORIGIN)
+    make("Casque Alpha", "120 000")
+    brand.fill("MarqueAlpha")
+    subtitle.fill("SOUS-TITRE ALPHA")
+    words.filter(has_text="Casque").click()
+    expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
+    generate()
+    poster_a = page.url.split("#")[1]
+    assert (scenes[-1]["headline"]["brand"], scenes[-1]["headline"]["subtitle"], scenes[-1]["headline"]["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), scenes[-1]
+    # The form waits for the next product: nothing of A's photos, name, price or agreement is left in it.
+    page.locator(".nav a", has_text="Créer").click()
+    expect(page.locator(".photo-strip img")).to_have_count(0)
+    expect(page.get_by_label("Nom du produit", exact=True)).to_have_value("")
+    expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("")
+    expect(page.get_by_label("Variante confirmée")).to_have_value("Conforme à la photo")
+    expect(page.get_by_label("Les photos correspondent")).not_to_be_checked()
+    make("Enceinte Beta", "80 000")
+    expect(brand).to_have_value("")
+    expect(subtitle).to_have_value("")
+    expect(words.filter(has_text="Aucun")).to_have_attribute("aria-pressed", "true")
+    asked = len(scenes)
+    generate()
+    sent = scenes[asked]
+    assert (sent["headline"]["brand"], sent["headline"]["subtitle"], sent["headline"]["accent_word"]) == (None, None, None), sent
+    assert not re.search("Alpha|ALPHA|Casque", json.dumps(sent)), sent
+    # A reopened poster brings back the words its version was made with.
+    page.goto(f"{ORIGIN}/#{poster_a}")
+    expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
+    expect(brand).to_have_value("MarqueAlpha")
+    expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
+    expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
+    context.close()
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
@@ -1432,6 +1498,7 @@ def run():
                         light_poster = walk_look(browser, session, "light", errors)
                         walk_look(browser, session, "dark", errors)
                         walk_wait(browser, session, errors)
+                        walk_words(browser, session, errors)
                         desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
                         screen = desk.new_page()
                         screen.set_default_timeout(10000)

@@ -22,7 +22,8 @@ const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
 watch(notice, value => { clearTimeout(noticeTimer); if (value) noticeTimer = setTimeout(() => { if (notice.value === value) notice.value = '' }, 8000) })
-const intake = reactive({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
+const blankIntake = () => ({ name: '', variant: 'Conforme à la photo', price: '', confirmed: false })
+const intake = reactive(blankIntake())
 // The logo identifies the shop, and without one the footer carries the contact only (ADR-053): the name starts unticked.
 const include = reactive({ logo: false, shop_name: false, contact: true })
 // A contact typed for the first time is put on the poster, as an uploaded logo is; its box can still be unticked.
@@ -33,7 +34,8 @@ const creation = ref<Creation | null>(null), doc = shallowRef<PosterDocument | n
 const visuals = ref<Visual[]>([]), direction = ref('Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.'), plannerMode = ref<'fixed' | 'claude'>('fixed')
 const styleReference = ref<string | null>(null)
 // The image model sets brand, product name and subtitle itself; the price stays an exact editable layer.
-const headline = ref({ on: true, price: true, contact: true, brand_text: false, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
+const blankHeadline = () => ({ on: true, price: true, contact: true, brand_text: false, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
+const headline = ref(blankHeadline())
 const profileValue = (role: 'shop_name' | 'contact') => doc.value?.include[role] ? (role === 'shop_name' ? doc.value.brand_snapshot.name : doc.value.brand_snapshot.contact) ?? undefined : undefined
 // Looks measured on real shop products (docs/project/reviews/style-study-2026-11-11.md): the owner picks a picture, not a prompt.
 const tint = (hex: string) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .14 + 255 * .86).toString(16).padStart(2, '0')).join('').toUpperCase()
@@ -97,17 +99,17 @@ async function createLook() {
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/looks`, { name: lookName.value.trim() || `Style ${savedLooks.value.length + 1}`, reference_asset: lookReference.value }, saver!.revision)
   follow({ id: result.job_id, kind: 'look', status: 'queued', result_ref: null, error_code: null })
 }
-// The owner's last look, colour and brand come back on the next poster ("same style as last time").
+// The owner's last look and colour come back on the next poster ("same style as last time"); never its words.
 const STYLE_KEY = 'affiche.style'
 try {
   const saved = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null')
   if (saved && LOOKS.some(item => item.id === saved.look) && /^#[0-9A-Fa-f]{6}$/.test(saved.accent_colour)) {
-    headline.value.accent_colour = saved.accent_colour; headline.value.brand = String(saved.brand ?? '').slice(0, 60); pickLook(saved.look)
+    headline.value.accent_colour = saved.accent_colour; pickLook(saved.look)
     headline.value.accent_colour = saved.accent_colour
   }
 } catch { /* private mode or damaged entry: start from the defaults */ }
 function rememberStyle() {
-  try { localStorage.setItem(STYLE_KEY, JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand: headline.value.brand, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })) } catch { /* convenience only */ }
+  try { localStorage.setItem(STYLE_KEY, JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })) } catch { /* convenience only */ }
 }
 // By default the image model draws the contact as one compact line, so it composes it with the price
 // (ADR-055). Unticked, or when it cannot be drawn, it is the same line written by the renderer as a layer.
@@ -621,6 +623,8 @@ async function createPoster() {
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
   if (photos.value.some(photo => photo.warnings.includes('low_resolution'))) smallPhotoOf.value = result.id
+  // The form now waits for the next product: this one's photos, name, variant, price and agreement must not carry over.
+  Object.assign(intake, blankIntake()); photos.value = []
   if (doc.value?.include.contact) edit(document => {
     compactContact(document, defaultAlign(document))
     // The seal is the default for the footer it was designed for: a logo and a contact, no shop name.
@@ -632,6 +636,13 @@ async function adopt(result: Creation) {
   // Steps or tabs depend on the versions: for another poster they are read before the editor shows it.
   const opening = creation.value?.id !== result.id
   const known = opening ? (await api<{ items: Visual[] }>(`/api/creations/${result.id}/visuals`)).items : visuals.value
+  // Another product starts from blank words: the last poster's brand, subtitle and accent word would be drawn on it unseen
+  // (user, 2026-11-14), and its instructions sent with it. The accent colour (it goes with the look) and the plain-brand
+  // choice are style and stay. A copy of the same product keeps its words; a poster with a version gets its own back below.
+  if (opening && doc.value?.input_id !== result.document.input_id) {
+    headline.value = { ...blankHeadline(), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text }
+    refinement.value = ''; polish.value = ''
+  }
   if (opening) { group.value = 'textes'; visited.value = ['textes']; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false }
   finalPreview.value = null; confirmedDownload.value = ''; previewLoaded.value = false; priceError.value = ''
   clearTimeout(pollTimer); job.value = null; review.value = null; proposal.value = null; effect.value = null; previewPolish.value = false
