@@ -1,5 +1,45 @@
 # DECISIONS
 
+## ADR-094 — 2026-11-14 — Creation by message: design v2 approved; five requirement amendments
+
+- [Design v2](designs/text-first-generation.md) is approved under the autonomy grant after a fresh review (APPROVE WITH FIXES, four P1) and a devil's advocate. Kept against challenge: a synchronous paid read with its own ledger table `chat_reads` summed in `spent_micros` (the job queue needs a poster, a first message has none), and the model on every message (a parser reads `Redmi Note 13 700 000 Ar` as 13 700 000 Ar).
+- Changed after the devil's advocate: (1) the conversation lives in the browser; the server has one stateless route `POST /api/reads` and the ledger; the list of modifications is built from the poster's versions, so it is the same everywhere; (2) the chat calls the step editor's functions in place, nothing is moved out of `App.vue`; (3) the check and the download use the existing review and final dialogs, one tap more than the mockup, to keep the photo comparison and the summary (ADR-051); (4) no automatic price read-back in this slice, measured offline first; (5) the start view is remembered per device.
+- Fixed after the review: the price must be one of the amounts the owner wrote before « Ar » (the server lists them), the card's id is the idempotency key of its paid request and a tapped card is spent, the ledger rule is the existing one (cost 0 only on a 429 or a call never sent), `ClaudePlanner.structured` takes `max_tokens` and `timeout`.
+- Requirements amended to match (marked in the file): start view per device, check through the existing review screen, read-back deferred, conversation per device, limits per message and per day. The user can reverse any of these.
+
+## ADR-093 — 2026-11-14 — Full autonomy for creation by message; requirements approved with two working defaults
+
+- User: "go full automation again for the implementation and if there is additionnal search needed. You can make as many paid call as needed". For this feature Claude decides the open points, researches, designs, implements, commits locally and makes paid calls inside the configured cap, reporting the spend. Push and deploy stay the user's word.
+- R-TEXT-FIRST-001 to 005 (Draft v2) are approved under this grant with two working defaults, both reversible by the user: (1) no web image search in the first slice, the chat asks for a photo or offers the shop's own photos (this sets aside the automatic lookup of ADR-088 for now; reasons: the search provider's retention terms, image rights, wrong-variant risk and the cost of safe remote fetching); (2) the automatic read-back of the drawn price is in the first slice, as a warning only.
+
+## ADR-092 — 2026-11-14 — Each chat message is read by a paid model call (user decision)
+
+- User: "go for the paid call per message". Every message of the creation chat is read by a model that extracts product, price and style and classifies a change request. The call is reserved and recorded in the spend ledger and counts against the cap.
+- Consequence accepted with it: reading a message is not confirmed tap by tap, unlike an image generation. It is bounded instead (maximum per message, per poster and per day; values in design). The model never starts a generation and the price still passes the existing validation.
+- Draft v2 of [text-first-generation.md](requirements/text-first-generation.md) is rewritten on this basis. Still the user's to decide: web image search or shop photos only, and the automatic read-back of the drawn price. The reading model is chosen in design.
+
+## ADR-091 — 2026-11-14 — Creation by message is a real chat beside the step editor (user direction; mockup only)
+
+- User direction: a proper chat, one attachment button for the product photo and the inspiration image together, a first screen with the choice « Par message » / « Pas à pas » that becomes the default view, the chat kept for the first request and every polish, a visible list of the modifications, and one colour behind the glass instead of blue plus cream. Fewer steps and fewer words.
+- Mockup `docs/project/mockups/chat-first/` replaces the three-step wizard of ADR-089 as the concept to judge. In it: the first image is the product and the next the inspiration, one tap on the label swaps them; the recap and the paid confirmation are one card with one button and its cost; a correction is typed, not edited in fields; a price change says that the image is redrawn.
+- Claude's pushback on the research, open until the user answers: (1) no web image search in the first slice (a photo is attached or reused from the shop's own photos); (2) reading a free message needs a small paid model call per message, to meter in the ledger; (3) an automatic read-back of the drawn price before the owner's check. None is decided. Requirements R-TEXT-FIRST stay Draft; no production code changed.
+
+## ADR-090 — 2026-11-14 — Persistent polish chat; account credits deferred
+
+- User requires the chat to remain available for polish after generation. Update the isolated mockup with follow-up requests, conversation history and explicit confirmation before simulating a new version; keep unsent text during generation and show the prior result. Real edit routing remains subject to design.
+- Retain current confirmation, budget and metering behavior. Account credits are a later feature; no credit balance/purchase/deduction UI or implementation now. These choices amend Draft requirements but do not approve the complete feature or authorize paid calls.
+
+## ADR-089 — 2026-11-14 — Isolated text-first concept before feature design
+
+- User explicitly requested a mockup to continue research. Build a standalone local HTML concept in docs/project/mockups/text-first/, reusing current Figtree/warm-glass/amber visual language and existing Sony assets. This authorizes the mockup only; Draft requirements and subsequent design gates remain.
+- Demonstrate optional product/inspiration attachment roles and compact reference/offer/style confirmation. Reuse a fixed historical scene, with an explicitly labelled layout-only price overlay; real generation still draws price into the raster. No app routing, API, provider, schema, paid call or deployment change. Keep all assets local and serve only the mockup directory on loopback.
+
+## ADR-088 — 2026-11-14 — Text-first generation research scope (user choices; criteria still Draft)
+
+- User chose a simple text box in the app first, automatic product-image lookup/reuse when no image is attached, and optional product-photo attachments. Attached photos take priority. Price remains drawn into the composition.
+- Research recommends reusing the existing reference-based poster service and predefined styles, with a compact product/reference/price/style confirmation. This is a recommendation, not an approved design; no new provider, schema, model, paid call or integration is authorized here.
+- Source selection remains open: Brave documents image search but its standard retention restrictions conflict with durable reference provenance/cache without a suitable agreement. Separate permitted image use from search access. Findings: reviews/text-first-generation-research-2026-11-14.md; proposed criteria: requirements/text-first-generation.md.
+
 ## ADR-087 — 2026-11-14 — Every tap answers at once; slow actions show a spinner and a top progress line (user report after the deploy; Claude under the autonomy grant)
 - User, on his phone after the deploy: no feedback when tapping navigation, buttons and tabs; he tapped « Dupliquer » several times. He named Emil Kowalski's design-engineering approach.
 - Checked first: the extra taps did not create extra copies (`perform` refuses while busy and every button is disabled), so this is feedback, not a data fault. The existing press rule scaled buttons by 2 % for 100 ms and never applied to the navigation links.
