@@ -606,15 +606,426 @@ def walk_words(browser, session, errors):
     context.close()
 
 
+BOX_JS = "e => { const b = e.getBoundingClientRect(); return [b.width, b.height] }"
+# Resolves once scrollY has not changed for six frames in a row.
+STILL_SCROLL = "() => new Promise(done => { let last = -1, still = 0; const tick = () => { still = scrollY === last ? still + 1 : 0; last = scrollY; if (still > 5) done(); else requestAnimationFrame(tick) }; tick() })"
+
+
+def check_shape(locator, ratio, where):
+    width, height = locator.evaluate(BOX_JS)
+    assert height and abs(width / height - ratio) / ratio < .02, f"{where}: {width} x {height}, not {ratio:.4f}"
+    return width, height
+
+
+def walk_formats(browser, errors):
+    """Three formats enabled (FORMATS_ENABLED=feed,square,story; T-FMT-005, T-FMT-006, ADR-080), on an API of its own.
+    The format is chosen in « Style » only: a Story and a Square poster go to their confirmed PNG at their own size; a 9:16
+    model asks on a Publication poster, « Utiliser Story » changes the saved format, « Garder Publication » is remembered,
+    a 3:4 or a landscape model asks nothing; a refused format change reloads the stored poster; a version locks the format
+    and « Refaire en Story » makes a new poster of the same product. Then each shape at 360 × 740 and 1366 × 768, both
+    themes (format-*.png)."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(ORIGIN)
+    page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+    page.get_by_role("button", name="Ouvrir l’atelier").click()
+    expect(page.get_by_label("Photos du produit")).to_be_enabled()
+    get = lambda path: page.request.get(ORIGIN + path).json()
+    here = lambda: page.url.split("#")[1]
+    saved = lambda: get(f"/api/creations/{here()}")["document"]
+
+    def until(check):
+        for _ in range(50):
+            if check():
+                return
+            page.wait_for_timeout(200)
+        raise AssertionError("condition not reached")
+
+    formats = page.get_by_role("radiogroup", name="Format")
+    radio = lambda name: formats.get_by_role("radio", name=name, exact=True)
+    question = page.locator(".format-ask")
+    sizes = {"feed": (1080, 1350), "square": (1080, 1080), "story": (1080, 1920)}
+    scene_sizes = {"feed": "1088x1360", "square": "1088x1088", "story": "1152x2048"}
+    # One place to choose: the intake form has no format.
+    expect(formats).to_have_count(0)
+    assert get("/api/capabilities")["formats_enabled"] == ["feed", "square", "story"]
+
+    def make(name):
+        page.locator(".nav a", has_text="Créer").click()
+        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back from a poster is over
+        page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        expect(page.locator(".photo-strip img")).to_have_count(1)
+        page.get_by_label("Nom du produit", exact=True).fill(name)
+        page.get_by_label("Prix en ariary", exact=True).fill("90 000")
+        page.get_by_label("Les photos correspondent").check()
+        page.get_by_role("button", name="Préparer mon affiche").click()
+        expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
+        expect(formats).to_have_count(0)  # not in « Textes »
+        for _ in range(2):
+            page.get_by_role("button", name="Continuer", exact=True).click()
+        expect(page.locator(".step-count")).to_have_text("Étape 4 sur 4")
+        # A new poster starts in Publication; the three formats are offered.
+        expect(formats.get_by_role("radio")).to_have_count(3)
+        expect(radio("Publication 4:5")).to_be_checked()
+        assert saved()["primary_format"] == "feed"
+
+    def choose(name, value):
+        radio(name).check()
+        until(lambda: saved()["primary_format"] == value)
+        layouts = saved()["formats"]
+        assert list(layouts) == [value] and layouts[value]["scene"]["visual_id"] is None, layouts
+        expect(page.locator(".bar .format")).to_contain_text(f"{name.split()[0]} · {sizes[value][0]} × {sizes[value][1]}")
+
+    def running(route):
+        response = route.fetch()
+        body = response.json()
+        if body["kind"] in ("scene", "refine"):
+            body.update(status="running", result_ref=None, error_code=None, finished_at=None)
+        route.fulfill(response=response, json=body)
+
+    def generate():
+        page.get_by_role("button", name="Générer l’affiche").click()
+        page.get_by_role("button", name="Lancer la génération").click()
+        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+        page.get_by_role("button", name="Tout est conforme, approuver").click()
+        expect(page.get_by_role("tab")).to_have_count(4)
+
+    def confirm(value):
+        size = sizes[value]
+        page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
+        expect(page.locator(".final-preview .facts")).to_contain_text(f"{size[0]} × {size[1]} px")
+        preview = page.locator(".final-preview .shot img")
+        page.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=preview.element_handle())
+        assert preview.evaluate("e => [e.naturalWidth, e.naturalHeight]") == list(size)
+        check_shape(preview, size[0] / size[1], f"final preview of {value} at 1366 px")
+        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
+        link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+        expect(link).to_be_visible()
+        png = page.request.get(ORIGIN + link.get_attribute("href")).body()
+        assert Image.open(io.BytesIO(png)).size == size, Image.open(io.BytesIO(png)).size
+        (OUTPUT / f"format-{value}-confirmed.png").write_bytes(png)
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+
+    def tab(name):
+        page.get_by_role("tab", name=name, exact=True).click()
+        expect(page.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
+
+    locked_sentence = page.get_by_text("Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.")
+    posters = {}
+    # A Story and a Square poster, chosen in « Style », generated with the stub, checked, confirmed, downloaded.
+    for value, name, title in (("story", "Story 9:16", "Enceinte Story"), ("square", "Carré 1:1", "Enceinte Carré")):
+        make(title)
+        choose(name, value)
+        expect(locked_sentence).to_have_count(0)
+        generate()
+        # The version has the format's own scene size.
+        assert [visual["size"] for visual in get(f"/api/creations/{here()}/visuals")["items"]] == [scene_sizes[value]]
+        # A version fixes the format: the group says why and offers the other formats as new posters.
+        tab("Style")
+        expect(radio(name)).to_be_checked()
+        expect(radio(name)).to_be_disabled()
+        expect(radio("Publication 4:5")).to_be_disabled()
+        expect(locked_sentence).to_be_visible()
+        others = [label for key, label in (("feed", "Publication"), ("square", "Carré"), ("story", "Story")) if key != value]
+        expect(page.get_by_role("button", name=re.compile("^Refaire en "))).to_have_text([f"Refaire en {label}" for label in others])
+        confirm(value)
+        posters[value] = here()
+
+    # Once a scene of this size is on its way, undo stops before the format step (v2 point 8). On a poster of its own, left
+    # afterwards: an edit saved during the first generation meets the revision the server writes when the scene arrives.
+    make("Essai annuler")
+    choose("Carré 1:1", "square")
+    page.route("**/api/jobs/*", running)
+    page.get_by_role("button", name="Générer l’affiche").click()
+    page.get_by_role("button", name="Lancer la génération").click()
+    expect(page.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
+    undo, undone = page.get_by_role("button", name="Annuler", exact=True), 0
+    while undo.is_enabled():
+        undo.click()
+        undone += 1
+    assert undone, "nothing to undo"
+    expect(page.locator(".bar .format")).to_contain_text("Carré · 1080 × 1080")
+    expect(radio("Carré 1:1")).to_be_checked()
+    page.unroute("**/api/jobs/*", running)
+    expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+    page.reload()
+    expect(page.get_by_role("heading", name="Essai annuler", exact=True)).to_be_visible()
+    assert saved()["primary_format"] == "square"
+
+    # The model's shape. Files made here: two 9:16 ones (different pixels, so two assets) and a landscape one.
+    models = {}
+    for key, size, colour in (("story-a", (900, 1600), (30, 60, 140)), ("story-b", (720, 1280), (140, 60, 30)), ("story-c", (1080, 1920), (40, 120, 60)), ("landscape", (1600, 900), (90, 90, 90))):
+        models[key] = OUTPUT / f"model-{key}.png"
+        Image.new("RGB", size, colour).save(models[key])
+    picker = page.get_by_label("Affiche modèle")
+
+    def pick_model(path):
+        with page.expect_response("**/api/assets"):
+            picker.set_input_files(path)
+        page.wait_for_function("!document.querySelector('.new-look input[type=file]').disabled")
+
+    asks = "Votre modèle est au format Story (9:16). Utiliser ce format pour l’affiche ?"
+    # The section may stay open from an earlier visit of « Style »: opened, never toggled.
+    open_models = lambda: page.locator("details.new-look").evaluate("e => { e.open = true }")
+    make("Casque modèle")
+    open_models()
+    # A 3:4 model counts as Publication: nothing to ask on a Publication poster.
+    pick_model(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+    expect(question).to_have_count(0)
+    pick_model(models["story-a"])
+    expect(question.get_by_role("status")).to_have_text(asks)
+    expect(question.get_by_role("button")).to_have_text(["Utiliser Story", "Garder Publication"])
+    check_one_blur(page, "the format question at 1366 px")
+    check_contrast(page, "the format question at 1366 px")
+    question.scroll_into_view_if_needed()
+    shot(page, "format-question-1366-clair.png", full_page=False)
+    question.get_by_role("button", name="Garder Publication").click()
+    expect(question).to_have_count(0)
+    assert saved()["primary_format"] == "feed"
+    # A landscape model asks nothing; the declined one, picked again, asks nothing on this poster (the same file twice in a
+    # row fires no change: another file goes between).
+    pick_model(models["landscape"])
+    expect(question).to_have_count(0)
+    pick_model(models["story-a"])
+    expect(question).to_have_count(0)
+    pick_model(models["story-b"])
+    expect(question.get_by_role("status")).to_have_text(asks)
+    question.get_by_role("button", name="Utiliser Story").click()
+    expect(question).to_have_count(0)
+    until(lambda: saved()["primary_format"] == "story")
+    expect(radio("Story 9:16")).to_be_checked()
+    expect(page.locator(".bar .format")).to_contain_text("Story · 1080 × 1920")
+    # A style saved from that model is picked: it is Story already, nothing to ask.
+    page.get_by_label("Nom du style").fill("Modèle Story")
+    page.get_by_role("button", name="Enregistrer ce style").click()
+    page.get_by_role("button", name="Créer le style").click()
+    expect(page.get_by_text("Style « Modèle Story » enregistré", exact=False)).to_be_visible(timeout=15000)
+    look = get("/api/looks")["items"][0]
+    assert (look["reference_width"], look["reference_height"]) == (720, 1280), look
+    expect(question).to_have_count(0)
+    # Back to Publication, the saved style is picked again: it asks, under the styles; « Garder » is remembered there too.
+    choose("Publication 4:5", "feed")
+    page.get_by_role("button", name="Modèle Story", exact=True).click()
+    expect(question.get_by_role("status")).to_have_text(asks)
+    assert question.evaluate("e => !!e.previousElementSibling?.matches('.look-grid')")
+    question.get_by_role("button", name="Garder Publication").click()
+    page.get_by_role("button", name="Studio clair", exact=True).click()
+    page.get_by_role("button", name="Modèle Story", exact=True).click()
+    expect(question).to_have_count(0)
+    assert saved()["primary_format"] == "feed"
+    # A format change the server refuses (a version made meanwhile elsewhere): the stored poster comes back, with the reason.
+    poster = here()
+
+    def refuse(route):
+        if route.request.method != "PUT":
+            return route.continue_()
+        route.fulfill(status=409, json={"error": {"code": "format_locked", "retryable": False,
+                      "message_fr": "Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille."}})
+    page.route(f"**/api/creations/{poster}", refuse)
+    radio("Story 9:16").check()
+    expect(page.locator(".message.error")).to_contain_text("Vos dernières modifications n’ont pas été enregistrées : l’affiche enregistrée a été rechargée.")
+    expect(radio("Publication 4:5")).to_be_checked()
+    expect(page.locator(".bar .format")).to_contain_text("Publication · 1080 × 1350")
+    page.unroute(f"**/api/creations/{poster}", refuse)
+    page.locator(".message.error").get_by_role("button", name="Fermer").click()
+    assert saved()["primary_format"] == "feed"
+    tab("Style")
+    generate()
+    # With a version: a model of another shape is only said to differ; the poster keeps its format.
+    tab("Style")
+    open_models()
+    pick_model(models["story-c"])
+    expect(question.get_by_role("status")).to_have_text("Ce modèle est au format Story. Cette affiche garde son format : il se choisit avant la première version.")
+    expect(question.get_by_role("button")).to_have_text(["Fermer"])
+    expect(locked_sentence).to_be_visible()
+    assert formats.get_attribute("aria-describedby") == locked_sentence.get_attribute("id") == "format-lock"
+    question.scroll_into_view_if_needed()
+    shot(page, "format-question-locked-1366-clair.png", full_page=False)
+    question.get_by_role("button", name="Fermer").click()
+    expect(question).to_have_count(0)
+    source_input = saved()["input_id"]
+    assert [visual["size"] for visual in get(f"/api/creations/{poster}/visuals")["items"]] == [scene_sizes["feed"]]
+    # « Refaire en Story » whose last step fails (the copy's format change is refused once): the copy made is opened and
+    # said, in Publication, its title a layer again, its format free in « Style »; the source is untouched.
+    failed = []
+
+    def fail_once(route):
+        if route.request.method != "PUT" or failed or poster in route.request.url:
+            return route.continue_()
+        failed.append(route.request.url)
+        route.fulfill(status=503, json={"error": {"code": "service_down", "message_fr": "Le service est momentanément indisponible.", "retryable": True}})
+    page.route("**/api/creations/*", fail_once)
+    page.get_by_role("button", name="Refaire en Story", exact=True).click()
+    page.wait_for_function(f"location.hash !== '#{poster}'")
+    expect(page.locator(".message.error")).to_contain_text("Une copie au format Publication a été créée, sans version, mais elle n’a pas pu passer au format Story (Le service est momentanément indisponible.). Choisissez son format dans « Style ».")
+    assert len(failed) == 1 and here() in failed[0], failed
+    page.unroute("**/api/creations/*", fail_once)
+    expect(radio("Publication 4:5")).to_be_checked()
+    expect(radio("Publication 4:5")).to_be_focused()
+    expect(radio("Story 9:16")).to_be_enabled()
+    until(lambda: all(layer["visible"] for layer in saved()["formats"]["feed"]["layers"] if layer["role"] in ("title", "price")))
+    assert saved()["input_id"] != source_input and get(f"/api/creations/{here()}/visuals")["items"] == []
+    assert next(layer for layer in get(f"/api/creations/{poster}")["document"]["formats"]["feed"]["layers"] if layer["role"] == "title")["visible"] is False
+    page.locator(".message.error").get_by_role("button", name="Fermer").click()
+    page.goto(f"{ORIGIN}/#{poster}")
+    expect(page.get_by_role("tab")).to_have_count(4)
+    tab("Style")
+    page.get_by_role("button", name="Refaire en Story", exact=True).click()
+    page.wait_for_function(f"location.hash !== '#{poster}'")
+    expect(page.locator(".message.notice")).to_contain_text("Nouvelle affiche au format Story")
+    remade = saved()
+    assert remade["primary_format"] == "story" and list(remade["formats"]) == ["story"], remade
+    assert remade["input_id"] != source_input and remade["offer"]["title"] == "Casque modèle"
+    assert remade["formats"]["story"]["scene"]["visual_id"] is None
+    assert get(f"/api/creations/{here()}/visuals")["items"] == []
+    product = get(f"/api/product-inputs/{remade['input_id']}")
+    assert (product["name"], product["photo_assets"]) == (get(f"/api/product-inputs/{source_input}")["name"], get(f"/api/product-inputs/{source_input}")["photo_assets"])
+    expect(page.locator(".step-count")).to_have_text("Étape 4 sur 4")
+    expect(radio("Story 9:16")).to_be_checked()
+    expect(radio("Story 9:16")).to_be_enabled()
+    expect(radio("Story 9:16")).to_be_focused()
+    expect(locked_sentence).to_have_count(0)
+    # The poster left behind is unchanged: Publication, its version kept.
+    source = get(f"/api/creations/{poster}")["document"]
+    assert source["primary_format"] == "feed" and [visual["size"] for visual in get(f"/api/creations/{poster}/visuals")["items"]] == [scene_sizes["feed"]]
+    posters["remade"] = here()
+    session = {"cookies": context.storage_state()["cookies"], "origins": []}
+    context.close()
+
+    # Shapes (T-FMT-006): each poster in its own shape at 360 × 740 (touch) and 1366 × 768, light and dark: the confirmed
+    # file (shown on opening), the poster, the versions strip and its « Nouvelle version » tile, the locked « Style » tab,
+    # on a phone the large view; the library's thumbnails; a Story poster in the steps, whose thumbnail stays 130 px high.
+    ratios, titles = {"story": 1080 / 1920, "square": 1.0}, {"story": "Enceinte Story", "square": "Enceinte Carré"}
+    for width, height in ((360, 740), (1366, 768)):
+        phone = width == 360
+        view = browser.new_context(viewport={"width": width, "height": height}, is_mobile=phone, has_touch=phone, color_scheme="light", storage_state=session)
+        screen = view.new_page()
+        screen.set_default_timeout(10000)
+        screen.on("pageerror", lambda error: errors.append(str(error)))
+        press = (lambda locator: locator.tap()) if phone else (lambda locator: locator.click())
+        for theme, scheme in (("clair", "light"), ("sombre", "dark")):
+            screen.emulate_media(color_scheme=scheme)
+            for value in ("story", "square"):
+                ratio, where = ratios[value], f"{value} at {width} px, {theme}"
+                screen.goto(f"{ORIGIN}/#{posters[value]}")
+                screen.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+                final = screen.locator(".final-preview")
+                expect(final.get_by_role("heading", name="Votre affiche est prête")).to_be_visible()
+                image = final.locator(".shot img")
+                screen.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=image.element_handle())
+                assert check_shape(image, ratio, f"final preview, {where}")[1] <= height * .7 + 1
+                check_one_blur(screen, f"final preview, {where}")
+                check_contrast(screen, f"final preview, {where}")
+                shot(screen, f"format-{value}-{width}-{theme}-final.png", full_page=False)
+                press(final.get_by_role("button", name="Fermer"))
+                expect(final).to_have_count(0)
+                expect(screen.get_by_role("tab")).to_have_count(4)
+                expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
+                canvas = screen.locator(".poster-canvas canvas").first
+                check_shape(canvas, ratio, f"poster, {where}")
+                expect(canvas).to_be_in_viewport(ratio=1)
+                thumb = check_shape(screen.locator(".version img").first, ratio, f"version, {where}")
+                check_shape(screen.locator(".version.new .add"), ratio, f"« Nouvelle version », {where}")
+                assert abs(thumb[1] - 70) < 1 if phone else thumb[1] <= 196, (where, thumb)
+                if phone:
+                    # The version's badge stays on the poster, in front, also on a Story's narrow one.
+                    badge, poster = screen.locator(".frame .badge").bounding_box(), canvas.bounding_box()
+                    assert badge["x"] + badge["width"] <= poster["x"] + poster["width"] + 1, (where, badge, poster)
+                    assert topmost(screen.locator(".frame .badge"))
+                screen.wait_for_function(NO_SIDEWAYS)
+                check_one_blur(screen, f"editor, {where}")
+                check_contrast(screen, f"editor, {where}")
+                # The focus given back by the closed preview may still be scrolling the page (smoothly, and an instant scroll
+                # does not stop it): once the page is still, it goes to the top for the picture.
+                screen.evaluate(STILL_SCROLL)
+                screen.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+                shot(screen, f"format-{value}-{width}-{theme}-editeur.png", full_page=False)
+                press(screen.get_by_role("tab", name="Style", exact=True))
+                expect(screen.get_by_text("Le format ne change plus après la première version", exact=False)).to_be_visible()
+                screen.wait_for_function(NO_SIDEWAYS)
+                check_one_blur(screen, f"Style tab, {where}")
+                check_contrast(screen, f"Style tab, {where}")
+                if phone:
+                    check_targets(screen, f"Style tab, {where}")
+                screen.locator(".format-choice").evaluate("e => e.scrollIntoView({ block: 'start', behavior: 'instant' })")
+                shot(screen, f"format-{value}-{width}-{theme}-style.png", full_page=False)
+                if phone:
+                    press(screen.get_by_role("button", name="Voir l’affiche", exact=True))
+                    sheet = screen.get_by_role("dialog", name="Affiche")
+                    expect(sheet).to_be_visible()
+                    screen.wait_for_function("document.querySelector('.stage.peek .poster-canvas canvas')?.getBoundingClientRect().width > 250")
+                    check_shape(sheet.locator(".poster-canvas canvas").first, ratio, f"large view, {where}")
+                    check_contrast(screen, f"large view, {where}")
+                    shot(screen, f"format-{value}-{width}-{theme}-grand.png", full_page=False)
+                    press(sheet.get_by_role("button", name="Revenir aux réglages"))
+                    expect(screen.get_by_role("dialog")).to_have_count(0)
+            # The library: each thumbnail whole, in its poster's shape, inside the same 48 × 60 place.
+            screen.goto(f"{ORIGIN}/#affiches")
+            expect(screen.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
+            for value, title in titles.items():
+                picture = screen.locator(".library-item", has_text=title).locator("img")
+                screen.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=picture.element_handle())
+                natural = picture.evaluate("e => e.naturalWidth / e.naturalHeight")
+                assert abs(natural - ratios[value]) / ratios[value] < .02 and picture.evaluate("e => getComputedStyle(e).objectFit") == "contain", (value, natural)
+                assert [round(side) for side in picture.evaluate(BOX_JS)] == [48, 60]
+            check_contrast(screen, f"Mes affiches at {width} px, {theme}")
+            shot(screen, f"format-mes-affiches-{width}-{theme}.png", full_page=False)
+            # A Story poster in the steps: on one column its thumbnail is at most 130 px high and the first field stays high.
+            screen.goto(f"{ORIGIN}/#{posters['remade']}")
+            expect(screen.locator(".step-count")).to_have_text("Étape 2 sur 4")
+            canvas = screen.locator(".poster-canvas canvas").first
+            expect(canvas).to_be_visible()
+            box = check_shape(canvas, ratios["story"], f"steps, story at {width} px, {theme}")
+            if phone:
+                assert box[1] <= 130.5, box
+                assert screen.get_by_label("Titre", exact=True).bounding_box()["y"] < 444
+            else:
+                expect(canvas).to_be_in_viewport(ratio=1)
+            check_contrast(screen, f"steps, story at {width} px, {theme}")
+            shot(screen, f"format-story-{width}-{theme}-etape.png", full_page=False)
+            for _ in range(2):
+                press(screen.get_by_role("button", name="Continuer", exact=True))
+            expect(screen.locator(".step-count")).to_have_text("Étape 4 sur 4")
+            expect(screen.get_by_role("radio", name="Story 9:16", exact=True)).to_be_enabled()
+            screen.wait_for_function(NO_SIDEWAYS)
+            check_one_blur(screen, f"Style step, story at {width} px, {theme}")
+            check_contrast(screen, f"Style step, story at {width} px, {theme}")
+            if phone:
+                check_targets(screen, f"Style step, story at {width} px, {theme}")
+            shot(screen, f"format-story-{width}-{theme}-etape-style.png", full_page=False)
+        view.close()
+    assert not errors, errors
+
+
+def serve(data, **extra):
+    """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data; the defaults unless told."""
+    settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
+                        anthropic_api_key=None, stub_fail=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
+                        data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD), **extra)
+    server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started or not thread.is_alive():
+            break
+        time.sleep(.05)
+    assert server.started, "API did not start"
+    return server, thread
+
+
+def stop(server, thread):
+    server.should_exit = True
+    thread.join(timeout=20)
+    assert not thread.is_alive(), "API did not stop"
+
+
 def run():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="affiche-browser-") as data:
-        settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
-                            anthropic_api_key=None, stub_fail=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
-                            data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD))
-        server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
+        servers = [serve(data)]
         with (OUTPUT / "vite.log").open("w", encoding="utf-8") as log:
             vite = subprocess.Popen(["node", str(ROOT / "frontend/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1"],
                                     cwd=ROOT / "frontend", stdout=log, stderr=log,
@@ -774,14 +1185,27 @@ def run():
                         expect(proceed).to_have_count(0)
                         expect(generate).to_be_enabled()
                         expect(page.get_by_label("Position du contact")).to_have_count(0)
+                        # One format enabled (the pilot's default, FORMATS_ENABLED=feed): no format is offered, nothing asked.
+                        expect(page.get_by_role("radiogroup", name="Format")).to_have_count(0)
+                        expect(page.locator(".bar .format")).to_contain_text("Publication · 1080 × 1350")
                         check_contrast(page, "step Style")
                         shot(page, "step-style.png")
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
                         page.get_by_text("Créer un style depuis une affiche", exact=True).click()
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_be_visible()
-                        page.get_by_label("Affiche modèle").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+                        # A 9:16 model with one format enabled: uploaded, shown, and nothing is asked.
+                        Image.new("RGB", (900, 1600), (30, 60, 140)).save(OUTPUT / "model-story-feed-only.png")
+                        with page.expect_response("**/api/assets") as uploaded:
+                            page.get_by_label("Affiche modèle").set_input_files(OUTPUT / "model-story-feed-only.png")
+                        assert (uploaded.value.json()["width"], uploaded.value.json()["height"]) == (900, 1600)
+                        expect(page.get_by_alt_text("Affiche modèle pour le nouveau style")).to_be_visible()
+                        page.wait_for_function("!document.querySelector('.new-look input[type=file]').disabled")
+                        expect(page.locator(".format-ask")).to_have_count(0)
+                        with page.expect_response("**/api/assets"):
+                            page.get_by_label("Affiche modèle").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.get_by_alt_text("Affiche modèle pour le nouveau style")).to_be_visible()
                         expect(page.get_by_text("Choisissez d’abord une affiche modèle ci-dessus.")).to_have_count(0)
+                        expect(page.locator(".format-ask")).to_have_count(0)
                         page.get_by_label("Nom du style").fill("Vagues bleues")
                         page.get_by_role("button", name="Enregistrer ce style").click()
                         # A paid action is confirmed first, with its cost; cancelling does nothing.
@@ -1578,7 +2002,16 @@ def run():
                         expect(other.get_by_label("Titre", exact=True)).to_be_visible()
                         assert other.url.endswith(f"#{copy_id}"), other.url
                         other.close()
-                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, zero spend.")
+                        # The three formats (ADR-080) on an API of their own, fresh data: FORMATS_ENABLED=feed,square,story.
+                        stop(*servers.pop())
+                        with tempfile.TemporaryDirectory(prefix="affiche-formats-") as formats_data:
+                            formats_server = serve(formats_data, formats_enabled="feed,square,story")
+                            try:
+                                walk_formats(browser, errors)
+                            finally:
+                                stop(*formats_server)  # before its data directory is removed
+                        assert not errors, errors
+                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, three formats, zero spend.")
                     except Exception:
                         page.screenshot(path=str(OUTPUT / "failure.png"), full_page=True)
                         print(page.locator("body").inner_text(), flush=True)
@@ -1593,9 +2026,8 @@ def run():
                 except subprocess.TimeoutExpired:
                     vite.kill()
                     vite.wait(timeout=10)
-                server.should_exit = True
-                thread.join(timeout=20)
-                assert not thread.is_alive(), "API did not stop"
+                for server in servers:
+                    stop(*server)
 
 
 if __name__ == "__main__":

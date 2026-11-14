@@ -31,5 +31,5 @@ export async function mutation<T>(path: string, body: unknown, revision?: number
 
 export async function upload(file: File, role: 'original' | 'logo' | 'style') {
   const body = new FormData(); body.set('file', file); body.set('role', role)
-  return api<{ asset: string; warnings: string[] }>('/api/assets', { method: 'POST', body })
+  return api<{ asset: string; width: number; height: number; warnings: string[] }>('/api/assets', { method: 'POST', body })
 }

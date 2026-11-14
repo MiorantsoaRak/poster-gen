@@ -124,6 +124,19 @@ label.other { flex-direction: row; align-items: center; gap: 8px; margin: 0; fon
 label.other input { width: 36px; min-height: 36px; border-radius: 999px }
 label.other.on input { border-color: var(--text); box-shadow: 0 0 0 1px var(--text) }
 @media (pointer: coarse) { .chip, .sw, label.other input { min-height: 44px } .sw { width: 44px } label.other input { width: 44px } }
+/* The poster's format (ADR-080): native radios dressed as chips, the chosen one a pill. Each radio covers its label,
+   transparent, for touch, keyboard and screen readers. */
+.format-choice label.chip { position: relative; flex-direction: row; align-items: center; justify-content: center; margin: 0; border: 1.5px solid var(--line); background: var(--glass-field); cursor: pointer }
+.format-choice label.chip input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; opacity: 0; cursor: inherit }
+.format-choice label.chip:has(input:checked) { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
+.format-choice label.chip:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px }
+.format-choice label.chip:has(input:disabled) { cursor: not-allowed }
+.format-choice label.chip:has(input:disabled:not(:checked)) { color: var(--faint) }
+.format-choice .help, .format-choice .row { margin: 4px 0 0 }
+.format-choice .help { font-weight: 500 }
+/* A model of another shape asks under its picker; no blur, it sits on the rail's. */
+.format-ask { margin: 12px 0 14px; padding: 12px 14px; background: var(--glass-field); border-radius: var(--field) }
+.format-ask p { margin: 0; color: var(--text); font-size: 13.5px; font-weight: 600 }
 .unit { position: relative; display: block }
 .unit::after { content: 'Ar'; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--faint); font-weight: 600 }
 details { border-top: 1px solid var(--line); margin-top: 14px }
@@ -205,7 +218,8 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item span { color: var(--faint); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item svg { color: var(--faint); justify-self: center }
-.library-item img { width: 48px; height: 60px; object-fit: cover; border-radius: 8px; display: block }
+/* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
+.library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
 .empty { color: var(--muted); border-radius: var(--radius); padding: 28px }
 .look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px }
 .look-card { margin: 0; border: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
@@ -309,7 +323,8 @@ details.new-look[open] { padding-bottom: 14px }
    Only on one column, where the poster is small: on a wide screen and in the large view it would hide the corner of
    the poster from the pointer. Glass blurs the poster under the pill only. */
 .frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; align-items: center; gap: 6px; min-height: 28px; margin: 0; padding: 0 11px; border-radius: 999px;
-  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
+  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700;
+  max-width: calc(100% - 16px); white-space: normal }  /* on a narrow poster (a Story, 142 px at 360) it wraps inside it */
 .tap-open { position: absolute; inset: 0; z-index: 1; cursor: zoom-in }
 /* While a scene is made (D-POSTER-EDITOR-006) the poster says so itself: a glass pill with the state word and a pulsing
    dot in the one hue, in front like the badge; the badge names what is shown (the draft, or the version kept), at every
@@ -318,7 +333,7 @@ details.new-look[open] { padding-bottom: 14px }
   background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
 .gen-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--hue); animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
-.canvas-host.generating .frame .badge { display: inline-flex; max-width: calc(100% - 16px); white-space: normal }
+.canvas-host.generating .frame .badge { display: inline-flex }
 @keyframes pulse { 50% { opacity: .3 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
 .coach svg { margin-top: 2px }
@@ -357,7 +372,11 @@ details.new-look[open] { padding-bottom: 14px }
 .versions h2 { font-size: 13px; font-weight: 700; letter-spacing: 0; color: var(--muted); white-space: nowrap }
 .version { display: grid; gap: 4px; font-size: 12px; line-height: 16px; color: var(--muted); min-width: 0 }
 .version .thumb { display: block; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none }
-.version img { width: 100%; aspect-ratio: 4/5; object-fit: cover; border-radius: 10px; display: block; box-shadow: var(--poster-shadow) }
+/* Each version and the « Nouvelle version » tile in the poster's shape (--poster-ratio, width / height, set on the
+   editor), never taller than a Publication's in the same place (--thumb-h). */
+.versions { --thumb-h: 195px }
+.version img, button.version.new .add { width: min(100%, calc(var(--thumb-h) * var(--poster-ratio, .8))); height: auto; aspect-ratio: var(--poster-ratio, .8) }
+.version img { object-fit: cover; border-radius: 10px; display: block; box-shadow: var(--poster-shadow) }
 .version.selected img { outline: 2.5px solid var(--text); outline-offset: 2px }
 .version .pick { color: var(--text) }
 .version .text-button { justify-self: start; min-height: 28px; font-size: 12px }
@@ -370,7 +389,7 @@ button.version.new { justify-items: stretch; justify-content: stretch; text-alig
   button.version.new:hover:not(:disabled) { background: none }
   button.version.new:hover:not(:disabled) .add { border-color: var(--text); color: var(--text) }
 }
-button.version.new .add { aspect-ratio: 4/5; border-radius: 10px }
+button.version.new .add { border-radius: 10px }
 button.version.new small { font-size: 12px; font-weight: 500 }
 
 /* Confirmation of a paid action, the fidelity check and the final check open in front of the page */
@@ -407,7 +426,9 @@ button.version.new small { font-size: 12px; font-weight: 500 }
 .review-panel > .actions { margin-top: 0 }
 .final-grid { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 14px; align-items: start }
 .shot { border-radius: var(--radius); padding: 18px; display: grid; gap: 10px; justify-items: center }
-.shot img { width: 100%; height: auto; border-radius: 5px; display: block; box-shadow: var(--poster-shadow) }
+/* A Story preview stays within 70 % of the screen's height (--shot-ratio, width / height, set on a Story's final check only:
+   a Publication keeps the full width it always had). */
+.shot img { width: min(100%, calc(70vh * var(--shot-ratio, 10))); height: auto; border-radius: 5px; display: block; box-shadow: var(--poster-shadow) }
 .shot .help { margin: 0 }
 .facts { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 14px; border-radius: 20px }
 .facts div { padding: 16px 20px; min-width: 0 }
@@ -425,7 +446,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .work { display: flex; flex-direction: column; align-items: stretch }
   .stage { order: -2; position: static }
   .canvas-host { min-height: 0 }
-  .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding-bottom: 6px }
+  .versions { order: -1; grid-auto-flow: column; grid-auto-columns: 104px; grid-template-rows: auto auto; overflow-x: auto; padding-bottom: 6px; --thumb-h: 130px }
   .versions h2, .versions > .help { grid-column: 1 / -1 }
   .versions > .version { grid-row: 2 }
   .why, .stage-head .why { text-align: left }
@@ -459,6 +480,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .stepping .stage:not(.peek) :is(.stage-head, .selection, .photo, .layer-list), .stepping .stage:not(.peek) > .help { display: none }
   /* The thumbnail is narrower than the pill: it hangs from the thumbnail's corner, towards the empty column. */
   .stepping .stage:not(.peek) .gen-pill { left: 6px; bottom: 6px; transform: none }
+  /* « Aperçu » is one word: on a Story's 73 px thumbnail it hangs past the edge, like the pill, rather than out of its own background. */
+  .stepping .stage:not(.peek) .frame .badge { max-width: none; white-space: nowrap }
   /* Once a version exists the real image stays on top (D-POSTER-EDITOR-005): the stage dissolves into the column, so
      that only the poster and its row of elements stick under the top bar; its other blocks follow, then the versions,
      then the tools. The large view is still the stage itself. */
@@ -475,7 +498,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor.typing .pin :is(.layer-list, .badge, .gen-pill), .editor.typing .main-action { display: none }
   /* Versions: one row of small thumbnails, each with its state in words. */
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
-  .editor:not(.stepping) :is(.version img, button.version.new .add) { width: 56px; height: 70px }
+  .editor:not(.stepping) :is(.version img, button.version.new .add) { width: calc(70px * var(--poster-ratio, .8)); height: 70px }
   .editor:not(.stepping) .version.new small { display: none }
   /* Tools: the four groups as a glass row of icons with their labels, the active one marked by an amber pill behind its icon. */
   .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 6px; margin-bottom: 12px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 28px }

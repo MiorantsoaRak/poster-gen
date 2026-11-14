@@ -3,13 +3,13 @@ import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shall
 import PosterCanvas from './PosterCanvas.vue'
 import { api, ApiError, clockSkew, mutation, upload } from './api'
 import { DraftSaver } from './autosave'
-import { copy, fitCrop, FORMATS, History, parsePrice, setIdentity, type Creation, type FontId, type Layer, type PosterDocument, type Visual } from './document'
+import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
-interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number }
+interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
 interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
@@ -46,7 +46,7 @@ const LOOKS = [
   { id: 'libre', label: 'Décrire moi-même', image: null, direction: null, palette: null },
 ] as const
 // Looks the shop made from posters it likes (Claude writes the brief once; it is reused from then on).
-interface SavedLook { id: string; name: string; reference_asset: string; brief: { direction_fr: string; surface_fr: string; lighting: string; camera: string; palette: string[]; accent_colour: string; alignment: string } }
+interface SavedLook { id: string; name: string; reference_asset: string; reference_width?: number | null; reference_height?: number | null; brief: { direction_fr: string; surface_fr: string; lighting: string; camera: string; palette: string[]; accent_colour: string; alignment: string } }
 const savedLooks = ref<SavedLook[]>([]), lookName = ref(''), lookReference = ref<string | null>(null)
 const look = ref<string>('clair')
 // A poster made with a style that was removed since keeps it for its new versions (D-CREATION-LIBRARY-004). It is held
@@ -71,6 +71,9 @@ function chooseLook(id: string) {
   const proposed = headline.value.accent_colour.toLowerCase()
   styleAccent.value = ''
   if (accentPicked.value && proposed !== mine.toLowerCase()) { headline.value.accent_colour = mine; styleAccent.value = proposed }
+  const saved = savedLooks.value.find(item => item.id === id)
+  if (saved) askFormat('look', saved.reference_asset, saved.reference_width, saved.reference_height)
+  else if (formatAsk.value?.where === 'look') formatAsk.value = null  // a built-in style has no model
 }
 function useStyleAccent() { headline.value.accent_colour = styleAccent.value; accentPicked.value = false; styleAccent.value = '' }
 // A reopened poster brings back what its scene was made with (brand, subtitle, accent, look), so that a new
@@ -92,8 +95,79 @@ async function restoreHeadline() {
 }
 async function chooseLookReference(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
-  if (file) lookReference.value = (await upload(file, 'style')).asset
+  if (!file) return
+  const model = await upload(file, 'style')
+  lookReference.value = model.asset
+  askFormat('model', model.asset, model.width, model.height)
 }
+// The poster's format (ADR-080): chosen in « Style », free until the first version. A model image of another shape asks
+// whether the poster takes its format (R-POSTER-FORMAT-002); it never switches alone, and a « non » is kept for this
+// poster and this model during the visit (a reload asks once more). Only the formats the server enables are offered.
+const FORMAT_NAMES: Record<Format, [string, string]> = { feed: ['Publication', '4:5'], square: ['Carré', '1:1'], story: ['Story', '9:16'] }
+const enabledFormats = computed(() => caps.value?.formats_enabled ?? ['feed'])
+const formatsShown = computed(() => (Object.keys(FORMATS) as Format[]).filter(item => enabledFormats.value.includes(item) || item === format.value))
+// A version fixes the format: its title, price and contact are drawn in an image of this size. A scene on its way too.
+const formatFixed = computed(() => visuals.value.length > 0)
+// Any job holds it too, but a style brief (it reads the model only): a paid result made for one revision would be refused.
+const formatHeld = computed(() => busy.value || formatFixed.value || (!!job.value && job.value.kind !== 'look'))
+const formatAsk = ref<{ where: 'model' | 'look'; asset: string; format: Format } | null>(null)
+const declinedModels = new Set<string>()
+function askFormat(where: 'model' | 'look', asset: string, width?: number | null, height?: number | null) {
+  const shape = width && height ? nearestFormat(width, height) : null
+  formatAsk.value = shape && shape !== format.value && enabledFormats.value.includes(shape) && !declinedModels.has(`${creation.value?.id}:${asset}`) ? { where, asset, format: shape } : null
+}
+const formatQuestion = computed(() => formatAsk.value?.format !== format.value ? formatAsk.value : null)
+const formatQuestionText = computed(() => {
+  const [name, ratio] = FORMAT_NAMES[formatQuestion.value?.format ?? 'feed']
+  return formatFixed.value ? `Ce modèle est au format ${name}. Cette affiche garde son format : il se choisit avant la première version.` : `Votre modèle est au format ${name} (${ratio}). Utiliser ce format pour l’affiche ?`
+})
+const otherFormats = computed(() => formatsShown.value.filter(item => item !== format.value && enabledFormats.value.includes(item)))
+function keepPosterFormat() { declinedModels.add(`${creation.value?.id}:${formatAsk.value!.asset}`); formatAsk.value = null }
+// One layout, no scene, no plan: the next scene is planned for the new size. Undoable until a scene is on its way.
+function chooseFormat(to: Format) {
+  if (!doc.value || to === format.value || formatHeld.value) return
+  edit(document => { Object.assign(document, reformat(document, to)) })
+  plan.value = null; formatAsk.value = null
+}
+const formatChoice = computed({ get: () => format.value, set: chooseFormat })
+// « Refaire en … » (D-POSTER-FORMAT-001 v2 point 3): this poster keeps its format. The same product gets a new input (same
+// photos, name and variant, so no version is attached to it), the poster is copied onto it and the copy takes the other
+// format. The poster left behind is unchanged; a copy that could not take the format is opened as it is, and the reason said.
+// The button pressed is gone with its poster: the focus goes to the new poster's format (free again once the action is over).
+const focusFormat = () => nextTick(() => document.querySelector<HTMLElement>('.format-choice input:checked:not(:disabled)')?.focus())
+async function remakeIn(to: Format) {
+  await flush()
+  const source = await api<{ product_ref: string; name: string; variant: string; photo_assets: string[]; facts: string[] }>(`/api/product-inputs/${doc.value!.input_id}`)
+  const input = await mutation<{ id: string }>('/api/product-inputs', { product_ref: source.product_ref, name: source.name, variant: source.variant, photo_assets: source.photo_assets, facts: source.facts })
+  const copied = await mutation<Creation>(`/api/creations/${creation.value!.id}/copies`, { source_revision: saver!.revision, reason: 'replace_input', new_input_id: input.id })
+  const words = { ...headline.value }
+  let made = copied, failure: unknown
+  try { made = await mutation<Creation>(`/api/creations/${copied.id}`, reformat(copied.document, to), copied.revision, undefined, 'PUT') }
+  catch (reason) { failure = reason }
+  // The copy exists either way: it is opened, so that a retry never makes another one. The first failure is the one said.
+  try { await adopt(made) } catch (reason) { throw failure ?? reason }
+  // The same product: its words stay (adopt blanks them for another input). The steps were all walked once.
+  headline.value = words; visited.value = ['textes', 'boutique', 'style']; group.value = 'style'
+  if (failure) {
+    // The copy kept the source's format and the layers its scene had hidden: without a scene they are shown again.
+    edit(document => { Object.assign(document, reformat(document, document.primary_format)) })
+    throw new Error(`Une copie au format ${FORMAT_NAMES[made.document.primary_format][0]} a été créée, sans version, mais elle n’a pas pu passer au format ${FORMAT_NAMES[to][0]}${failure instanceof Error ? ` (${failure.message})` : ''}. Choisissez son format dans « Style ». L’affiche d’origine est conservée.`)
+  }
+  notice.value = `Nouvelle affiche au format ${FORMAT_NAMES[to][0]}, sans version : générez-la quand vous êtes prêt. L’affiche d’origine est conservée.`
+}
+// A format change refused by the server (a version or a scene appeared meanwhile, in another tab for instance): the stored
+// poster comes back and the refusal is said, instead of sending the refused save again (v2 point 8).
+// It waits for the action in progress, like a change of address: nothing runs beside it.
+let reloadDue: (() => Promise<void>) | null = null
+function reloadRefusedFormat(id: string, message: string) {
+  reloadDue = async () => {
+    if (creation.value?.id !== id) return
+    await adopt(await api<Creation>(`/api/creations/${id}`))
+    error.value = `${message} Vos dernières modifications n’ont pas été enregistrées : l’affiche enregistrée a été rechargée.`
+  }
+  if (!busy.value) runReload()
+}
+function runReload() { const run = reloadDue; reloadDue = null; if (run) perform(run) }
 async function createLook() {
   await flush()
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/looks`, { name: lookName.value.trim() || `Style ${savedLooks.value.length + 1}`, reference_asset: lookReference.value }, saver!.revision)
@@ -538,6 +612,8 @@ function removeFromPoster() {
 const scale = computed(() => {
   const [width, height] = FORMATS[format.value]
   if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
+  // The steps' thumbnail is never taller than a Publication's (130 px): a Story would push the step's first field down.
+  if (tapToOpen.value) return Math.min(canvasWidth.value / width, 130 / height)
   // The poster keeps its size while a scene is made: shrinking it to fit the waiting block moved and resized the stage
   // (T-WAIT-DEFORM). Under it, the block's state, time and rail are in view; its steps may need a scroll on a short screen.
   return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / height) : .62, .62)
@@ -582,7 +658,7 @@ async function perform(action: () => Promise<void>) {
     if (held) { fieldError.value = { group: held, text: (reason as ApiError).message }; go(held) }
     else if (!(reason instanceof Shown)) error.value = reason instanceof Error ? reason.message : 'La demande a échoué. Réessayez ; si l’erreur persiste, rechargez la page.'
   }
-  finally { busy.value = false; if (routeDue) { routeDue = false; onHash() } }
+  finally { busy.value = false; if (reloadDue) runReload(); else if (routeDue) { routeDue = false; onHash() } }
 }
 async function loadShop() {
   const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<Listing>('/api/creations?limit=50')])
@@ -626,6 +702,7 @@ async function createPoster() {
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
   await adopt(result)
+  pendingInput = null  // kept only for a retry of this creation: the same product typed again gets its own input
   if (photos.value.some(photo => photo.warnings.includes('low_resolution'))) smallPhotoOf.value = result.id
   // The form now waits for the next product: this one's photos, name, variant, price and agreement must not carry over.
   Object.assign(intake, blankIntake()); photos.value = []
@@ -647,13 +724,16 @@ async function adopt(result: Creation) {
     headline.value = { ...blankHeadline(), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text }
     refinement.value = ''; polish.value = ''
   }
-  if (opening) { group.value = 'textes'; visited.value = ['textes']; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false }
+  if (opening) { group.value = 'textes'; visited.value = ['textes']; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false; formatAsk.value = null }
   finalPreview.value = null; confirmedDownload.value = ''; previewLoaded.value = false; priceError.value = ''
   clearTimeout(pollTimer); job.value = null; review.value = null; proposal.value = null; effect.value = null; previewPolish.value = false
   saver?.dispose(); creation.value = result; visuals.value = known; doc.value = copy(result.document); priceText.value = shownPrice(result.document.offer.price_ar)
   selected.value = result.document.formats[result.document.primary_format]!.layers.find(layer => layer.role === 'title')?.id ?? null
   history = new History(); plan.value = null; styleReference.value = null
-  saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT'), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
+  saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT').catch(reason => {
+    if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
+    throw reason
+  }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
   window.location.hash = result.id
   if (!opening) await refreshVisuals()
   styleReference.value = currentVisual.value?.style_reference_asset ?? null
@@ -869,6 +949,8 @@ function onVisibility() {
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
 function follow(value: Job, found = false) {
   clearTimeout(pollTimer); round++; job.value = value; failures = 0; offline.value = false; decoded.value = false; runningSince.value = null; arrived = ''
+  // A scene of this size is on its way: undo must not bring another format back (D-POSTER-FORMAT-001 v2 point 8).
+  if (waitJob.value && doc.value) history.keepFormat(doc.value.primary_format)
   since.value = found ? localTime(value.created_at, clockSkew, Date.now()) : Date.now(); now.value = Date.now()
   pollTimer = setTimeout(poll, 250)
   // The owner may be far down a step: on one column the poster and the waiting block are at the top of the page; on a wide
@@ -1160,13 +1242,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
-    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned }" :inert="modalOpen">
+    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
-        <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">Publication · 1080 × 1350 · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
+        <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
-        <div class="undo"><button class="ghost icon" :disabled="!history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="!history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
+        <div class="undo"><button class="ghost icon" :disabled="busy || !history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
@@ -1207,11 +1289,14 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             </template>
             <template v-else-if="group === 'style'">
             <p class="help lead">L’allure de l’affiche : choisissez un style, ou décrivez l’ambiance vous-même.</p>
+            <div v-if="formatsShown.length > 1" class="choice format-choice"><span id="format-label">Format</span><div class="chips" role="radiogroup" aria-labelledby="format-label" :aria-describedby="formatFixed ? 'format-lock' : undefined"><label v-for="item in formatsShown" :key="item" class="chip"><input v-model="formatChoice" type="radio" name="format" :value="item" :disabled="formatHeld" />{{ FORMAT_NAMES[item][0] }} {{ FORMAT_NAMES[item][1] }}</label></div>
+              <template v-if="formatFixed"><p id="format-lock" class="help">Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.</p><div class="row"><button v-for="item in otherFormats" :key="item" type="button" class="secondary" :disabled="busy || !!job" @click="perform(() => remakeIn(item)).then(focusFormat)">Refaire en {{ FORMAT_NAMES[item][0] }}</button></div></template></div>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="`/api/assets/${item.reference_asset}?prepared=true`" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
+            <div v-if="formatQuestion?.where === 'look'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div>
             <p v-if="look === 'couleur' && !styleAccent" class="help">Ce style est teinté de la couleur d’accent choisie dans « Textes ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p><p v-if="styleAccent" class="help" role="status">Ce style propose sa couleur d’accent ; la vôtre est conservée. <button type="button" class="text-button" @click="useStyleAccent">Utiliser la couleur du style</button></p>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
             <label class="ambiance">{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label>
-            <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
+            <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="`/api/assets/${lookReference}?prepared=true`" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             </template>
             <template v-else>
             <p class="help lead">Choisissez l’élément à régler, ici ou sous l’affiche.</p>
@@ -1286,7 +1371,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
           <p v-if="!visuals.length" class="help">Chaque génération crée une version. Vous choisirez celle à exporter.</p>
           <article v-for="visual in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
-            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir cette version (${ versionStates[visual.status] })`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" height="130" loading="lazy" alt="Version générée de la scène" /></button>
+            <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-label="`Choisir cette version (${ versionStates[visual.status] })`" @click="chooseVisual(visual)"><img :src="visual.image_url" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
             <span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
             <button class="text-button" @click="review = visual; resetChecks()">Comparer</button>
@@ -1301,13 +1386,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <label v-if="smallPhoto && paid.run === createScene" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
       <div class="row"><button class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">Annuler</button></div>
     </div></div>
-    <section v-if="finalPreview" v-modal class="review-panel final-preview" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid" @keydown.esc="finalPreview = null">
+    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ confirmedDownload ? 'Votre affiche est prête' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ confirmedDownload ? 'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
-        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :src="finalPreview.preview_url" width="1080" height="1350" alt="Aperçu final du fichier à télécharger" @load="previewLoaded = true" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'; previewLoaded = false" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
+        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoaded = true" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'; previewLoaded = false" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
         <div>
           <p v-if="confirmedDownload" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
-          <dl class="facts"><div><dt>Format</dt><dd>1080 × 1350 px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
+          <dl class="facts"><div><dt>Format</dt><dd>{{ finalPreview.width }} × {{ finalPreview.height }} px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
           <template v-if="!confirmedDownload">
           <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!previewLoaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>

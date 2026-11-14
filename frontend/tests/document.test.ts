@@ -1,6 +1,91 @@
 import { describe, expect, it } from 'vitest'
-import { drawOrder, fitCrop, formatPrice, History, parsePrice, setIdentity } from '../src/document'
+import { copy, drawOrder, fitCrop, FORMATS, formatPrice, History, nearestFormat, parsePrice, reformat, setIdentity, type Format, type PosterDocument } from '../src/document'
 import { document } from './fixture'
+
+describe('the format a model image is close to (8 % rule)', () => {
+  it.each([[1080, 1350, 'feed'], [1500, 2000, 'feed'], [1080, 1080, 'square'], [1000, 1050, 'square'], [1050, 1000, 'square'],
+    [1080, 1920, 'story'], [900, 1600, 'story'], [720, 1280, 'story']])('reads %i × %i as %s', (width, height, format) => {
+    expect(nearestFormat(width, height)).toBe(format)
+  })
+  // 2:3 sits between Publication and Story; landscape is no format; nothing for a size that is not one.
+  it.each([[1000, 1500], [1600, 900], [1350, 1080], [1200, 1000], [1000, 2400], [0, 100], [100, 0], [-100, 100], [NaN, 100], [Infinity, 100]])('asks nothing for %d × %d', (width, height) => {
+    expect(nearestFormat(width, height)).toBeNull()
+  })
+  it('stops at 8 %, in both directions', () => {
+    const at = (format: Format, factor: number) => nearestFormat(FORMATS[format][0] * factor, FORMATS[format][1])
+    for (const format of Object.keys(FORMATS) as Format[]) {
+      expect([at(format, Math.exp(.079)), at(format, Math.exp(-.079))]).toEqual([format, format])
+      expect([at(format, Math.exp(.081)), at(format, Math.exp(-.081))]).toEqual([null, null])
+    }
+  })
+})
+
+describe('reformat: another format before the first version', () => {
+  const layer = (role: 'title' | 'price' | 'shop_name' | 'contact', y: number, height: number, visible = true) => ({ id: role, kind: 'text' as const, role, x: 64, y, width: 952, height, z: 0, visible,
+    font_id: 'noto-sans' as const, font_size: 40, weight: 700 as const, fill: '#FFFFFF', align: 'left' as const, line_height: 1.2, outline: null, shadow: null, texture_effect_id: null })
+  const poster = (): PosterDocument => {
+    const doc = document()
+    doc.include.contact = true
+    doc.formats.feed = { scene: { visual_id: 'scene', crop: { x: 0, y: 0, w: 1088, h: 1360 } },
+      layers: [layer('title', 64, 192, false), layer('price', 970, 120, false), layer('shop_name', 1110, 64), layer('contact', 1186, 132, false)] }
+    return doc
+  }
+  const ys = (doc: PosterDocument, format: Format) => doc.formats[format]!.layers.map(item => item.y)
+
+  it('gives one layout without a scene, the top in place and the bottom at its distance from the bottom', () => {
+    const before = poster(), kept = copy(before), story = reformat(before, 'story')
+    expect(before).toEqual(kept)  // pure
+    expect(story.primary_format).toBe('story')
+    expect(Object.keys(story.formats)).toEqual(['story'])
+    expect(story.formats.story!.scene).toEqual({ visual_id: null, crop: null })
+    expect(ys(story, 'story')).toEqual([64, 970 + 570, 1110 + 570, 1186 + 570])
+    expect(story.formats.story!.layers.map(item => [item.x, item.width])).toEqual(before.formats.feed!.layers.map(item => [item.x, item.width]))
+    expect(story.offer).toEqual(before.offer)
+    const square = reformat(story, 'square')
+    expect(ys(square, 'square')).toEqual([64, 970 - 270, 1110 - 270, 1186 - 270])
+    expect(reformat(square, 'feed').formats.feed!.layers.map(item => item.y)).toEqual(ys(before, 'feed'))
+  })
+
+  it('keeps every layer inside the new canvas', () => {
+    const doc = document()
+    doc.formats = { story: { scene: { visual_id: null, crop: null }, layers: [layer('title', 800, 318), layer('price', 1900, 120), { ...layer('contact', -40, 2000), x: 900 }] } }
+    doc.primary_format = 'story'; doc.include.contact = true
+    for (const to of Object.keys(FORMATS) as Format[]) {
+      const [width, height] = FORMATS[to]
+      for (const item of reformat(doc, to).formats[to]!.layers) {
+        expect(item.x).toBeGreaterThanOrEqual(0); expect(item.y).toBeGreaterThanOrEqual(0)
+        expect(item.x + item.width).toBeLessThanOrEqual(width); expect(item.y + item.height).toBeLessThanOrEqual(height)
+      }
+    }
+    expect(ys(reformat(doc, 'square'), 'square')).toEqual([762, 960, 0])
+  })
+
+  it('shows again as layers what the scene had drawn, and the shop texts as they are ticked', () => {
+    const doc = poster()
+    doc.include.shop_name = false
+    const layers = reformat(doc, 'story').formats.story!.layers
+    expect(layers.map(item => [item.role, item.visible])).toEqual([['title', true], ['price', true], ['shop_name', false], ['contact', true]])
+  })
+})
+
+it('cuts the undo history at the nearest state in another format', () => {
+  const history = new History(), feed = document()
+  history.record(feed)
+  const story = reformat(feed, 'story')
+  history.record(story)
+  const edited = copy(story); edited.offer.title = 'Edited'
+  history.record(edited)
+  history.keepFormat('story')
+  expect(history.past.map(doc => [doc.primary_format, doc.offer.title])).toEqual([['story', 'Soundcore R50i'], ['story', 'Edited']])
+  const back = history.undo(edited)!
+  history.undo(back); history.keepFormat('story')
+  expect(history.past).toHaveLength(0)
+  expect(history.future.every(doc => doc.primary_format === 'story')).toBe(true)
+  // A redo that would bring Publication back is gone as well.
+  const other = new History()
+  other.record(story); other.undo(feed); other.keepFormat('story')
+  expect(other.future).toHaveLength(0)
+})
 
 describe('exact Ariary values', () => {
   it('accepts integer groups without rounding', () => {

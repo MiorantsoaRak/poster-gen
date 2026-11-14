@@ -76,6 +76,34 @@ export function setIdentity(doc: PosterDocument, role: keyof PosterDocument['inc
   }
 }
 
+// The format a model image is close to (ADR-080): within 8 % of a format's ratio, as a log-ratio, so that 3:4 counts as
+// Publication while 2:3, a landscape image or an odd shape is no format at all (and asks nothing).
+export function nearestFormat(width: number, height: number): Format | null {
+  if (!(width > 0 && height > 0)) return null
+  for (const [format, [w, h]] of Object.entries(FORMATS) as [Format, [number, number]][])
+    if (Math.abs(Math.log(width / height / (w / h))) <= .08) return format  // the windows do not overlap
+  return null
+}
+
+// The poster in another format, before its first version (D-POSTER-FORMAT-001 v2): one layout and no scene. Every format
+// is 1080 wide, so x and width stay; a layer in the lower half keeps its distance to the bottom; then every layer is kept
+// inside the canvas. Overlaps are accepted: the first scene places the layers again. Without a scene nothing is drawn in
+// an image, so the title, the price and the shop's ticked texts are layers again (a remake of a poster that had versions).
+export function reformat(doc: PosterDocument, to: Format): PosterDocument {
+  const next = copy(doc), fromHeight = FORMATS[doc.primary_format][1], [width, height] = FORMATS[to]
+  const layers = next.formats[doc.primary_format]!.layers
+  for (const layer of layers) {
+    if (layer.y + layer.height / 2 > fromHeight / 2) layer.y += height - fromHeight
+    layer.width = Math.min(layer.width, width); layer.height = Math.min(layer.height, height)
+    layer.x = Math.max(0, Math.min(layer.x, width - layer.width)); layer.y = Math.max(0, Math.min(layer.y, height - layer.height))
+    if (layer.role === 'title' || layer.role === 'price') layer.visible = true
+    else if (layer.role === 'shop_name' || layer.role === 'contact') layer.visible = next.include[layer.role]
+  }
+  next.primary_format = to
+  next.formats = { [to]: { scene: { visual_id: null, crop: null }, layers } }
+  return next
+}
+
 export function fitCrop(imageWidth: number, imageHeight: number, format: Format): Crop {
   const [w, h] = FORMATS[format]
   const scale = Math.min(imageWidth / w, imageHeight / h)
@@ -103,5 +131,10 @@ export class History {
     const next = this.future.pop()
     if (!next) return null
     this.past.push(copy(current)); this.lastKey = ''; return next
+  }
+  // Once a scene is on its way the format is fixed (ADR-080): the history stops at the nearest state in another format.
+  keepFormat(format: Format) {
+    const cut = (list: PosterDocument[]) => { let at = list.length; while (at && list[at - 1].primary_format === format) at--; return list.slice(at) }
+    this.past = cut(this.past); this.future = cut(this.future)
   }
 }
