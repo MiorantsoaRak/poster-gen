@@ -13,7 +13,7 @@ from affiche.db import make_engine, migrate, write_tx
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
                  "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
                  "product_inputs", "creations", "creation_versions", "mutation_keys", "sessions", "login_failures",
-                 "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks"}
+                 "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks", "chat_reads"}
 GUARD_WHERE = {
     "req_one_revision": "WHERE parent_id IS NOT NULL AND status IN ('running','succeeded')",
     "req_one_initial": "WHERE parent_id IS NULL AND status IN ('running','succeeded')",
@@ -67,7 +67,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0011"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0012"
     finally:
         engine.dispose()
 

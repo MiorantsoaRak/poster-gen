@@ -296,5 +296,7 @@ def spent_micros(conn: Connection, settings: Settings) -> int:
     """Micro-USD on the ledger since SPEND_CAP_SINCE: what the cap is checked against."""
     # ISO text comparison: utc_now() text order is time order, and the date is a prefix of its first instant.
     return conn.execute(text("SELECT (SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since)"
-                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM poster_calls WHERE created_at >= :since)"),
+                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM poster_calls WHERE created_at >= :since)"
+                             # A running read counts with its reservation (D-TEXT-FIRST-002).
+                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM chat_reads WHERE created_at >= :since)"),
                         {"since": settings.spend_cap_since.isoformat()}).scalar_one()

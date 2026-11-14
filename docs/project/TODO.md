@@ -5,8 +5,9 @@
 
 ## Now (current focus — max 3 items)
 
-- [ ] T-CHAT-001 (D-TEXT-FIRST-002) Backend reading: migration 0012 `chat_reads`, reader (Claude and stub, `STUB_FAIL`), `POST /api/reads` with cards, candidate-amount price check, replay rules, sweep, ledger in `spent_micros`, daily limit, `ESTIMATE_READ_USD`, French sentences, `chat_available`.
+- [x] T-CHAT-001 (D-TEXT-FIRST-002) Backend reading: migration 0012 `chat_reads`, reader (Claude and stub, `STUB_FAIL`), `POST /api/reads` with cards, candidate-amount price check, replay rules, sweep, ledger in `spent_micros`, daily limit, `ESTIMATE_READ_USD`, French sentences, `chat_available`.
   - verify: `cd backend && uv run pytest -q` passes with the new tests of the design's list.
+  - done 2026-11-14: 128 tests in tests/test_reads.py, full suite 924 passed / 3 deselected. Codex reviews r1 to r4 (reviews/t-chat-001-code-r*.md): three rejections on the price guard, then APPROVE WITH FIXES after the allowlist rewrite (ADR-095); its two last fixes applied and probed by hand. Not verified: the prompt against the real model (T-CHAT-002); the migration on the paid database.
 - [ ] T-CHAT-002 (D-TEXT-FIRST-002 "Paid") Paid reading of about twenty real messages; report cost and delay per read and every wrong field in docs/project/reviews/.
 - [ ] T-CHAT-003 (D-TEXT-FIRST-001, 003) Frontend first request: choice screen, switch, routes, `ChatView` with attachments, recap, generation, « Vérifier » and « Télécharger » through the existing dialogs; `chat.ts`; smoke.
 - [ ] T-CHAT-004 (D-TEXT-FIRST-003) Polish in the chat: change cards (scene, price), « Annuler », list of modifications with `instruction_fr`, version limit lines; smoke.

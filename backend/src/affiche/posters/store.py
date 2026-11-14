@@ -30,14 +30,18 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def mutate(engine: Engine, shop: int, key: str, method: str, path: str, payload: dict, apply,
-           *, revision: int | None = None) -> tuple[int, dict]:
+def check_key(key: str):
     try:
         valid_key = str(UUID(key)) == key
     except (ValueError, AttributeError):
         valid_key = False
     if not valid_key:
         raise Refused("invalid_idempotency_key")
+
+
+def mutate(engine: Engine, shop: int, key: str, method: str, path: str, payload: dict, apply,
+           *, revision: int | None = None) -> tuple[int, dict]:
+    check_key(key)
     digest = _sha(canonical({"body": payload, "revision": revision}))
     with write_tx(engine) as conn:
         old = conn.execute(text("SELECT * FROM mutation_keys WHERE shop_id=:shop AND key=:key"),

@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-5-5"
     estimate_plan_usd: PositiveUsd = Decimal("0.10")
     estimate_texture_usd: PositiveUsd = Decimal("0.30")
+    estimate_read_usd: PositiveUsd = Decimal("0.02")  # one reading of a chat message (D-TEXT-FIRST-002)
     # Poster formats a poster may be created in, changed to and exported in, as a comma list. Square and Story stay
     # off until real scenes in them were judged on a phone (T-FMT-007, ADR-080).
     formats_enabled: Annotated[tuple[Format, ...], NoDecode, Field(min_length=1)] = ("feed",)

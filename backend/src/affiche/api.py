@@ -26,7 +26,7 @@ from starlette.staticfiles import StaticFiles
 
 from affiche import assets
 from affiche.config import Settings, load_settings
-from affiche.posters import auth, exports, jobs, looks, rendering, store, typography, visuals
+from affiche.posters import auth, exports, jobs, looks, reads, rendering, store, typography, visuals
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -110,6 +110,20 @@ MESSAGES = {
         "invalid_brief": "Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image.",
         "attempt_limit": "Douze scènes ont déjà été demandées pour cette affiche. Conservez une version ou créez une copie pour continuer.",
         "planner_unavailable": "La préparation par Claude n’est pas disponible. La composition simple reste disponible.",
+        "chat_unavailable": "La création par message n’est pas disponible pour le moment. Continuez dans Pas à pas.",
+        "read_failed": "Je n’ai pas pu lire votre message. Réessayez, ou passez par Pas à pas.",
+        "read_running": "Votre message est encore en cours de lecture. Patientez quelques secondes.",
+        "read_limit": "Limite de messages atteinte pour aujourd’hui. Continuez dans Pas à pas.",
+        # The chat's cards (posters/reads.py): the one place for their French sentences. {} is filled by the server.
+        "card_ask_product": "Quel est le produit ? Marque et modèle.",
+        "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
+        "card_ask_photo": "Il me faut une photo du produit.",
+        "card_recap": "Voici l’affiche que je vais créer.",
+        "card_change_scene": "Nouvelle version : « {} ». L’actuelle reste gardée.",
+        "card_change_price": "Le prix est dessiné dans l’image : je refais l’affiche avec {}.",
+        "card_refused": "Je ne peux pas demander ce changement : décrivez seulement le fond, la lumière ou le décor, sans prix, promotion, titre ni texte à écrire.",
+        "card_unclear": "Écrivez le produit et son prix.",
+        "card_unclear_poster": "Dites ce qu’il faut changer : le fond, la lumière, le prix. Le titre et le format se changent dans Pas à pas.",
 }
 
 
@@ -363,6 +377,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             auth.end_sessions_on_new_password(runtime.engine, settings)
             app.state.pending_finalisations = jobs.recover(runtime.engine, settings.data_dir)
+            reads.recover(runtime.engine)
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
             service.start()
@@ -418,7 +433,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "scene_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_scene_usd),
                 "plan_estimate_micros": 0 if settings.planner_provider == "stub" else usd_to_micros(settings.estimate_plan_usd),
                 "texture_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_texture_usd),
-                "formats_enabled": list(settings.formats_enabled)}
+                "formats_enabled": list(settings.formats_enabled), "chat_available": reads.available(settings)}
+
+    @protected.post("/api/reads", status_code=201)
+    async def new_read(body: reads.ReadRequest, request: Request, key: Key):
+        return await reads.read(app.state.engine, settings, request.state.shop, key, body, MESSAGES)
 
     @protected.get("/api/creations/{id}/jobs")
     def creation_jobs(id: Id, request: Request):

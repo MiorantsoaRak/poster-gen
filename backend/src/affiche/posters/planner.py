@@ -41,8 +41,9 @@ def parse_usage(raw: object) -> tuple[dict | None, int | None]:
 
 class PlannerError(Exception):
     def __init__(self, code: str, *, ambiguous: bool = False, usage: dict | None = None,
-                 cost_micros: int | None = None, request_id: str | None = None):
-        self.code, self.ambiguous = code, ambiguous
+                 cost_micros: int | None = None, request_id: str | None = None, complete: bool = False):
+        # complete: the model finished its answer (end_turn, one text block) and only its content was refused.
+        self.code, self.ambiguous, self.complete = code, ambiguous, complete
         self.usage, self.cost_micros, self.request_id = usage, cost_micros, request_id
         super().__init__(code)
 
@@ -71,13 +72,13 @@ class ClaudePlanner:
         return PlanResult(*await self.structured(SYSTEM, blocks, wire_schema(),
             lambda raw: validate_plan(ScenePlan.model_validate_json(raw), context), "invalid_plan"))
 
-    async def structured(self, system, blocks, schema, validate, invalid_code):
-        body = {"model": self.model, "max_tokens": 4096, "stream": False, "system": system,
+    async def structured(self, system, blocks, schema, validate, invalid_code, *, max_tokens=4096, timeout=90):
+        body = {"model": self.model, "max_tokens": max_tokens, "stream": False, "system": system,
                 "messages": [{"role": "user", "content": blocks}],
                 "output_config": {"format": {"type": "json_schema", "schema": schema}}}
         failure = None
         try:
-            async with httpx2.AsyncClient(transport=self._transport, timeout=90, follow_redirects=False) as client:
+            async with httpx2.AsyncClient(transport=self._transport, timeout=timeout, follow_redirects=False) as client:
                 response = await client.post("https://api.anthropic.com/v1/messages", json=body,
                                              headers={"x-api-key": self._key.get_secret_value(),
                                                       "anthropic-version": "2023-06-01"})
@@ -92,7 +93,7 @@ class ClaudePlanner:
             code = ("planner_rate_limited" if response.status_code == 429 else
                     "planner_auth" if response.status_code in (401, 403) else "planner_provider_error")
             raise PlannerError(code, ambiguous=response.status_code >= 500, request_id=request_id)
-        usage, cost = None, None
+        usage, cost, complete = None, None, False
         try:
             payload = response.json()
             if not isinstance(payload, dict):
@@ -104,9 +105,13 @@ class ClaudePlanner:
             content = payload.get("content")
             if not isinstance(content, list) or len(content) != 1 or content[0].get("type") != "text":
                 raise ValueError("unexpected_content")
-            value = validate(content[0]["text"])
+            answer = content[0]["text"]
+            if not isinstance(answer, str):
+                raise ValueError("unexpected_content")
+            complete = True
+            value = validate(answer)
         except (ValueError, TypeError, KeyError, AttributeError, ValidationError, json.JSONDecodeError):
-            failure = PlannerError(invalid_code, usage=usage, cost_micros=cost, request_id=request_id)
+            failure = PlannerError(invalid_code, usage=usage, cost_micros=cost, request_id=request_id, complete=complete)
         if failure:
             raise failure
         return value, usage, cost, request_id

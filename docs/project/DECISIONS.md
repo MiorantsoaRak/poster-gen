@@ -1,5 +1,12 @@
 # DECISIONS
 
+## ADR-095 — 2026-11-14 — The price read from a message: an allowlist of whole digit tokens (user choice after three review rejections)
+
+- Three Codex rounds broke every "forbidden character" version of the price guard (`-700 123 Ar` gave 123, a superscript minus, a foreign digit, `A55..123 Ar`). Asked, the user chose the allowlist rewrite.
+- Rule (`posters/reads.py`): the message is split on spaces; an amount is only whole ASCII-digit tokens (or one dotted token) directly before `Ar`, `ariary` or `MGA`, correctly grouped as a whole; nothing is salvaged from a malformed one. The token before it may hold a digit only if it starts with a letter (a model code: `A55`, `WH-1000XM6`) or ends with `,` `;` `:` (the end of the name: `JBL Flip 7, 700 000 Ar`).
+- Accepted on purpose: `Redmi Note 13 700 000 Ar` and `iPhone 15, 1 200 000 Ar` offer the whole amount and its group suffixes, the model chooses and the recap shows the price large; `700, 123 Ar` gives 123; `(700 000 Ar)` gives nothing and the chat asks again.
+- Also decided in the task: a read for an abandoned poster is refused (`creation_abandoned`), as the poster routes do; a model answer cut, refused or without text is a failed read with its cost kept, only a complete answer outside the schema is the « unclear » card.
+
 ## ADR-094 — 2026-11-14 — Creation by message: design v2 approved; five requirement amendments
 
 - [Design v2](designs/text-first-generation.md) is approved under the autonomy grant after a fresh review (APPROVE WITH FIXES, four P1) and a devil's advocate. Kept against challenge: a synchronous paid read with its own ledger table `chat_reads` summed in `spent_micros` (the job queue needs a poster, a first message has none), and the model on every message (a parser reads `Redmi Note 13 700 000 Ar` as 13 700 000 Ar).
