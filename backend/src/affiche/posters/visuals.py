@@ -235,7 +235,7 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                            "signature_unsupported": ("contact_unsupported", "contact")}.get(str(refusal), ("invalid_headline", None))
             raise store.Refused(code, field=field) from None
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
-                   "quality": "high", "prompt": compiled, "photo_assets": product["photo_assets"],
+                   "quality": settings.openai_image_quality or "high", "prompt": compiled, "photo_assets": product["photo_assets"],
                    "base_visual_id": None, "low_res_ack": low_res,
                    "style_reference_asset": request.style_reference_asset,
                    "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
@@ -277,7 +277,7 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
         except ValueError:
             raise store.Refused("invalid_plan") from None
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
-                   "quality": "high", "prompt": compiled, "photo_assets": product["photo_assets"],
+                   "quality": settings.openai_image_quality or "high", "prompt": compiled, "photo_assets": product["photo_assets"],
                    "base_visual_id": base["id"], "low_res_ack": bool(base["low_res_ack"]),
                    "style_reference_asset": request.style_reference_asset,
                    "reference_roles": ["base"] + ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}

@@ -33,6 +33,13 @@ def execute(engine, settings):
     service.provider.delay = 0
     job = jobs.claim(engine, ("scene", "refine", "plan"))
     assert job
+    return execute_claimed(engine, settings, job, service)
+
+
+def execute_claimed(engine, settings, job, service=None):
+    if service is None:
+        service = PosterService(engine, settings)
+        service.provider.delay = 0
     assert asyncio.run(run_job(engine, settings, job, prepare=service.prepare, send=service.send, finalise=service.finalise))
     with engine.connect() as conn:
         return jobs.get_job(conn, 1, job["id"])["result_ref"]
@@ -54,6 +61,17 @@ def test_actual_draft_dimensions_fit_plan_and_auto_selected_scene(engine, settin
     assert visual["status"] == "pending_review"
     assert saved["document"]["offer"] == creation["document"]["offer"]
     store.save_creation(engine, settings.data_dir, 1, key(), creation["id"], Document.model_validate(saved["document"]), 2)
+
+
+@pytest.mark.parametrize("configured, used", [(None, "high"), ("medium", "medium")])
+def test_scene_quality_follows_the_setting(engine, settings, input_id, configured, used):
+    settings = settings.model_copy(update={"openai_image_quality": configured})
+    creation = draft(engine, settings.data_dir, input_id, {})
+    scene(engine, settings, creation, fixed(engine, settings, creation))
+    job = jobs.claim(engine, ("scene",))
+    with engine.connect() as conn:
+        visual = visuals.get_visual(conn, 1, execute_claimed(engine, settings, job))
+    assert visual["quality"] == used
 
 
 def test_first_scene_keeps_a_styled_price_pill_size_and_centres_it(engine, settings, input_id):

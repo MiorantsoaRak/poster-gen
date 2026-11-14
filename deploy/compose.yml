@@ -23,8 +23,10 @@ services:
       BACKUP_DIR: /backups
       # Not the defaults on purpose: "stub" would be recorded as this data's provider mode for good.
       IMAGE_PROVIDER: openai
-      OPENAI_IMAGE_MODEL: gpt-image-2
-      OPENAI_IMAGE_QUALITY: high
+      # Trial on the user's word (2026-11-14, ADR-078), after the benchmark of 2026-11-13. Back to
+      # gpt-image-2 / high by restoring these two lines and deploying.
+      OPENAI_IMAGE_MODEL: gpt-image-2.5-flare
+      OPENAI_IMAGE_QUALITY: medium
       PLANNER_PROVIDER: claude
       SERVE_FRONTEND: "true"
       API_HOST: 0.0.0.0

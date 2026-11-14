@@ -1,7 +1,9 @@
 # DECISIONS
 
-## ADR-078 — 2026-11-14 — No trial of GPT Image 2.5 Flare; the application is named « Affiche Gen » (user)
-- Asked whether to try GPT Image 2.5 Flare at medium on his next real posters (Codex's benchmark, ADR-077), the user answered "No go for 3". The pilot stays on `gpt-image-2` at high. Do not propose the switch again unless he raises it.
+## ADR-078 — 2026-11-14 — Trial of GPT Image 2.5 Flare at medium on the pilot; the application is named « Affiche Gen » (user)
+- Asked whether to try GPT Image 2.5 Flare at medium on his next real posters (Codex's benchmark, ADR-077), the user wrote "No go for 3". Claude first read it as a refusal and recorded that; he corrected: "I meant let's try 2.5 flare". The trial is on.
+- How: `deploy/compose.yml` sets `OPENAI_IMAGE_MODEL: gpt-image-2.5-flare` and `OPENAI_IMAGE_QUALITY: medium`. A scene's quality was fixed to "high" in `posters/visuals.py`; it now follows `OPENAI_IMAGE_QUALITY` and stays "high" when unset (T-FLARE-TRIAL). `gateway.py`'s rates for the model (5 / 8 / 30 USD per million tokens) equal the benchmark's rate card. The cost shown before a paid call stays the conservative estimate (`ESTIMATE_SCENE_USD`), so the owner sees "au plus" a figure above the real cost.
+- It takes effect at his next deploy. He judges the posters; back to `gpt-image-2` / high by restoring the two lines. Each visual records its model and quality, so old and new can be told apart.
 - "Replace the title with affiche gen": the wordmark, the page title and the manifest name are « Affiche Gen » (T-NAME).
 
 ## ADR-077 — 2026-11-13 — The mockup's look is the target, glass on every surface; the accent word must stay readable; the benchmark's model is a candidate only (user: "let's go with that for now", "go", "go full autonomous")

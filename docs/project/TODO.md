@@ -62,6 +62,10 @@
   - delivered: `backend/src/affiche/posters/plans.py`: with an accent word, the scene prompt asks that it is as easy to read as the rest of the name, with a deeper or lighter shade of the same hue if needed (new scenes only).
   - verified 2026-11-13: `uv run pytest -q` 739 passed, 3 deselected; `tests/test_plans.py::test_the_accent_word_is_asked_to_stay_readable`.
   - not verified: the image model obeying the sentence (paid scenes, only with the user's go).
+- [x] T-FLARE-TRIAL (ADR-078; user 2026-11-14: "let's try 2.5 flare") The pilot tries GPT Image 2.5 Flare at medium.
+  - delivered: `backend/src/affiche/posters/visuals.py`: a scene's and a refinement's quality follow `OPENAI_IMAGE_QUALITY` ("high" when unset); `deploy/compose.yml`: model `gpt-image-2.5-flare`, quality `medium`.
+  - verified 2026-11-14: `uv run pytest -q` 741 passed, 3 deselected; `tests/test_poster_visuals.py::test_scene_quality_follows_the_setting` (unset gives high, medium gives medium, read on the stored visual).
+  - not verified: a real call to the model from the application (paid; it happens at the user's first poster after his deploy). `deploy/phone_session.py` still names gpt-image-2 / high.
 - [x] T-NAME (trivial; user 2026-11-14: "Replace the title with affiche gen") The application is named « Affiche Gen »: wordmark in `frontend/src/App.vue`, `<title>` in `frontend/index.html`, `name` in the manifest. Not changed: the manifest's short name « Affiches », the outage sentence in `deploy/README.md` (Maizina's Caddy file, on the box).
   - verified 2026-11-14: build; the demo's page title and wordmark read « Affiche Gen ». Not committed.
 - [x] T-UI-PHONE-FIRST (R-POSTER-EDITOR-007, 006 amendment; D-POSTER-EDITOR-005 v2; ADR-075) The phone-first editor, in two tasks below. Requirements and design written and reviewed (reviews/phone-first-design-r1-2026-11-13.md).
