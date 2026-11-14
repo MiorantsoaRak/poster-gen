@@ -168,10 +168,40 @@ STILL_JS = r"""() => {
 SETTLED = "document.getAnimations().every(animation => animation.effect.getTiming().iterations === Infinity)"
 
 
+# Nothing in the editor's panel may stick out of its padding box (user, 2026-11-14: an auto grid column grew to the step
+# tabs' width and pushed the panel's contents and its bottom bar 17 px out). Fixed and scrolling parts are excluded.
+RAIL_FITS_JS = """() => {
+  const rail = document.querySelector('.rail')
+  if (!rail || !rail.getClientRects().length) return []
+  const r = rail.getBoundingClientRect(), cs = getComputedStyle(rail)
+  const left = r.left + parseFloat(cs.paddingLeft) - 1, right = r.right - parseFloat(cs.paddingRight) + 1
+  const bad = []
+  for (const e of rail.querySelectorAll('*')) {
+    const b = e.getBoundingClientRect()
+    if (!b.width || !b.height || e.closest('.main-action')) continue
+    let fixed = false
+    for (let a = e; a && a !== rail; a = a.parentElement) if (getComputedStyle(a).position === 'fixed') { fixed = true; break }
+    if (fixed) continue
+    let clipped = false  // inside a horizontally scrolling box, the box itself is what must fit
+    for (let a = e.parentElement; a && a !== rail; a = a.parentElement) if (/auto|scroll|hidden/.test(getComputedStyle(a).overflowX)) { clipped = true; break }
+    if (clipped) continue
+    if (b.left < left || b.right > right) bad.push(`${e.tagName.toLowerCase()}.${String(e.className).replace(/ /g, '.')} [${(e.closest('label')?.innerText || e.getAttribute('aria-label') || e.parentElement.className || '').slice(0, 40).split('\\n').join(' ')}; parent ${e.parentElement.tagName}.${e.parentElement.className} ${Math.round(e.parentElement.getBoundingClientRect().left)}-${Math.round(e.parentElement.getBoundingClientRect().right)}] ${Math.round(b.left)}-${Math.round(b.right)} outside ${Math.round(left)}-${Math.round(right)}`)
+  }
+  const bar = rail.querySelector('.main-action.step-nav')
+  if (bar && getComputedStyle(bar).position !== 'fixed') {
+    const b = bar.getBoundingClientRect()
+    if (Math.abs(b.left - r.left) > 1 || Math.abs(b.right - r.right) > 1) bad.push(`step bar ${Math.round(b.left)}-${Math.round(b.right)} not the panel's ${Math.round(r.left)}-${Math.round(r.right)}`)
+  }
+  return bad.slice(0, 6)
+}"""
+
+
 def check_contrast(page, where):
     page.wait_for_function(SETTLED, polling=100)
     failures = page.evaluate(CONTRAST_JS)
     assert not failures, f"contrast on {where}:\n" + "\n".join(failures)
+    outside = page.evaluate(RAIL_FITS_JS)
+    assert not outside, f"panel contents outside the panel on {where}:\n" + "\n".join(outside)
 
 
 def shot(page, name, full_page=True):
