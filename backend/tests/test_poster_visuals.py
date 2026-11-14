@@ -3,29 +3,34 @@ import itertools
 import time
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import text
 
 from affiche import assets
 from affiche.db import write_tx
+from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import prepare_provider_input
-from affiche.posters import jobs, store, visuals
-from affiche.posters.models import Document, PriceBadge, ProductInput, Profile
+from affiche.posters import exports, jobs, looks, store, typography, visuals
+from affiche.posters.models import (
+    FORMATS, CopyCreation, Crop, Document, NewCreation, Offer, PriceBadge, ProductInput, Profile, Scene,
+)
 from affiche.posters.service import PosterService
 from affiche.posters.worker import run_job
 from test_api import client, create_draft, login, password_hash, post, settings  # noqa: F401
 from test_db import engine  # noqa: F401
 from test_config import env  # noqa: F401
+from test_gateway import KEY, USAGE, FakeApi, form_parts, image_reply, picture
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
 
 
-def fixed(engine, settings, creation):
+def fixed(engine, settings, creation, format="feed"):
     return visuals.create_plan(engine, settings, 1, key(), creation["id"], creation["revision"],
-                               visuals.PlanRequest(mode="fixed", direction="Terrasse tropicale"))[1]
+                               visuals.PlanRequest(mode="fixed", direction="Terrasse tropicale", format=format))[1]
 
 
-def scene(engine, settings, creation, plan):
-    return visuals.request_scene(engine, settings, 1, key(), creation["id"], creation["revision"],
-                                 visuals.SceneRequest(plan_id=plan["id"], acknowledged_warnings=["low_resolution"]))[1]
+def scene(engine, settings, creation, plan, format="feed"):
+    return visuals.request_scene(engine, settings, 1, key(), creation["id"], creation["revision"], visuals.SceneRequest(
+        plan_id=plan["id"], format=format, acknowledged_warnings=["low_resolution"]))[1]
 
 
 def execute(engine, settings):
@@ -212,8 +217,8 @@ def test_text_only_requests_cannot_regenerate_the_scene(instruction):
         visuals.RefinementRequest(base_visual_id=key(), instruction_fr=instruction)
 
 
-def wait_job(client, path):
-    deadline = time.monotonic() + 15
+def wait_job(client, path, seconds=15):
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         response = client.get(path)
         assert response.status_code == 200, response.text
@@ -335,3 +340,220 @@ def test_style_rechecked_at_dispatch_and_absent_style_replays_legacy_hash(engine
     assets.path(settings.data_dir, style, "png").write_bytes(b"corrupt after admission")
     with pytest.raises(store.Refused, match="asset_corrupt"):
         PosterService(engine, settings).prepare(job, call)
+
+
+def reformat(creation, to):
+    """The editor's format change before the first version: same layers, one layout, no scene."""
+    document = Document.model_validate(creation["document"])
+    layout = document.formats.pop(document.primary_format)
+    document.primary_format, document.formats = to, {to: layout}
+    return document
+
+
+ALL = tuple(FORMATS)
+
+
+def test_format_changes_only_before_the_first_version(engine, settings, input_id):
+    settings.planner_provider, settings.formats_enabled = "stub", ALL
+    def save(value, document):
+        return store.save_creation(engine, settings.data_dir, 1, key(), value["id"], document, value["revision"],
+                                   formats_enabled=ALL)[1]
+    def current(value):
+        with engine.connect() as conn:
+            return store.get_creation(conn, 1, value["id"])
+    creation = draft(engine, settings.data_dir, input_id)
+    square = save(creation, reformat(creation, "square"))
+    assert (square["revision"], square["document"]["primary_format"], list(square["document"]["formats"])) == (2, "square", ["square"])
+    both = Document.model_validate(square["document"])
+    both.formats["feed"] = both.formats["square"].model_copy(deep=True)
+    with pytest.raises(store.Refused, match="format_locked"):  # one format per poster
+        save(square, both)
+    # A style brief is a plan job: it does not lock the format.
+    reference = store.upload(engine, settings.data_dir, 1, photo(colour="gold"), "style")["asset"]
+    looks.request_look(engine, settings, 1, key(), square["id"], square["revision"],
+                       looks.LookRequest(name="Or", reference_asset=reference))
+    story = save(square, reformat(square, "story"))
+    execute(engine, settings)
+    # A queued, then a running scene locks it.
+    scene(engine, settings, story, fixed(engine, settings, story, "story"), "story")
+    with pytest.raises(store.Refused, match="format_locked"):
+        save(story, reformat(story, "feed"))
+    job = jobs.claim(engine, ("scene",))
+    with pytest.raises(store.Refused, match="format_locked"):
+        save(story, reformat(story, "feed"))
+    execute_claimed(engine, settings, job)
+    placed = current(story)
+    assert placed["document"]["formats"]["story"]["scene"]["visual_id"]
+    # A version exists for this product input: removing the scene from the document does not free the format.
+    cleared = Document.model_validate(placed["document"])
+    cleared.formats["story"].scene = Scene()
+    cleared = save(placed, cleared)
+    with pytest.raises(store.Refused, match="format_locked"):
+        save(cleared, reformat(cleared, "feed"))
+    # The same rule holds for a copy that carries an unsaved document.
+    with pytest.raises(store.Refused, match="format_locked"):
+        store.copy_creation(engine, settings.data_dir, 1, key(), cleared["id"], CopyCreation(
+            source_revision=cleared["revision"], reason="save_conflict", unsaved_document=reformat(cleared, "feed")),
+            formats_enabled=ALL)
+    kept = store.copy_creation(engine, settings.data_dir, 1, key(), cleared["id"], CopyCreation(
+        source_revision=cleared["revision"], reason="save_conflict", unsaved_document=Document.model_validate(cleared["document"])))[1]
+    assert kept["document"]["primary_format"] == "story"
+    # The way out: a new input with the same body; the copy onto it has no version, so its format is free.
+    with engine.connect() as conn:
+        source = store.get_input(conn, 1, input_id)
+    again = store.create_input(engine, settings.data_dir, 1, key(), ProductInput(
+        name=source["name"], variant=source["variant"], photo_assets=source["photo_assets"]))[1]["id"]
+    remade = store.copy_creation(engine, settings.data_dir, 1, key(), cleared["id"], CopyCreation(
+        source_revision=cleared["revision"], reason="replace_input", new_input_id=again))[1]
+    assert save(remade, reformat(remade, "feed"))["document"]["primary_format"] == "feed"
+
+
+def square_draft(engine, settings, input_id):
+    return store.create_creation(engine, settings.data_dir, 1, key(), NewCreation(
+        input_id=input_id, offer=Offer(title="Une enceinte", price_ar=899000),
+        brand_selection={"logo": False, "shop_name": False, "contact": False}, primary_format="square"),
+        formats_enabled=ALL)[1]
+
+
+def test_a_scene_belongs_to_the_format_it_was_made_for(engine, settings, input_id):
+    settings.formats_enabled = ALL
+    feed = draft(engine, settings.data_dir, input_id)
+    scene(engine, settings, feed, fixed(engine, settings, feed))
+    visual_id = execute(engine, settings)
+    # A second poster of the same product input, made in another format, meets that feed version.
+    square = square_draft(engine, settings, input_id)
+    mixed = Document.model_validate(square["document"])
+    mixed.formats["square"].scene = Scene(visual_id=visual_id, crop=Crop(x=0, y=0, w=1088, h=1088))
+    with pytest.raises(store.Refused, match="scene_format_mismatch"):
+        store.save_creation(engine, settings.data_dir, 1, key(), square["id"], mixed, square["revision"])
+    # A draft saved in that state before the check: no paid refinement at the wrong size, no export.
+    with write_tx(engine) as conn:
+        store._insert_version(conn, square["id"], 2, mixed)
+        conn.execute(text("UPDATE creations SET current_revision=2 WHERE id=:id"), {"id": square["id"]})
+    with pytest.raises(store.Refused, match="scene_format_mismatch"):
+        visuals.request_refinement(engine, settings, 1, key(), square["id"], 2, visuals.RefinementRequest(
+            base_visual_id=visual_id, format="square", instruction_fr="Plus de lumière"))
+    with pytest.raises(store.Refused, match="scene_format_mismatch"):
+        exports.request_render(engine, settings, 1, key(), square["id"], 2, exports.RenderRequest(format="square"))
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_jobs WHERE kind IN ('refine','render')")).scalar_one() == 0
+
+
+def test_a_format_not_enabled_is_refused_wherever_a_poster_gets_it(engine, settings, input_id):
+    assert settings.formats_enabled == ("feed",)  # the default: Square and Story wait for a paid check
+    with pytest.raises(store.Refused, match="format_unavailable"):
+        store.create_creation(engine, settings.data_dir, 1, key(), NewCreation(
+            input_id=input_id, offer=Offer(title="Une enceinte", price_ar=899000),
+            brand_selection={"logo": False, "shop_name": False, "contact": False}, primary_format="story"),
+            formats_enabled=settings.formats_enabled)
+    creation = draft(engine, settings.data_dir, input_id)
+    with pytest.raises(store.Refused, match="format_unavailable"):
+        store.save_creation(engine, settings.data_dir, 1, key(), creation["id"], reformat(creation, "story"), 1,
+                            formats_enabled=settings.formats_enabled)
+    with pytest.raises(store.Refused, match="format_unavailable"):
+        store.copy_creation(engine, settings.data_dir, 1, key(), creation["id"], CopyCreation(
+            source_revision=1, reason="save_conflict", unsaved_document=reformat(creation, "square")),
+            formats_enabled=settings.formats_enabled)
+    # A poster made while Square was on keeps its format, but is not exported once Square is off again.
+    square = square_draft(engine, settings, input_id)
+    with pytest.raises(store.Refused, match="format_unavailable"):
+        exports.request_render(engine, settings, 1, key(), square["id"], 1, exports.RenderRequest(format="square"))
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM creations")).scalar_one() == 2
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one() == 0
+
+
+def test_nothing_is_paid_for_in_a_format_switched_off(engine, settings, input_id):
+    """A Square poster made while Square was on: once it is off again, no request in that format makes a job."""
+    settings.formats_enabled, settings.planner_provider = ALL, "stub"
+    square = square_draft(engine, settings, input_id)
+    plan = fixed(engine, settings, square, "square")
+    scene(engine, settings, square, plan, "square")
+    base = execute(engine, settings)
+    with engine.connect() as conn:
+        current = store.get_creation(conn, 1, square["id"])
+    id, revision = current["id"], current["revision"]
+    title = next(layer["id"] for layer in current["document"]["formats"]["square"]["layers"] if layer["role"] == "title")
+    settings.formats_enabled = ("feed",)
+    requests = {
+        "claude plan": lambda: visuals.create_plan(engine, settings, 1, key(), id, revision, visuals.PlanRequest(
+            mode="claude", direction="Studio clair", format="square")),
+        "fixed plan": lambda: fixed(engine, settings, current, "square"),
+        "plan revision": lambda: visuals.revise_plan(engine, settings, 1, key(), plan["id"], revision,
+            visuals.PlanRevision.model_validate({k: v for k, v in plan["plan"].items() if k not in {"schema_version", "summary_fr"}})),
+        "scene": lambda: scene(engine, settings, current, plan, "square"),
+        "refinement": lambda: visuals.request_refinement(engine, settings, 1, key(), id, revision, visuals.RefinementRequest(
+            base_visual_id=base, format="square", instruction_fr="Plus de lumière")),
+        "text proposal": lambda: typography.request_proposal(engine, settings, 1, key(), id, revision, typography.ProposalRequest(
+            format="square", layer_id=title, instruction_fr="Plus gras")),
+        "text effect": lambda: typography.request_effect(engine, settings, 1, key(), id, revision, typography.EffectRequest(
+            format="square", layer_id=title, proposal_id=key())),
+    }
+    def counts():
+        with engine.connect() as conn:
+            return [conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+                    for table in ("poster_jobs", "poster_calls", "scene_plans")]
+    before = counts()
+    for name, request in requests.items():
+        with pytest.raises(store.Refused, match="format_unavailable"):
+            request()
+        assert counts() == before, name  # no job, no reservation, no plan
+    settings.formats_enabled = ALL  # the same scene request is accepted while Square is on
+    scene(engine, settings, current, fixed(engine, settings, current, "square"), "square")
+
+
+def test_http_versions_are_listed_for_the_poster_format_only(client, settings):
+    settings.formats_enabled = ALL
+    login(client)
+    creation = create_draft(client)
+    headers = {"If-Match": '"1"', "Idempotency-Key": key()}
+    planned = client.post(f'/api/creations/{creation["id"]}/plans', headers=headers,
+                          json={"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"})
+    response = post_scene(client, creation["id"], 1, planned.json()["id"])
+    visual_id = wait_job(client, response.json()["status_url"])
+    square = post(client, "/api/creations", {"input_id": creation["document"]["input_id"], "primary_format": "square",
+                                             "offer": {"title": "JBL Flip", "price_ar": 899000},
+                                             "brand_selection": {"logo": False, "shop_name": False, "contact": False}})
+    assert square.status_code == 201, square.text
+    assert [item["id"] for item in client.get(f'/api/creations/{creation["id"]}/visuals').json()["items"]] == [visual_id]
+    assert client.get(f'/api/creations/{square.json()["id"]}/visuals').json()["items"] == []
+    # The lock reaches the owner with its own sentence.
+    document = client.get(f'/api/creations/{creation["id"]}').json()
+    document["document"]["formats"] = {"story": document["document"]["formats"]["feed"]}
+    document["document"]["primary_format"] = "story"
+    document["document"]["formats"]["story"]["scene"] = {"visual_id": None, "crop": None}
+    locked = client.put(f'/api/creations/{creation["id"]}', json=document["document"],
+                        headers={"If-Match": f'"{document["revision"]}"', "Idempotency-Key": key()})
+    assert locked.status_code == 409 and locked.json()["error"]["code"] == "format_locked"
+    assert "première version" in locked.json()["error"]["message_fr"]
+
+
+def test_a_scene_of_the_wrong_size_fails_the_job_and_keeps_its_cost(engine, settings, input_id):
+    """D-POSTER-FORMAT-001 v2 point 12: a provider that answers another size than the format's (Story asked here)."""
+    settings = settings.model_copy(update={"image_provider": "openai", "openai_api_key": SecretStr(KEY), "formats_enabled": ALL})
+    story = store.create_creation(engine, settings.data_dir, 1, key(), NewCreation(
+        input_id=input_id, offer=Offer(title="Une enceinte", price_ar=899000),
+        brand_selection={"logo": False, "shop_name": False, "contact": False}, primary_format="story"),
+        formats_enabled=ALL)[1]
+    scene(engine, settings, story, fixed(engine, settings, story, "story"), "story")
+    service = PosterService(engine, settings)
+    api = FakeApi(image_reply(picture(size=(1088, 1360)), usage=USAGE))  # a feed-sized image, billed
+    service.provider = api.provider()
+    job = jobs.claim(engine, ("scene",))
+    assert not asyncio.run(run_job(engine, settings, job, prepare=service.prepare, send=service.send, finalise=service.finalise))
+    assert ("size", None, b"1152x2048") in form_parts(api.requests[0])
+    with engine.connect() as conn:
+        failed = jobs.get_job(conn, 1, job["id"])
+        assert (failed["status"], failed["error_code"]) == ("failed", "invalid_response")
+        # The answer's usage is not read once its size is wrong: the reservation stays in the ledger, marked estimated.
+        assert failed["usage"] == {"recorded_micros": 400_000, "estimated": True}
+        assert spent_micros(conn, settings) == 400_000
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_visuals")).scalar_one() == 0
+        assert store.get_creation(conn, 1, story["id"])["revision"] == 1
+
+
+def post_scene(client, id, revision, plan_id, format="feed"):
+    response = client.post(f"/api/creations/{id}/scenes", headers={"If-Match": f'"{revision}"', "Idempotency-Key": key()},
+                           json={"plan_id": plan_id, "format": format, "acknowledged_warnings": ["low_resolution"]})
+    assert response.status_code == 202, response.text
+    return response

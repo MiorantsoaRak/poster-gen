@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from affiche.posters.models import Format
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_FILE = BACKEND_DIR / ".env"
@@ -53,6 +55,21 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-5-5"
     estimate_plan_usd: PositiveUsd = Decimal("0.10")
     estimate_texture_usd: PositiveUsd = Decimal("0.30")
+    # Poster formats a poster may be created in, changed to and exported in, as a comma list. Square and Story stay
+    # off until real scenes in them were judged on a phone (T-FMT-007, ADR-080).
+    formats_enabled: Annotated[tuple[Format, ...], NoDecode, Field(min_length=1)] = ("feed",)
+
+    @field_validator("formats_enabled", mode="before")
+    @classmethod
+    def _comma_list(cls, value):
+        return tuple(part.strip() for part in value.split(",")) if isinstance(value, str) else value
+
+    @field_validator("formats_enabled")
+    @classmethod
+    def _feed_once_each(cls, value):
+        if "feed" not in value:  # every new poster starts in Publication (feed)
+            raise ValueError("must include feed: every new poster starts in the feed format")
+        return tuple(dict.fromkeys(value))
 
     @field_validator("spend_cap_since")
     @classmethod

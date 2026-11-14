@@ -25,7 +25,7 @@ class ConfirmRequest(Model):
 
 
 def snapshot(conn, settings, shop, id, revision, format, build):
-    _, document, _ = visuals._snapshot(conn, shop, id, revision, format)
+    _, document, _ = visuals._snapshot(conn, shop, id, revision, format, settings.formats_enabled)
     return effective_snapshot(conn, settings, shop, document, format, build)
 
 
@@ -96,8 +96,6 @@ def effective_snapshot(conn, settings, shop, document, format, build):
 
 
 def request_render(engine, settings, shop, key, id, revision, request):
-    if request.format != "feed":
-        raise store.Refused("format_unavailable")
     def apply(conn):
         build = rendering.bundle()
         value = snapshot(conn, settings, shop, id, revision, request.format, build)

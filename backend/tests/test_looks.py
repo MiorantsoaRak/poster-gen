@@ -90,6 +90,9 @@ def test_reference_becomes_a_saved_look_and_styles_a_later_scene(engine, setting
         saved = looks.list_looks(conn, 1)
         assert [item["id"] for item in saved] == [look_id] and saved[0]["name"] == "Vagues bleues"
         assert saved[0]["reference_asset"] == reference and saved[0]["brief"] == looks.stub_brief().model_dump()
+        # The model's upright size, for the format question (ADR-080); the test photo is 40 × 80.
+        assert (saved[0]["reference_width"], saved[0]["reference_height"]) == (40, 80)
+        assert looks.get_look(conn, 1, look_id) == saved[0]
         assert looks.list_looks(conn, 2) == []
         with pytest.raises(store.Refused, match="not_found"):
             looks.get_look(conn, 2, look_id)

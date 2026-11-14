@@ -31,7 +31,7 @@ from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
 from affiche.visuals.admission import spent_micros
-from affiche.visuals.gateway import usd_to_micros
+from affiche.visuals.gateway import POSTER_SIZES, usd_to_micros
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,9 @@ MESSAGES = {
         "invalid_reference": "L’image de référence choisie n’est plus utilisable. Choisissez-en une autre.",
         "input_changed": "Le produit de cette affiche a changé pendant la génération. Relancez la génération.",
         "provider_unavailable": "Le service d’images n’est pas disponible pour le moment. Réessayez dans quelques minutes.",
-        "format_unavailable": "Ce format n’est pas encore disponible : seul le format publication (1080 × 1350) peut être exporté.",
+        "format_unavailable": "Ce format d’affiche n’est pas encore disponible. Faites l’affiche au format Publication (4:5).",
+        "format_locked": "Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.",
+        "scene_format_mismatch": "Cette version a été faite pour un autre format d’affiche. Choisissez une version de ce format, ou générez-en une nouvelle.",
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
         "revision_conflict": "Une version plus récente existe. Vos modifications restent à récupérer.",
         "idempotency_reused": "Cette référence de demande a déjà été utilisée avec un autre contenu.",
@@ -346,7 +348,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "planner_available": settings.planner_provider == "stub" or (settings.planner_provider == "claude" and settings.anthropic_api_key is not None),
                 "scene_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_scene_usd),
                 "plan_estimate_micros": 0 if settings.planner_provider == "stub" else usd_to_micros(settings.estimate_plan_usd),
-                "texture_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_texture_usd)}
+                "texture_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_texture_usd),
+                "formats_enabled": list(settings.formats_enabled)}
 
     @protected.get("/api/creations/{id}/jobs")
     def creation_jobs(id: Id, request: Request):
@@ -408,8 +411,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def creation_visuals(id: Id, request: Request):
         with app.state.engine.connect() as conn:
             creation = store.get_creation(conn, request.state.shop, id)
-            ids = conn.execute(text("SELECT id FROM poster_visuals WHERE shop_id=:shop AND input_id=:input ORDER BY created_at DESC"),
-                               {"shop": request.state.shop, "input": creation["document"]["input_id"]}).scalars().all()
+            # Only the versions made at this poster's size: a copy in another format shares the product input.
+            ids = conn.execute(text("SELECT id FROM poster_visuals WHERE shop_id=:shop AND input_id=:input AND size=:size "
+                                    "ORDER BY created_at DESC"),
+                               {"shop": request.state.shop, "input": creation["document"]["input_id"],
+                                "size": POSTER_SIZES[creation["document"]["primary_format"]]}).scalars().all()
             return {"items": [visuals.get_visual(conn, request.state.shop, item) for item in ids]}
 
     @protected.post("/api/visuals/{id}/decision")
@@ -587,7 +593,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @protected.post("/api/creations", status_code=201, response_model=CreationView)
     def new_creation(body: NewCreation, request: Request, key: Key):
-        return result_response(store.create_creation(app.state.engine, settings.data_dir, request.state.shop, key, body))
+        return result_response(store.create_creation(app.state.engine, settings.data_dir, request.state.shop, key, body,
+                                                     formats_enabled=settings.formats_enabled))
 
     @protected.get("/api/creations")
     def creations(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
@@ -603,13 +610,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError:
                 raise store.Refused("invalid_cursor") from None
         with app.state.engine.connect() as conn:
-            # Thumbnail: the last final preview of the poster, else its current scene. Feed only until T-POSTER-009.
+            # Thumbnail: the last final preview of the poster, else the current scene of its format.
+            scene = "s.id=json_extract(v.document_json,'$.formats.'||json_extract(v.document_json,'$.primary_format')||'.scene.visual_id')"
             rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"
                 "(SELECT r.png_sha256 FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_sha,"
-                "(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
-                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_asset,"
-                "(SELECT s.status FROM poster_visuals s WHERE s.shop_id=c.shop_id AND "
-                "s.id=json_extract(v.document_json,'$.formats.feed.scene.visual_id')) AS scene_status,"
+                f"(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND {scene}) AS scene_asset,"
+                f"(SELECT s.status FROM poster_visuals s WHERE s.shop_id=c.shop_id AND {scene}) AS scene_status,"
                 # A later version waits outside the document until it is chosen: look at the creation's own jobs too.
                 "EXISTS(SELECT 1 FROM poster_visuals w JOIN poster_jobs j ON j.id=w.job_id "
                 "WHERE j.creation_id=c.id AND w.status='pending_review') AS waiting,"
@@ -640,7 +646,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @protected.put("/api/creations/{id}", response_model=CreationView)
     def save_creation(id: Id, body: Document, request: Request, key: Key, version: Version = None):
         return result_response(store.save_creation(app.state.engine, settings.data_dir, request.state.shop,
-                                                   key, id, body, expected_revision(version)))
+                                                   key, id, body, expected_revision(version),
+                                                   formats_enabled=settings.formats_enabled))
 
     @protected.get("/api/creations/{id}/versions")
     def versions(id: Id, request: Request, before: Annotated[int | None, Query(ge=1)] = None,
@@ -659,7 +666,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @protected.post("/api/creations/{id}/copies", status_code=201, response_model=CreationView)
     def copy_creation(id: Id, body: CopyCreation, request: Request, key: Key):
-        return result_response(store.copy_creation(app.state.engine, settings.data_dir, request.state.shop, key, id, body))
+        return result_response(store.copy_creation(app.state.engine, settings.data_dir, request.state.shop, key, id, body,
+                                                   formats_enabled=settings.formats_enabled))
 
     @protected.post("/api/creations/{id}/abandon", response_model=CreationView)
     def abandon_creation(id: Id, request: Request, key: Key, version: Version = None, body: Model | None = None):

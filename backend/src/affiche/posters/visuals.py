@@ -88,7 +88,11 @@ class Decision(Model):
         return self
 
 
-def _snapshot(conn, shop, id, revision, format):
+def _snapshot(conn, shop, id, revision, format, enabled):
+    # Every format-bound request, paid or not, starts here: a poster left in a format switched off since
+    # (FORMATS_ENABLED) gets no plan, scene, text job or export, so nothing is paid for that cannot be exported.
+    if format not in enabled:
+        raise store.Refused("format_unavailable")
     creation = store.get_creation(conn, shop, id)
     store._revision(creation["revision"], revision)
     if creation["status"] != "active":
@@ -140,7 +144,7 @@ def insert_plan(conn, *, shop, creation_id, revision, input_id, context, plan, p
 
 def create_plan(engine, settings, shop, key, id, revision, request: PlanRequest):
     def apply(conn):
-        _, document, product = _snapshot(conn, shop, id, revision, request.format)
+        _, document, product = _snapshot(conn, shop, id, revision, request.format, settings.formats_enabled)
         store._source_files(conn, settings.data_dir, shop, product["id"])
         context = context_for(document, product, request.direction, request.format)
         if request.mode == "claude":
@@ -160,7 +164,7 @@ def create_plan(engine, settings, shop, key, id, revision, request: PlanRequest)
 def revise_plan(engine, settings, shop, key, id, revision, request: PlanRevision):
     def apply(conn):
         old = store._owned(conn, "scene_plans", shop, id)
-        _, document, product = _snapshot(conn, shop, old["creation_id"], revision, old["format"])
+        _, document, product = _snapshot(conn, shop, old["creation_id"], revision, old["format"], settings.formats_enabled)
         if document.input_id != old["input_id"]:
             raise store.Refused("plan_stale", 409)
         context = context_for(document, product, json.loads(old["context_json"])["direction"], old["format"])
@@ -196,7 +200,7 @@ def read_visual_bytes(conn, data_dir, shop, visual_id, input_id=None):
 
 def request_scene(engine, settings, shop, key, id, revision, request: SceneRequest):
     def apply(conn):
-        _, document, product = _snapshot(conn, shop, id, revision, request.format)
+        _, document, product = _snapshot(conn, shop, id, revision, request.format, settings.formats_enabled)
         plan = store._owned(conn, "scene_plans", shop, request.plan_id)
         if (plan["creation_id"], plan["origin_revision"], plan["input_id"], plan["format"]) != (id, revision, product["id"], request.format):
             raise store.Refused("plan_stale", 409)
@@ -250,11 +254,13 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
 
 def request_refinement(engine, settings, shop, key, id, revision, request: RefinementRequest):
     def apply(conn):
-        _, document, product = _snapshot(conn, shop, id, revision, request.format)
+        _, document, product = _snapshot(conn, shop, id, revision, request.format, settings.formats_enabled)
         if document.formats[request.format].scene.visual_id != request.base_visual_id:
             raise store.Refused("base_not_selected", 409)
         base, _ = read_visual_bytes(conn, settings.data_dir, shop, request.base_visual_id, product["id"])
         plan = store._owned(conn, "scene_plans", shop, base["plan_id"])
+        if plan["format"] != request.format:  # a paid refinement at another size would cut the drawn words
+            raise store.Refused("scene_format_mismatch", 409)
         context = context_for(document, product, json.loads(plan["context_json"])["direction"], request.format)
         store._source_files(conn, settings.data_dir, shop, product["id"])
         if request.style_reference_asset:

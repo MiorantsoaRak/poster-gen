@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import itertools
 import json
 
 import httpx2
@@ -251,6 +253,97 @@ def test_the_accent_word_is_asked_to_stay_readable():
     assert "as easy to read" not in compile_scene(plan, ctx, photo_count=1, title="CMF Buds 2a", headline=Headline())
     # A refinement of a stored scene keeps the prompt that scene was made with.
     assert "as easy to read" not in compiled(refinement=True)
+
+
+LOOK_ID = "11111111-1111-4111-8111-111111111111"
+GOLDEN_HEADLINES = [  # every prompt branch the pilot compiles: plain, headline, brand, price, signature, seal, look
+    {}, {"headline": Headline()},
+    {"headline": Headline(brand="JBL", subtitle="ENCEINTE PORTABLE", accent_word="Flip", accent_colour="#FF6600")},
+    {"headline": Headline(brand="JBL", brand_text=True)}, {"headline": Headline(price=True), "price_ar": 899000},
+    {"headline": Headline(signature=True), "signature": "both"},
+    {"headline": Headline(signature=True, signature_align="right", price=True), "signature": "contact", "price_ar": 899000},
+    {"headline": Headline(signature=True, signature_align="right", price=True, logo_seal=True), "signature": "contact",
+     "price_ar": 899000},
+    {"headline": Headline(look_id=LOOK_ID, subtitle="SANS FIL", signature=True, signature_align="right", price=True,
+                          logo_seal=True), "signature": "contact", "price_ar": 899000,
+     "headline_style": "Bold geometric sans-serif, tight spacing", "align": "left"},
+]
+
+
+def golden(format):
+    """Fixed plans and compiled prompts of one format over the brand choices; a refusal is recorded by its code.
+
+    Stored scenes are recompiled by refinements, and a seal prompt compares the stored plan with a new fixed plan:
+    feed and square must not move (T-FMT-003)."""
+    plans, prompts = [], []
+    for flags in range(8):
+        sizes = context().field_sizes | {field: {"w": .09 if field == "logo" else .7, "h": .03}
+                                         for index, field in enumerate(("logo", "shop_name", "contact")) if flags & (1 << index)}
+        ctx = context(format=format, field_sizes=sizes)
+        try:
+            plan = fixed_plan(ctx)
+        except ValueError as error:
+            plans.append(f"ValueError:{error}")
+            continue
+        plans.append(canonical(plan))
+        for case, refinement in itertools.product(GOLDEN_HEADLINES, (False, True)):
+            options = dict(case)
+            wanted = options.pop("signature", None)
+            signature = {"both": {"shop_name": "Original Phone Mada", "contact": "034 93 028 00"},
+                         "contact": {"contact": "034 93 028 00"}}.get(wanted, {})
+            try:
+                prompts.append(compile_scene(plan, ctx, photo_count=2, refinement=refinement, style_reference=refinement,
+                                             refinement_note="Plus de lumière" if refinement else None,
+                                             title="JBL Flip 7" if "headline" in options else None,
+                                             signature={k: v for k, v in signature.items() if k in sizes}, **options))
+            except ValueError as error:
+                prompts.append(f"ValueError:{error}")
+    return plans, prompts
+
+
+def digest(items):
+    return hashlib.sha256("\n\x00\n".join(items).encode()).hexdigest()
+
+
+# Captured on the code before T-FMT-003 (commit 159892b).
+GOLDEN = {"feed_plans": "743d368613cd664393b49826e4400b7c64c9b3cf5a592f39afe9f15313301826",
+          "feed_prompts": "b812d779d7e352ca89cd41e60e9d3c816605c35cd9a9b2b9435e33695ded5ade",
+          "square_plans": "743d368613cd664393b49826e4400b7c64c9b3cf5a592f39afe9f15313301826",
+          "square_prompts": "7f85773cb76a56df4643eec539ccc92bec4681e810b93918bb67f35b18c46683"}
+
+
+def test_feed_and_square_plans_and_prompts_are_unchanged_byte_for_byte():
+    feed_plans, feed_prompts = golden("feed")
+    square_plans, square_prompts = golden("square")
+    assert sum("Contact line" in prompt for prompt in feed_prompts + square_prompts) > 20
+    assert digest(feed_plans) == GOLDEN["feed_plans"] and digest(feed_prompts) == GOLDEN["feed_prompts"]
+    assert digest(square_plans) == GOLDEN["square_plans"]
+    # Square changes only in the size of the contact digits (2.5 % of 1080 px: the 23 px-per-character rule holds).
+    assert all("digits about 2% of" not in prompt for prompt in square_prompts)
+    assert digest([prompt.replace("digits about 2.5% of the frame height", "digits about 2% of the frame height")
+                   for prompt in square_prompts]) == GOLDEN["square_prompts"]
+
+
+@pytest.mark.parametrize("flags", range(8))
+def test_story_keeps_every_box_inside_its_margins(flags):
+    sizes = context().field_sizes | {field: {"w": .09 if field == "logo" else .7, "h": .02}
+                                     for index, field in enumerate(("logo", "shop_name", "contact")) if flags & (1 << index)}
+    plan = fixed_plan(context(format="story", field_sizes=sizes))
+    for box in [plan.product_region, *(region.box for region in plan.overlay_regions)]:
+        assert .13 - 1e-9 <= box.y and box.y + box.h <= .87 + 1e-9, box
+    assert next(region.box for region in plan.overlay_regions if region.field == "title").y == .13
+
+
+@pytest.mark.parametrize("format, digits", [("feed", "2%"), ("square", "2.5%"), ("story", "1.4%")])
+def test_the_logo_seal_and_contact_line_compile_in_every_format(format, digits):
+    ctx = context(format=format, field_sizes=context().field_sizes | {"contact": {"w": .9, "h": .02}})
+    plan = fixed_plan(ctx)
+    prompt = compile_scene(plan, ctx, photo_count=1, title="JBL Flip 7", signature={"contact": "034 93 028 00"},
+                           price_ar=190000, headline=Headline(price=True, signature=True, signature_align="right",
+                                                              logo_seal=True))
+    contact = next(region.box for region in plan.overlay_regions if region.field == "contact")
+    assert f"evenly spaced digits about {digits} of the frame height" in prompt
+    assert f"its centre at 11% of the frame width and {contact.y - .01:.1%} of the frame height" in prompt
 
 
 def test_context_has_no_commercial_value_channel():

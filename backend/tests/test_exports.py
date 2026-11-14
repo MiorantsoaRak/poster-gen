@@ -8,15 +8,16 @@ from sqlalchemy import text
 
 from affiche import assets
 from affiche.posters import exports, jobs, store, visuals
-from affiche.posters.models import Document, PriceBadge, Profile
+from affiche.posters.models import FORMATS, Document, PriceBadge, Profile
 from affiche.posters.plans import Headline
 from affiche.posters.service import PosterService
 from affiche.posters.worker import run_job
-from test_api import settings, password_hash  # noqa: F401
+from affiche.visuals.gateway import POSTER_SIZES
+from test_api import client, login, post, settings, password_hash  # noqa: F401
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
-from test_poster_visuals import fixed, scene, execute
+from test_poster_visuals import fixed, scene, execute, wait_job
 
 
 @pytest.fixture
@@ -382,6 +383,56 @@ def test_logo_seal_not_found_removes_the_logo_instead_of_guessing(engine, settin
     assert document.include.logo is False
     assert not next(layer for layer in document.formats["feed"].layers if layer.role == "logo").visible
     assert render(engine, settings, current)["png_sha256"]  # no disc recorded: nothing to cover
+
+
+@pytest.mark.parametrize("format", ["feed", "square", "story"])
+def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settings, format):
+    """T-FMT-001: fixed plan, stub scene, first placement, approval, real Chromium render, confirmation, download."""
+    settings.formats_enabled = ("feed", "square", "story")
+    login(client)
+    upload = client.post("/api/assets", files={"file": ("source.png", photo(), "image/png")}, data={"role": "original"})
+    source = post(client, "/api/product-inputs", {"name": "JBL", "variant": "Bleu", "photo_assets": [upload.json()["asset"]]})
+    created = post(client, "/api/creations", {"input_id": source.json()["id"], "primary_format": format,
+                                              "offer": {"title": "JBL Flip", "price_ar": 899000},
+                                              "brand_selection": {"logo": False, "shop_name": False, "contact": False}})
+    assert created.status_code == 201, created.text
+    id, (width, height) = created.json()["id"], FORMATS[format]
+
+    def act(path, body, revision):
+        response = client.post(f"/api/creations/{id}/{path}", json=body,
+                               headers={"If-Match": f'"{revision}"', "Idempotency-Key": key()})
+        assert response.status_code in (201, 202), response.text
+        return response.json()
+
+    def listed():
+        return next(item for item in client.get("/api/creations").json()["items"] if item["id"] == id)
+
+    plan = act("plans", {"mode": "fixed", "direction": "Studio clair", "format": format}, 1)
+    visual_id = wait_job(client, act("scenes", {"plan_id": plan["id"], "format": format,
+                                                "acknowledged_warnings": ["low_resolution"]}, 1)["status_url"])
+    visual = client.get(f"/api/visuals/{visual_id}").json()
+    assert visual["size"] == POSTER_SIZES[format]
+    poster = client.get(f"/api/creations/{id}").json()
+    layout = poster["document"]["formats"][format]
+    assert poster["revision"] == 2 and layout["scene"]["visual_id"] == visual_id  # the first scene is placed
+    assert all(0 <= layer["y"] and layer["y"] + layer["height"] <= height for layer in layout["layers"])
+    approved = post(client, f"/api/visuals/{visual_id}/decision",
+                    {"action": "approve", "checks": {check: True for check in visuals.CHECKS}})
+    assert approved.json()["status"] == "approved"
+    assert listed()["state"] == "approved"
+    assert listed()["thumbnail_url"] == visual["image_url"].replace("/api/assets/", "/api/thumbnails/")
+    render = client.get(f'/api/renders/{wait_job(client, act("renders", {"format": format}, 2)["status_url"], 60)}').json()
+    preview = client.get(render["preview_url"]).content
+    assert (render["width"], render["height"]) == Image.open(io.BytesIO(preview)).size == (width, height)
+    confirmed = act("confirmations", {"render_id": render["id"], "png_sha256": render["png_sha256"],
+                                      "checks": {check: True for check in ("framing", "content", "identity", "readability")},
+                                      "acknowledged_warning_ids": [warning["id"] for warning in render["warnings"]]}, 2)
+    download = client.get(confirmed["download_url"])
+    assert download.content == preview and f'filename="affiche-{format}-' in download.headers["content-disposition"]
+    item = listed()
+    assert item["state"] == "confirmed" and item["thumbnail_url"] == f'/api/thumbnails/{render["png_sha256"]}'
+    thumbnail = Image.open(io.BytesIO(client.get(item["thumbnail_url"]).content))
+    assert thumbnail.format == "JPEG" and abs(thumbnail.width / thumbnail.height - width / height) < .01
 
 
 @pytest.mark.parametrize("case", ["no_seal_layer", "shop_name", "contact_left", "price_not_drawn", "contact_not_drawn"])

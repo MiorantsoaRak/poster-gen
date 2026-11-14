@@ -82,7 +82,8 @@ def test_owned_job_status_usage_and_cancel(client, settings):
     assert client.get(f"/api/creations/{creation['id']}/jobs").json()["items"] == [response.json()]
     assert client.get(f"/api/creations/{uuid4()}/jobs").status_code == 404
     assert client.get("/api/capabilities").json() == {"image_mode": "stub", "planner_mode": "disabled",
-        "planner_available": False, "scene_estimate_micros": 0, "plan_estimate_micros": 100000, "texture_estimate_micros": 0}
+        "planner_available": False, "scene_estimate_micros": 0, "plan_estimate_micros": 100000, "texture_estimate_micros": 0,
+        "formats_enabled": ["feed"]}
     assert client.get("/api/jobs/" + str(uuid4())).status_code == 404
     usage = client.get("/api/usage").json()
     assert usage["recorded_micros"] == 0 and usage["cap_micros"] == 20000000

@@ -106,20 +106,29 @@ def insert_look(conn, job, payload, result) -> str:
     return id
 
 
+# The reference's upright size, so the editor can ask whether the poster takes the model's format (ADR-080).
+# A missing asset row gives null sizes: no question, the format stays.
+_LOOKS = ("SELECT l.*,a.width AS reference_width,a.height AS reference_height FROM looks l "
+          "LEFT JOIN assets a ON a.sha256=l.reference_asset WHERE l.shop_id=:shop")
+
+
 def _public(row) -> dict:
     return {"id": row["id"], "name": row["name"], "reference_asset": row["reference_asset"],
+            "reference_width": row["reference_width"], "reference_height": row["reference_height"],
             "brief": json.loads(row["brief_json"]), "created_at": row["created_at"], "removed_at": row["removed_at"]}
 
 
 def get_look(conn, shop, id) -> dict:
     """Also a removed look: the scenes made with it, and their refinements, still read it."""
-    return _public(store._owned(conn, "looks", shop, id))
+    row = conn.execute(text(_LOOKS + " AND l.id=:id"), {"shop": shop, "id": id}).mappings().first()
+    if row is None:
+        raise store.Refused("not_found", 404)
+    return _public(row)
 
 
 def list_looks(conn, shop) -> list[dict]:
     return [_public(row) for row in conn.execute(
-        text("SELECT * FROM looks WHERE shop_id=:shop AND removed_at IS NULL ORDER BY created_at DESC, id"),
-        {"shop": shop}).mappings()]
+        text(_LOOKS + " AND l.removed_at IS NULL ORDER BY l.created_at DESC, l.id"), {"shop": shop}).mappings()]
 
 
 def _names(conn, shop, *, apart: str | None = None) -> set[str]:

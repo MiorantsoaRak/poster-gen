@@ -119,6 +119,18 @@ def test_product_access_and_replacement_are_immutable(engine, tmp_path, input_id
         store.create_input(engine, tmp_path, 1, key(), request)
 
 
+def test_an_identical_product_body_gets_a_fresh_input(engine, tmp_path, input_id):
+    """The way out of a fixed format (ADR-080): the same photos, name and variant give a new input with no version.
+    Only a replayed Idempotency-Key returns an earlier input; nothing deduplicates by body."""
+    with engine.connect() as conn:
+        source = store.get_input(conn, 1, input_id)
+    body = ProductInput(name=source["name"], variant=source["variant"], photo_assets=source["photo_assets"])
+    op = key()
+    fresh = store.create_input(engine, tmp_path, 1, op, body)[1]
+    assert fresh["id"] != input_id and store.create_input(engine, tmp_path, 1, op, body)[1] == fresh
+    assert store.create_input(engine, tmp_path, 1, key(), body)[1]["id"] not in (input_id, fresh["id"])
+
+
 @pytest.mark.parametrize("flags", list(itertools.product([False, True], repeat=3)))
 def test_every_identity_combination_is_snapshotted(engine, tmp_path, input_id, flags):
     logo = store.upload(engine, tmp_path, 1, photo(), "logo")["asset"]

@@ -1,6 +1,6 @@
 # Pilot HTTP contract
 
-Implemented: original uploads, immutable inputs, shop identity, versioned drafts/history/copies, durable jobs/combined spending, fixed or Claude scene plans, GPT scene integration/refinement, fidelity review and owned generated assets. Constrained text proposals and separately requested material effects are implemented. Feed PNG rendering, final confirmation and immutable downloads are implemented. The API scheduler starts automatically under the exclusive API process lock.
+Implemented: original uploads, immutable inputs, shop identity, versioned drafts/history/copies, durable jobs/combined spending, fixed or Claude scene plans, GPT scene integration/refinement, fidelity review and owned generated assets. Constrained text proposals and separately requested material effects are implemented. PNG rendering in the three poster formats (Publication 1080 × 1350, Carré 1080 × 1080, Story 1080 × 1920), final confirmation and immutable downloads are implemented; `FORMATS_ENABLED` decides which formats a poster may take. The API scheduler starts automatically under the exclusive API process lock.
 
 The executable OpenAPI contract is generated from `affiche.api.create_app()` and served at authenticated `GET /api/openapi.json`. `tests/test_api.py` exercises the real ASGI app against temporary SQLite/files, with no remote providers or Postman workspace dependency. Run from `backend/`:
 
@@ -8,7 +8,7 @@ The executable OpenAPI contract is generated from `affiche.api.create_app()` and
 uv run pytest tests/test_api.py tests/test_poster_drafts.py -q
 ```
 
-Configure the server-only `APP_ORIGIN` and `SHOP_PASSWORD_HASH` variables listed in `.env.example`, alongside the existing required spend cap/date. The CLI does not require these HTTP settings. Generate an Argon2 hash locally without putting the password in shell history:
+Configure the server-only `APP_ORIGIN` and `SHOP_PASSWORD_HASH` variables listed in `.env.example`, alongside the existing required spend cap/date. The CLI does not require these HTTP settings. `FORMATS_ENABLED` (a comma list of `feed`, `square`, `story` that must include `feed`; default `feed`) names the formats a poster may be created in, changed to, planned, generated, refined and exported in; any other is refused with `format_unavailable` before any job or reservation, and `GET /api/capabilities` reports the list (ADR-080: Square and Story stay off until real scenes in them were judged). Generate an Argon2 hash locally without putting the password in shell history:
 
 ```powershell
 uv run python -c "from getpass import getpass; from pwdlib import PasswordHash; print(PasswordHash.recommended().hash(getpass('Shop password: ')))"
@@ -26,16 +26,16 @@ Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST 
 | POST `/api/product-inputs` | name, confirmed variant, ordered 1–3 photo hashes, optional facts/replacement | immutable input ID |
 | GET `/api/product-inputs/{id}` | owned input | original URLs and confirmed fields |
 | GET/PUT `/api/shop-profile` | name/contact/logo hash, nullable | versioned profile; older draft snapshots unchanged |
-| POST `/api/creations` | input ID, title/integer MGA price, three identity switches, primary format | draft revision 1 |
-| GET/PUT `/api/creations/{id}` | full validated application document on PUT | current/new revision and ETag |
+| POST `/api/creations` | input ID, title/integer MGA price, three identity switches, primary format (an enabled one) | draft revision 1 |
+| GET/PUT `/api/creations/{id}` | full validated application document on PUT | current/new revision and ETag. A change of `primary_format` or of the `formats` keys is accepted only with one layout without scene, while the product input has no version and no queued or running scene/refinement (else 409 `format_locked`); a selected scene must have its format's size (409 `scene_format_mismatch`) |
 | GET `/api/creations` | `limit<=50`, opaque `before` cursor from response | newest first, next cursor |
 | GET `/api/creations/{id}/versions` | `limit<=50`, integer `before` revision | immutable revision list |
 | GET `/api/creations/{id}/versions/{revision}` | exact revision | saved document |
-| POST `/api/creations/{id}/copies` | source revision, reason; replacement input or conflict document when applicable | linked new draft, no generation |
+| POST `/api/creations/{id}/copies` | source revision, reason; replacement input or conflict document when applicable | linked new draft, no generation; a conflict document in another format follows the PUT rule; a copy onto a new input keeps the source's format, which it may then change |
 | POST `/api/creations/{id}/abandon` | no body or `{}` | read-only draft; active image job blocks abandonment |
 | GET `/api/jobs/{id}` | owned job | status, result ID, safe error code, recorded cost/estimate flag; no prompt/source body |
 | POST `/api/jobs/{id}/cancel` | no body or `{}`, Idempotency-Key | queued job only; releases unsent reservation |
-| GET `/api/capabilities` | authenticated | configured provider availability and estimates; no credentials |
+| GET `/api/capabilities` | authenticated | configured provider availability and estimates, `formats_enabled`; no credentials |
 | GET `/api/creations/{id}/jobs` | owned creation | latest 50 jobs, active first, allowing reload recovery |
 | GET `/api/usage` | authenticated | combined legacy/poster recorded micro-USD, cap and start date |
 | POST `/api/creations/{id}/plans` | If-Match; mode=fixed or claude, direction, format | 201 fixed plan or 202 queued planner job |
@@ -43,9 +43,9 @@ Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST 
 | POST `/api/plans/{id}/revisions` | If-Match; scene/product_region/overlay_regions/palette | new manual plan bound to current revision |
 | POST `/api/creations/{id}/scenes` | If-Match; plan_id, format, acknowledged_warnings, optional style_reference_asset, optional headline `{brand, subtitle, accent_word, accent_colour}` (all nullable) plus `signature` (boolean, ADR-043: also draw the included shop name/contact from the profile snapshot; one line each, at most 80 characters; stale or removed drawn words give 409 `signature_missing`) | 202 job; explicit low_resolution acknowledgement when needed. With `headline`, the image model sets brand, `offer.title` and subtitle in the scene (ADR-042); `invalid_headline` for commercial wording, quotes, a title over 60 characters or an accent word absent from the title. The price is never sent. The first scene hides the title layer; a hidden title needs a selected scene whose recorded headline title equals the offer title, else render/confirm return 409 `title_missing` and refinement 409 `headline_stale`. Visuals expose `headline` (with the exact `title` sent) or null. |
 | POST `/api/creations/{id}/looks` | If-Match; `name` (1–40), `reference_asset` (owned `style` asset) | 202 job reported with kind `look`; result_ref is the look id. Claude writes a screened style brief (ADR-046). 503 `planner_unavailable` when the planner is disabled; 409 `look_limit` at 24 looks; job error `invalid_brief` when the answer fails validation |
-| GET `/api/looks`, GET `/api/looks/{id}` | none | The shop's saved looks: `{id, name, reference_asset, brief, created_at}`. A scene request uses one with `headline.look_id`; the server reads its typography and alignment, and an unknown or foreign id is 404 |
-| POST `/api/creations/{id}/refinements` | If-Match; selected base_visual_id, instruction_fr, format, optional style_reference_asset | 202 job; base retained, result is an alternative |
-| GET `/api/creations/{id}/visuals` | owned creation | visuals for its exact immutable product input |
+| GET `/api/looks`, GET `/api/looks/{id}` | none | The shop's saved looks: `{id, name, reference_asset, reference_width, reference_height, brief, created_at}` (the reference's upright size, null when its asset row is missing). A scene request uses one with `headline.look_id`; the server reads its typography and alignment, and an unknown or foreign id is 404 |
+| POST `/api/creations/{id}/refinements` | If-Match; selected base_visual_id, instruction_fr, format, optional style_reference_asset | 202 job; base retained, result is an alternative; a base planned for another format is 409 `scene_format_mismatch` |
+| GET `/api/creations/{id}/visuals` | owned creation | visuals for its exact immutable product input, at its format's size |
 | GET `/api/visuals/{id}` | owned visual | original/generated URLs, fidelity status, provenance |
 | POST `/api/visuals/{id}/decision` | action, checks, reasons/note | terminal approve/reject; all six fidelity checks required to approve |
 | POST `/api/creations/{id}/text-proposals` | If-Match; format, title/price layer_id, instruction_fr | 202 Claude job; no automatic image call |
@@ -56,7 +56,7 @@ Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST 
 | GET `/api/text-effects/{id}` | owned effect | texture URL, target/revision and status |
 | POST `/api/text-effects/{id}/apply` | If-Match | unchanged origin/style required; attach one reviewed effect |
 | POST `/api/text-effects/{id}/reject` | Idempotency-Key | terminal rejection; prior text/effect intact |
-| POST `/api/creations/{id}/renders` | If-Match; format=feed | 202 local job, duplicate exact render reuses the job; no model charge |
+| POST `/api/creations/{id}/renders` | If-Match; format (an enabled one) | 202 local job, duplicate exact render reuses the job; no model charge |
 | GET `/api/renders/{id}` | owned render | immutable PNG hash, preview URL/warnings, prior confirmation download if any |
 | GET `/api/renders/{id}/preview` | owned render | verified stored PNG bytes |
 | POST `/api/creations/{id}/confirmations` | If-Match; render_id, png_sha256, four checks, acknowledged_warning_ids | exact current effective layout/approved scene required; immutable confirmation |

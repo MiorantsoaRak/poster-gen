@@ -152,23 +152,31 @@ def validate_plan(plan: ScenePlan, context: PlanContext) -> ScenePlan:
     return plan
 
 
+# Top and bottom of the fixed plan, as fractions of the height. A story app draws its own bar and reply field over
+# about 13 % at the top and the bottom (unverified; tuned on the shop's real app in T-FMT-007, ADR-080).
+MARGINS = {"feed": (.05, .95), "square": (.05, .95), "story": (.13, .87)}
+# Contact digits about 27 px high in every format, which the 23 px-per-character rule of the contact line assumes.
+CONTACT_DIGITS = {"feed": "2%", "square": "2.5%", "story": "1.4%"}
+
+
 def fixed_plan(context: PlanContext) -> ScenePlan:
     """An explicit free starting composition, not an AI response or a detected product box."""
+    top, bottom = MARGINS[context.format]
     sizes = context.field_sizes
     logo = sizes.get("logo")
     text_x = .05 + (logo.w + .025 if logo else 0)
     footer_fields = [field for field in ("shop_name", "contact") if field in sizes]
     footer_height = max(logo.h if logo else 0,
                         sum(sizes[field].h for field in footer_fields) + .01 * max(0, len(footer_fields)-1))
-    footer_y = .95 - footer_height
+    footer_y = bottom - footer_height
     price_height = max(.09, sizes["price"].h)
     price_y = footer_y - (.03 if footer_height else 0) - price_height
     title_height = max(.15, sizes["title"].h)
-    product_y = .05 + title_height + .04
+    product_y = top + title_height + .04
     product_height = price_y - .04 - product_y
     if product_height < .20:
         raise ValueError("composition_does_not_fit")
-    boxes = {"title": Box(x=.05, y=.05, w=.90, h=title_height),
+    boxes = {"title": Box(x=.05, y=top, w=.90, h=title_height),
              "price": Box(x=.05, y=price_y, w=.90, h=price_height)}
     if logo:
         boxes["logo"] = Box(x=.05, y=footer_y, w=logo.w, h=logo.h)
@@ -344,8 +352,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         lines.append(text)
     if compact:
         contact, box = signature["contact"], boxes["contact"]
-        # ponytail: a character count stands in for a measured width. About 23 px per character for digits 2%
-        # of the frame high, 50 px for the icon and its gap, on the 1080 px wide poster; measure if this misfires.
+        # ponytail: a character count stands in for a measured width. About 23 px per character for digits about
+        # 27 px high (CONTACT_DIGITS), 50 px for the icon and its gap, on the 1080 px wide poster; measure if this misfires.
         if not 1 <= len(contact) <= (box.w * 1080 - 50) // 23 or '"' in contact or "\n" in contact or "\r" in contact:
             raise ValueError("signature_unsupported")
         screen_headline(contact)
@@ -355,7 +363,7 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         # Explicit margins, never "the full-width band": left and right must mean the margins, not the frame edges.
         lines.append(f"Contact line, {where} the area {_area(box)}: one single line, a small telephone handset "
                      f'icon followed by "{contact}", rendered verbatim, each character exactly as written, in a '
-                     "clean sans-serif with evenly spaced digits about 2% of the frame height"
+                     f"clean sans-serif with evenly spaced digits about {CONTACT_DIGITS[context.format]} of the frame height"
                      + (", clearly smaller than the price and entirely below the price label" if under_price else "")
                      + ". No rule, no second line and no other words. Discreet, in the same colour family as the "
                      "headline, clearly legible. These digits are a telephone contact, not a price.")

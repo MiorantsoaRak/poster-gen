@@ -192,8 +192,11 @@ def _references(conn, data_dir, shop, document: Document):
     for format, layout in document.formats.items():
         if layout.scene.visual_id:
             from .visuals import read_visual_bytes
-            from affiche.visuals.gateway import image_dimensions
+            from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
             visual, _ = read_visual_bytes(conn, data_dir, shop, layout.scene.visual_id, document.input_id)
+            # Versions are listed by product input, so a copy in another format can meet them (ADR-080).
+            if visual["size"] != POSTER_SIZES[format]:
+                raise Refused("scene_format_mismatch", 409)
             width, height = image_dimensions(visual["size"])
             crop = layout.scene.crop
             if (crop.x + crop.w > width or crop.y + crop.h > height
@@ -238,8 +241,14 @@ def _new_creation(conn, shop, document, parent=None):
     return 201, get_creation(conn, shop, id)
 
 
-def create_creation(engine, data_dir, shop, key, request: NewCreation):
+# The formats a poster may take (FORMATS_ENABLED). The HTTP routes pass the setting; this is the setting's default.
+FEED_ONLY = ("feed",)
+
+
+def create_creation(engine, data_dir, shop, key, request: NewCreation, *, formats_enabled=FEED_ONLY):
     def apply(conn):
+        if request.primary_format not in formats_enabled:
+            raise Refused("format_unavailable")
         profile = get_profile(conn, shop)
         for role, field in (("logo", "logo_asset"), ("shop_name", "name"), ("contact", "contact")):
             if getattr(request.brand_selection, role) and profile[field] is None:
@@ -251,7 +260,23 @@ def create_creation(engine, data_dir, shop, key, request: NewCreation):
     return mutate(engine, shop, key, "POST", "/api/creations", request.model_dump(), apply)
 
 
-def save_creation(engine, data_dir, shop, key, id, document: Document, revision):
+def _format_change(conn, old: dict, document: Document, enabled):
+    """The format changes only while the product input has no version and no scene on the way: a scene has one
+    size, and the words drawn in it cannot be recropped (ADR-080). A style brief is a plan job and does not lock."""
+    if document.primary_format == old["primary_format"] and set(document.formats) == set(old["formats"]):
+        return
+    if document.primary_format not in enabled:
+        raise Refused("format_unavailable")
+    if (set(document.formats) != {document.primary_format}
+            or document.formats[document.primary_format].scene.visual_id is not None
+            # By input, not by creation: a copy sharing the input would meet the versions of its source.
+            or conn.execute(text("SELECT 1 FROM poster_visuals WHERE input_id=:input UNION ALL "
+                                 "SELECT 1 FROM poster_jobs WHERE input_id=:input AND kind IN ('scene','refine') "
+                                 "AND status IN ('queued','running') LIMIT 1"), {"input": document.input_id}).first()):
+        raise Refused("format_locked", 409)
+
+
+def save_creation(engine, data_dir, shop, key, id, document: Document, revision, *, formats_enabled=FEED_ONLY):
     def apply(conn):
         old = get_creation(conn, shop, id)
         _revision(old["revision"], revision)
@@ -259,6 +284,7 @@ def save_creation(engine, data_dir, shop, key, id, document: Document, revision)
             raise Refused("creation_abandoned", 409)
         if document.input_id != old["document"]["input_id"]:
             raise Refused("input_immutable")
+        _format_change(conn, old["document"], document, formats_enabled)
         _references(conn, data_dir, shop, document)
         if canonical(document) == canonical(Document.model_validate(old["document"])):
             return 200, old
@@ -269,7 +295,7 @@ def save_creation(engine, data_dir, shop, key, id, document: Document, revision)
     return mutate(engine, shop, key, "PUT", f"/api/creations/{id}", document.model_dump(), apply, revision=revision)
 
 
-def copy_creation(engine, data_dir, shop, key, id, request: CopyCreation):
+def copy_creation(engine, data_dir, shop, key, id, request: CopyCreation, *, formats_enabled=FEED_ONLY):
     def apply(conn):
         source = get_creation(conn, shop, id, request.source_revision)
         # A copy asked from the list must not silently take an older price than the poster now has.
@@ -287,6 +313,11 @@ def copy_creation(engine, data_dir, shop, key, id, request: CopyCreation):
             for layout in document.formats.values():
                 layout.scene = Scene()
                 layout.layers = [layer for layer in layout.layers if layer.kind != "product_cutout"]
+        # The save rule, checked on the copy's own input: a format other than the source's is accepted only while
+        # that input has no version and no scene on the way. A copy onto a new input carries the source document
+        # (CopyCreation allows no unsaved document with it), so it keeps the format here; its new input has no
+        # version, so a later save may change it.
+        _format_change(conn, source["document"], document, formats_enabled)
         _references(conn, data_dir, shop, document)
         _source_files(conn, data_dir, shop, document.input_id)
         return _new_creation(conn, shop, document, parent=id)

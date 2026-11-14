@@ -145,7 +145,7 @@ def patched(document, format, patch):
 
 def request_proposal(engine, settings, shop, key, id, revision, request):
     def apply(conn):
-        _, document, _ = visuals._snapshot(conn, shop, id, revision, request.format)
+        _, document, _ = visuals._snapshot(conn, shop, id, revision, request.format, settings.formats_enabled)
         selected(document, request.format, request.layer_id)
         if re.search(r"\b(?:change|modifie|remplace|supprime|efface|ajoute)\s+(?:le |la |les |un |une )?(?:fond|scène|produit|contact|logo)\b", request.instruction_fr, re.IGNORECASE):
             raise store.Refused("unsupported_target")
@@ -223,7 +223,7 @@ def decide_proposal(engine, settings, shop, key, id, revision, action, request):
         if action == "reject":
             conn.execute(text("UPDATE text_proposals SET status='rejected' WHERE id=:id"), {"id": id})
             return 200, get_proposal(conn, shop, id)
-        _, document, _ = visuals._snapshot(conn, shop, row["creation_id"], revision, row["format"])
+        _, document, _ = visuals._snapshot(conn, shop, row["creation_id"], revision, row["format"], settings.formats_enabled)
         if revision != row["origin_revision"]:
             raise store.Refused("stale_proposal", 409)
         patch = TextPatch.model_validate_json(row["patch_json"])
@@ -240,7 +240,7 @@ def decide_proposal(engine, settings, shop, key, id, revision, action, request):
 
 def request_effect(engine, settings, shop, key, id, revision, request):
     def apply(conn):
-        _, document, _ = visuals._snapshot(conn, shop, id, revision, request.format)
+        _, document, _ = visuals._snapshot(conn, shop, id, revision, request.format, settings.formats_enabled)
         proposal = store._owned(conn, "text_proposals", shop, request.proposal_id)
         if (proposal["creation_id"], proposal["format"], proposal["layer_id"], proposal["status"], proposal["applied_revision"]) != (
                 id, request.format, request.layer_id, "applied", revision):
@@ -286,7 +286,7 @@ def decide_effect(engine, settings, shop, key, id, revision, action):
         if action == "reject":
             conn.execute(text("UPDATE text_effects SET status='rejected' WHERE id=:id"), {"id": id})
             return 200, get_effect(conn, shop, id)
-        _, document, _ = visuals._snapshot(conn, shop, row["creation_id"], revision, row["format"])
+        _, document, _ = visuals._snapshot(conn, shop, row["creation_id"], revision, row["format"], settings.formats_enabled)
         if revision != row["origin_revision"] or style_hash(document, row["format"], row["layer_id"]) != row["input_layer_style_hash"]:
             raise store.Refused("stale_effect", 409)
         selected(document, row["format"], row["layer_id"]).texture_effect_id = id

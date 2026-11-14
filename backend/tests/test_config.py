@@ -8,7 +8,8 @@ from affiche.config import BACKEND_DIR, ConfigError, load_settings
 NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEND_CAP_SINCE", "ESTIMATE_SCENE_USD",
          "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "MIN_SOURCE_SHORT_EDGE", "REMBG_MODEL", "MAX_HOLE_RATIO",
          "DATA_DIR", "OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "APP_ORIGIN", "SHOP_PASSWORD_HASH",
-         "PLANNER_PROVIDER", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ESTIMATE_PLAN_USD", "ESTIMATE_TEXTURE_USD")
+         "PLANNER_PROVIDER", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ESTIMATE_PLAN_USD", "ESTIMATE_TEXTURE_USD",
+         "FORMATS_ENABLED")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 SECRET = "sk-test-must-never-be-printed"
@@ -42,6 +43,14 @@ def test_valid_config_with_defaults(env):
     assert settings.data_dir == BACKEND_DIR / "data"
     assert settings.stub_fail is None
     assert settings.planner_provider == "disabled" and settings.anthropic_api_key is None
+    assert settings.formats_enabled == ("feed",)
+
+
+def test_formats_enabled_is_a_comma_list(env):
+    env.setenv("FORMATS_ENABLED", "feed, square,story")
+    assert load().formats_enabled == ("feed", "square", "story")
+    env.setenv("FORMATS_ENABLED", "story,feed,story,feed")
+    assert load().formats_enabled == ("story", "feed")  # once each, in the order given
 
 
 def test_anthropic_key_validation_does_not_echo_secrets(env):
@@ -83,6 +92,10 @@ def test_relative_data_dir_is_resolved_from_backend(env):
     ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": ""}, "OPENAI_API_KEY is required"),
     ({"IMAGE_PROVIDER": "openai", "OPENAI_API_KEY": SECRET, "STUB_FAIL": "timeout"}, "STUB_FAIL is only allowed"),
     ({"STUB_FAIL": "budget_exhausted"}, "stub_fail"),  # not a kind the gateway produces
+    ({"FORMATS_ENABLED": "feed,landscape"}, "formats_enabled"),
+    ({"FORMATS_ENABLED": ","}, "formats_enabled"),
+    ({"FORMATS_ENABLED": "story"}, "must include feed"),  # every new poster starts in feed
+    ({"FORMATS_ENABLED": "square,story"}, "must include feed"),
 ])
 def test_invalid_config_is_refused(env, overrides, match):
     for name, value in overrides.items():
