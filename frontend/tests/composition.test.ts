@@ -1,4 +1,4 @@
-import brandCases from '../../backend/fixtures/brand-title-cases.json'
+import brandCases from './fixtures/brand-title-cases.json'
 import { describe, expect, it } from 'vitest'
 import { brandInTitle, logoPlacementStale, placeLogo } from '../src/composition'
 import { colourPalette, photoPalette } from '../src/palette'

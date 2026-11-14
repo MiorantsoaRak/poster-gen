@@ -19,7 +19,7 @@ from test_poster_drafts import input_id, key, photo  # noqa: F401
 from test_poster_visuals import fixed, execute
 
 
-@pytest.mark.parametrize('brand,title,expected', json.loads((Path(__file__).parents[1]/'fixtures/brand-title-cases.json').read_text()))
+@pytest.mark.parametrize('brand,title,expected', json.loads((Path(__file__).parents[2]/'frontend/tests/fixtures/brand-title-cases.json').read_text()))
 def test_brand_word_boundaries(brand, title, expected):
     assert brand_in_title(brand, title) is expected
 
