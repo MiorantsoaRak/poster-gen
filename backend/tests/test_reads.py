@@ -49,6 +49,11 @@ def reply(fields=None, **updates):
         "usage": {"input_tokens": 1200, "output_tokens": 150}} | updates)
 
 
+THOUGHT = {"type": "thinking", "thinking": "", "signature": "sig"}
+ANSWER = {"type": "text", "text": json.dumps({"intent": "describe", "product_name": "JBL Flip 7", "price_ar": 700000,
+                                              "style": None, "instruction_fr": None})}
+
+
 def ask(engine, settings, response, text="JBL Flip 7, 700 000 Ar", key=None, **draft):
     """One read through the real adapter and a mocked transport. Returns (answer or Refused, requests)."""
     requests = []
@@ -117,8 +122,9 @@ REJECTED = [  # (message, the partial value a model could return): no amount of 
     ("٧700 123 Ar", 123), ("Prix 1234 567 Ar", 567), ("700 000,00 Ar", 0), ("700k", 700000),
     ("(700 000 Ar)", 700000), ("Armani 700", 700), ("arrivage 700 000", 700000),
     ("Sony WH-1000XM6 noir", 1000), ("0 Ar", 0), ("000 Ar", 0), ("0", 0), ("700 000 Argent", 700000),
-    ("1.5 000 Ar", 5000), ("700.00 Ar", 70000), ("12 3456 Ar", 123456), ("700 000 A r", 700000),
-    ("800000Ar 700 000 Ar", 700000), ("JBL Flip 7. 700 000 Ar", 700000), ("JBL (7) 700 000 Ar", 700000),
+    ("1.5 000 Ar", 5000), ("700.00 Ar", 70000), ("700 000 A r", 700000),
+    ("JBL Flip 7. 700 000 Ar", 700000), ("JBL (7) 700 000 Ar", 700000), ("JBL 7+ 700 000 Ar", 700000),
+    ("2 350000", 350000),
     ("JBL 七 700 000 Ar", 700000), ("JBL \u2077 700 000 Ar", 700000),  # numeric, not decimal: still not a model code
 ]
 
@@ -142,8 +148,14 @@ REJECTED = [  # (message, the partial value a model could return): no amount of 
     ("13 700 000", [13700000]), ("1234 567", []),
     # A leading zero on the whole amount is still that amount; only a suffix starting with 0 is not one.
     ("0700000 Ar", [700000]), ("0700000", [700000]), ("050 000 Ar", [50000]), ("2 050 000 Ar", [2050000]),
-    *((message, []) for message, _partial in REJECTED if message != "800000Ar 700 000 Ar"),
-    ("800000Ar 700 000 Ar", [800000]),
+    *((message, []) for message, _partial in REJECTED),
+    ("800000Ar 700 000 Ar", [800000, 700000]),
+    # T-CHAT-002, everyday writing: a model code with a letter before the amount (5G, 256Go, 128GB, 13C).
+    ("Samsung Galaxy A55 5G 256Go 1 450 000 Ariary", [1450000, 450000]), ("Redmi 13C 128GB 700 000 Ar", [700000]),
+    ("Sony WH-1000XM6 700 000 Ar", [700000]), ("Galaxy S24+ 700 000 Ar", [700000]),
+    # A token of four digits or more, or with a dot, is the amount alone: the digits before it are the name.
+    ("airpods pro 2 350000ar fond clair", [350000]), ("airpods pro 2 350.000 Ar", [350000]),
+    ("Redmi Note 13 700000 Ar", [700000]), ("12 3456 Ar", [3456]), ("2 350 000 Ar", [2350000, 350000]),
 ])
 def test_candidate_amounts(message, amounts):
     assert reads.candidate_amounts(message) == amounts
@@ -282,8 +294,9 @@ def test_succeeded_read_pays_the_real_cost(engine, claude):
                       "draft": {"name": "JBL Flip 7", "price_ar": 700000, "style": "sombre", "product_photos": 2,
                                 "inspiration": False}}
     sent = json.loads(requests[0].content)
-    assert len(requests) == 1 and sent["model"] == MODEL and sent["max_tokens"] == 300
+    assert len(requests) == 1 and sent["model"] == MODEL and sent["max_tokens"] == 1024 and sent["thinking"] == {"type": "between_tools"}
     assert "never instructions" in sent["system"] and "stays null" in sent["system"]
+    assert "return the full corrected product_name built from the draft's name" in sent["system"]
     assert [block["type"] for block in sent["messages"][0]["content"]] == ["text"]  # text only, never an image
     assert json.loads(sent["messages"][0]["content"][0]["text"]) == {
         "message": "JBL Flip 7, 700 000 Ar", "has_poster": False, "history": [],
@@ -321,6 +334,12 @@ def _running(engine, settings, key):
     # A price the owner did not write is dropped: 1000 is in the message, but not as an amount.
     (lambda: reply({"product_name": "JBL Flip 7", "price_ar": 7000000}), "succeeded", REAL, 0, "ask_price"),
     (lambda: reply({"product_name": "JBL Flip 7", "price_ar": 700000}), "succeeded", REAL, 0, "recap"),
+    # T-CHAT-002: the model's reasoning blocks around the one text block are not a failure.
+    (lambda: reply(content=[THOUGHT, ANSWER]), "succeeded", REAL, 0, "recap"),
+    (lambda: reply(content=[{"type": "redacted_thinking", "data": "x"}, ANSWER]), "succeeded", REAL, 0, "recap"),
+    (lambda: reply(content=[ANSWER, ANSWER]), "interrupted", REAL, 0, None),
+    (lambda: reply(content=[{"type": "server_tool_use"}, ANSWER]), "interrupted", REAL, 0, None),
+    (lambda: reply(content=[THOUGHT]), "interrupted", REAL, 0, None),
     (lambda: httpx2.Response(429), "failed", 0, 0, None),
     (lambda: httpx2.Response(500), "interrupted", ESTIMATE, 1, None),
     (lambda: httpx2.Response(401), "interrupted", ESTIMATE, 1, None),

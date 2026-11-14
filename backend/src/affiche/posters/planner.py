@@ -72,10 +72,13 @@ class ClaudePlanner:
         return PlanResult(*await self.structured(SYSTEM, blocks, wire_schema(),
             lambda raw: validate_plan(ScenePlan.model_validate_json(raw), context), "invalid_plan"))
 
-    async def structured(self, system, blocks, schema, validate, invalid_code, *, max_tokens=4096, timeout=90):
+    async def structured(self, system, blocks, schema, validate, invalid_code, *, max_tokens=4096, timeout=90,
+                         thinking: dict | None = None):
         body = {"model": self.model, "max_tokens": max_tokens, "stream": False, "system": system,
                 "messages": [{"role": "user", "content": blocks}],
                 "output_config": {"format": {"type": "json_schema", "schema": schema}}}
+        if thinking is not None:  # absent by default: the body of the earlier callers stays as it was
+            body["thinking"] = thinking
         failure = None
         try:
             async with httpx2.AsyncClient(transport=self._transport, timeout=timeout, follow_redirects=False) as client:
@@ -103,9 +106,12 @@ class ClaudePlanner:
             if payload.get("stop_reason") != "end_turn" or payload.get("model") != self.model:
                 raise ValueError("incomplete_or_unexpected_model")
             content = payload.get("content")
-            if not isinstance(content, list) or len(content) != 1 or content[0].get("type") != "text":
+            # The model thinks by default: reasoning blocks may come before the one text block (T-CHAT-002).
+            texts = [block for block in content if block.get("type") == "text"] if isinstance(content, list) else []
+            if len(texts) != 1 or any(block.get("type") not in ("text", "thinking", "redacted_thinking")
+                                      for block in content):
                 raise ValueError("unexpected_content")
-            answer = content[0]["text"]
+            answer = texts[0]["text"]
             if not isinstance(answer, str):
                 raise ValueError("unexpected_content")
             complete = True

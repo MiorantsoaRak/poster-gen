@@ -1,5 +1,11 @@
 # DECISIONS
 
+## ADR-096 — 2026-11-14 — A read asks the model for no reasoning; the Claude adapter accepts reasoning blocks
+
+- Paid test (reviews/chat-read-eval-2026-11-14.md): 9 of 26 reads failed because `claude-sonnet-5-5` reasons by default and returned a reasoning block before the text, which `ClaudePlanner.structured` refused. A read now sends `thinking: {"type": "between_tools"}` (the model refuses `disabled`), verified on the live API: one text block, about 40 output tokens, same fields. `structured` accepts `thinking` and `redacted_thinking` blocks beside exactly one text block, for every caller; the other callers' request bodies are unchanged.
+- The price guard of ADR-095 is widened for two everyday spellings: the token before the amount may be a code of ASCII letters and digits with at least one letter (`256Go`, `5G`, `13C`), and a last token of four characters or more is the amount alone (`airpods pro 2 350000ar`). Accepted: `12 3456 Ar` gives 3456.
+- The model stays `claude-sonnet-5-5`: median 2.6 s and about USD 0.0025 per read, under the design's 3 s threshold.
+
 ## ADR-095 — 2026-11-14 — The price read from a message: an allowlist of whole digit tokens (user choice after three review rejections)
 
 - Three Codex rounds broke every "forbidden character" version of the price guard (`-700 123 Ar` gave 123, a superscript minus, a foreign digit, `A55..123 Ar`). Asked, the user chose the allowlist rewrite.

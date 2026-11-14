@@ -8,8 +8,11 @@
 - [x] T-CHAT-001 (D-TEXT-FIRST-002) Backend reading: migration 0012 `chat_reads`, reader (Claude and stub, `STUB_FAIL`), `POST /api/reads` with cards, candidate-amount price check, replay rules, sweep, ledger in `spent_micros`, daily limit, `ESTIMATE_READ_USD`, French sentences, `chat_available`.
   - verify: `cd backend && uv run pytest -q` passes with the new tests of the design's list.
   - done 2026-11-14: 128 tests in tests/test_reads.py, full suite 924 passed / 3 deselected. Codex reviews r1 to r4 (reviews/t-chat-001-code-r*.md): three rejections on the price guard, then APPROVE WITH FIXES after the allowlist rewrite (ADR-095); its two last fixes applied and probed by hand. Not verified: the prompt against the real model (T-CHAT-002); the migration on the paid database.
-- [ ] T-CHAT-002 (D-TEXT-FIRST-002 "Paid") Paid reading of about twenty real messages; report cost and delay per read and every wrong field in docs/project/reviews/.
-- [ ] T-CHAT-003 (D-TEXT-FIRST-001, 003) Frontend first request: choice screen, switch, routes, `ChatView` with attachments, recap, generation, « Vérifier » and « Télécharger » through the existing dialogs; `chat.ts`; smoke.
+- [x] T-CHAT-002 (D-TEXT-FIRST-002 "Paid") Paid reading of about twenty real messages; report cost and delay per read and every wrong field in docs/project/reviews/.
+  - done 2026-11-14: report reviews/chat-read-eval-2026-11-14.md. Run 1: 17 of 26 answered (reasoning block refused, two price spellings refused); after the fixes run 2: 26 of 26 right, about USD 0.0025 and 2.6 s per read (longest 7 s). Spent USD 0.138 on the ledger and about 0.05 outside it. Fixes reviewed by Codex (reviews/t-chat-002-code-r1.md: APPROVE); backend 939 passed / 3 deselected. Migration 0012 is applied to `backend/data-probe` (backup `backups/before-chat-reads-2026-11-14.db`).
+  - follow-up, not done: re-test the Claude composition (T-PLANNER-CLAUDE-INVALID) now that `structured` accepts a reasoning block.
+- [~] T-CHAT-003 (D-TEXT-FIRST-001, 003) Frontend first request: choice screen, switch, routes, `ChatView` with attachments, recap, generation, « Vérifier » and « Télécharger » through the existing dialogs; `chat.ts`; smoke.
+  - note 2026-11-14: being implemented by a subagent in this session (frontend only); Codex review follows.
 - [ ] T-CHAT-004 (D-TEXT-FIRST-003) Polish in the chat: change cards (scene, price), « Annuler », list of modifications with `instruction_fr`, version limit lines; smoke.
 - [ ] T-CHAT-005 (D-TEXT-FIRST-004 and "Tests") Photos already used; failure-path audit on empty data; free demo; one paid poster through the chat; offline price read-back measurement; report.
 

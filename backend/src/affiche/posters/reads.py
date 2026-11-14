@@ -25,6 +25,10 @@ from .visuals import RefinementRequest
 
 log = logging.getLogger(__name__)
 TIMEOUT_S = 20  # the whole provider call; the client gives up at 30 s
+# Measured in T-CHAT-002: with the model's default thinking, 9 reads of 26 came back with a reasoning block and 300
+# tokens were once not enough. Without it an answer is about 40 tokens; only what is generated is billed.
+MAX_TOKENS = 1024
+THINKING = {"type": "between_tools"}  # "disabled" is refused (400) by this model
 STALE_S = 60  # a read still 'running' after this was cut by a crash or a lost answer
 DAILY_LIMIT = 200  # reads per shop and UTC day; the spend cap stays the money guard
 SYSTEM = (
@@ -34,7 +38,8 @@ SYSTEM = (
     "in this message stays null; never guess a product, a price or a style. intent: describe = product, price or "
     "style of a new poster; scene_change = a change to the picture of an existing poster (background, light, "
     "setting); price_change = a new price for an existing poster; other = anything else. product_name: brand and "
-    "model as the owner wrote them, without the price. price_ar: the price in ariary, only when written in digits "
+    "model as the owner wrote them, without the price. When the owner corrects part of the draft's product (a "
+    "colour, a variant, a model number), return the full corrected product_name built from the draft's name. price_ar: the price in ariary, only when written in digits "
     "in this message; null when two different prices are written. instruction_fr: scene_change only, the change "
     "in French, with no word about the title or the price."
 )
@@ -107,12 +112,18 @@ def _amounts(tokens: list[str]) -> list[tuple[int, int, list[int]]]:
         while first and re.fullmatch(_PURE, tokens[first - 1], re.ASCII):
             first -= 1
             span.insert(0, tokens[first])
+        # "pro 2 350000ar": a token longer than three characters (four digits or more, or dotted) is never a
+        # group of three, so it is the amount alone and the digits before it belong to the name.
+        if len(span) > 1 and len(span[-1]) > 3:
+            first, span = first + len(span) - 1, span[-1:]
         before = tokens[first - 1] if first else ""
-        # A token with a digit just before the amount may be a model code (A55, WH-1000XM6) or the end of the
-        # name ("Flip 7, 700 000 Ar": a separator then a space, so what follows stands alone); otherwise it is the
-        # start of something that is not this amount ("-700", "700,123", "(700").
-        if (any(c.isnumeric() for c in before)
-                and not re.match(r"[A-Za-z]", before) and not before.endswith((",", ";", ":"))):
+        # A token with a digit just before the amount may be a model code (A55, 256Go, WH-1000XM6), a number of
+        # the name left by the rule above, or the end of the name ("Flip 7, 700 000 Ar": a separator then a
+        # space, so what follows stands alone); otherwise it is the start of something that is not this amount
+        # ("-700", "700,123", "(700").
+        code = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+-]*", before) and re.search(r"[A-Za-z]", before)
+        if (any(c.isnumeric() for c in before) and not code and not re.fullmatch(_PURE, before, re.ASCII)
+                and not before.endswith((",", ";", ":"))):
             continue
         if span and (values := _values(span, suffixes=True)):
             found.append((first, at, values))
@@ -304,7 +315,8 @@ async def _ask(settings, spec, request: ReadRequest, transport):
     data = {"message": request.text, "has_poster": request.creation_id is not None,
             "draft": request.draft.model_dump(), "history": [line.model_dump() for line in request.history]}
     return await planner.structured(SYSTEM, [{"type": "text", "text": canonical(data)}], wire_schema(Fields),
-                                    Fields.model_validate_json, "invalid_read", max_tokens=300, timeout=TIMEOUT_S)
+                                    Fields.model_validate_json, "invalid_read", max_tokens=MAX_TOKENS,
+                                    timeout=TIMEOUT_S, thinking=THINKING)
 
 
 async def read(engine, settings, shop, key, request: ReadRequest, messages: dict, *, transport=None) -> dict:

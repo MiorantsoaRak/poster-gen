@@ -415,6 +415,7 @@ def test_real_http_adapter_contract():
     assert req.headers["anthropic-version"] == "2023-06-01"
     body = json.loads(req.content)
     assert body["model"] == MODEL and body["max_tokens"] == 4096 and body["stream"] is False
+    assert "thinking" not in body  # only a caller that asks for it sends the field (the chat's reads)
     assert body["output_config"]["format"]["type"] == "json_schema"
     content = body["messages"][0]["content"]
     assert [block["type"] for block in content] == ["image", "image", "text"]
