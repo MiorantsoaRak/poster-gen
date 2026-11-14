@@ -45,3 +45,4 @@ Approved delivery order: intake/profile/access + persistence → plan/job/scene 
 Paid tests are separate: verify the new Claude planner, sizes, selected-scene references and text textures within an explicit budget before production claims. Existing JBL/Soundcore evidence covers only the current initial-scene path. No UI/renderer prototype, new dependency installation, paid call or implementation code was produced during design.
 
 See [requirements](../requirements/_INDEX.md), [decisions](../DECISIONS.md) and [AGENTS workflow gates](../../../AGENTS.md). Previous phase-1 design review rounds are not approval of these new sections.
+| [poster-format.md](poster-format.md) | R-POSTER-FORMAT-001/002; D-POSTER-FORMAT-001 formats and the model's shape | Approved v2 (ADR-080) |

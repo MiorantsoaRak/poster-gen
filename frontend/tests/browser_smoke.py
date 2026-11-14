@@ -145,6 +145,21 @@ NESTED_BLUR_JS = r"""() => {
 }"""
 NO_SIDEWAYS = "document.documentElement.scrollWidth <= innerWidth"
 GROUNDS = {"clair": "#f4f1ec", "sombre": "#100f0e"}
+# The controls keep their place while a poster is made (T-WAIT-DEFORM, user report 2026-11-14): the rail's size and its
+# place in its column, each row of the open tab inside the rail, the poster's size and the bottom bar's size. On one
+# column the waiting block sits above the controls (D-POSTER-EDITOR-006): there the rail's place down the column is left out.
+STILL_JS = r"""() => {
+  const box = e => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height] }
+  const inside = (e, to) => { const a = box(e), b = box(to); return [a[0] - b[0], a[1] - b[1], a[2], a[3]] }
+  const rail = document.querySelector('.rail'), place = inside(rail, document.querySelector('.work'))
+  const bar = [...document.querySelectorAll('.main-action')].find(e => e.checkVisibility() && getComputedStyle(e).display !== 'contents')
+  return {
+    rail: innerWidth > 1080 ? place : [place[0], place[2], place[3]],
+    rows: [...document.querySelectorAll('#panneau > *')].filter(e => e.checkVisibility()).map(e => inside(e, rail)),
+    poster: box(document.querySelector('.frame')).slice(2),
+    bar: bar ? box(bar).slice(2) : null,
+  }
+}"""
 
 
 # A colour still in its 150 ms transition is neither the old nor the new one. The waiting's rail and dot repeat forever
@@ -191,6 +206,24 @@ def topmost(locator):
 def check_targets(page, where):
     small = page.evaluate(SMALL_TARGETS_JS)
     assert not small, f"tappable elements under 44 px on {where}:\n" + "\n".join(small)
+
+
+def same_boxes(a, b):
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(same_boxes(a[key], b[key]) for key in a)
+    if isinstance(a, list):
+        return isinstance(b, list) and len(a) == len(b) and all(same_boxes(x, y) for x, y in zip(a, b))
+    return a is b if a is None or b is None else abs(a - b) <= 1
+
+
+def check_still(page, before, where, samples=1):
+    # Sampled every 250 ms: the rail's segment, the pulsing dot and the 1 s clock run meanwhile.
+    for index in range(samples):
+        now = page.evaluate(STILL_JS)
+        assert same_boxes(before, now), f"the controls moved {where}:\nbefore {before}\nnow    {now}"
+        assert page.evaluate(NO_SIDEWAYS), f"sideways scroll {where}"
+        if index < samples - 1:
+            page.wait_for_timeout(250)
 
 
 def check_one_blur(page, where):
@@ -355,6 +388,7 @@ def walk_wait(browser, session, errors):
     # The first generation, asked from far down the last step: the page goes back to the top, where the draft stays as the
     # thumbnail of the steps (« Aperçu ») with the state pill in front, and the waiting block under it.
     device.evaluate("scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
+    still = device.evaluate(STILL_JS)
     device.get_by_role("button", name="Générer l’affiche").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
     expect(words).to_contain_text("Votre demande est en attente.")
@@ -363,6 +397,7 @@ def walk_wait(browser, session, errors):
     expect(block.locator("li[aria-current=step]")).to_contain_text("Demande enregistrée")
     expect(cancel).to_be_visible()
     device.wait_for_function("scrollY === 0")
+    check_still(device, still, "while the first generation is queued at 360 px")
     expect(block).to_be_in_viewport()
     assert topmost(pill) and topmost(badge)
     expect(device.locator(".frame[aria-busy=true]")).to_have_count(1)
@@ -376,6 +411,7 @@ def walk_wait(browser, session, errors):
     shown = elapsed.text_content()
     assert re.fullmatch(r"Temps écoulé : \d+:\d\d", shown), shown
     expect(elapsed).not_to_have_text(shown)
+    check_still(device, still, "while the first generation runs at 360 px", samples=6)
     waiting_checks(device, "first generation at 360 px", "sombre", "dark")
     check_targets(device, "first generation at 360 px")
     shot(device, "wait-360-sombre-premiere.png", full_page=False)
@@ -416,10 +452,15 @@ def walk_wait(browser, session, errors):
     device.get_by_role("button", name="Tout est conforme, approuver").tap()
     expect(device.get_by_role("tab")).to_have_count(4)
     # A new version once one exists: the version shown is said to be kept, the pills are in front in both themes.
-    held["status"] = "running"
+    still = device.evaluate(STILL_JS)
+    held["status"] = "queued"
     device.get_by_role("button", name="Nouvelle version").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
+    expect(words).to_contain_text("Votre demande est en attente.")
+    check_still(device, still, "while a new version is queued at 360 px")
+    held["status"] = "running"
     expect(words).to_contain_text("Votre affiche prend forme.")
+    check_still(device, still, "while a new version runs at 360 px", samples=6)
     expect(badge).to_have_text("Version précédente conservée")
     # On a phone the poster is narrow: the badge shows « Version précédente » on one line; screen readers hear it whole.
     assert badge.bounding_box()["height"] <= 30, badge.bounding_box()
@@ -444,9 +485,10 @@ def walk_wait(browser, session, errors):
     expect(review).to_be_visible(timeout=30000)
     device.get_by_role("button", name="Tout est conforme, approuver").tap()
     expect(block).to_have_count(0)
+    check_still(device, still, "after a new version at 360 px")
     assert len(scenes) == 2, scenes
     context.close()
-    # 1366 × 768: the waiting block is in view under the poster, in both themes.
+    # 1366 × 768: the waiting block's state is in view under the poster, which keeps its size, in both themes.
     desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
     watch(desk)
     screen = desk.new_page()
@@ -454,17 +496,24 @@ def walk_wait(browser, session, errors):
     screen.on("pageerror", lambda error: errors.append(str(error)))
     screen.goto(f"{ORIGIN}/#{poster}")
     expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
-    held["status"] = "running"
+    still = screen.evaluate(STILL_JS)
+    held["status"] = "queued"
     screen.get_by_role("button", name="Nouvelle version").click()
     screen.get_by_role("button", name="Lancer la génération").click()
+    expect(screen.locator(".wait [role=status]")).to_contain_text("Votre demande est en attente.")
+    check_still(screen, still, "while a new version is queued at 1366 px")
+    held["status"] = "running"
     expect(screen.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
+    check_still(screen, still, "while a new version runs at 1366 px", samples=6)
     expect(screen.locator(".frame .badge")).to_have_text("Version précédente conservée")
     expect(screen.locator(".frame .badge .visually-hidden")).to_have_count(0)
     assert topmost(screen.locator(".frame .gen-pill")) and topmost(screen.locator(".frame .badge"))
     expect(screen.locator(".coach[role=status]")).to_have_count(0)
     for theme, scheme in (("clair", "light"), ("sombre", "dark")):
         waiting_checks(screen, "waiting at 1366 px", theme, scheme)
-        expect(screen.locator(".wait")).to_be_in_viewport(ratio=1)
+        # The poster keeps its size: under it the state, the time and the rail are in view; the steps may need a scroll.
+        for part in (".wait strong", ".wait-time", ".wait-rail"):
+            expect(screen.locator(part)).to_be_in_viewport(ratio=1)
         shot(screen, f"wait-1366-{theme}.png", full_page=False)
     held["status"] = None
     expect(screen.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
@@ -473,6 +522,7 @@ def walk_wait(browser, session, errors):
     # A refusal of the poll does not change by asking again: on a session that ended the editor stops following, says
     # why and shows the sign-in; it never polls again nor starts another generation.
     screen.locator(".review-panel").get_by_role("button", name="Fermer").click()
+    check_still(screen, still, "after a new version at 1366 px")
     held["status"] = "running"
     screen.get_by_role("button", name="Nouvelle version").click()
     screen.get_by_role("button", name="Lancer la génération").click()

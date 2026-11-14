@@ -490,12 +490,16 @@ const textChecks = computed(() => {
 })
 const reviewKeys = computed(() => [...Object.keys(checkNames), ...textChecks.value.map(item => item.key)])
 const waiting = 'Une tâche est en cours : patientez quelques instants.'
-const whyBusy = computed(() => job.value ? waiting : '')
-const whyNoText = computed(() => job.value ? waiting : !polish.value.trim() ? 'Écrivez d’abord votre consigne ci-dessus.' : '')
-const whyNoRefine = computed(() => job.value ? waiting : !refinement.value.trim() ? 'Décrivez d’abord l’ajustement souhaité ci-dessus.' : '')
-const whyNoLook = computed(() => job.value ? waiting : !lookReference.value ? 'Choisissez d’abord une affiche modèle ci-dessus.' : '')
+// While a poster is made, the waiting block and the pill over the poster say so. The sentence under each disabled button
+// added a line to the bottom bar, to the rail (its step bar) and to the panel for the time of the wait, which moved the
+// controls (T-WAIT-DEFORM, user report 2026-11-14): those reasons stay what they were before the wait.
+const otherJob = computed(() => !!job.value && !waitJob.value)
+const whyBusy = computed(() => otherJob.value ? waiting : '')
+const whyNoText = computed(() => otherJob.value ? waiting : !polish.value.trim() ? 'Écrivez d’abord votre consigne ci-dessus.' : '')
+const whyNoRefine = computed(() => otherJob.value ? waiting : !refinement.value.trim() ? 'Décrivez d’abord l’ajustement souhaité ci-dessus.' : '')
+const whyNoLook = computed(() => otherJob.value ? waiting : !lookReference.value ? 'Choisissez d’abord une affiche modèle ci-dessus.' : '')
 const whyNoDraft = computed(() => !photos.value.length ? 'Ajoutez au moins une photo du produit.' : !intake.confirmed ? 'Cochez la case « Les photos correspondent… » pour continuer.' : '')
-const whyNoExport = computed(() => job.value ? waiting
+const whyNoExport = computed(() => otherJob.value ? waiting
   : !currentVisual.value ? 'Générez d’abord l’affiche.'
   : currentVisual.value.status === 'pending_review' ? 'Comparez d’abord la version à votre photo et approuvez la fidélité du produit.'
   : currentVisual.value.status === 'rejected' ? 'Cette version a été refusée : choisissez une autre version ou générez-en une nouvelle.'
@@ -534,9 +538,9 @@ function removeFromPoster() {
 const scale = computed(() => {
   const [width, height] = FORMATS[format.value]
   if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
-  // While a scene is made, a wide screen's poster leaves room under it for the waiting block (D-POSTER-EDITOR-006).
-  const reserved = waitJob.value && viewportWidth.value > 1080 ? 440 : 300
-  return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - reserved) / height) : .62, .62)
+  // The poster keeps its size while a scene is made: shrinking it to fit the waiting block moved and resized the stage
+  // (T-WAIT-DEFORM). Under it, the block's state, time and rail are in view; its steps may need a scroll on a short screen.
+  return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / height) : .62, .62)
 })
 const sources = computed(() => Object.fromEntries([
   ...Object.entries(effectSources.value).map(([id, url]) => [id, `${url}?prepared=true`]),
@@ -868,7 +872,7 @@ function follow(value: Job, found = false) {
   since.value = found ? localTime(value.created_at, clockSkew, Date.now()) : Date.now(); now.value = Date.now()
   pollTimer = setTimeout(poll, 250)
   // The owner may be far down a step: on one column the poster and the waiting block are at the top of the page; on a wide
-  // screen the stage goes to its sticky place, where it fits.
+  // screen the stage goes to its sticky place, with the block's state and time under the poster.
   if (!found && waitJob.value) nextTick(() => viewportWidth.value <= 1080 ? window.scrollTo({ top: 0 }) : stageBox.value?.scrollIntoView({ block: 'start' }))
 }
 // The new version's image is decoded before the poster switches to it; a load that stalls gives up after 20 s.

@@ -15,3 +15,4 @@
 Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → fidelity review → manual or prompted selected-text polish → server preview → confirm → download the same PNG. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
 
 Next gate: review the [technical designs](../designs/_INDEX.md), then approve them before implementation tasks, as required by [AGENTS.md](../../../AGENTS.md). No new feature code or paid testing was performed during design.
+| [poster-format.md](poster-format.md) | R-POSTER-FORMAT-001 … 002 | Approved 2026-11-14 (ADR-080) | [poster-format](../designs/poster-format.md) |

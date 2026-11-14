@@ -210,6 +210,7 @@ Verification: pure document/schema/price/layout tests; manual/prompt changes wit
 5. **Receiving:** when the job succeeds, the new visual's image is decoded (`Image.decode()`) before the document switches to it; meanwhile the phase is `receiving`. A decode failure shows the image anyway through the normal path with a notice (the visual exists server-side; nothing is lost). The swap fades in 200 ms.
 6. **Connection:** a failed poll does not clear the job: the block shows « Connexion interrompue. La demande continue… », polling goes on with a backoff (2 s, 4 s, 8 s, then 10 s), and the first success restores the state. `visibilitychange` to visible polls at once instead of waiting for the 10 s hidden timer.
 7. **Reduced motion:** the rail is a still full-width line at reduced opacity and the dot does not pulse.
+8. **Nothing else moves** (amendment 2026-11-14, T-WAIT-DEFORM, ADR-081): while the block is shown, no « Une tâche est en cours… » line is added under a disabled button (bar, rail or panel), and the poster keeps its size on a wide screen (the block's steps may need a scroll there). The controls keep their size and rows before, during and after; the smoke measures it at 360 px and 1366 px.
 
 **Failure modes & handling:**
 
