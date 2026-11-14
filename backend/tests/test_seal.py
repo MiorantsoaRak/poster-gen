@@ -41,6 +41,13 @@ def test_disc_is_found_where_it_is_not_where_it_was_asked():
     assert moved and abs(moved[0] - .53 * 1088) <= 2 and abs(moved[1] - .89 * 1360) <= 2 and abs(moved[2] - 116.4) <= 3
 
 
+def test_a_footer_drawn_lower_than_asked_is_still_found():
+    # The first paid Story scene (2026-11-14): asked at 83.5 % of the height, drawn at 88.7 %, 77 % of the diameter.
+    low = find_disc(scene((.50, .887, .092)), (.50, .835), .12)
+    assert low and abs(low[0] - 544) <= 2 and abs(low[1] - .887 * 1360) <= 2 and abs(low[2] - 100) <= 3
+    assert find_disc(scene((.50, .96, .092)), (.50, .835), .12) is None  # 12.5 % away is another object
+
+
 @pytest.mark.parametrize("case", ["none", "oval", "tiny", "huge", "touched", "far"])
 def test_nothing_is_guessed(case):
     def pill(draw):  # a white price pill running into the disc: the region is no longer round

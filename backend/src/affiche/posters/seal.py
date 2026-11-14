@@ -26,7 +26,9 @@ def find_disc(image: bytes, centre: tuple[float, float], diameter: float) -> tup
         left, top = max(0, round(cx - 1.5 * asked)), max(0, round(cy - 1.5 * asked))
         window = picture.crop((left, top, min(width, round(cx + 1.5 * asked)), min(height, round(cy + 1.5 * asked))))
         for dx in (0, -.03, .03):
-            for dy in (0, -.02, .02):
+            # Up to 6 % lower or higher: in the tall Story format the model drew the whole footer 5 % lower than
+            # asked (first paid Story scene, 2026-11-14); the nearest offsets are tried first.
+            for dy in (0, -.02, .02, .04, -.04, .06, -.06):
                 seed = (round(cx + dx * width) - left, round(cy + dy * height) - top)
                 if not (0 <= seed[0] < window.width and 0 <= seed[1] < window.height):
                     continue
