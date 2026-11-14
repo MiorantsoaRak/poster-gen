@@ -62,6 +62,8 @@
   - delivered: `backend/src/affiche/posters/plans.py`: with an accent word, the scene prompt asks that it is as easy to read as the rest of the name, with a deeper or lighter shade of the same hue if needed (new scenes only).
   - verified 2026-11-13: `uv run pytest -q` 739 passed, 3 deselected; `tests/test_plans.py::test_the_accent_word_is_asked_to_stay_readable`.
   - not verified: the image model obeying the sentence (paid scenes, only with the user's go).
+- [x] T-NAME (trivial; user 2026-11-14: "Replace the title with affiche gen") The application is named « Affiche Gen »: wordmark in `frontend/src/App.vue`, `<title>` in `frontend/index.html`, `name` in the manifest. Not changed: the manifest's short name « Affiches », the outage sentence in `deploy/README.md` (Maizina's Caddy file, on the box).
+  - verified 2026-11-14: build; the demo's page title and wordmark read « Affiche Gen ». Not committed.
 - [x] T-UI-PHONE-FIRST (R-POSTER-EDITOR-007, 006 amendment; D-POSTER-EDITOR-005 v2; ADR-075) The phone-first editor, in two tasks below. Requirements and design written and reviewed (reviews/phone-first-design-r1-2026-11-13.md).
   - note 2026-11-13 (later): unblocked by the user ("let's go with that for now", "go full autonomous", ADR-077): build T-PF-STRUCT then T-PF-LOOK to mockup version 20; glass on every surface; Figtree, bottom navigation, theme follows the phone. Push, deploy and the observed phone session stay his.
   - earlier note 2026-11-13: blocked on the user: release order (recommended: commit, push and deploy the current fixes first), then the observed phone session (T-HOST-004), then T-PF-STRUCT; T-PF-LOOK needs his choices (theme by default, Figtree, bottom navigation).

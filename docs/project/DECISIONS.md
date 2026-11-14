@@ -1,5 +1,9 @@
 # DECISIONS
 
+## ADR-078 — 2026-11-14 — No trial of GPT Image 2.5 Flare; the application is named « Affiche Gen » (user)
+- Asked whether to try GPT Image 2.5 Flare at medium on his next real posters (Codex's benchmark, ADR-077), the user answered "No go for 3". The pilot stays on `gpt-image-2` at high. Do not propose the switch again unless he raises it.
+- "Replace the title with affiche gen": the wordmark, the page title and the manifest name are « Affiche Gen » (T-NAME).
+
 ## ADR-077 — 2026-11-13 — The mockup's look is the target, glass on every surface; the accent word must stay readable; the benchmark's model is a candidate only (user: "let's go with that for now", "go", "go full autonomous")
 - The user reviewed the mockup through version 20 (https://claude.ai/artifact/6JoS82gMXkucaat4FKvUia) and said "let's go with that for now", then "go full autonomous". Claude reads this as: build T-PF-STRUCT then T-PF-LOOK to that mockup without further gates. Commit locally; push, deploy and paid calls stay his.
 - The three choices left open in ADR-075 are taken from the mockup he approved: Figtree; bottom navigation on phones (Créer, Mes affiches, Styles); the theme follows the phone's setting, with the existing switch kept (Claude's pick: the mockup shows both themes and the light one first).
