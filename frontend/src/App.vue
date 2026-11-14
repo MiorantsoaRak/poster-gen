@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import PosterCanvas from './PosterCanvas.vue'
-import { api, ApiError, mutation, upload } from './api'
+import { api, ApiError, clockSkew, mutation, upload } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, parsePrice, setIdentity, type Creation, type FontId, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
+import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
@@ -12,7 +13,7 @@ interface Capabilities { image_mode: string; planner_mode: string; planner_avail
 interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
-interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
+interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
 const authenticated = ref(false), checking = ref(true), down = ref(false), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
@@ -325,7 +326,7 @@ function panelFocus(event: FocusEvent) {
 watch(pinned, on => { if (!on) typing.value = false })
 // What stays at the top of the editor (the top bar, and in the tabs the poster): the poster sits under the bar, the
 // scroll padding and go() keep fields out from under both. Not measured while the large view is open.
-const appHeader = ref<HTMLElement>(), bar = ref<HTMLElement>(), pin = ref<HTMLElement>(), stickyTop = ref(0)
+const appHeader = ref<HTMLElement>(), bar = ref<HTMLElement>(), pin = ref<HTMLElement>(), stageBox = ref<HTMLElement>(), stickyTop = ref(0)
 let stickyObserver: ResizeObserver | undefined
 function measureSticky() {
   if (peeking.value) return
@@ -386,7 +387,7 @@ const costLine = (micros?: number) => micros ? `Coût estimé : au plus ${dollar
 function askScene() {
   if (whyNoHeadline.value) { error.value = whyNoHeadline.value; go('textes'); return }  // also for « Nouvelle version »
   paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: costLine(caps.value?.scene_estimate_micros),
-    text: visuals.value.length ? 'Mêmes textes et même style, un autre essai. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. Cela prend environ une minute.', run: createScene }
+    text: visuals.value.length ? 'Mêmes textes et même style, un autre essai. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
 }
 function askLook() {
   paid.value = { title: 'Créer un style depuis cette affiche ?', label: 'Créer le style', cost: costLine(caps.value?.plan_estimate_micros),
@@ -500,7 +501,7 @@ const whyNoExport = computed(() => job.value ? waiting
   : discUncovered.value ? 'L’image contient un disque prévu pour le logo : replacez le logo dessus (activez « Logo ») ou générez une nouvelle version.'
   : issues.value.some(issue => issue.blocking) ? 'Corrigez d’abord les éléments signalés sous l’affiche.'
   : previewPolish.value ? 'Appliquez ou refusez d’abord l’ajustement en cours.' : '')
-const nextStep = computed(() => job.value && ['scene', 'refine'].includes(job.value.kind) ? 'Votre affiche est en cours de création. Cela prend environ une minute.'
+const nextStep = computed(() => job.value && ['scene', 'refine'].includes(job.value.kind) ? 'Votre affiche est en cours de création.'
   : !currentVisual.value ? 'Vérifiez les textes, choisissez un style, puis appuyez sur « Générer l’affiche ».'
   : currentVisual.value.status === 'pending_review' ? 'Comparez le produit à votre photo, puis approuvez sa fidélité.'
   : currentVisual.value.status === 'approved' ? 'Dernière étape : vérifiez l’aperçu final, puis téléchargez votre affiche.'
@@ -531,7 +532,9 @@ function removeFromPoster() {
 const scale = computed(() => {
   const [width, height] = FORMATS[format.value]
   if (pinned.value) return Math.min(canvasWidth.value / width, (typing.value ? POSTER_STRIP : posterHeight(viewportHeight.value)) / height)
-  return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - 300) / height) : .62, .62)
+  // While a scene is made, a wide screen's poster leaves room under it for the waiting block (D-POSTER-EDITOR-006).
+  const reserved = waitJob.value && viewportWidth.value > 1080 ? 440 : 300
+  return Math.min(canvasWidth.value / width, viewportWidth.value > 850 ? Math.max(.25, (viewportHeight.value - reserved) / height) : .62, .62)
 })
 const sources = computed(() => Object.fromEntries([
   ...Object.entries(effectSources.value).map(([id, url]) => [id, `${url}?prepared=true`]),
@@ -658,7 +661,7 @@ async function adopt(result: Creation) {
     effect.value = await api(`/api/text-effects/${previousEffect.result_ref}`)
     effectSources.value[`effect:${effect.value.id}`] = effect.value.image_url
   }
-  if (active) follow(active)
+  if (active) follow(active, true)
   else {
     const previousPlan = jobs.items.find(item => item.kind === 'plan' && item.status === 'succeeded')
     if (previousPlan) acceptPlan(await api(`/api/plans/${previousPlan.result_ref}`))
@@ -819,25 +822,74 @@ async function refineScene() {
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/refinements`, { base_visual_id: currentVisual.value!.id, instruction_fr: refinement.value, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}) }, saver!.revision)
   follow({ id: result.job_id, kind: 'refine', status: 'queued', result_ref: null, error_code: null })
 }
-function follow(value: Job) { clearTimeout(pollTimer); job.value = value; pollTimer = setTimeout(poll, 250) }
+// Waiting for a scene or an adjustment of the scene (D-POSTER-EDITOR-006): the phase comes from the job's real state,
+// the time from timestamps on this device's clock (never from counted ticks), and a lost connection is its own state.
+const waitJob = computed(() => job.value && ['scene', 'refine'].includes(job.value.kind) ? job.value : null)
+const now = ref(Date.now()), since = ref(0), runningSince = ref<number | null>(null), offline = ref(false), decoded = ref(false), visible = ref(!document.hidden)
+// polling counts the polls in flight: a stale one may still be finishing when the next job's starts. round changes at
+// each follow(), so that a poll begun before it (even for the same job, re-followed by adopt) ends instead of chaining.
+let ticker: ReturnType<typeof setInterval> | undefined, polling = 0, failures = 0, arrived = '', round = 0
+const waitPhase = computed(() => waitJob.value ? phase(waitJob.value, decoded.value) : null)
+const waitLong = computed(() => !!waitPhase.value && runningSince.value !== null && overdue(waitPhase.value, now.value - runningSince.value))
+const WAIT_WORDS: Record<Phase, [string, string]> = {
+  queued: ['Votre demande est en attente.', 'La création va démarrer. Vous pouvez encore annuler cette demande.'],
+  running: ['Votre affiche prend forme.', 'L’IA compose une nouvelle version. La durée varie selon l’affiche.'],
+  receiving: ['Réception de votre affiche…', 'La création est terminée. L’image se charge avant de vous être présentée.'],
+  ready: ['Votre affiche est prête à vérifier.', 'Prenez un instant pour vérifier le produit, les textes et chaque chiffre du prix.'],
+  failed: ['Cette version n’a pas abouti.', 'Aucune nouvelle version n’a été ajoutée.'],
+}
+const WAIT_STEPS = ['Demande enregistrée', 'Création de l’affiche', 'Image prête à vérifier']
+const waitStep = computed(() => ({ queued: 0, running: 1, receiving: 2, ready: 3, failed: -1 })[waitPhase.value ?? 'failed'])
+const pillWord = computed(() => offline.value || !waitPhase.value ? '' : ({ queued: 'En attente', running: 'Création en cours', receiving: 'Réception' } as Partial<Record<Phase, string>>)[waitPhase.value] ?? '')
+// The time is the one thing redrawn each second, and only while the tab is visible.
+watch(() => !!waitJob.value && visible.value, on => {
+  clearInterval(ticker); now.value = Date.now()
+  if (on) ticker = setInterval(() => { now.value = Date.now() }, 1000)
+})
+// Back on the tab, the state is asked at once instead of after the hidden tab's 10 s wait.
+function onVisibility() {
+  visible.value = !document.hidden
+  if (visible.value && job.value && !polling) { clearTimeout(pollTimer); poll() }
+}
+// A job this editor started is timed from now; one found active on opening, from the server's creation time.
+function follow(value: Job, found = false) {
+  clearTimeout(pollTimer); round++; job.value = value; failures = 0; offline.value = false; decoded.value = false; runningSince.value = null; arrived = ''
+  since.value = found ? localTime(value.created_at, clockSkew, Date.now()) : Date.now(); now.value = Date.now()
+  pollTimer = setTimeout(poll, 250)
+  // The owner may be far down a step: on one column the poster and the waiting block are at the top of the page; on a wide
+  // screen the stage goes to its sticky place, where it fits.
+  if (!found && waitJob.value) nextTick(() => viewportWidth.value <= 1080 ? window.scrollTo({ top: 0 }) : stageBox.value?.scrollIntoView({ block: 'start' }))
+}
+// The new version's image is decoded before the poster switches to it; a load that stalls gives up after 20 s.
+async function decodes(url: string) {
+  const image = new Image(); image.src = url
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try { await Promise.race([image.decode(), new Promise((_, reject) => { timer = setTimeout(reject, 20000) })]); return true }
+  catch { return false }
+  finally { clearTimeout(timer) }
+}
 async function poll() {
   if (!job.value || !creation.value) return
   if (document.hidden) { pollTimer = setTimeout(poll, 10000); return }
-  const creationId = creation.value.id, jobId = job.value.id
+  const creationId = creation.value.id, jobId = job.value.id, mine = round
+  const stale = () => creation.value?.id !== creationId || job.value?.id !== jobId || round !== mine
+  polling++
   try {
     const response = await api<Job>(`/api/jobs/${jobId}`)
-    if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+    if (stale()) return
+    offline.value = false
+    if (response.status === 'running' && runningSince.value === null) runningSince.value = localTime(response.started_at, clockSkew, Date.now())
     job.value = response
     if (job.value.status === 'succeeded') {
       const completed = job.value
       if (completed.kind === 'render') {
         const result = await api(`/api/renders/${completed.result_ref}`)
-        if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+        if (stale()) return
         openFinalPreview(result)
       }
       else if (completed.kind === 'text_patch' || completed.kind === 'text_texture') {
         const result: any = await api(`/api/${completed.kind === 'text_patch' ? 'text-proposals' : 'text-effects'}/${completed.result_ref}`)
-        if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+        if (stale()) return
         if (completed.kind === 'text_patch') { proposal.value = result; effect.value = null; acknowledgeContent.value = false }
         else { effect.value = result; effectSources.value[`effect:${result.id}`] = result.image_url }
         previewPolish.value = true
@@ -845,22 +897,28 @@ async function poll() {
       }
       else if (completed.kind === 'look') {
         const made = await api<SavedLook>(`/api/looks/${completed.result_ref}`)
-        if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+        if (stale()) return
         savedLooks.value = [made, ...savedLooks.value.filter(item => item.id !== made.id)]
         chooseLook(made.id); lookName.value = ''; lookReference.value = null
         notice.value = `Style « ${made.name} » enregistré. Il est sélectionné et restera disponible pour vos prochaines affiches.`
       }
       else if (completed.kind === 'plan') {
         const result = await api(`/api/plans/${completed.result_ref}`)
-        if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+        if (stale()) return
         acceptPlan(result)
       }
       else {
         await refreshVisuals()
-        if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+        if (stale()) return
+        // « Réception » until the image is decoded here. One that cannot be is still shown the usual way: the version exists.
+        const made = visuals.value.find(item => item.id === completed.result_ref)
+        const shown = !made || await decodes(`${made.image_url}?prepared=true`)
+        if (stale()) return
+        if (!shown) notice.value = 'La nouvelle version est enregistrée, mais son image tarde à se charger sur cet appareil.'
+        decoded.value = true; arrived = completed.result_ref ?? ''
         if (!saver?.unsaved) {
           const saved = await api<Creation>(`/api/creations/${creation.value.id}`)
-          if (creation.value?.id !== creationId || job.value?.id !== jobId) return
+          if (stale()) return
           if (saved.revision !== saver?.revision && !saver?.unsaved) await adopt(saved)
         }
         // No notice here: the review opens in front and a notice would cover its instructions.
@@ -873,12 +931,30 @@ async function poll() {
       error.value = job.value.status === 'interrupted' ? 'La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.' : job.value.kind === 'look' ? 'Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.' : jobFailure(job.value.error_code)
       job.value = null; return
     }
-    pollTimer = setTimeout(poll, 2000)
+    failures = 0; pollTimer = setTimeout(poll, 2000)
   } catch (reason) {
-    if (creation.value?.id === creationId && job.value?.id === jobId) { error.value = (reason as Error).message; pollTimer = setTimeout(poll, 10000) }
-  }
+    if (stale()) return
+    // A refusal does not change by asking again (the session ended, the job is unknown): the following stops and says why.
+    if (reason instanceof ApiError && reason.status >= 400 && reason.status < 500 && reason.status !== 429) {
+      job.value = null; error.value = reason.message
+      if (reason.status === 401) { authenticated.value = false; window.scrollTo({ top: 0 }) }
+      return
+    }
+    // A failed poll keeps the job and never starts another attempt: the editor keeps asking, less and less often.
+    const lost = reason instanceof ApiError && (reason.code === 'network' || reason.status >= 500)
+    if (lost && waitJob.value) offline.value = true
+    else error.value = (reason as Error).message
+    pollTimer = setTimeout(poll, retryDelay(++failures))
+  } finally { polling-- }
 }
 async function cancelJob() { await mutation(`/api/jobs/${job.value!.id}/cancel`, {}); job.value = null; clearTimeout(pollTimer) }
+// The new version fades in once drawn, not while its image was still on its way.
+function canvasDrawn(ready: boolean) {
+  canvasReady.value = ready
+  if (!ready || !arrived || layout.value?.scene.visual_id !== arrived) return
+  arrived = ''
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) canvasHost.value?.querySelector('.poster-canvas')?.animate({ opacity: [0, 1] }, { duration: 200, easing: 'ease-out' })
+}
 async function refreshEffects() {
   const ids = [...new Set(Object.values(doc.value?.formats ?? {}).flatMap(layout => layout.layers.flatMap(layer => layer.kind === 'text' && layer.texture_effect_id ? [layer.texture_effect_id] : [])))]
   const entries = await Promise.all(ids.map(async id => { const value: any = await api(`/api/text-effects/${id}`); return [`effect:${id}`, value.image_url] as const }))
@@ -1023,9 +1099,10 @@ onMounted(() => {
   window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
+  document.addEventListener('visibilitychange', onVisibility)
   return start()
 })
-onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); saver?.dispose(); clearTimeout(pollTimer); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
+onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
 </script>
 
 <template>
@@ -1148,17 +1225,17 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p v-if="group === 'style' && mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p>
           </div>
         </aside>
-        <section class="stage" :class="{ peek: peeking }" aria-label="Affiche" :role="peeking ? 'dialog' : undefined" :aria-modal="peeking || undefined" @keydown.esc="peeking && setPeek(false)">
+        <section ref="stageBox" class="stage" :class="{ peek: peeking }" aria-label="Affiche" :role="peeking ? 'dialog' : undefined" :aria-modal="peeking || undefined" @keydown.esc="peeking && setPeek(false)">
           <button v-if="peeking" id="fermer-affiche" type="button" class="secondary back" @click="setPeek(false)"><Icon n="close" />{{ stepping ? 'Revenir à l’étape' : 'Revenir aux réglages' }}</button>
-          <div class="stage-head"><p class="coach" role="status"><Icon n="clock" /><span><b>À faire :</b> {{ nextStep }}</span></p>
+          <div class="stage-head"><p class="coach" :role="waitJob ? undefined : 'status'"><Icon n="clock" /><span><b>À faire :</b> {{ nextStep }}</span></p>
             <div v-if="!stepping" class="main-action"><button type="button" class="ghost icon see" aria-label="Voir l’affiche" title="Voir l’affiche" @click="setPeek(true)"><Icon n="image" /></button><button type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
             <p v-if="mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p></div></div>
           <!-- On one column with a version, only this stays on top of the controls; the blocks after it follow the stage. -->
           <div ref="pin" class="pin">
             <div class="proof">
               <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
-              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!job && ['scene', 'refine'].includes(job.kind) }"><div class="frame" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasReady = $event" @error="error = $event" />
-                <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status">Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
+              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event" />
+                <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob">Version précédente<span :class="{ 'visually-hidden': viewportWidth <= 720 }"> conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
             </div>
             <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
           </div>
@@ -1175,7 +1252,16 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <button v-else type="button" class="text-button" @click="go('boutique')">Ouvrir « Boutique »</button>
             </template>
           </div>
-          <div v-if="job" class="job-state" role="status"><strong>{{ { plan:'Préparation de la composition…', look:'Description du style…', scene:'Création de votre affiche…', refine:'Ajustement de la scène…', text_patch:'Préparation de l’ajustement du texte…', text_texture:'Création de la matière du texte…', render:'Préparation de l’aperçu final…' }[job.kind] }}</strong><p>{{ drawingTexts ? 'Le titre et le prix sont en train d’être dessinés : ils se modifient à nouveau dès la fin.' : 'Le titre et le prix restent modifiables. Les choix de style et ce que l’IA dessine reviennent à la fin de la tâche.' }}</p><button v-if="job.status === 'queued'" class="quiet" @click="perform(cancelJob)">Annuler la demande</button></div>
+          <!-- The state in words is announced when it changes; the ticking time is outside the live region. -->
+          <div v-if="waitPhase" class="job-state wait">
+            <div role="status"><strong>{{ WAIT_WORDS[waitPhase][0] }}</strong><p>{{ waitLong ? 'C’est plus long que d’habitude. La demande est toujours en cours : inutile de la relancer.' : WAIT_WORDS[waitPhase][1] }}</p><p v-if="offline" class="offline">Connexion interrompue. La demande continue : son état revient avec la connexion, sans nouvel essai.</p></div>
+            <span class="wait-time"><Icon n="clock" /><span class="visually-hidden">Temps écoulé : </span>{{ elapsedLabel(now - since) }}</span>
+            <div class="wait-rail" :class="{ moving: !offline }" aria-hidden="true"><span /></div>
+            <ol class="wait-steps" aria-label="Étapes de la demande"><li v-for="(name, index) in WAIT_STEPS" :key="name" :class="{ done: index < waitStep, now: index === waitStep }" :aria-current="index === waitStep ? 'step' : undefined"><span class="n" aria-hidden="true"><Icon v-if="index < waitStep" n="check" /><template v-else>{{ index + 1 }}</template></span>{{ name }}</li></ol>
+            <p class="note">{{ drawingTexts ? 'Le titre et le prix sont en train d’être dessinés : ils se modifient à nouveau dès la fin.' : 'Le titre et le prix restent modifiables. Les choix de style et ce que l’IA dessine reviennent à la fin de la tâche.' }}</p>
+            <button v-if="waitPhase === 'queued' && !offline" class="quiet" @click="perform(cancelJob)">Annuler la demande</button>
+          </div>
+          <div v-else-if="job" class="job-state" role="status"><strong>{{ { plan:'Préparation de la composition…', look:'Description du style…', text_patch:'Préparation de l’ajustement du texte…', text_texture:'Création de la matière du texte…', render:'Préparation de l’aperçu final…' }[job.kind] }}</strong><p>Le titre et le prix restent modifiables. Les choix de style et ce que l’IA dessine reviennent à la fin de la tâche.</p><button v-if="job.status === 'queued'" class="quiet" @click="perform(cancelJob)">Annuler la demande</button></div>
           <div v-if="proposal?.status === 'pending' || effect?.status === 'proposed'" class="polish-preview"><strong>Ajustement à vérifier</strong><label class="check"><input v-model="previewPolish" type="checkbox" />Voir la proposition sur l’affiche</label><button v-if="!stepping" type="button" class="text-button" @click="selected = (effect?.status === 'proposed' ? effect : proposal).layer_id; go('reglages')">Ouvrir l’ajustement</button></div>
           <div v-if="saveState === 'failed' || saveState === 'conflict'" class="save-recovery"><button v-if="saveState === 'failed'" @click="perform(flush)">Réessayer l’enregistrement</button><template v-else><button @click="perform(conflictCopy)">Conserver mes modifications dans une copie</button><button class="quiet" @click="askDiscard">Abandonner mes modifications et recharger</button></template></div>
           <ul v-if="issues.length" class="issues"><li v-for="issue in issues" :key="issue.id" :class="{ blocking: issue.blocking }"><button class="text-button" @click="pick(issue.layer_id)">{{ issue.message }}</button></li></ul>

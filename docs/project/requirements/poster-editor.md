@@ -11,6 +11,7 @@
 | R-POSTER-EDITOR-005 | Remove an element from the poster | P1 | Approved 2026-11-13 (ADR-072) |
 | R-POSTER-EDITOR-006 | Visual language: the poster first, glass only on floating chrome | P2 | Approved 2026-11-13 (ADR-072); amended the same day (ADR-075) |
 | R-POSTER-EDITOR-007 | Phone-first editor: the poster stays in view | P0 | Approved 2026-11-13 under the autonomy grant (ADR-075) |
+| R-POSTER-EDITOR-008 | Honest waiting while a poster is generated | P1 | Approved 2026-11-14 under the autonomy grant (ADR-079) |
 
 ## R-POSTER-EDITOR-001 — A complete, editable first draft
 
@@ -144,3 +145,16 @@ Acceptance criteria (all on one-column screens, measured at 360 × 740 with a to
 - [ ] Every rule that exists today still holds: steps and tabs (R-POSTER-EDITOR-004), removal from the poster (005), the paid confirmation, the small-photo agreement, the reasons beside a blocked action, the fidelity review, the stale-text notices, autosave and its recovery.
 
 Out of scope: the desktop layout (a later task: tools in a vertical rail, versions under the poster); « Mes affiches » as a grid of cards with status filters (a later task); the share sheet; the owner's vocabulary (no dollars).
+
+## R-POSTER-EDITOR-008 — Honest waiting while a poster is generated
+
+- **Status:** Approved 2026-11-14 under the autonomy grant (ADR-079). User: "Can we implement also codex finding on the generation animation? It have a preview in it's branch". Source: Codex's local prototype and its reviewed requirements R-GEN-EXP-003 and 004 (worktree `codex/generation-cost-ux`, `docs/project/requirements/generation-experience.md`, `frontend/src/generation-lab/`), here applied to the real editor and the real job.
+- [ ] While a scene or an adjustment of the scene is being made, the editor tells apart: waiting to start, being created, image being received, ready to check, failed. The words come from the real job's state, never from a timer alone.
+- [ ] The elapsed time is shown (minutes and seconds), with no percentage, no countdown and no invented sub-stage. Three steps are shown: « Demande enregistrée », « Création de l'affiche », « Image prête à vérifier ».
+- [ ] After 100 seconds of creation a sentence says it is longer than usual, that the request is still running and that starting again is useless. It asserts neither failure nor success.
+- [ ] « Annuler la demande » exists only while the job waits to start. Once creation started, nothing suggests that leaving cancels the call or refunds it.
+- [ ] A lost connection is its own state: « Connexion interrompue », the request continues, the editor keeps looking and never starts another attempt. On return to the tab the state is refreshed at once.
+- [ ] The poster area stays visible: the previous version labelled as kept, or the draft at the first generation; a small state pill sits over it, in front (R-007's pill rule). No fake preview of the image being made.
+- [ ] The new image appears only once loaded, with a short fade; it still needs the owner's fidelity check. A failure says so, keeps the previous version and adds none.
+- [ ] Motion is calm (a thin moving rail, a pulsing dot); with reduced motion nothing repeats and the state stays clear. Screen readers hear state changes, not every second. Works at 360 px and on wide screens, both themes.
+- **Out of scope:** the server, the job queue, streaming partial images, any change to what is paid or when.

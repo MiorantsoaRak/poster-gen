@@ -1,5 +1,10 @@
 # DECISIONS
 
+## ADR-079 — 2026-11-14 — Codex's waiting experience goes into the real editor, frontend only (user request; requirements and design passed by Claude under the autonomy grant)
+- The user asked to implement Codex's finding on the generation animation, previewed in its branch. Codex built it as a separate simulated page; its requirements and design were reviewed there. Claude adapts them to the real job (R-POSTER-EDITOR-008, D-POSTER-EDITOR-006) instead of merging the branch: the lab page stays a prototype in its worktree, and the editor uses the real job's state and timestamps.
+- Not taken: the lab's scenario controls (simulation only), a separate page, any server change. Kept: no percentage or countdown, cancel only while queued, a lost connection as its own state, the long-wait sentence at 100 s, calm motion with a reduced-motion form.
+- No devil's advocate round on this design: it restates a design already reviewed in Codex's worktree; the build gets a fresh code review.
+
 ## ADR-078 — 2026-11-14 — Trial of GPT Image 2.5 Flare at medium on the pilot; the application is named « Affiche Gen » (user)
 - Asked whether to try GPT Image 2.5 Flare at medium on his next real posters (Codex's benchmark, ADR-077), the user wrote "No go for 3". Claude first read it as a refusal and recorded that; he corrected: "I meant let's try 2.5 flare". The trial is on.
 - How: `deploy/compose.yml` sets `OPENAI_IMAGE_MODEL: gpt-image-2.5-flare` and `OPENAI_IMAGE_QUALITY: medium`. A scene's quality was fixed to "high" in `posters/visuals.py`; it now follows `OPENAI_IMAGE_QUALITY` and stays "high" when unset (T-FLARE-TRIAL). `gateway.py`'s rates for the model (5 / 8 / 30 USD per million tokens) equal the benchmark's rate card. The cost shown before a paid call stays the conservative estimate (`ESTIMATE_SCENE_USD`), so the owner sees "au plus" a figure above the real cost.

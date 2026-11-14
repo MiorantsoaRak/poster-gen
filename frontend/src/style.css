@@ -311,15 +311,41 @@ details.new-look[open] { padding-bottom: 14px }
 .frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; align-items: center; gap: 6px; min-height: 28px; margin: 0; padding: 0 11px; border-radius: 999px;
   background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
 .tap-open { position: absolute; inset: 0; z-index: 1; cursor: zoom-in }
-/* Work in progress is said on the stage itself: a quiet pulsing chip in the one hue. */
-.canvas-host.generating::after { content: 'Génération en cours…'; position: absolute; z-index: 3; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--hue); color: #1c1206; font-size: 13px; font-weight: 700; white-space: nowrap; animation: pulse 1.6s ease-in-out infinite }
+/* While a scene is made (D-POSTER-EDITOR-006) the poster says so itself: a glass pill with the state word and a pulsing
+   dot in the one hue, in front like the badge; the badge names what is shown (the draft, or the version kept), at every
+   width while it lasts. */
+.gen-pill { position: absolute; z-index: 3; left: 50%; bottom: 10px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 12px; border-radius: 999px;
+  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
+.gen-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--hue); animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
-@keyframes pulse { 50% { opacity: .55 } }
+.canvas-host.generating .frame .badge { display: inline-flex; max-width: calc(100% - 16px); white-space: normal }
+@keyframes pulse { 50% { opacity: .3 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
 .coach svg { margin-top: 2px }
 .coach b { color: var(--text) }
 .job-state { padding: 14px 16px; border-radius: var(--field); display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap }
 .job-state p { margin: 0; color: var(--muted); font-size: 13px; margin-right: auto }
+/* The waiting block: the state in words, the time, a 2 px rail with a moving segment, three steps. The time sits in the
+   corner, beside the heading only, so that the sentences keep the block's width. */
+.job-state.wait { position: relative; display: grid; gap: 12px; padding: 16px 18px; border-radius: 20px }
+.wait strong { display: block; padding-right: 72px; font-size: 16px; line-height: 22px; font-weight: 800; letter-spacing: -.01em }
+.wait [role=status] p { margin: 2px 0 0; font-size: 13.5px; line-height: 19px }
+.wait .offline { margin-top: 8px; padding: 8px 12px; border-radius: 12px; background: var(--warn-bg); color: var(--warn); font-weight: 600 }
+.wait-time { position: absolute; top: 16px; right: 18px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; line-height: 22px; font-weight: 700 }
+.wait-rail { position: relative; height: 2px; overflow: hidden; border-radius: 2px; background: var(--line) }
+.wait-rail span { position: absolute; top: 0; left: 0; width: 30%; height: 100%; border-radius: inherit; background: var(--hue); opacity: 0 }
+.wait-rail.moving span { opacity: 1; animation: travel 2.4s linear infinite }
+@keyframes travel { from { transform: translateX(-100%) } to { transform: translateX(435%) } }
+.wait-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; color: var(--faint); font-size: 12.5px; line-height: 16px; font-weight: 600 }
+.wait-steps li { display: flex; align-items: center; gap: 8px; min-width: 0 }
+.wait-steps .n { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--control); font-size: 11px; line-height: 1 }
+.wait-steps .done { color: var(--muted) }
+.wait-steps .done .n { background: var(--ok-bg); color: var(--ok); box-shadow: none }
+.wait-steps .now { color: var(--text); font-weight: 700 }
+.wait-steps .now .n { box-shadow: inset 0 0 0 2px var(--hue); color: var(--accent-ink) }
+.wait .note { color: var(--faint) }
+.wait button { justify-self: start }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
 .issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-glass); border-radius: var(--field) }
 .issues .text-button { color: var(--warn) }
 .issues .blocking .text-button { color: var(--bad); font-weight: 700 }
@@ -431,6 +457,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .stepping .stage:not(.peek) > .pin { grid-column: 1; grid-row: 1 }
   .stepping .stage:not(.peek) > .see-big { display: inline-flex; grid-column: 2; grid-row: 1; justify-self: start; align-self: center }
   .stepping .stage:not(.peek) :is(.stage-head, .selection, .photo, .layer-list), .stepping .stage:not(.peek) > .help { display: none }
+  /* The thumbnail is narrower than the pill: it hangs from the thumbnail's corner, towards the empty column. */
+  .stepping .stage:not(.peek) .gen-pill { left: 6px; bottom: 6px; transform: none }
   /* Once a version exists the real image stays on top (D-POSTER-EDITOR-005): the stage dissolves into the column, so
      that only the poster and its row of elements stick under the top bar; its other blocks follow, then the versions,
      then the tools. The large view is still the stage itself. */
@@ -444,7 +472,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .stage:not(.peek) .layer-list { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none }
   .editor:not(.stepping) .stage:not(.peek) .layer-list > * { flex: none }
   /* Typing: the poster is a strip, its elements and the bottom bar make room for the field and the keyboard. */
-  .editor.typing .pin :is(.layer-list, .badge), .editor.typing .main-action { display: none }
+  .editor.typing .pin :is(.layer-list, .badge, .gen-pill), .editor.typing .main-action { display: none }
   /* Versions: one row of small thumbnails, each with its state in words. */
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
   .editor:not(.stepping) :is(.version img, button.version.new .add) { width: 56px; height: 70px }
@@ -490,6 +518,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   /* The lists' title rows keep wrapping: at 360 px « Mes affiches » was squeezed to one word per line under its checkbox. */
   .gallery .titlerow { flex-wrap: wrap; align-items: center }
   .gallery .titlerow .what { flex: 1 1 100% }
+  /* A third of 360 px: each step's number goes above its words. */
+  .wait-steps li { flex-direction: column; align-items: flex-start; gap: 6px }
   .intake .form-row { grid-template-columns: 1fr }
   /* Two styles to a row, large enough to judge (the approved mockup). */
   .look-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
@@ -549,7 +579,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
-  .canvas-host.generating::after { animation: none }
+  .gen-pill i { animation: none }
+  .wait-rail.moving span { animation: none; width: 100%; opacity: .6 }
 }
 
 /* Glass blurs once. A control or a tile on a surface that already blurs keeps its translucent fill but not a blur of its

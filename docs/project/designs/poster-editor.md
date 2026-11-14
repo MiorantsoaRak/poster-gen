@@ -196,3 +196,30 @@ Verification: pure document/schema/price/layout tests; manual/prompt changes wit
 | A smoke assertion loses its target | smoke | kept or retargeted; changes listed in the code review |
 
 **Tests:** Vitest for `posterHeight`. Smoke at 360 × 740 with a touch pointer: first field of « Textes » above 444 px; in tabs the poster is on screen and at least 200 px tall with nothing focused, collapses when « Prix » takes the focus and comes back after; the large view in tabs; the editor's top bar and back button; the review's choice shows one side at a time; the bottom navigation if built; contrast in both themes. The measurement walk rerun at 360 px.
+
+## D-POSTER-EDITOR-006 — Waiting while a poster is generated (covers R-POSTER-EDITOR-008)
+
+**Status:** v1, 2026-11-14, approved under the autonomy grant (ADR-079). Adapted from Codex's reviewed prototype (worktree `codex/generation-cost-ux`: `frontend/src/generation-lab/Lab.vue`, `lab.css`, `simulation.ts`, design `docs/project/designs/generation-experience.md`). Its build gets a fresh code review.
+
+**Approach:** frontend only. `GET /api/jobs/{id}` already returns `status`, `created_at`, `started_at`, `finished_at`. No server change.
+
+1. **A pure module `frontend/src/generation.ts`** (Vitest): `phase(job, loaded)` gives `queued | running | receiving | ready | failed` from the job's status and whether the result image has loaded; `elapsedLabel(ms)` gives `m:ss`; `overdue(phase, runningMs)` is true after 100 000 ms in `running`. The `Job` type gains the three timestamps.
+2. **Elapsed time** counts from the moment the editor started following the job when it created it, and from the server's `created_at` when it finds a job already active on opening a poster (corrected by the difference between the response's `Date` header and the local clock when the header is readable, never negative). A 1 s ticker runs only while a scene or refine job is followed and the tab is visible; it is cleared when the job ends and on unmount.
+3. **The waiting block** replaces the one-line `.job-state` for the kinds `scene` and `refine` (other kinds keep today's line): a heading and one sentence inside one `role="status"` (state changes only), the elapsed time outside it (not announced), a 2 px rail with a moving segment, the three steps as a list, « Annuler la demande » while `queued`. Words as in the prototype, adjusted to the app (« Votre affiche prend forme. » …); the existing sentence about what stays editable is kept under it.
+4. **Over the poster:** the existing generation chip shows the state word (« En attente », « Création en cours », « Réception ») with a pulsing dot, z-index as in D-005 item 8b; the frame gets `aria-busy`. The stage label says « Version précédente conservée » when a version exists.
+5. **Receiving:** when the job succeeds, the new visual's image is decoded (`Image.decode()`) before the document switches to it; meanwhile the phase is `receiving`. A decode failure shows the image anyway through the normal path with a notice (the visual exists server-side; nothing is lost). The swap fades in 200 ms.
+6. **Connection:** a failed poll does not clear the job: the block shows « Connexion interrompue. La demande continue… », polling goes on with a backoff (2 s, 4 s, 8 s, then 10 s), and the first success restores the state. `visibilitychange` to visible polls at once instead of waiting for the 10 s hidden timer.
+7. **Reduced motion:** the rail is a still full-width line at reduced opacity and the dot does not pulse.
+
+**Failure modes & handling:**
+
+| Failure | Detection | Behaviour |
+|---|---|---|
+| The poll fails (network, 5xx) | rejected request | connection state, backoff, no new attempt, no lost job |
+| The job fails or its outcome is uncertain | `status` | today's `jobFailure` sentence, previous version kept; the uncertain-outcome protection is unchanged |
+| The result image cannot be decoded | `decode()` rejects | switch through the normal path, notice |
+| Client clock wrong | `Date` header | elapsed corrected; without the header, counted from first sight |
+| The tab sleeps for minutes | `visibilitychange` | immediate poll; elapsed recomputed from timestamps, not from tick counts |
+
+**Tests:** Vitest for `generation.ts`. Smoke with the stub provider slowed enough to see each state (if the stub's delay can be set for the smoke's isolated server; otherwise route interception on `/api/jobs/*`): the pill and words while queued and running, the elapsed time advancing, cancel only while queued, a poll failure showing the connection state then recovering without a second `POST /scenes`, the long-wait sentence with a mocked clock, reduced motion (no running animation), the pill topmost (`elementFromPoint`), 360 px and 1366 px, contrast in both themes.
+

@@ -135,11 +135,11 @@ SMALL_TARGETS_JS = r"""() => [...document.querySelectorAll('.editor :is(button, 
   .filter(([, box]) => box.width < 44 || box.height < 44)
   .map(([e, box]) => `${Math.round(box.width)} x ${Math.round(box.height)} <${e.tagName.toLowerCase()} class="${e.className}"> ${(e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 40)}`)"""
 # Glass blurs once (code review 2026-11-14): nothing that blurs sits inside a surface that already blurs (its own or its
-# ::before). Sticky and fixed bars are surfaces of their own over moving content; the pill over the poster blurs the poster.
+# ::before). Sticky and fixed bars are surfaces of their own over moving content; the pills over the poster blur the poster.
 NESTED_BLUR_JS = r"""() => {
   const blurs = (e, pseudo) => getComputedStyle(e, pseudo).backdropFilter !== 'none'
   return [...document.querySelectorAll('body *')]
-    .filter(e => blurs(e) && !['fixed', 'sticky'].includes(getComputedStyle(e).position) && !e.matches('.frame .badge') && e.checkVisibility())
+    .filter(e => blurs(e) && !['fixed', 'sticky'].includes(getComputedStyle(e).position) && !e.matches('.frame :is(.badge, .gen-pill)') && e.checkVisibility())
     .filter(e => { for (let a = e.parentElement; a; a = a.parentElement) if (blurs(a) || blurs(a, '::before')) return true; return false })
     .map(e => `<${e.tagName.toLowerCase()} class="${e.className}"> ${(e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 30)}`)
 }"""
@@ -147,9 +147,14 @@ NO_SIDEWAYS = "document.documentElement.scrollWidth <= innerWidth"
 GROUNDS = {"clair": "#f4f1ec", "sombre": "#100f0e"}
 
 
+# A colour still in its 150 ms transition is neither the old nor the new one. The waiting's rail and dot repeat forever
+# (D-POSTER-EDITOR-006) and move no text colour: only animations that end are waited for. Polled every 100 ms: while
+# they run, a wait polled on animation frames was seen to stop polling (Playwright 1.64's Chromium, 2026-11-14).
+SETTLED = "document.getAnimations().every(animation => animation.effect.getTiming().iterations === Infinity)"
+
+
 def check_contrast(page, where):
-    # A colour still in its 150 ms transition is neither the old nor the new one: measure settled colours only.
-    page.wait_for_function("document.getAnimations().length === 0")
+    page.wait_for_function(SETTLED, polling=100)
     failures = page.evaluate(CONTRAST_JS)
     assert not failures, f"contrast on {where}:\n" + "\n".join(failures)
 
@@ -158,7 +163,7 @@ def shot(page, name, full_page=True):
     # A picture for a person to judge: from the top of the page, and not in the middle of a colour transition.
     if full_page:
         page.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
-    page.wait_for_function("document.getAnimations().length === 0")
+    page.wait_for_function(SETTLED, polling=100)
     page.screenshot(path=str(OUTPUT / name), full_page=full_page)
 
 
@@ -284,6 +289,205 @@ def walk_look(browser, session, scheme, errors):
         assert theme_of(device) == "sombre" and bar_colour(device) == GROUNDS["sombre"], (theme_of(device), bar_colour(device))
     context.close()
     return poster
+
+
+def walk_wait(browser, session, errors):
+    """Waiting while a poster is generated (R-POSTER-EDITOR-008, D-POSTER-EDITOR-006). The stub makes a scene in about a
+    second and its delay is not a setting: the job's state is held by rewriting the answers to GET /api/jobs/{id} while
+    the real job runs and ends behind; a poll can be made to fail, and the new image's load held. A clock installed in the
+    page at the end lets 100 s pass at once. Pictures wait-*.png at 360 × 740 and 1366 × 768, both themes."""
+    held = {"status": "queued", "lost": False, "images": None, "signed_out": False}
+    scenes, polls, stamps = [], [], []
+
+    def hold_job(route):
+        polls.append(route.request.url)
+        if held["lost"]:
+            return route.abort("failed")
+        if held["signed_out"]:
+            return route.fulfill(status=401, json={"error": {"code": "unauthenticated", "message_fr": "Connectez-vous pour continuer.", "retryable": False}})
+        if not held["status"]:
+            return route.continue_()
+        response = route.fetch()
+        body = response.json()
+        stamps.append((body["created_at"], body["started_at"], response.headers.get("date")))
+        if body["kind"] in ("scene", "refine"):
+            body.update(status=held["status"], result_ref=None, error_code=None, finished_at=None)
+            if held["status"] == "queued":
+                body["started_at"] = None
+        route.fulfill(response=response, json=body)
+
+    def hold_image(route):
+        if held["images"] is None:
+            return route.continue_()
+        held["images"].append(route)
+
+    def watch(context):
+        context.route("**/api/jobs/*", hold_job)
+        context.route("**/api/assets/**", hold_image)
+        context.on("request", lambda request: scenes.append(request.url) if request.method == "POST" and request.url.endswith("/scenes") else None)
+
+    def waiting_checks(page, where, theme, scheme):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+        page.wait_for_function(NO_SIDEWAYS)
+        check_one_blur(page, f"{where}, {theme}")
+        check_contrast(page, f"{where}, {theme}")
+
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark", storage_state=session)
+    watch(context)
+    device = context.new_page()
+    device.set_default_timeout(10000)
+    device.on("pageerror", lambda error: errors.append(str(error)))
+    device.goto(ORIGIN)
+    device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+    expect(device.locator(".photo-strip img")).to_have_count(1)
+    device.get_by_label("Nom du produit", exact=True).fill("Écouteurs attente")
+    device.get_by_label("Prix en ariary", exact=True).fill("90 000")
+    device.get_by_label("Les photos correspondent").check()
+    device.get_by_role("button", name="Préparer mon affiche").tap()
+    proceed = device.get_by_role("button", name="Continuer", exact=True)
+    proceed.tap()
+    proceed.tap()
+    block, pill, badge = device.locator(".wait"), device.locator(".frame .gen-pill"), device.locator(".frame .badge")
+    words, elapsed = block.locator("[role=status]"), block.locator(".wait-time")
+    cancel = device.get_by_role("button", name="Annuler la demande")
+    review = device.get_by_role("heading", name="Vérifier la fidélité du produit")
+    # The first generation, asked from far down the last step: the page goes back to the top, where the draft stays as the
+    # thumbnail of the steps (« Aperçu ») with the state pill in front, and the waiting block under it.
+    device.evaluate("scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
+    device.get_by_role("button", name="Générer l’affiche").tap()
+    device.get_by_role("button", name="Lancer la génération").tap()
+    expect(words).to_contain_text("Votre demande est en attente.")
+    expect(pill).to_have_text("En attente")
+    expect(badge).to_have_text("Aperçu")
+    expect(block.locator("li[aria-current=step]")).to_contain_text("Demande enregistrée")
+    expect(cancel).to_be_visible()
+    device.wait_for_function("scrollY === 0")
+    expect(block).to_be_in_viewport()
+    assert topmost(pill) and topmost(badge)
+    expect(device.locator(".frame[aria-busy=true]")).to_have_count(1)
+    # Screen readers hear the state when it changes, not the time every second.
+    assert elapsed.evaluate("e => !e.closest('[role=status], [role=alert], [aria-live]')")
+    held["status"] = "running"
+    expect(words).to_contain_text("Votre affiche prend forme.")
+    expect(pill).to_have_text("Création en cours")
+    expect(block.locator("li[aria-current=step]")).to_contain_text("Création de l’affiche")
+    expect(cancel).to_have_count(0)
+    shown = elapsed.text_content()
+    assert re.fullmatch(r"Temps écoulé : \d+:\d\d", shown), shown
+    expect(elapsed).not_to_have_text(shown)
+    waiting_checks(device, "first generation at 360 px", "sombre", "dark")
+    check_targets(device, "first generation at 360 px")
+    shot(device, "wait-360-sombre-premiere.png", full_page=False)
+    # Reduced motion: nothing repeats, the rail is a still line.
+    device.emulate_media(reduced_motion="reduce")
+    device.wait_for_function("document.getAnimations().length === 0")
+    assert block.locator(".wait-rail span").evaluate("e => getComputedStyle(e).opacity") == "0.6"
+    device.emulate_media(reduced_motion="no-preference")
+    # A lost poll is its own state: the job is kept, no error, no new request; the first answer brings the state back.
+    held["lost"] = True
+    expect(block.locator(".offline")).to_contain_text("Connexion interrompue. La demande continue")
+    expect(pill).to_have_count(0)
+    expect(device.locator(".message.error")).to_have_count(0)
+    shot(device, "wait-360-sombre-connexion.png", full_page=False)
+    held["lost"] = False
+    expect(block.locator(".offline")).to_have_count(0)
+    expect(pill).to_have_text("Création en cours")
+    assert len(scenes) == 1, scenes
+    # The job ends: « Réception » while the image is decoded. This one cannot be: the version is shown the usual way,
+    # with a notice (the later arrivals decode normally).
+    held["images"] = []
+    held["status"] = None
+    expect(words).to_contain_text("Réception de votre affiche…")
+    expect(pill).to_have_text("Réception")
+    expect(block.locator("li[aria-current=step]")).to_contain_text("Image prête à vérifier")
+    for _ in range(50):
+        if held["images"]:
+            break
+        device.wait_for_timeout(100)
+    images, held["images"] = held["images"], None
+    images[0].abort("failed")
+    for image in images[1:]:
+        image.continue_()
+    expect(device.locator(".message.notice")).to_contain_text("son image tarde à se charger")
+    expect(review).to_be_visible(timeout=30000)
+    expect(block).to_have_count(0)
+    expect(device.locator(".frame[aria-busy=true]")).to_have_count(0)
+    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    expect(device.get_by_role("tab")).to_have_count(4)
+    # A new version once one exists: the version shown is said to be kept, the pills are in front in both themes.
+    held["status"] = "running"
+    device.get_by_role("button", name="Nouvelle version").tap()
+    device.get_by_role("button", name="Lancer la génération").tap()
+    expect(words).to_contain_text("Votre affiche prend forme.")
+    expect(badge).to_have_text("Version précédente conservée")
+    # On a phone the poster is narrow: the badge shows « Version précédente » on one line; screen readers hear it whole.
+    assert badge.bounding_box()["height"] <= 30, badge.bounding_box()
+    expect(block).to_be_in_viewport()
+    assert topmost(pill) and topmost(badge)
+    # One voice at a time: while the waiting block speaks, the coach line is not a live region.
+    expect(device.locator(".coach[role=status]")).to_have_count(0)
+    for theme, scheme in (("sombre", "dark"), ("clair", "light")):
+        waiting_checks(device, "new version at 360 px", theme, scheme)
+        check_targets(device, f"new version at 360 px, {theme}")
+        shot(device, f"wait-360-{theme}.png", full_page=False)
+    poster = device.url.split("#")[1]
+    # After 100 s of creation a sentence says it is long, still running, and useless to start again. The fake clock is
+    # installed only now, so that it governs nothing else in this walk.
+    waiting_checks(device, "new version at 360 px", "sombre", "dark")
+    expect(words).not_to_contain_text("plus long que d’habitude")
+    context.clock.install()
+    device.clock.fast_forward("01:41")
+    expect(words).to_contain_text("C’est plus long que d’habitude. La demande est toujours en cours : inutile de la relancer.")
+    device.screenshot(path=str(OUTPUT / "wait-360-sombre-longue.png"))
+    held["status"] = None
+    expect(review).to_be_visible(timeout=30000)
+    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    expect(block).to_have_count(0)
+    assert len(scenes) == 2, scenes
+    context.close()
+    # 1366 × 768: the waiting block is in view under the poster, in both themes.
+    desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    watch(desk)
+    screen = desk.new_page()
+    screen.set_default_timeout(10000)
+    screen.on("pageerror", lambda error: errors.append(str(error)))
+    screen.goto(f"{ORIGIN}/#{poster}")
+    expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
+    held["status"] = "running"
+    screen.get_by_role("button", name="Nouvelle version").click()
+    screen.get_by_role("button", name="Lancer la génération").click()
+    expect(screen.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
+    expect(screen.locator(".frame .badge")).to_have_text("Version précédente conservée")
+    expect(screen.locator(".frame .badge .visually-hidden")).to_have_count(0)
+    assert topmost(screen.locator(".frame .gen-pill")) and topmost(screen.locator(".frame .badge"))
+    expect(screen.locator(".coach[role=status]")).to_have_count(0)
+    for theme, scheme in (("clair", "light"), ("sombre", "dark")):
+        waiting_checks(screen, "waiting at 1366 px", theme, scheme)
+        expect(screen.locator(".wait")).to_be_in_viewport(ratio=1)
+        shot(screen, f"wait-1366-{theme}.png", full_page=False)
+    held["status"] = None
+    expect(screen.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+    assert len(scenes) == 3, scenes
+    expect(screen.locator(".coach[role=status]")).to_have_count(1)
+    # A refusal of the poll does not change by asking again: on a session that ended the editor stops following, says
+    # why and shows the sign-in; it never polls again nor starts another generation.
+    screen.locator(".review-panel").get_by_role("button", name="Fermer").click()
+    held["status"] = "running"
+    screen.get_by_role("button", name="Nouvelle version").click()
+    screen.get_by_role("button", name="Lancer la génération").click()
+    expect(screen.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
+    held["signed_out"] = True
+    expect(screen.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    expect(screen.locator(".message.error")).to_contain_text("Connectez-vous pour continuer.")
+    expect(screen.locator(".wait")).to_have_count(0)
+    asked = len(polls)
+    screen.wait_for_timeout(3000)
+    assert len(polls) == asked and len(scenes) == 4, (polls[asked:], scenes)
+    desk.close()
+    # The elapsed time rests on what the real answers carried: UTC stamps with their offset, the server's Date header.
+    assert stamps and all(re.search(r"\+00:00$", created) and (started is None or re.search(r"\+00:00$", started)) and date
+                          for created, started, date in stamps), stamps
 
 
 def run():
@@ -1227,6 +1431,7 @@ def run():
                         session = {"cookies": page.context.storage_state()["cookies"], "origins": []}
                         light_poster = walk_look(browser, session, "light", errors)
                         walk_look(browser, session, "dark", errors)
+                        walk_wait(browser, session, errors)
                         desk = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
                         screen = desk.new_page()
                         screen.set_default_timeout(10000)

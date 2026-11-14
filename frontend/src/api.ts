@@ -2,10 +2,15 @@ export class ApiError extends Error {
   constructor(public code: string, message: string, public status: number, public currentRevision?: number, public field?: string) { super(message) }
 }
 
+// The server's clock minus this device's, from the last response's Date header (whole seconds); null until one is read.
+export let clockSkew: number | null = null
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response
   try { response = await fetch(path, { ...options, credentials: 'same-origin' }) }
   catch { throw new ApiError('network', 'Connexion interrompue. Vos modifications restent dans cet onglet.', 0) }
+  const date = Date.parse(response.headers.get('Date') ?? '')
+  if (!Number.isNaN(date)) clockSkew = date - Date.now()
   let data: any
   try { data = await response.json() }
   catch { throw new ApiError('invalid_response', 'Réponse du serveur illisible. Réessayez.', response.status) }
