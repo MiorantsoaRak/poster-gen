@@ -1,0 +1,407 @@
+<title>Affiche Gen par message</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: one screen. A top bar, then either the home choice or the chat: poster strip, thread, composer.
+   Wide screens put the poster and the list of modifications in a right column. */
+@font-face { font-family: Figtree; src: url('assets/figtree.woff2') format('woff2'); font-weight: 300 900; font-display: swap }
+:root {
+  --ground: #f4f1ec; --surface: #ffffff; --line: #e2dacf; --control: #c9c0b4;
+  --text: #1b1815; --muted: #5c554d; --hue: #e58e1a; --accent-soft: #fcead0; --accent-ink: #7a4300;
+  --ok: #145c37; --ok-bg: #e2f2e8; --invert: #1b1815; --invert-ink: #ffffff; --scrim: rgb(21 19 15 / .6);
+  --glass: rgb(255 255 255 / .74); --glass-field: rgb(255 255 255 / .62); --glass-line: rgb(255 255 255 / .8);
+  --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3);
+  /* A neutral ground, almost flat. The glass is on the elements: a light sheen from one corner, a bright edge, a soft shadow. */
+  --tint-1: #f7f5f1; --tint-2: #f2efe9; --tint-3: #eae6df; --glass-hi: rgb(255 255 255 / .96); --bubble: #e4dfd7; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 4px 18px -10px rgb(40 28 14 / .12);
+  --blur: blur(26px) saturate(1.5); --radius: 24px; --field: 16px;
+  --font: Figtree, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #100f0e; --surface: #1b1a18; --line: #302d2a; --control: #57524c;
+  --text: #f5f2ee; --muted: #bdb6ad; --hue: #f2a33d; --accent-soft: #3b2a13; --accent-ink: #f8c27a;
+  --ok: #8fddb0; --ok-bg: #16261d; --invert: #f5f2ee; --invert-ink: #100f0e; --scrim: rgb(0 0 0 / .8);
+  --glass: rgb(30 28 26 / .6); --glass-field: rgb(255 255 255 / .07); --glass-line: rgb(255 255 255 / .1);
+  --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65);
+  --tint-1: #191816; --tint-2: #121110; --tint-3: #0d0c0b; --glass-hi: rgb(74 70 65 / .72); --bubble: #34312d; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --ground: #100f0e; --surface: #1b1a18; --line: #302d2a; --control: #57524c;
+  --text: #f5f2ee; --muted: #bdb6ad; --hue: #f2a33d; --accent-soft: #3b2a13; --accent-ink: #f8c27a;
+  --ok: #8fddb0; --ok-bg: #16261d; --invert: #f5f2ee; --invert-ink: #100f0e; --scrim: rgb(0 0 0 / .8);
+  --glass: rgb(30 28 26 / .6); --glass-field: rgb(255 255 255 / .07); --glass-line: rgb(255 255 255 / .1);
+  --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65);
+  --tint-1: #191816; --tint-2: #121110; --tint-3: #0d0c0b; --glass-hi: rgb(74 70 65 / .72); --bubble: #34312d; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3); color-scheme: dark }
+
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--control) transparent }
+[hidden] { display: none !important }
+html, body { height: 100% }
+body { margin: 0; font: 500 15px/22px var(--font); color: var(--text); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  background: linear-gradient(155deg, var(--tint-1), var(--tint-2) 50%, var(--tint-3)) fixed, var(--ground) }
+button, textarea { font: inherit; color: inherit }
+button { cursor: pointer; border: 0; background: none; padding: 0; -webkit-tap-highlight-color: transparent }
+button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px }
+h1, h2, p { margin: 0 }
+.glass { background: linear-gradient(140deg, var(--glass-hi), var(--glass) 60%); border: 1px solid var(--glass-line); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur) }
+
+.app { height: 100%; display: flex; flex-direction: column; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+.demo { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; padding-block: 6px; font-size: 12px; line-height: 16px; color: var(--muted) }
+.demo select { font: inherit; color: var(--text); background: var(--glass-field); border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; max-width: 100% }
+.top { display: flex; align-items: center; gap: 10px; padding-block: 6px 10px; max-width: 1080px; width: 100%; margin: 0 auto }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 16px; letter-spacing: -.01em; margin-right: auto }
+.logo i { width: 30px; height: 30px; border-radius: 10px; background: var(--hue); color: #1b1815; display: grid; place-items: center; font-style: normal; font-size: 15px }
+.seg { display: flex; padding: 3px; border-radius: 999px; background: var(--glass-field); border: 1px solid var(--line) }
+.seg button { padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 13px; line-height: 18px; color: var(--muted) }
+.seg button[aria-pressed="true"] { background: var(--invert); color: var(--invert-ink) }
+.icon { width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; color: var(--muted) }
+.icon:hover { background: var(--glass-field) }
+svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round }
+
+/* Home: the choice, once. */
+.home { flex: 1; display: grid; align-content: center; gap: 20px; max-width: 640px; width: 100%; margin: 0 auto; padding-block: 16px 48px }
+.home h1 { font-size: 28px; line-height: 32px; font-weight: 800; letter-spacing: -.02em; text-wrap: balance }
+.choices { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) }
+.choice { text-align: left; border-radius: var(--radius); padding: 18px; display: grid; gap: 12px; transition: transform 160ms cubic-bezier(.23, 1, .32, 1) }
+.choice:active { transform: scale(.98) }
+.choice b { font-size: 18px; line-height: 24px; font-weight: 700; display: block }
+.choice span { color: var(--muted) }
+.sketch { height: 92px; border-radius: 14px; background: var(--glass-field); border: 1px solid var(--line); padding: 12px; display: grid; gap: 7px; align-content: center }
+.sketch u { display: block; height: 12px; border-radius: 6px; background: var(--control); text-decoration: none; opacity: .7 }
+.sketch.talk u:nth-child(1) { width: 62%; margin-left: auto; background: var(--hue); opacity: .85; height: 16px; border-radius: 8px }
+.sketch.talk u:nth-child(2) { width: 48%; height: 16px; border-radius: 8px }
+.sketch.talk u:nth-child(3) { width: 100%; height: 20px; border-radius: 10px; background: none; border: 1.5px solid var(--control) }
+.sketch.steps u { height: 16px; background: none; border: 1.5px solid var(--control); border-radius: 6px }
+.note { color: var(--muted); font-size: 13px; line-height: 18px }
+
+/* Chat */
+.chat { flex: 1; min-height: 0; display: grid; grid-template: "side" auto "thread" 1fr "composer" auto / minmax(0, 1fr); gap: 10px; max-width: 680px; width: 100%; margin: 0 auto; padding-bottom: 12px }
+.thread { grid-area: thread; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-block: 4px; overscroll-behavior: contain }
+.thread > :first-child { margin-top: auto }
+.msg { max-width: min(86%, 460px); padding: 10px 14px; border-radius: 18px; display: grid; gap: 8px; overflow-wrap: anywhere }
+.msg.me { align-self: flex-end; background: var(--bubble); color: var(--text); border-bottom-right-radius: 6px }
+.msg.bot { align-self: flex-start; border-bottom-left-radius: 6px; box-shadow: var(--msg-shadow) }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap }
+.thumb { position: relative; width: 68px; display: grid; gap: 3px; justify-items: center; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted) }
+.thumb img { width: 68px; height: 68px; object-fit: cover; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); display: block }
+.role { padding: 2px 8px; border-radius: 999px; background: var(--glass-field); border: 1px solid var(--line); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--text) }
+.role.inspo { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent }
+.drop { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 999px; background: var(--invert); color: var(--invert-ink); display: grid; place-items: center }
+.drop svg { width: 12px; height: 12px; stroke-width: 3 }
+.recap { display: grid; gap: 2px }
+.recap b { font-size: 16px; line-height: 22px; font-weight: 700 }
+.recap .price { font-size: 24px; line-height: 30px; font-weight: 800; letter-spacing: -.01em }
+.recap small, .hint { font-size: 13px; line-height: 18px; color: var(--muted) }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.btn { min-height: 44px; padding: 0 18px; border-radius: 999px; background: var(--invert); color: var(--invert-ink); font-weight: 700; transition: transform 160ms cubic-bezier(.23, 1, .32, 1) }
+.btn:active { transform: scale(.97) }
+.btn.soft { background: var(--glass-field); color: var(--text); border: 1px solid var(--line); font-weight: 600 }
+.btn:disabled { opacity: .45; cursor: default }
+.btn em { font-style: normal; font-weight: 500; opacity: .7; margin-left: 6px }
+.wait { display: flex; gap: 10px; align-items: center }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--control); border-top-color: var(--hue); animation: spin .8s linear infinite; flex: none }
+@keyframes spin { to { transform: rotate(1turn) } }
+.done { display: inline-flex; gap: 6px; align-items: center; color: var(--ok); font-weight: 700 }
+
+.poster { position: relative; aspect-ratio: 4 / 5; max-width: 100%; border-radius: 14px; overflow: hidden; background: #14110e; container-type: inline-size; display: block; width: 100% }
+.poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
+.poster .pill { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); white-space: nowrap; padding: 2.4cqw 7cqw; border-radius: 999px; background: #14110e; color: #fff; border: 1px solid #c9a56a; font-weight: 800; font-size: 7.5cqw; line-height: 1.2 }
+.poster.small { width: 168px }
+
+/* Poster strip (phone) / right column (wide) */
+.side { grid-area: side; border-radius: 20px; padding: 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center }
+.side .view { width: 60px; flex: none; border-radius: 10px }
+.side .view .poster { border-radius: 10px }
+.side .info { flex: 1; min-width: 0; display: grid }
+.side .info b { font-weight: 700 }
+.side .info span { color: var(--muted); font-size: 13px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.toggle { min-height: 36px; padding: 0 12px; border-radius: 999px; background: var(--glass-field); border: 1px solid var(--line); font-weight: 600; font-size: 13px }
+.mods { flex-basis: 100%; display: none; gap: 2px; margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--line); max-height: 34vh; overflow-y: auto }
+.side.open .mods { display: grid }
+.mods h2 { display: none; font-size: 13px; line-height: 18px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 0 8px 4px }
+.mod { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 6px 8px; border-radius: 12px }
+.mod:hover { background: var(--glass-field) }
+.mod[aria-current="true"] { background: var(--bubble) }
+.mod i { font-style: normal; font-weight: 800; font-size: 12px; width: 30px; height: 30px; border-radius: 9px; background: var(--glass-field); border: 1px solid var(--line); display: grid; place-items: center; flex: none }
+.mod span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.mod small { font-size: 12px; color: var(--muted); flex: none }
+.mod small.ok { color: var(--ok); font-weight: 700 }
+
+/* Composer: always there, before and after the first poster. */
+.composer { grid-area: composer; border-radius: 22px; padding: 8px; display: grid; gap: 8px }
+.tray { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 6px 0 }
+.styles { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none }
+.style { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 12px 3px 3px; border-radius: 999px; background: var(--glass-field); border: 1px solid var(--line); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--muted) }
+.style img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; display: block }
+.style[aria-pressed="true"] { border-color: var(--text); color: var(--text) }
+.style.plain { padding: 7px 12px }
+.row { display: flex; gap: 6px; align-items: flex-end }
+.row textarea { flex: 1; min-width: 0; resize: none; border: 0; background: none; padding: 9px 4px; font-size: 16px; line-height: 22px; max-height: 120px; outline: none }
+.row textarea::placeholder { color: var(--muted); opacity: .8 }
+.send { width: 40px; height: 40px; border-radius: 999px; background: var(--hue); color: #1b1815; display: grid; place-items: center; flex: none }
+.send:disabled { background: var(--control); opacity: .6; cursor: default }
+
+.formview { flex: 1; display: grid; align-content: center; justify-items: start; gap: 14px; max-width: 520px; width: 100%; margin: 0 auto; padding-block: 16px 48px }
+.formview .card { border-radius: var(--radius); padding: 20px; display: grid; gap: 12px; justify-items: start; width: 100% }
+.formview h1 { font-size: 22px; line-height: 28px; font-weight: 800 }
+
+dialog { border: 0; padding: 0; background: none; max-width: min(92vw, 440px); width: 100%; color: var(--text) }
+dialog::backdrop { background: var(--scrim) }
+dialog .close { margin: 10px auto 0; display: block }
+.toast { position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--invert); color: var(--invert-ink); padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; z-index: 5; max-width: calc(100% - 32px); text-align: center }
+
+@media (min-width: 880px) {
+  .chat.has-poster { max-width: 1080px; grid-template: "thread side" 1fr "composer side" auto / minmax(0, 1fr) 340px; column-gap: 24px }
+  .chat.has-poster .side { flex-direction: column; flex-wrap: nowrap; align-items: stretch; align-self: start; max-height: 100%; overflow-y: auto; padding: 12px; gap: 10px }
+  .chat.has-poster .side .view { width: 100%; border-radius: 14px }
+  .chat.has-poster .side .view .poster { border-radius: 14px }
+  .chat.has-poster .toggle { display: none }
+  .chat.has-poster .mods { display: grid; flex-basis: auto; max-height: none; overflow: visible; margin: 0; padding-top: 10px }
+  .chat.has-poster .mods h2 { display: block }
+}
+.logo, .seg button { white-space: nowrap }
+@media (max-width: 359px) { .logo { font-size: 0; gap: 0 } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2.4s } .btn, .choice { transition: none } }
+</style>
+
+<div class="app">
+  <div class="demo">
+    <span>Maquette : rien n’est généré ni facturé.</span>
+    <label>Aller à
+      <select id="jump">
+        <option value="accueil">1 · Accueil : le choix</option>
+        <option value="vide">2 · Nouvelle affiche</option>
+        <option value="photos">3 · Message + 2 images</option>
+        <option value="recap">4 · Récapitulatif</option>
+        <option value="creation">5 · Création en cours</option>
+        <option value="resultat">6 · Affiche à vérifier</option>
+        <option value="retouche">7 · Demande de retouche</option>
+        <option value="versions">8 · Version 2 + modifications</option>
+        <option value="prix">9 · Changer le prix</option>
+        <option value="sans-photo">Cas : pas de photo</option>
+        <option value="sans-prix">Cas : pas de prix</option>
+      </select>
+    </label>
+  </div>
+
+  <header class="top">
+    <div class="logo"><i>a.</i>affiche gen</div>
+    <div class="seg" id="seg" hidden role="group" aria-label="Façon de créer">
+      <button type="button" data-mode="chat">Message</button>
+      <button type="button" data-mode="form">Pas à pas</button>
+    </div>
+    <button type="button" class="icon" id="theme" aria-label="Changer de thème"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+  </header>
+
+  <section class="home" id="home" hidden>
+    <h1>Comment voulez-vous créer vos affiches ?</h1>
+    <div class="choices">
+      <button type="button" class="choice glass" data-mode="chat">
+        <div class="sketch talk"><u></u><u></u><u></u></div>
+        <div><b>Par message</b><span>Écrivez le produit et le prix, ajoutez vos photos.</span></div>
+      </button>
+      <button type="button" class="choice glass" data-mode="form">
+        <div class="sketch steps"><u></u><u></u><u></u></div>
+        <div><b>Pas à pas</b><span>Remplissez les champs, un écran à la fois.</span></div>
+      </button>
+    </div>
+    <p class="note">Ce choix devient votre écran de départ. Vous pouvez changer en haut de l’écran.</p>
+  </section>
+
+  <section class="chat" id="chat" hidden>
+    <aside class="side glass" id="side" hidden>
+      <button type="button" class="view" id="view" aria-label="Agrandir l’affiche"></button>
+      <div class="info"><b id="vname"></b><span id="vlabel"></span></div>
+      <button type="button" class="toggle" id="toggle" aria-expanded="false"></button>
+      <div class="mods" id="mods"></div>
+    </aside>
+    <div class="thread" id="thread" aria-live="polite"></div>
+    <form class="composer glass" id="composer">
+      <div class="tray" id="tray" hidden></div>
+      <div class="styles" id="styles"></div>
+      <div class="row">
+        <button type="button" class="icon" id="attach" aria-label="Ajouter des images"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3"/></svg></button>
+        <textarea id="text" rows="1" aria-label="Votre message"></textarea>
+        <button type="submit" class="send" id="send" aria-label="Envoyer"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      </div>
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+    </form>
+  </section>
+
+  <section class="formview" id="form" hidden>
+    <div class="card glass">
+      <h1>Pas à pas</h1>
+      <p>L’éditeur actuel, sans changement : photo, textes, style, boutique.</p>
+      <button type="button" class="btn soft" data-mode="chat">Essayer par message</button>
+    </div>
+  </section>
+</div>
+
+<dialog id="zoom"><div id="zoomed"></div><button type="button" class="btn close" id="zoomclose">Fermer</button></dialog>
+
+<script>
+const $ = id => document.getElementById(id)
+// h('button.btn.soft', {onclick}, 'Annuler') → element; strings become text nodes, never HTML.
+function h(spec, props, ...kids) {
+  const [tag, ...cls] = spec.split('.'); const el = document.createElement(tag || 'div')
+  if (cls.length) el.className = cls.join(' ')
+  for (const [k, v] of Object.entries(props || {})) k.startsWith('on') ? el.addEventListener(k.slice(2), v) : k.startsWith('aria-') ? el.setAttribute(k, String(v)) : v === true ? el.setAttribute(k, '') : v !== false && v != null && el.setAttribute(k, v)
+  el.append(...kids.flat().filter(k => k != null && k !== false)); return el
+}
+const X = () => { const s = h('span'); s.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>'; return s.firstChild }
+const fmt = n => n.toLocaleString('fr-FR').replace(/\s/g, ' ') + ' Ar'
+const COST = '≈ 0,21 $'
+const STYLES = [['clair', 'Studio clair'], ['couleur', 'Couleurs du produit'], ['sombre', 'Luxe sombre']]
+const SAMPLE = { text: 'Sony WH-1000XM6 noir, 700 000 Ar', product: 'assets/product.jpg', inspo: 'assets/sombre.jpg' }
+const PRICE = /(\d[\d\s  .]*)\s*(?:ar|ariary|mga)\b/i
+
+let S, timers = []
+function reset() {
+  timers.forEach(clearTimeout); timers = []
+  S = { draft: { name: '', price: null, product: null, inspo: null }, style: 'sombre', att: [], versions: [], shown: 0, pending: null, busy: false, instant: false }
+  $('thread').replaceChildren(); $('text').value = ''; $('side').classList.remove('open')
+  bot('Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.',
+    h('div.acts', {}, h('button.btn.soft', { type: 'button', onclick: example }, 'Essayer l’exemple')))
+  render()
+}
+
+// ── views ─────────────────────────────────────────────────────────────────────────────────────────────────
+function show(mode, remember) {
+  for (const v of ['home', 'chat', 'form']) $(v).hidden = v !== (mode || 'home')
+  $('seg').hidden = !mode
+  document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === mode))
+  if (remember) try { localStorage.setItem('affiche-mode', mode) } catch {}
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => show(b.dataset.mode, true)))
+$('theme').onclick = () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark'
+}
+
+// ── thread ────────────────────────────────────────────────────────────────────────────────────────────────
+function add(el) { $('thread').append(el); $('thread').scrollTop = $('thread').scrollHeight; return el }
+const bot = (...kids) => add(h('div.msg.bot.glass', {}, kids.map(k => typeof k === 'string' ? h('p', {}, k) : k)))
+const thumb = (a, extra) => h('div.thumb', {}, h('img', { src: a.src, alt: a.role === 'inspo' ? 'Inspiration' : 'Photo du produit' }), extra || (a.role === 'inspo' ? 'Inspiration' : 'Produit'))
+function me(text, att) { add(h('div.msg.me', {}, att.length ? h('div.thumbs', {}, att.map(a => thumb(a))) : null, text ? h('p', {}, text) : null)) }
+function poster(v, cls) {
+  return h('span.poster' + (cls ? '.' + cls : ''), {}, h('img', { src: 'assets/poster.jpg', alt: 'Affiche ' + S.draft.name, style: 'filter:' + v.filter }), h('span.pill', {}, fmt(v.price).toUpperCase()))
+}
+function toast(t) { const el = h('div.toast', { role: 'status' }, t); document.body.append(el); setTimeout(() => el.remove(), 2200) }
+
+// ── composer ──────────────────────────────────────────────────────────────────────────────────────────────
+function render() {
+  const has = S.versions.length > 0, cur = S.versions[S.shown]
+  $('chat').classList.toggle('has-poster', has); $('side').hidden = !has
+  if (has) {
+    $('view').replaceChildren(poster(cur))
+    $('vname').textContent = 'Version ' + cur.n + (cur.ok ? ' · confirmée' : '')
+    $('vlabel').textContent = cur.label
+    $('toggle').textContent = 'Modifications (' + S.versions.length + ')'
+    $('toggle').setAttribute('aria-expanded', $('side').classList.contains('open'))
+    $('mods').replaceChildren(h('h2', {}, 'Modifications'), ...S.versions.map((v, i) =>
+      h('button.mod', { type: 'button', 'aria-current': i === S.shown, onclick: () => { S.shown = i; render() } },
+        h('i', {}, 'V' + v.n), h('span', {}, v.label), h('small' + (v.ok ? '.ok' : ''), {}, v.ok ? 'Confirmée' : 'À vérifier'))).reverse())
+  }
+  $('tray').hidden = !S.att.length
+  $('tray').replaceChildren(...S.att.map((a, i) => thumb(a, [
+    h('button.role' + (a.role === 'inspo' ? '.inspo' : ''), { type: 'button', title: 'Toucher pour changer', onclick: () => { a.role = a.role === 'inspo' ? 'product' : 'inspo'; render() } }, a.role === 'inspo' ? 'Inspiration' : 'Produit'),
+    h('button.drop', { type: 'button', 'aria-label': 'Retirer', onclick: () => { S.att.splice(i, 1); render() } }, X())])))
+  // The style choice is only for the first version; an inspiration image replaces it.
+  const inspo = S.att.some(a => a.role === 'inspo') || S.draft.inspo
+  $('styles').hidden = has
+  $('styles').replaceChildren(...(has ? [] : inspo ? [h('span.style.plain', {}, 'Style : comme votre inspiration')] : STYLES.map(([id, name]) =>
+    h('button.style', { type: 'button', 'aria-pressed': S.style === id, onclick: () => { S.style = id; render() } }, h('img', { src: 'assets/' + id + '.jpg', alt: '' }), name))))
+  $('text').placeholder = has ? 'Que voulez-vous changer ?' : 'Produit et prix…'
+  $('send').disabled = S.busy
+}
+function addImages(srcs) { for (const src of srcs) S.att.push({ src, role: S.att.some(a => a.role === 'product') || S.draft.product ? 'inspo' : 'product' }); render() }
+$('attach').onclick = () => $('file').click()
+$('file').onchange = e => { addImages([...e.target.files].map(f => URL.createObjectURL(f))); e.target.value = '' }
+$('toggle').onclick = () => { $('side').classList.toggle('open'); render() }
+$('view').onclick = () => { $('zoomed').replaceChildren(poster(S.versions[S.shown])); $('zoom').showModal() }
+$('zoomclose').onclick = () => $('zoom').close()
+$('text').oninput = e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }
+$('text').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit() } }
+$('composer').onsubmit = e => { e.preventDefault(); send() }
+function example() { S.att = []; addImages([SAMPLE.product, SAMPLE.inspo]); $('text').value = SAMPLE.text; $('text').focus() }
+
+// ── the conversation ──────────────────────────────────────────────────────────────────────────────────────
+function send() {
+  const text = $('text').value.trim(), att = S.att
+  if (S.busy || (!text && !att.length)) return
+  me(text, att); S.att = []; $('text').value = ''; $('text').style.height = 'auto'
+  S.versions.length ? edit(text) : first(text, att)
+  render()
+}
+function first(text, att) {
+  const d = S.draft, m = text.match(PRICE) || (d.name && /^\d[\d\s.]*$/.test(text) ? [text, text] : null)
+  const rest = (m ? text.replace(m[0], '') : text).replace(/^[\s,;:·-]+|[\s,;:·-]+$/g, '')
+  if (m) d.price = Number(m[1].replace(/\D/g, ''))
+  if (rest && !(d.name && m)) d.name = rest
+  for (const a of att) a.role === 'inspo' ? d.inspo = a.src : d.product = a.src
+  if (!d.name) return bot('Quel est le produit ? Marque et modèle.')
+  if (!d.price) return bot('Quel est le prix en Ariary ?')
+  if (!d.product) return bot('Il me faut une photo du produit.', h('div.acts', {},
+    h('button.btn', { type: 'button', onclick: () => $('file').click() }, 'Ajouter une photo'),
+    h('button.btn.soft', { type: 'button', onclick: e => { e.target.disabled = true; d.product = SAMPLE.product; recap(); render() } }, 'Reprendre une photo déjà utilisée')))
+  recap()
+}
+function recap() {
+  const d = S.draft, style = d.inspo ? 'comme votre inspiration' : STYLES.find(s => s[0] === S.style)[1]
+  bot(h('div.thumbs', {}, thumb({ src: d.product, role: 'product' }), d.inspo ? thumb({ src: d.inspo, role: 'inspo' }) : null),
+    h('div.recap', {}, h('b', {}, d.name), h('span.price', {}, fmt(d.price)), h('small', {}, 'Style : ' + style)),
+    h('div.acts', {}, h('button.btn', { type: 'button', onclick: e => { e.target.disabled = true; create({ label: 'Première affiche', price: d.price, filter: 'none' }) } }, 'Créer l’affiche', h('em', {}, COST))),
+    h('p.hint', {}, 'Une erreur ? Écrivez la correction.'))
+}
+function edit(text) {
+  const last = S.versions.at(-1), m = text.match(PRICE)
+  const v = m ? { label: 'Prix : ' + fmt(Number(m[1].replace(/\D/g, ''))), price: Number(m[1].replace(/\D/g, '')), filter: last.filter }
+    : { label: text[0].toUpperCase() + text.slice(1), price: last.price, filter: /sombre|fonc/i.test(text) ? 'brightness(.7)' : /lumi|clair/i.test(text) ? 'brightness(1.22)' : 'hue-rotate(-24deg) saturate(1.2)' }
+  let box
+  box = bot(m ? 'Le prix est dessiné dans l’image : je refais l’affiche avec ' + fmt(v.price) + '.' : 'Nouvelle version : « ' + v.label + ' ». La version ' + last.n + ' reste gardée.',
+    h('div.acts', {},
+      h('button.btn', { type: 'button', onclick: () => { box.querySelector('.acts').remove(); create(v) } }, 'Créer', h('em', {}, COST)),
+      h('button.btn.soft', { type: 'button', onclick: () => { box.remove(); $('text').value = text; $('text').focus() } }, 'Annuler')))
+}
+function create(v) {
+  S.busy = true; render()
+  const line = h('p', {}, 'Je prépare la scène…'), wait = bot(h('div.wait', {}, h('span.spin'), line))
+  const finish = () => {
+    wait.remove(); S.busy = false
+    v.n = S.versions.length + 1; v.ok = false; S.versions.push(v); S.shown = S.versions.length - 1
+    let box
+    box = bot(poster(v, 'small'), 'Version ' + v.n + ' prête. Le produit, le titre et le prix sont-ils exacts ?',
+      h('div.acts', {},
+        h('button.btn', { type: 'button', onclick: () => { v.ok = true; box.querySelector('.acts').replaceWith(h('div.acts', {}, h('span.done', {}, '✓ Confirmée'), h('button.btn', { type: 'button', onclick: () => toast('Maquette : aucun fichier à télécharger') }, 'Télécharger'))); render() } }, 'Oui, c’est bon'),
+        h('button.btn.soft', { type: 'button', onclick: () => $('text').focus() }, 'Corriger')))
+    render()
+  }
+  if (S.instant) return finish()
+  timers.push(setTimeout(() => line.textContent = 'Je dessine l’affiche…', 1200), setTimeout(() => line.textContent = 'Dernières finitions…', 2600), setTimeout(finish, 3800))
+}
+
+// ── the steps of the mockup ───────────────────────────────────────────────────────────────────────────────
+const say = (t, withPhotos) => { if (withPhotos) addImages([SAMPLE.product, SAMPLE.inspo]); $('text').value = t; send() }
+const click = label => [...$('thread').querySelectorAll('button')].filter(b => b.textContent.startsWith(label)).at(-1).click()
+const STEPS = {
+  accueil: () => show(null),
+  vide: () => {},
+  photos: () => example(),
+  recap: () => say(SAMPLE.text, true),
+  creation: () => { STEPS.recap(); S.instant = false; click('Créer') },
+  resultat: () => { STEPS.recap(); click('Créer') },
+  retouche: () => { STEPS.resultat(); say('Fond plus sombre') },
+  versions: () => { STEPS.retouche(); click('Créer') },
+  prix: () => { STEPS.versions(); say('650 000 Ar') },
+  'sans-photo': () => say(SAMPLE.text),
+  'sans-prix': () => { addImages([SAMPLE.product]); say('Sony WH-1000XM6 noir') },
+}
+function go(step) {
+  if (!STEPS[step]) return
+  show('chat'); reset(); S.instant = true; STEPS[step](); S.instant = false
+  $('jump').value = step; $('text').blur()
+}
+$('jump').onchange = e => { go(e.target.value); try { history.replaceState(null, '', '#' + e.target.value) } catch {} }
+
+reset()
+let saved = null; try { saved = localStorage.getItem('affiche-mode') } catch {}
+const start = location.hash.slice(1)
+if (STEPS[start]) go(start); else { show(saved); $('jump').value = saved ? 'vide' : 'accueil' }
+</script>

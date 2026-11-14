@@ -19,8 +19,8 @@
   --glass: rgb(27 26 24 / .86); --glass-panel: rgb(30 28 26 / .58); --glass-field: rgb(255 255 255 / .07); --glass-strong: rgb(70 66 62 / .7);
   --glass-line: rgb(255 255 255 / .1); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65); --warn-glass: rgb(42 34 18 / .8);
   --blur-panel: blur(26px) saturate(1.5); --blur-field: blur(16px) saturate(1.4);
-  /* The backdrop: pale blue, pale blue, warm cream; 12 % as strong as in the light theme. */
-  --patch-1: rgb(205 224 247 / .1); --patch-2: rgb(220 233 250 / .1); --patch-3: rgb(252 228 196 / .09);
+  /* The backdrop: neutral, almost flat, no colour (user decision 2026-11-14, ADR-091). The glass is on the elements. */
+  --patch-1: #191816; --patch-2: #121110; --patch-3: #0d0c0b;
   font-family: Figtree, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
   font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark; -webkit-font-smoothing: antialiased;
 }
@@ -32,15 +32,15 @@
   --lift: 0 1px 2px rgb(40 28 14 / .06), 0 10px 28px -10px rgb(40 28 14 / .18); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
   --glass: rgb(255 255 255 / .86); --glass-panel: rgb(255 255 255 / .74); --glass-field: rgb(255 255 255 / .62); --glass-strong: rgb(255 255 255 / .92);
   --glass-line: rgb(255 255 255 / .75); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3); --warn-glass: rgb(255 241 214 / .8);
-  --patch-1: rgb(205 224 247 / .85); --patch-2: rgb(220 233 250 / .8); --patch-3: rgb(252 228 196 / .75);
+  --patch-1: #f7f5f1; --patch-2: #f2efe9; --patch-3: #eae6df;
 }
 /* A press: at once, back with a strong ease-out (D-POSTER-EDITOR-007; the property only, never `all`). */
 :root { --press: transform 160ms cubic-bezier(.23, 1, .32, 1) }
-:root { --ambient: radial-gradient(70% 45% at 10% 8%, var(--patch-1), transparent 70%), radial-gradient(60% 45% at 95% 50%, var(--patch-2), transparent 70%), radial-gradient(60% 40% at 20% 100%, var(--patch-3), transparent 70%) }
+:root { --ambient: linear-gradient(155deg, var(--patch-1), var(--patch-2) 50%, var(--patch-3)) }
 
 * { box-sizing: border-box }
 html { scroll-behavior: smooth; scroll-padding: 64px 0 80px; -webkit-tap-highlight-color: transparent }
-/* What the glass blurs: the patches, fixed on the page ground; never a blurred copy of the poster (a dark product blurs
+/* What the glass blurs: the neutral backdrop, fixed on the page ground; never a blurred copy of the poster (a dark product blurs
    to grey). The body stays transparent so that they show. */
 html::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--ambient) }
 /* In the editor a focused field is never under what stays at the top (measured in App.vue: top bar, and the poster in the tabs). */
