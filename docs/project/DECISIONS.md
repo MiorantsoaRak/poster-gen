@@ -1,5 +1,14 @@
 # DECISIONS
 
+## ADR-097 — 2026-11-14 — The chat never guesses what a paid request became (after five review rounds)
+
+- One chat tab per device: `ChatView` holds the Web Lock `affiche-chat`; another tab shows « Le chat est ouvert dans un autre onglet. » and « Continuer ici », and sends nothing. Each acquisition has its own token, and work started under an older token stops. Without Web Locks the chat is not offered (« Pas à pas » instead).
+- A paid card keeps the exact `/scenes` request (key = the card's id, body, revision), saved before it leaves. After a reload or a return from « Pas à pas » nothing is sent by itself: the card shows « Reprendre » with the cost, which sends that same request again; the server answers what it stored, runs it once, or refuses.
+- A card is retired, and a new one offered, only on a refusal that also blocks a late delivery of the same request (`plan_stale`, `revision_conflict`, `attempt_limit`, `acknowledgement_required`, `validation_error`, `format_locked`, `not_found`, `idempotency_reused`, `title_*`). Every other answer keeps the request and « Réessayer ».
+- A pending read is one record apart from the typed text, cleared only by the answer to its own key.
+- Check and download go through the editor's own dialogs; « Télécharger » shows only on the version selected in the document. The recap tap stands for the editor's « Les photos correspondent… » agreement.
+- One change to the step editor, accepted: a focused field is revealed again when only the visible height shrinks (a keyboard opening after the focus); with the new « Continuer par message » button in the phone bar, one browser check failed 4 runs in 12 without it.
+
 ## ADR-096 — 2026-11-14 — A read asks the model for no reasoning; the Claude adapter accepts reasoning blocks
 
 - Paid test (reviews/chat-read-eval-2026-11-14.md): 9 of 26 reads failed because `claude-sonnet-5-5` reasons by default and returned a reasoning block before the text, which `ClaudePlanner.structured` refused. A read now sends `thinking: {"type": "between_tools"}` (the model refuses `disabled`), verified on the live API: one text block, about 40 output tokens, same fields. `structured` accepts `thinking` and `redacted_thinking` blocks beside exactly one text block, for every caller; the other callers' request bodies are unchanged.

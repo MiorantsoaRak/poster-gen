@@ -1182,8 +1182,8 @@ def walk_formats(browser, errors):
 def serve(data, **extra):
     """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data; the defaults unless told."""
     settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
-                        anthropic_api_key=None, stub_fail=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
-                        data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD), **extra)
+                        anthropic_api_key=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
+                        data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD), **{"stub_fail": None, **extra})
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -1193,6 +1193,23 @@ def serve(data, **extra):
         time.sleep(.05)
     assert server.started, "API did not start"
     return server, thread
+
+
+# The stub planner makes the chat available, and a device that never chose its start view is asked once
+# (D-TEXT-FIRST-001). This run is the step editor's: each of its contexts starts as a device that chose « Pas à pas ».
+# The chat and the choice itself have their own run (chat_browser.py).
+STEPS_FIRST = "try { localStorage.getItem('affiche.start') || localStorage.setItem('affiche.start', 'steps') } catch {}"
+
+
+def steps_first(browser):
+    make = browser.new_context
+
+    def context(**options):
+        made = make(**options)
+        made.add_init_script(STEPS_FIRST)
+        return made
+    browser.new_context = context
+    browser.new_page = lambda **options: context(**options).new_page()
 
 
 def stop(server, thread):
@@ -1214,6 +1231,7 @@ def run():
                     # SMOKE_CHANNEL=msedge runs the same flow in the installed Microsoft Edge.
                     browser = playwright.chromium.launch(headless=True, channel=os.environ.get("SMOKE_CHANNEL") or None)
                     print("Browser:", browser.browser_type.name, os.environ.get("SMOKE_CHANNEL") or "bundled", browser.version, flush=True)
+                    steps_first(browser)
                     try:
                         page = browser.new_page(viewport={"width": 1440, "height": 1050}, color_scheme="dark")
                         errors = []

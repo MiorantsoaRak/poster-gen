@@ -29,6 +29,7 @@ def run():
             try:
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=True)
+                    smoke.steps_first(browser)  # the step editor's run (see browser_smoke.steps_first)
                     context = browser.new_context(viewport={'width': 1366, 'height': 900}, color_scheme='light', has_touch=True)
                     page = context.new_page()
                     page.set_default_timeout(10000)

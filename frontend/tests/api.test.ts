@@ -79,3 +79,45 @@ it('builds the image addresses with the server encoder versions', async () => {
   expect(displayUrl('/api/assets/ab')).toBe('/api/assets/ab?prepared=true&display=true&v=1')
   expect(thumbnailUrl('/api/assets/ab')).toBe('/api/thumbnails/ab?v=1')
 })
+
+// D-TEXT-FIRST-002 and 003: a read is paid and bounded at 30 s on the client; its record goes as it is.
+it('gives up a read after 30 s with a timeout error, and leaves other calls without a limit', async () => {
+  vi.useFakeTimers(); vi.resetModules()
+  const signals: (AbortSignal | undefined)[] = []
+  vi.stubGlobal('fetch', vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_done, fail) => {
+    signals.push(init.signal ?? undefined)
+    init.signal?.addEventListener('abort', () => fail(new DOMException('aborted', 'AbortError')))
+  })))
+  const { api, read, ApiError } = await import('../src/api')
+  const failure = read({ key: 'k', body: '{}' }).catch(reason => reason)
+  void api('/slow')
+  await vi.advanceTimersByTimeAsync(29_999)
+  expect(signals[0]!.aborted).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  const reason = await failure as InstanceType<typeof ApiError>
+  expect(reason).toBeInstanceOf(ApiError)
+  expect(reason.code).toBe('timeout')
+  expect(signals[1]).toBeUndefined()  // no opt-in, no signal: the call is as before
+})
+it('clears the limit once a read has answered', async () => {
+  vi.useFakeTimers(); vi.resetModules()
+  vi.stubGlobal('fetch', vi.fn(answer()))
+  const { read } = await import('../src/api')
+  await expect(read({ key: 'k', body: '{}' })).resolves.toEqual({ id: 'saved' })
+  await vi.advanceTimersByTimeAsync(1000)  // the progress line's own short timers end
+  expect(vi.getTimerCount()).toBe(0)
+})
+it('sends a read record with its own key and exact body, the same at each attempt', async () => {
+  const fetch = vi.fn().mockRejectedValueOnce(new Error('lost')).mockImplementation(answer())
+  vi.stubGlobal('fetch', fetch)
+  const { read } = await import('../src/api')
+  const pending = { key: '0b9f3c1e-2a4d-4e6f-8a1b-3c5d7e9f1a2b', body: '{"text":"Sony, 700 000 Ar","draft":{"name":null}}' }
+  await expect(read(pending)).rejects.toThrow('Connexion')
+  await read(pending)
+  const [one, two] = fetch.mock.calls.map(call => call[1] as RequestInit)
+  expect(fetch.mock.calls[0][0]).toBe('/api/reads')
+  expect((one.headers as Record<string, string>)['Idempotency-Key']).toBe(pending.key)
+  expect(one.body).toBe(pending.body)
+  expect(two.headers).toEqual(one.headers)
+  expect(two.body).toBe(one.body)
+})

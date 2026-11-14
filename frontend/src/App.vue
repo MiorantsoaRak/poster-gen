@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
 import PosterCanvas from './PosterCanvas.vue'
 import { api, ApiError, clockSkew, displayUrl, mutation, preparedUrl, progress, thumbnailUrl, upload } from './api'
 import { DraftSaver } from './autosave'
@@ -10,9 +10,10 @@ import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, WORDS_PREFIX } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
+import type { ChatAdapter, SceneRequest } from './chat'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
-interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
+interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
 interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
@@ -410,7 +411,7 @@ const ICONS: Record<string, string> = {
   eye: 'M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
   spark: 'M8 2l1.4 4.1L13.5 7.5 9.4 8.9 8 13 6.6 8.9 2.5 7.5l4.1-1.4z', clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3.5l2 1.5',
   undo: 'M6 4L3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H7', redo: 'M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H9',
-  pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2',
+  pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2', chat: 'M2.5 3h11v8H7.5l-3 2.5V11h-2z',
   box: 'M3 3h10v10H3zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z', sun: 'M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1',
   moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z', back: 'M10 3.5L5.5 8l4.5 4.5',
   store: 'M2.5 6.5l1-3.5h9l1 3.5zM3.5 6.5V13h9V6.5M6.5 13V9.5h3V13',
@@ -489,7 +490,8 @@ function revealFocusedField() {
   const bounds = (field as HTMLElement).getBoundingClientRect(), top = stickyTop.value + 8
   if (bounds.top < top || bounds.bottom > availableHeight.value - 8) window.scrollBy({ top: bounds.top - top, behavior: 'instant' })
 }
-watch(stickyTop, () => nextTick(revealFocusedField))
+// Also when only the visible height shrinks (the keyboard opens after the focus): the strip was already a strip.
+watch([stickyTop, availableHeight], () => nextTick(revealFocusedField))
 function measureSticky() {
   if (peeking.value) return
   const sticky = (element?: HTMLElement) => element && getComputedStyle(element).position === 'sticky' ? element.offsetHeight : 0
@@ -505,6 +507,12 @@ function watchSticky() {
   stickyObserver = new ResizeObserver(measureSticky)
   for (const element of [appHeader.value, bar.value, pin.value, toolsRow.value]) if (element) stickyObserver.observe(element)
 }
+// The editor is mounted again after the chat without adopt(): what it measures follows the elements actually rendered.
+watch(canvasHost, host => {
+  observer?.disconnect(); observer = undefined
+  if (host) { observer = new ResizeObserver(entries => { if (entries[0].contentRect.width > 0) canvasWidth.value = entries[0].contentRect.width }); observer.observe(host) }
+}, { flush: 'post' })
+watch([bar, pin, toolsRow], () => { if (doc.value) watchSticky() }, { flush: 'post' })
 const versionStates = { approved: 'approuvée', pending_review: 'à vérifier', rejected: 'refusée' }
 const versionNumber = computed(() => currentVisual.value ? visuals.value.length - visuals.value.indexOf(currentVisual.value) : 0)
 let peekFrom: HTMLElement | null = null
@@ -542,16 +550,46 @@ const view = ref<'create' | 'posters' | 'styles'>('create')
 // The address says where the owner is: '' new poster, 'affiches', 'styles', or an open poster's id. Reload,
 // back and a new tab then work, and the navigation is made of real links.
 const VIEWS: Record<string, 'create' | 'posters' | 'styles'> = { '': 'create', affiches: 'posters', styles: 'styles' }
-const here = () => creation.value?.id ?? (view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : '')
+// Creation by message (D-TEXT-FIRST-001) is a second front door: 'message' is its new poster, 'message-<id>' an open
+// poster in it. The start view is this device's choice (affiche.start), asked once when the chat is available; without
+// storage the application opens on « Pas à pas » and the switch holds for the visit.
+type Start = 'chat' | 'steps'
+const START_KEY = 'affiche.start', chatting = ref(false), chatRetry = shallowRef<(() => void) | null>(null)
+const startView = ref<Start | null>('steps')
+try { const saved = localStorage.getItem(START_KEY); startView.value = saved === 'chat' || saved === 'steps' ? saved : null } catch { /* stays on the steps */ }
+const chatOn = computed(() => !!caps.value?.chat_available)
+// Loaded on demand; it never mounts the canvas or the poster fonts. A failed load says so, with its retry.
+const ChatView = defineAsyncComponent({ loader: () => import('./ChatView.vue'), onError: (_reason, retry) => { chatRetry.value = retry } })
+const pickStart = computed(() => authenticated.value && chatOn.value && !startView.value && !doc.value && view.value === 'create' && !chatting.value)
+const editing = computed(() => !!doc.value && !chatting.value)
+const shownStart = computed<Start>(() => doc.value || view.value === 'create' ? (chatting.value ? 'chat' : 'steps') : startView.value ?? 'steps')
+function switchTo(to: Start) {
+  startView.value = to
+  try { localStorage.setItem(START_KEY, to) } catch { /* the choice holds for this visit */ }
+  const id = creation.value?.id
+  leave(to === 'chat' ? (id ? `message-${id}` : 'message') : id ?? '')
+}
+const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message' : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : ''
 let routeDue = false
 async function route() {
-  const hash = window.location.hash.slice(1)
+  const hash = window.location.hash.slice(1), was = chatting.value
   try {
-    if (/^[a-f0-9-]{36}$/.test(hash)) { if (creation.value?.id !== hash) await openCreation(hash); return }
+    const message = /^message(?:-([a-f0-9-]{36}))?$/.exec(hash)
+    const id = message ? message[1] : /^[a-f0-9-]{36}$/.test(hash) ? hash : undefined
+    // Without the chat its addresses open the editor; with it as the start view, the empty address is the chat's.
+    chatting.value = chatOn.value && (!!message || (!hash && startView.value === 'chat'))
+    const address = chatting.value ? (id ? `message-${id}` : 'message') : message ? id ?? '' : hash
+    if (address !== hash) window.history.replaceState(null, '', `#${address}`)
+    if (id) { if (creation.value?.id !== id) await openCreation(id); return }
     if (doc.value) await fresh()
     view.value = VIEWS[hash] ?? 'create'
     nextTick(() => document.querySelector('main')?.focus())
-  } catch (reason) { window.history.replaceState(null, '', `#${here()}`); throw reason }
+  } catch (reason) { chatting.value = was; window.history.replaceState(null, '', `#${here()}`); throw reason }
+}
+// « Mes affiches » opens a poster where the owner creates: in the chat when it is the start view.
+async function openFromList(id: string) {
+  chatting.value = chatOn.value && startView.value === 'chat'
+  try { await openCreation(id) } catch (reason) { chatting.value = false; throw reason }
 }
 function onHash() { if (window.location.hash.slice(1) !== here()) { if (busy.value) routeDue = true; else perform(route) } }
 function leave(hash: string) { window.location.hash = hash }
@@ -882,7 +920,7 @@ async function adopt(result: Creation) {
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
     throw reason
   }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
-  window.location.hash = result.id
+  window.location.hash = chatting.value ? `message-${result.id}` : result.id
   if (!opening) await refreshVisuals()
   styleReference.value = currentVisual.value?.style_reference_asset ?? null
   keptLook.value = null
@@ -890,9 +928,6 @@ async function adopt(result: Creation) {
   await refreshEffects(); await nextTick()
   // A jump, not the page's smooth scroll: for a moment the new poster sat under the top bar, scrolled from the intake form.
   if (opening) window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
-  observer?.disconnect()
-  if (canvasHost.value) { observer = new ResizeObserver(entries => { if (entries[0].contentRect.width > 0) canvasWidth.value = entries[0].contentRect.width }); observer.observe(canvasHost.value) }
-  watchSticky()
   const jobs = await api<{ items: Job[] }>(`/api/creations/${result.id}/jobs`)
   const previousRender = jobs.items.find(item => item.kind === 'render' && item.status === 'succeeded')
   if (previousRender) openFinalPreview(await api(`/api/renders/${previousRender.result_ref}`))
@@ -916,7 +951,7 @@ async function openCreation(id: string) {
   if (found.status === 'active') return adopt(found)
   // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
   if (doc.value) await fresh()
-  view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
+  chatting.value = false; view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
   await loadLibrary()
   notice.value = 'Cette affiche a été retirée de la liste. Remettez-la dans la liste pour l’ouvrir.'
 }
@@ -955,7 +990,7 @@ function askRemove(item: LibraryItem) {
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
     run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
 }
-async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
+async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
 async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
@@ -1022,7 +1057,8 @@ async function prepareScene() {
 let planSignature = ''
 // One tap for the simple composition. An unchanged request reuses its plan, so a retry after a lost
 // response sends the same scene body and key instead of paying for a second image.
-async function createScene() {
+// key: the chat's card id, so that one card pays once whatever the client does; the editor leaves it out.
+async function createScene(key?: string, sending?: (request: SceneRequest) => void) {
   if (paletteBlocked.value) throw new Error(paletteBlocked.value)
   stylePill()
   // A seal whose footer conditions are not met cannot be asked for: it becomes a plain logo before the plan is made,
@@ -1035,7 +1071,7 @@ async function createScene() {
   const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, sceneAccent.value, productPalette.value, format.value])
   if (!plan.value || planSignature !== signature) { await prepareScene(); planSignature = signature }
   rememberStyle()
-  await generateScene()
+  await generateScene(key, sending)
 }
 function acceptPlan(value: any) { plan.value = value; savedPlanSnapshot = JSON.stringify(value.plan) }
 async function savePlan() {
@@ -1044,13 +1080,18 @@ async function savePlan() {
   const { scene, product_region, overlay_regions, palette } = plan.value.plan
   acceptPlan(await mutation(`/api/plans/${plan.value.id}/revisions`, { scene, product_region, overlay_regions, palette }, saver!.revision))
 }
-async function generateScene() {
+async function generateScene(key?: string, sending?: (request: SceneRequest) => void) {
   await savePlan()
+  const path = `/api/creations/${creation.value!.id}/scenes`, revision = saver!.revision
+  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
+  // The chat's last word before the paid request leaves (it may stop it, and keeps it as sent); nothing is awaited between.
+  sending?.({ path, body, revision })
   let result: any
-  try { result = await mutation<any>(`/api/creations/${creation.value!.id}/scenes`, { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }, saver!.revision) }
+  try { result = await mutation<any>(path, body, revision, key) }
   catch (reason) {
     // A reopened poster does not know its photo is small until the server says so: ask in the same dialog.
-    if (!(reason instanceof ApiError && reason.code === 'acknowledgement_required')) throw reason
+    // In the chat the card asks it: the editor's paid dialog never opens there.
+    if (!(reason instanceof ApiError && reason.code === 'acknowledgement_required') || chatting.value) throw reason
     smallPhotoOf.value = creation.value!.id; askScene(); throw new Shown()
   }
   follow({ id: result.job_id, kind: 'scene', status: 'queued', result_ref: null, error_code: null })
@@ -1168,7 +1209,8 @@ async function poll() {
           if (saved.revision !== saver?.revision && !saver?.unsaved) await adopt(saved)
         }
         // No notice here: the review opens in front and a notice would cover its instructions.
-        review.value = visuals.value.find(item => item.id === completed.result_ref) ?? null; resetChecks()
+        // In the chat the result card's « Vérifier » opens it.
+        if (!chatting.value) { review.value = visuals.value.find(item => item.id === completed.result_ref) ?? null; resetChecks() }
       }
       if (job.value?.id === jobId) job.value = null
       return
@@ -1289,6 +1331,34 @@ async function decide(action: 'approve' | 'reject') {
   await mutation(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
   await refreshVisuals(); review.value = null
 }
+// What the chat is handed (D-TEXT-FIRST-003): this editor's own refs and functions, so the routes, guards and retries are
+// the same. A failure goes back to the card that asked instead of the general message.
+// It settles once perform() is over, so that the chat goes on with the editor free again.
+const told = (action: () => Promise<void>) => new Promise<void>((done, fail) => {
+  if (busy.value) return fail(new Error(waiting))
+  let failure: unknown
+  void perform(async () => { try { await action() } catch (reason) { failure = reason; throw new Shown() } }).then(() => failure === undefined ? done() : fail(failure))
+})
+const chat: ChatAdapter = {
+  state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
+    busy: computed(() => busy.value || checking.value), cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
+  attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
+  start: (key, style, smallPhotoAccepted, sending) => told(async () => {
+    pickLook(style)
+    const reference = styleReference.value  // adopt() empties it for the new poster
+    if (!creation.value) await createPoster()
+    styleReference.value = reference
+    if (smallPhotoAccepted) lowResAccepted.value = true
+    // « Couleurs du produit » reads the photo once the poster exists; colours that cannot be read give « Studio clair ».
+    if (paletteLoading.value) await new Promise<void>(done => { const stop = watch(paletteLoading, on => { if (!on) { stop(); done() } }) })
+    if (paletteBlocked.value) pickLook('clair')
+    await createScene(key, sending)
+  }),
+  job: id => api<Job>(`/api/jobs/${id}`, { quiet: true }),
+  follow: found => follow(found as Job, true),
+  review: visual => { review.value = visual; resetChecks() },
+  download: () => { void perform(renderFinal) },
+}
 function zoomScene(event: Event) {
   if (!currentVisual.value) return
   const zoom = Number((event.target as HTMLInputElement).value), [w, h] = currentVisual.value.size.split('x').map(Number)
@@ -1362,17 +1432,30 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
   <button class="skip" type="button" @click="($refs.main as HTMLElement).focus()">Aller au contenu</button>
-  <header ref="appHeader" class="app-header" :class="{ editing: !!doc }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
+  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
     <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
+    <div v-if="authenticated && chatOn && startView" class="seg" role="group" aria-label="Façon de créer"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
-  <main ref="main" tabindex="-1" :class="{ editing: !!doc }">
+  <main ref="main" tabindex="-1" :class="{ editing, chatting: authenticated && chatting }">
     <p v-if="checking" role="status">Ouverture de l’atelier…</p>
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <section v-if="!checking && down" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="start">Réessayer</button></section>
     <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous pour retrouver les visuels de la boutique.</p><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button></form>
-    <div v-if="authenticated && !doc && view === 'create'" class="intake-layout">
+    <section v-if="pickStart" class="start" aria-labelledby="titre-depart">
+      <h1 id="titre-depart">Comment voulez-vous créer vos affiches ?</h1>
+      <div class="start-choices">
+        <button type="button" class="start-choice" @click="switchTo('chat')"><span class="sketch talk" aria-hidden="true"><i /><i /><i /></span><span><b>Par message</b>Écrivez le produit et le prix, ajoutez vos photos.</span></button>
+        <button type="button" class="start-choice" @click="switchTo('steps')"><span class="sketch" aria-hidden="true"><i /><i /><i /></span><span><b>Pas à pas</b>Remplissez les champs, un écran à la fois.</span></button>
+      </div>
+      <p class="help">Ce choix devient votre écran de départ. Vous pouvez changer en haut de l’écran.</p>
+    </section>
+    <template v-if="authenticated && chatting">
+      <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
+      <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
+    </template>
+    <div v-if="authenticated && !doc && view === 'create' && !chatting && !pickStart" class="intake-layout">
       <form class="intake" @submit.prevent="perform(createPoster)">
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
@@ -1390,7 +1473,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
-        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openCreation(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
+        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
         <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
       </div></div>
       <p v-if="libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
@@ -1400,10 +1483,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
-    <div v-if="doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
+    <div v-if="editing && doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
         <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
+        <button v-if="chatOn && startView" type="button" class="ghost icon to-chat" aria-label="Continuer par message" title="Continuer par message" @click="switchTo('chat')"><Icon n="chat" /></button>
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
         <div class="undo"><button class="ghost icon" :disabled="busy || !history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>

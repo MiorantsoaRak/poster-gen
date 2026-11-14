@@ -21,21 +21,30 @@ function end() {
   hiding = setTimeout(() => { hiding = undefined; clearTimeout(showing); showing = undefined; progress.value = false }, 16)
 }
 
-export async function api<T>(path: string, { quiet = false, ...options }: RequestInit & { quiet?: boolean } = {}): Promise<T> {
+// timeout (ms) is opt-in: the request is given up after it, headers and body together. Without it nothing changes.
+export async function api<T>(path: string, { quiet = false, timeout, ...options }: RequestInit & { quiet?: boolean; timeout?: number } = {}): Promise<T> {
   if (!quiet) begin()
+  const limit = timeout ? new AbortController() : undefined, timer = limit && setTimeout(() => limit.abort(), timeout)
+  const late = () => new ApiError('timeout', 'Le serveur met trop de temps à répondre. Réessayez.', 0)
   try {
     let response: Response
-    try { response = await fetch(path, { ...options, credentials: 'same-origin' }) }
-    catch { throw new ApiError('network', 'Connexion interrompue. Vos modifications restent dans cet onglet.', 0) }
+    try { response = await fetch(path, { ...options, credentials: 'same-origin', ...(limit ? { signal: limit.signal } : {}) }) }
+    catch { throw limit?.signal.aborted ? late() : new ApiError('network', 'Connexion interrompue. Vos modifications restent dans cet onglet.', 0) }
     const date = Date.parse(response.headers.get('Date') ?? '')
     if (!Number.isNaN(date)) clockSkew = date - Date.now()
     let data: any
     try { data = await response.json() }
-    catch { throw new ApiError('invalid_response', 'Réponse du serveur illisible. Réessayez.', response.status) }
+    catch { throw limit?.signal.aborted ? late() : new ApiError('invalid_response', 'Réponse du serveur illisible. Réessayez.', response.status) }
     if (!response.ok) throw new ApiError(data.error?.code ?? 'server_error', data.error?.message_fr ?? 'La demande a échoué.', response.status, data.error?.current_revision, data.error?.field)
     return data as T
-  } finally { if (!quiet) end() }
+  } finally { clearTimeout(timer); if (!quiet) end() }
 }
+
+// Reading a chat message is a paid call (D-TEXT-FIRST-002), bounded at 30 s here. The caller owns the record (key and
+// exact body, chat.ts `Pending`) and sends it again unchanged after a lost answer: the server then answers what it stored.
+export const READ_TIMEOUT_MS = 30_000
+export const read = <T>(pending: { key: string; body: string }) => api<T>('/api/reads', { method: 'POST', timeout: READ_TIMEOUT_MS,
+  headers: { 'Content-Type': 'application/json', 'Idempotency-Key': pending.key }, body: pending.body })
 
 const uncertain = new Map<string, string>()
 export async function mutation<T>(path: string, body: unknown, revision?: number, key?: string, method = 'POST', quiet = false) {
