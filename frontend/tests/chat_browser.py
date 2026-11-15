@@ -78,7 +78,7 @@ def walk_desktop(browser, errors, product, inspiration):
             reads.append(request.headers["idempotency-key"])
         if request.method == "POST" and request.url.endswith("/scenes"):
             scenes.append(request.headers["idempotency-key"])
-        if POSTER_FONTS.search(request.url):
+        if POSTER_FONTS.search(request.url) or "PosterCanvas" in request.url:  # a font file, or the canvas's code (the dev server's module here)
             fonts.append(request.url)
 
     context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
@@ -214,7 +214,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(page.get_by_role("link", name="Télécharger le PNG confirmé")).to_be_visible()
     page.screenshot(path=str(OUT / "chat-confirmed-1366.png"))
     page.get_by_role("button", name="Fermer").click()
-    # The chat never mounted the canvas nor loaded a poster font.
+    # The chat never mounted the canvas, nor loaded its code (Konva and the fonts' module) or a poster font.
     expect(page.locator(".poster-canvas, .konvajs-content")).to_have_count(0)
     assert not fonts, fonts
     assert len(reads) == 1, reads

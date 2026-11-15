@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import PosterCanvas from './PosterCanvas.vue'
 import { api, ApiError, clockSkew, displayUrl, mutation, preparedUrl, progress, thumbnailUrl, upload } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
@@ -570,6 +569,10 @@ const startView = ref<Start | null>('steps')
 try { const saved = localStorage.getItem(START_KEY); startView.value = saved === 'chat' || saved === 'steps' ? saved : null } catch { /* stays on the steps */ }
 const chatOn = computed(() => !!caps.value?.chat_available)
 // Loaded on demand; it never mounts the canvas or the poster fonts. A failed load says so, with its retry.
+// The canvas (Konva, and the fonts' module with it) is loaded when the step editor first shows a poster, never for
+// the chat: a poster made by message costs a phone neither the download nor the parse (T-CHAT-CANVAS-LOAD).
+const canvasRetry = shallowRef<(() => void) | null>(null)
+const PosterCanvas = defineAsyncComponent({ loader: () => import('./PosterCanvas.vue'), onError: (_reason, retry) => { canvasRetry.value = retry } })
 const ChatView = defineAsyncComponent({ loader: () => import('./ChatView.vue'), onError: (_reason, retry) => { chatRetry.value = retry } })
 const pickStart = computed(() => authenticated.value && chatOn.value && !startView.value && !doc.value && view.value === 'create' && !chatting.value)
 const editing = computed(() => !!doc.value && !chatting.value)
@@ -1677,7 +1680,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div v-if="!stepping && !peeking" class="preview-tools"><button v-if="shortViewport" type="button" @click="setPeek(true)">Aperçu plein écran</button><button v-else type="button" :aria-expanded="previewVisible" aria-controls="poster-proof" @click="previewVisible = !previewVisible">{{ previewVisible ? 'Masquer l’aperçu' : 'Afficher l’aperçu' }}</button><button type="button" :aria-expanded="versionsOpen" aria-controls="poster-versions" @click="versionsOpen = !versionsOpen">Versions ({{ visuals.length }})</button></div>
             <div id="poster-proof" class="proof">
               <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
-              <div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event; choosing = null" />
+              <p v-if="canvasRetry" class="why" role="alert">L’affiche n’a pas pu s’afficher. <button type="button" @click="canvasRetry(); canvasRetry = null">Réessayer</button></p><div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event; choosing = null" />
                 <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob"><span v-if="viewportWidth <= 720" aria-hidden="true">Version {{ versionNumber }}</span><span :class="{ 'visually-hidden': viewportWidth <= 720 }">Version précédente conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
             </div>
             <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>

@@ -79,6 +79,8 @@ Spend of the day for this work: USD 0.8574, all on the ledger. `backend/data-pro
 
 **T-CHAT-PRICE-NO-COMMA done**, committed and pushed (commit "T-CHAT-PRICE-NO-COMMA: …"; ADR-104): « iPhone 15 1 200 000 Ar » now gives its price. Backend 1019 passed / 3 deselected; four real reads right (USD 0.0108). Spend of the day for this work: USD 0.8682.
 
+**T-CHAT-CANVAS-LOAD done**, committed and pushed (commit "T-CHAT-CANVAS-LOAD: …"): `App.vue` loads the canvas on demand, so the chat no longer loads Konva or `fonts.ts`; the chat smoke fails if it does.
+
 **Exact next step:** the user's deploy, backend and frontend together. Open in TODO.md: T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
