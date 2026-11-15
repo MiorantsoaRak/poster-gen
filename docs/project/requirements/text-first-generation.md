@@ -91,6 +91,25 @@ Research: [text-first generation findings](../reviews/text-first-generation-rese
 
 **Out of scope:** undoing a paid generation, editing an older message, merging two versions. Also out, and still done in « Pas à pas »: lettering requests that are not a field (size, position or font of the title), the accent word and its colour, the format, the style, the photos, the shop's contact line.
 
+**DRAFT, not approved (2026-11-15): its design was rejected in review; a paid baseline comes first (TODO.md, T-CHAT-SET-BASELINE), and these criteria will be rewritten from its result.**
+
+**Amendment of 2026-11-15, second (user request: "go ahead with the rest of the audit", [audit](../reviews/chat-capability-audit-2026-11-15.md), mechanism 2):**
+- [ ] By message I can put one word of the title in colour, change its colour (the five colours of « Textes »), or take the colour off.
+- [ ] By message I can ask for the brand in plain letters, or back as on the product.
+- [ ] By message I can ask for another of the three provided styles (Studio clair, Couleurs du produit, Luxe sombre). The card says what is not carried into the new style: the model image and the scene adjustments asked before.
+- [ ] By message I can put the shop's logo (top right) and the shop's contact (drawn in the image) on the poster, or take them off.
+- [ ] These changes and the words of the first amendment may come in one message: one card lists each change on its own line, and I pay once. What the card does not list stays as on the version it replaces.
+- [ ] The cost follows one rule: something drawn in the image, or that needs a place kept in the image, is a whole new image and a new check; taking off an element that is only laid over the image is free and keeps the approved image.
+- [ ] Nothing is paid when the new image could not carry a change the card lists (a contact too long to be drawn, a shop without a logo, a coloured word that is not in the title): the chat says why in one sentence and points to « Pas à pas ».
+- [ ] After a paid card that made no image, the chat says that the shop's elements no longer match the image and offers to put them back, free, as it does for the words.
+- [ ] A request for another format gets one sentence that says where it is done (« Pas à pas », « Style », « Refaire en … »). Nothing is paid, nothing is copied.
+- [ ] The sentence that says what the chat can change names these changes too.
+- [ ] A tab that still runs the application from before this change is not offered them: it never pays for a change it cannot carry out.
+
+**Open, the user's decision:** another format made from the chat (a free copy of the poster, then its first image as a paid card in the copy's own conversation). It is designed as the last task of D-TEXT-FIRST-006 and is built only on his word.
+
+**Out of scope, still done in « Pas à pas »:** the shop's name (a text laid over the image: its place needs the canvas); the logo as a round seal (the editor itself asks for a copy of the poster once a version exists); the logo at the top left or in the footer; the contact's position; a contact that cannot be drawn (several lines, quotation marks, too long); adding shop details that were empty when the poster was made; a saved style and « Décrire moi-même »; the title or the price as laid-over text instead of drawn (the two switches of « Textes »). Unchanged from the audit's mechanism 3: framing, typography and place of a laid-over text, text texture, « Ajuster ce texte avec une consigne », photos, undo and redo.
+
 ## R-TEXT-FIRST-005 — Paid reading of messages, limits and failures
 
 - **Story:** As the shop owner, I can write freely without a surprise on the bill and without losing my words when something fails.

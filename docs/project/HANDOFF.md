@@ -32,7 +32,11 @@ The paid check (the user's word, USD 0.0304) showed the plan's style kept for re
 
 **Landmine:** the user's note of 2026-11-15, "just noted": the image model invents the features it draws when asked for "4 lines of features" (AGENTS.md forbids invented specifications; the check's extra-text point is the only guard). Do not present this as verified product facts.
 
-**Exact next step:** the user's deploy, backend and frontend together. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
+**The rest of the audit (user request, later the same day): a draft only, nothing built.** Requirements block "Amendment of 2026-11-15, second" and design D-TEXT-FIRST-006 are in the documents, both marked NOT approved: the design review and the devil's advocate rejected the draft (reviews/text-first-d006-*-2026-11-15.md). Uncommitted: `docs/project/designs/text-first-generation.md`, `requirements/text-first-generation.md`, `TODO.md`, `HANDOFF.md`, the two review reports.
+
+**T-CHAT-SET-BASELINE done** (USD 0.1722): a coloured word and the brand's lettering already work as scene adjustments; a change of style does not. Report: reviews/chat-change-eval-2026-11-15.md, last section. Spend of the day for this work: USD 0.6413.
+
+**Exact next step:** the user's choice of what to build from it (a style change as a new plan; the shop's logo and contact asked in the first message; one sentence for another format), each needing a small design first; and his deploy of what is pushed, backend and frontend together. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.

@@ -133,3 +133,22 @@
 **To watch:** the median delay is 3.1 s here, against 2.1 s in the run before; the design's threshold for reconsidering the model is a median over 3 s. One run, slow at its start; not a conclusion.
 
 **Total of the day for this work:** USD 0.4691, all on the ledger.
+
+## Baseline for the rest of the audit (T-CHAT-SET-BASELINE): what today's scene adjustment already does
+
+**Why:** the draft D-TEXT-FIRST-006 proposed new rows for the coloured word, the plain-letters brand and the style. Both reviews of it asked to measure first what the scene adjustment of ADR-102 already does.
+
+**What was run:** `run_scene.py` on a free copy of the JBL poster in `backend/data-probe` (the original had reached its twelve versions; a copy shares the versions). Code at commit "T-CHAT-SCENE-FIELD, T-CHAT-D005-TESTS…", nothing changed. Each message was asked from a chosen version: three from version 3 (light scene, JBL mark, no adjustment before it), one from version 10 (night blue, four features, gradient title, five adjustments before it). USD 0.1589 for four images, USD 0.0133 for their reads: **USD 0.1722** on the ledger.
+
+| Message | From | Seen by Claude on the image (`baseline-sheet.png`) | Verdict |
+|---|---|---|---|
+| « mets le mot Tune en rouge » | version 3 | « Tune » is red, « 770NC noir » stays dark; nothing else moved | works |
+| « écris la marque JBL en lettres simples » | version 3 | the JBL mark became plain letters « JBL »; nothing else moved | works |
+| « passe en style luxe sombre » | version 3 | **no visible change**: the same light scene | **does not work** |
+| « mets le mot Tune en orange » | version 10 | « Tune » is orange; the features, the larger product, the night blue and the floor reflection are kept | works |
+
+**What it shows:** a coloured word and the brand's lettering are already done by a scene adjustment, from the image shown, with everything else kept. A change of style is not: a refinement starts from the image and is told to keep its composition, and the version's plan still describes the old style. One image per case: it shows the path, not a rate.
+
+**Consequence:** of the draft's rows, only the style needs building. The shop's identity and the format were never candidates for a scene adjustment (a real logo file, real contact data; another poster).
+
+**Total of the day for this work:** USD 0.6413, all on the ledger. The copy made for this test is poster `6302af5f-…` in `backend/data-probe`; the JBL product now has fourteen versions.

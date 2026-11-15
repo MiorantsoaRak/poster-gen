@@ -349,6 +349,191 @@ A read that succeeded before this change is replayed from `chat_reads.response_j
 | The word guard "closes" invention | Its limit is written; the refused word is named; the requirement is reworded | Review P1-3 |
 | New-poster reader loses `intent` | Not touched | Review, "simpler logic" |
 
+## D-TEXT-FIRST-006 — Settings of the next image as rows of the field table (covers the second 2026-11-15 amendment of R-TEXT-FIRST-004)
+
+**Status:** draft v1, 2026-11-15. **NOT approved, not to be built as written.** The fresh review rejected it ([round 1](../reviews/text-first-d006-design-r1-2026-11-15.md): four P1: an old tab can take over a stored settings card and pay while ignoring its settings; the guard before paying misses settings the card does not list; a style overwrites a colour asked in the same message; no ownership check after the palette wait). The devil's advocate ([report](../reviews/text-first-d006-devils-advocate-2026-11-15.md)) argued that its premise is out of date: since ADR-102 a message that changes no word is already a scene adjustment from the image shown, so the coloured word, the plain-letters brand and the style may already work, and nobody measured that. Next step, the user's word: a paid baseline of those three through today's scene adjustment; then only what fails is designed again, smaller. Kept below as the record of the reading of the code (its table "What the code says" was confirmed by the review).
+
+**Problem:** D-005 gave the chat the four words and the scene adjustment. The audit's mechanism 2 lists five more things that « Pas à pas » sets for the next image and the chat cannot: the coloured word, the brand in plain letters, the shop's identity, the style, the format. Three of them (A, B, D) are fields of the scene request and fit the table as it is. Two (C, E) are not only fields: C changes the document and the plan's regions; E makes another poster.
+
+**Approach:** the table gains rows marked `setting`. A setting is not a word: its current value is read from the version's stored headline or from the document, its change is carried on the card as `settings`, and the adapter sets it through the editor's own state after `restoreHeadline()`, so everything the card does not list stays the version's (ADR-100, ADR-101). One guard in the adapter compares the request about to leave with the card and stops before paying when they differ. C is built in a smaller version (logo at the top right, contact drawn); E is answered by a sentence, and its full version is the last task, built only on the user's word.
+
+### What the code says (A to E)
+
+| | Where the editor keeps it | How it reaches the image or the document | What a version stores | Editor's refusals |
+|---|---|---|---|---|
+| **A** coloured word, colour | `headline.accent_word`, `headline.accent_colour` (`App.vue:38`); offered words `accentWords` (`:305`); five colours `ACCENTS` (`:306`) plus a free colour input (`:1588`) | `headlineBody()` (`App.vue:307`): `accent_word` only if it is still in the title (`accentWord`, `:304`), `accent_colour` = `sceneAccent` (`:55`: the photo's colour when the look is « Couleurs du produit ») | `headline.accent_word`, `headline.accent_colour` in the job payload (`visuals.py:284`); `poster_words` already returns `accent_word` (`reads.py:484`) | server: `headline_accent_not_in_title` (`plans.py:375`) → `invalid_headline` |
+| **B** brand in plain letters | `headline.brand_text` (`App.vue:38`, switch at `:1592`, shown only with a brand) | `headlineBody()`: `brand_text: true` only with a non-empty brand (`:307`); prompt sentence `plans.py:382-384` | `headline.brand_text: true` when set, absent otherwise (`plans.py:95`) | server: `brand_text_requires_brand` (`plans.py:380`); no effect when the brand is inside the title (`deduplicate_brand`, `plans.py:381`) |
+| **C** logo, shop name, contact | `document.include` (`models.py:82-85`), the layers, `brand_snapshot`; drawn contact: `headline.contact` (`App.vue:38`, switch `:1609`); position: `rememberedAlign` in `localStorage` (`:244-250`); seal: `logo.shape = 'circle'` (`setSeal`, `:387-390`) | switches → `edit(d => toggleIdentity(d, role, on))` (`:1596`, `:401-412`, `document.ts:63-77`); drawn contact → `headlineBody()` `signature`, `signature_align`, `logo_seal` when `drawContact` / `sealOn` (`:369`, `:381`); the plan's regions come from the included layers (`context_for`, `visuals.py:135-150`) | drawn contact: `headline.contact` (`visuals.py:253`, `:284`); logo place: the plan's `logo` region → `logo_box` / `logo_footer_box` (`logo_region`, `visuals.py:367-374`); seal: `placement_json.logo_disc` (`service.py:139-147`) | `whyNoDrawnContact` (`:363-368`: several lines, `"`, too long); `whyNoSeal` (`:374-379`: after the first version « créez une copie »); `staleLogo` (`:335`), `discUncovered` (`:382-386`), `staleSignature` (`:740`) block the export (`:681`; server `check_logo_placement`, `visuals.py:377-390`, `signature_missing`, `exports.py:49-53`); a missing shop detail cannot be ticked (`identitySource`, `:541`) |
+| **D** style | `look` (`App.vue:51`), `direction` (`:35`), `LOOKS` (`:42-47`), `savedLooks` | `pickLook` (`:104-111`) sets `direction` and, for « Luxe sombre », the accent colour; `prepareScene` (`:1049-1066`) asks a plan with `direction` and lays the look's palette on it; a saved look also sends `look_id` (`:307`) | the plan (`scene`, `palette`; `visual.plan_id`, `visuals.py:408`); `headline.look_id` for a saved look. **The id of a provided style is stored nowhere.** | `paletteBlocked` (`:56`) while the photo's colours are unread |
+| **E** format | `document.primary_format`; « Refaire en … » (`:1614`) → `remakeIn(to)` (`:190-209`) | a new product input, a copy of the poster onto it (`store.py:302-328`), `reformat` (`document.ts:92-105`), then `adopt(copy)`: **the open poster becomes the copy, which has no version** | the version's `size`; a copy in another format shares no version (`listed_visuals`, `visuals.py:393-399`) | `format_locked` after a first version (`store.py:267-280`); formats offered = `FORMATS_ENABLED` (pilot: `feed,square,story`, `deploy/compose.yml:32`) |
+
+**Three findings that shape the design:**
+1. **A plan cannot be reused when the identity changes.** `validate_plan` refuses a plan whose regions are not exactly the included fields (`plans.py:188-189`), and `revise_plan` validates against the document's current context (`visuals.py:201-207`). ADR-100's "revise the version's plan" therefore answers `invalid_plan` after a logo or a contact is switched. The regions must be made again (`POST /plans`, mode `fixed`: free, synchronous, `visuals.py:185-191`; `plannerMode` is always `'fixed'`, `App.vue:35`); the look is kept by laying the version's `scene` and `palette` on the fresh plan, as `prepareScene` already does for a saved look (`:1057-1060`). The prompt reads the look from `plan.scene` and `plan.palette` only (`plans.py:509-510`).
+2. **Layers are placed in the plan's regions for the first version only** (`service.py:153-171`). On a later version a laid-over shop name or contact stays where `setIdentity` put it (`document.ts:72`), not where the new image kept room. The logo is the exception: `chooseVisual` moves it to the version's `logo_box` (`App.vue:1337-1338`). The chat does not mount the canvas, so nothing measures an overlap. This is why the shop name and a contact that is not drawn stay in « Pas à pas ».
+3. **`headlineBody()` drops silently what cannot be sent** (an accent that left the title, `brand_text` without a brand, a contact that is not drawable). A card that lists such a change would pay for an image without it. Hence the guard `carries` below.
+
+### Recommendation per item
+
+| | Effect | Cost | Verdict |
+|---|---|---|---|
+| A | whole new image, the version's plan and words kept | one image | **simple rows** (`accent_word`, `accent_colour`) |
+| B | whole new image, the version's plan and words kept | one image | **simple row** (`brand_text`) |
+| D | whole new image with **another** plan (`pickLook` + `createScene`); the version's model image and kept adjustments are **not** carried, and the card says so | one image | **simple row** (`style`, three values), one branch in `revise`. A saved style is not simple (see "What this does not do") |
+| C | logo on / contact on: whole new image with fresh regions and the version's look. Off: free when the element is only laid over; a new image when the image carries it (drawn contact, seal disc) | one image, or free | **harder**: a second effect function, a fresh-plan helper, a way back after a failure. Built in the smaller version: `logo` (top right), `contact` (drawn). Shop name, seal, positions: left in « Pas à pas » |
+| E | another poster | free copy + one image | **not a row.** Now: the reader recognises the request and the chat says where it is done. Full version: task 7, on the user's word only |
+
+### The new rows (`reads.py` `FIELDS`)
+
+`Row` gains `setting: bool = False` and `since: int = 1`. Setting rows are outside the word guard's "words of the poster" set and outside `card.words`.
+
+| Row (`since: 2`) | Type | Current value comes from | Check, in `_change` | Effect | Label / card line |
+|---|---|---|---|---|---|
+| `accent_word` (removable) | `str` | the version's `headline.accent_word` | `Headline(accent_word=…)` (`HeadlineText`, `screen_headline`); must be a substring of the **resulting** title (the server's own rule, `plans.py:375`), else `refused` « « {} » n’est pas dans le titre. »; under the word guard | differs from stored → `scene` | « le mot en couleur » / « Mot en couleur : {word} » · « Mot en couleur : retiré » |
+| `accent_colour` | `Literal["bleu","bleu nuit","rouge","orange","or"]` → hex by one constant `ACCENT_COLOURS`, the values of `App.vue:306` | the version's `headline.accent_colour`, compared without case | the result has an accent word, else `refused` « Dites quel mot du titre mettre en couleur. » | differs → `scene` | « sa couleur » / « Couleur du mot : {name} » |
+| `brand_text` | `bool` | `bool(headline.get("brand_text"))` | `true` needs a brand in the resulting words (set apart, so never inside the title), else `refused` « Donnez d’abord la marque. » | differs → `scene` | « le lettrage de la marque » / « Lettrage de la marque : lettres simples » · « … : comme sur le produit » |
+| `style` | `Literal["clair","couleur","sombre"]` (`reads.py:54`) | none: the id of a provided style is not stored | — | always `scene` | « le style » / « Style : {label} », then « L’affiche modèle n’est plus suivie. » when the version has `style_reference_asset`, and « Les ajustements de scène demandés avant ne sont pas repris. » when `kept_adjustments(version)` is not empty |
+| `logo` | `bool` | `shown` = `include.logo`; `carried` = the version's plan has a `logo` region or the version has a disc | on: `brand_snapshot.logo_asset`, else `steps` « Cette affiche n’a pas le logo de la boutique : ajoutez-le dans Pas à pas, « Boutique ». » | identity rule below | « le logo de la boutique » / « Logo de la boutique : en haut à droite » · « … : retiré » |
+| `contact` | `bool` | `shown` = `include.contact` and (drawn in the version, or its layer visible); `carried` = `"contact" in headline` | on: `brand_snapshot.contact`, else `steps` as for the logo; with `"` or a line break: `steps` with the editor's sentence (`App.vue:365`) | identity rule below | « le contact » / « Contact : dessiné dans l’image » · « Contact : retiré » |
+| `format` | `Literal["feed","square","story"]` | `document.primary_format` | — | card `steps`, « Un autre format est une nouvelle affiche : dans Pas à pas, « Style », « Refaire en … ». »; the other fields of the message are not offered. (Task 7 would change this row's effect to `copy`.) | « le format » / — |
+
+Rules written in each row's `rule` (the schema description), to be measured in the paid test: `logo` is the **shop's** logo, never the product brand's mark (that is `instruction_fr`, ADR-102); `accent_colour` is the colour of one word, `style` the look of the whole poster; `brand_text` only when the owner speaks of plain or simple letters, or of the brand's logo being wrong.
+
+**Identity rule (one function for `logo` and `contact`, asked value against the image):**
+| Asked | The image carries it (`carried`) | Shown now | Effect |
+|---|---|---|---|
+| on | — | yes | none (`same` if nothing else changes) |
+| on | yes | no | `free` (the layer or the drawn line is there; `toggleIdentity` shows it again, `App.vue:407`, `:411`) |
+| on | no | no | `scene` |
+| off | drawn contact, or seal disc | — | `scene` (a hidden one blocks the export: `staleSignature`, `discUncovered`) |
+| off | no, or a kept logo place | yes | `free` |
+| off | — | no, and not carried | none |
+
+**Order in `_change` (additions to D-005's five steps):** `format` first (its `steps` answer); then step 1 as today, with settings counted as "asked" (an instruction with them is dropped with « Demandez ensuite le changement de scène… »); any `since: 2` row asked on a version without drawn words → card `steps`, sentence generalised to « Cette affiche n’a pas de textes dessinés dans l’image : ce changement se règle dans Pas à pas. »; steps 2 to 4 unchanged (the word guard reads `accent_word` only among the settings); step 5: `scene` when a word differs from the image's, or a setting row's effect is `scene`; else `free` when a document word differs or an identity effect is `free`; else `same` / the scene adjustment as today. A card is whole: `scene` carries every asked change, free ones included.
+
+**No data model change. No migration. No new route.**
+
+### API contract additions
+
+```
+POST /api/reads
+body  + rows?: 2          -- the highest table version this client can carry out. Left out of the canonical body when
+                          -- absent (`exclude_if`, as `visual_id`), so kept requests keep their hash. Absent: only rows
+                          -- with since <= 1 are in the model's schema, the checks and the "what I can change" sentence:
+                          -- a tab on the old bundle gets D-005's behaviour and never a card it cannot carry out.
+201 card (kind "change")  + settings?: { accent_word?: string | null, accent_colour?: "#RRGGBB", brand_text?: boolean,
+                                         style?: "clair" | "couleur" | "sombre", logo?: boolean, contact?: boolean }
+                          -- only the settings that change. effect "scene": with `words` (the four, whole) as today.
+                          -- effect "free": `logo` / `contact` only, beside the document words if any.
+GET /api/visuals/{id}, GET /api/creations/{id}/visuals: unchanged.
+POST /api/creations/{id}/scenes: unchanged. A style card sends no `keep_adjustments_of`.
+```
+`poster_words` (`reads.py:474-486`) also returns `settings` (stored `accent_word`, `accent_colour`, `brand_text`), `identity` (`{logo, contact}` × `{shown, carried}`, from `document.include`, the contact layer's `visible`, `baked`, `logo_region(...)` and `placement_json`), `snapshot` (which of `logo_asset`, `contact` exist; whether the contact is one line without `"`), `model_image` and `adjustments` (booleans, for the style card's two lines). Nothing of it is sent to the model except `settings`.
+
+### The client
+
+`chat.ts`: `Settings` type; `Card.settings`; the read body sends `rows: 2`; `Stale` gains `identity?: { logo?: boolean; contact?: boolean }`; `staleLine` adds « La boutique sur l’affiche ne correspond plus à l’image. »; the button becomes « Remettre comme sur l’image » and sends both the stale words and `stale.identity`. `differences` (`chat.ts:209-216`) also compares `accent_word` and `brand_text`, so the list of modifications says « Mot en couleur : Buds ». A style or identity version is labelled « Nouvelle version » (its cause is not stored; see limits). `ChatView.create` (`:277-297`) passes `card.settings` beside `card.words`.
+
+### The adapter (`App.vue`)
+
+`ChatAdapter.revise(card, visual, words, settings, smallPhotoAccepted, owned, sending)` and `words(visual, values, settings, owned)`: one more argument each. New local functions: `setSettings`, `carries`, `freshPlan`, the computed `staleIdentity`.
+
+**`revise`, exact order (new steps in bold):**
+1. `pickVersion(visual, owned)`.
+2. `headline.on` false → stop, as today (`:1406`).
+3. `flush()`, `owned()`.
+4. `base = currentVisual`; `restoreHeadline(owned)`; `styleReference = base.style_reference_asset`.
+5. `setWords(words)`.
+6. **`setSettings(settings)`**, in this order:
+   - `accent_word` → `headline.accent_word = value ?? ''`; `accent_colour` → `headline.accent_colour = value.toLowerCase()` (not `pickAccent`: it also writes the product palette and `accentPicked`, `:115`); `brand_text` → `headline.brand_text = value`.
+   - `style` → when `'couleur'`: wait for `paletteLoading` as `start` does (`:1393`); `pickLook(style)`; `paletteBlocked` → throw its sentence (no silent fall back to « Studio clair »: the card listed the style); `styleReference = null`.
+   - `logo` / `contact` → one `edit()`: `toggleIdentity(d, role, on)`; logo on: `placeLogo(d, 'right')` (as `copyForCorner`, `:356`); contact on: its layer `visible = false` (the image will draw it; `Document` allows an included, hidden contact, `models.py:234`) and `headline.contact = true`.
+7. **`carries(headlineBody(), settings, doc)`**: each listed setting is in the request about to leave (`accent_word`, `accent_colour` upper case, `brand_text`, `signature` present for contact on and absent for off, `include.logo`). If not: the identity edit of step 6 is reversed by the same `toggleIdentity`, and the card fails with the editor's reason (`whyNoDrawnContact`) or « Ce changement ne peut pas être demandé ici : réglez-le dans Pas à pas. ». Nothing is sent.
+8. `lowResAccepted`; `kept = GET /api/plans/{base.plan_id}`; `owned()`.
+9. `keptAlign = base.headline?.signature_align`; `keptFrom = base.id`, **or `null` when `settings.style` is set**.
+10. The plan:
+    - **`settings.style`** → `createScene(key, sending, owned)`: a fresh plan in the new style.
+    - `kept` belongs to another poster or format, or is missing → `createScene`, as today.
+    - **identity changed** → `flush()`, `owned()`, **`freshPlan(kept, owned)`** = `prepareScene(owned)`, then `plan.plan.scene = kept.plan.scene`, `plan.plan.palette = kept.plan.palette`; `generateScene` saves it as a revision (`savePlan`, `:1088-1094`).
+    - otherwise → `acceptPlan(kept)`, `generateScene`, as today.
+11. `finally`: `keptAlign = keptFrom = null`.
+
+**`words` (free), exact order:** `pickVersion`, `flush`, `owned`, `setWords(values)`, **the identity toggles of `settings` in one `edit()` (`toggleIdentity` only)**, `flush`.
+
+**`state.stale.identity`** (computed, the editor's own truths, only what blocks the export): `logo: true` when `discUncovered`; `logo: false` when `staleLogo` and the selected version has no `logo_box`; `contact:` `currentVisual.headline?.contact !== undefined` when `staleSignature` holds for the contact (`:740`). `staleLogo` with a `logo_box` (a moved logo or a crop) and a stale shop name stay the editor's matter.
+
+**What the card promises.** The words as in D-005; each listed setting is in the request (step 7); everything else is the version's, through `restoreHeadline()` and its plan. For a style card: the words and the listed style; the accent colour follows the editor's rule (`pickLook`: « Luxe sombre » sets gold, « Couleurs du produit » takes the photo's colour, « Studio clair » keeps the version's). It does not promise that the image model obeys: the review and its text checks stay the guard (`required_checks`, `visuals.py:25-33`, adds the contact's check when it is drawn).
+
+### Failure modes & handling
+
+| Failure | Detection | Behavior |
+|---|---|---|
+| The reader takes « mets le logo Sony » for the shop's logo | none on the server | the line says « Logo de la boutique : … » before the paid tap; « Annuler »; counted in the paid test. If the rate is high, `logo` is offered only when the message has « boutique » or « mon / notre » (a check in the row, not a prompt patch) |
+| The reader confuses the word's colour and the style | none | each has its own line; paid test |
+| A listed setting would not be in the request (accent not in the title, brand empty, contact too long) | `carries`, step 7 | nothing sent, nothing paid; identity edit reversed; the editor's sentence |
+| The scene request is refused, lost, or its job fails after the identity was saved | `staleLogo`, `staleSignature`, `discUncovered` → `state.stale.identity` | the card keeps its request (« Réessayer » / « Reprendre », ADR-097) or is offered again; « La boutique sur l’affiche ne correspond plus à l’image. » with « Remettre comme sur l’image », free |
+| The owner chooses an older version, made without the logo, after a version with it | same computeds on the selected version | same line and button |
+| `freshPlan`: the fixed plan does not fit (`composition_does_not_fit` → `layout_not_plannable`) | the `/plans` refusal, before any paid request | the card fails with the server's sentence; the document keeps the identity change → the line above |
+| The photo's colours cannot be read for « Couleurs du produit » | `paletteBlocked` in step 6 | nothing sent; its sentence |
+| A style card on a version with scene adjustments | `kept_adjustments` at the read | the card says they are not carried; the request has no `keep_adjustments_of` |
+| A tab on the old bundle | `rows` absent | only the D-005 rows are read and offered |
+| The saved look of the version was removed and cannot be read | `restoreHeadline(owned)` throws (`:139`) | as today: nothing sent |
+| Twelve versions | as today | as today |
+
+ADR-097/098 are not changed: one unresolved paid card; the card's id is the key of the one `/scenes` request; `owned()` after every wait, `/plans` included (`prepareScene` already takes it, `:1050-1052`); nothing is sent by itself. `freshPlan` adds one unpaid request before the paid one; a lost answer there leaves no kept request, so the card is offered again (`nextStep` → `'new'`, `chat.ts:124`).
+
+### Edge cases
+
+- Accent word and a new title in one message: the accent is checked against the new title. A title change that drops the kept accent: D-005's line « Le mot en couleur est retiré. », unchanged.
+- A colour alone on a version with an accent word: `scene`. A colour alone without one: `refused`.
+- `brand_text` with a brand given in the same message: one card, both lines. « comme sur le produit » on a version that never had `brand_text`: `same`.
+- Logo on, on a version with a seal whose logo was switched off: `carried` (disc) → `free`; `toggleIdentity` puts the seal back on its disc (`:407`).
+- Logo off on a version with a seal: `scene`; `sealOn` is false without `include.logo` (`:381`), so no disc is asked.
+- Contact on while the shop name is shown as a layer: allowed; the new plan keeps both regions. The shop name's layer is not moved (finding 2) — the final preview is the guard; noted as a limit.
+- Contact on with the logo on: `whyNoDrawnContact` subtracts the logo's width even for a corner logo (`:366`), stricter than the server (`plans.py:415`). A contact of 34 to 40 characters is refused by step 7 with the logo on. Accepted: the editor's rule is the one source.
+- A style asked that is the version's own: a new image is offered (the id is not stored, so `same` cannot be known). Stated limit.
+- Style and words in one message: one card; the words are the card's, the plan is new.
+- Format with other fields: the format sentence only.
+- A message in Malagasy or English: read like any other.
+
+### What this does not do (and why)
+
+- **Shop name**: a laid-over text; later versions do not re-place layers (`service.py:153`) and the chat has no canvas to measure an overlap. Mechanism 3.
+- **Logo as a round seal**: the editor refuses it once a version exists (« créez une copie », `App.vue:375`) and the request needs the fixed footer, a drawn price and a contact at the right (`plans.py:326-333`, `visuals.py:255-259`). A copy is E.
+- **Logo at the top left or in the footer, contact position**: one more row each; little value for one shop. The contact keeps the version's `signature_align` (`keptAlign`) or the device's remembered one.
+- **A contact that cannot be drawn** (several lines, `"`, too long): it would be a laid-over layer (finding 2).
+- **Missing shop details**: a form with a file upload (`importMissingProfile`, `:546-556`).
+- **A saved style**: the reader would need the shop's style names in its schema (a schema per shop), and a saved style's model image raises the format question (`askFormat`, `:167`). Add when the owner has saved styles and asks for one by name.
+- **« Décrire moi-même »**: the scene adjustment already takes the owner's words (ADR-102).
+- **Another format (E)**: `remakeIn` opens another poster, without version, in another conversation, where the chat answers « L’affiche n’a pas encore de version. » (`ChatView.vue:224`). See task 7.
+- **The two switches « composer le titre / dessiner le prix dans l’image »**: not asked; `revise` still refuses when drawn texts are off.
+
+### Not established from the code
+
+- Nothing was run. `freshPlan` (a fixed plan with the version's `scene` and `palette` laid on it, saved as a revision) is assembled from `prepareScene`, `savePlan` and `revise_plan` as read; it has never executed.
+- Whether the image model keeps a corner free for the logo, obeys an accent colour or plain brand letters on a redraw: paid test only.
+- `ChatView.reconcile` was read in part; the claim "a failed job offers the same card again" rests on its comments (`:363`, `:380-381`).
+- `api.py` `MESSAGES` was read by grep only; the new sentences must be added there and each new code needs its French sentence (existing test).
+- The formats enabled on the running pilot were read from `deploy/compose.yml`, not from the box.
+
+### Tests
+
+- **Backend (`tests/test_reads.py`)**: a `setting` row added in a test appears in the schema, the sentence and the card's lines; `rows` absent → the schema, the sentence and the cards are D-005's, and the body's hash is unchanged; each row's check and refusal; accent against the resulting title (kept, changed, removed); colour names to hex and case; `brand_text` with and without a brand, and with the brand inside the title; the identity rule's six lines for the logo and for the contact (drawn, layer visible, layer hidden, seal disc, kept logo place); snapshot without logo or contact → `steps`; a setting on a version without drawn words → `steps`; style lines with and without a model image and kept adjustments; `format` → `steps`, other fields not offered; settings with an instruction → words-first line; mixed free and scene → one `scene` card; the stub's new patterns.
+- **Vitest (`tests/chat.test.ts`)**: `differences` with accent and `brand_text`; `staleLine` with `identity`; `carries` (extracted to `chat.ts` as a pure function of the request body and the settings) for each setting, present and dropped.
+- **Browser smoke (`tests/chat_browser.py`, stub, zero spend)**: accent word then colour → the `/scenes` body carries both, the plan is a revision of the version's; brand in plain letters; a style card → a new plan with the style's palette, no `style_reference_asset`, no `keep_adjustments_of`; logo on → the plan has a `logo` region and the version's palette, the new version has `logo_box`, the export is not blocked; contact on → `signature` in the body, the text check lists it; logo off free; a contact of 60 characters → refused, no request, `include.contact` back to off; `STUB_FAIL` on the scene after logo on → the stale line, « Remettre comme sur l’image », export unblocked; an older version chosen after a logo version → the same line; a read without `rows` (old bundle) → no settings card; reload between the identity save and the request → « Reprendre » sends the kept request.
+- **Paid (the user's word; reads about USD 0.10, each image at the pilot's price)**: about 25 real messages on the new rows, with the confusions named above (shop logo against brand mark, word colour against style, plain brand against a new brand), every wrong field reported; then one image each for: accent word with a colour, brand in plain letters, a style change on a version with a model image, logo and contact together.
+
+### Tasks (each one session, in this order)
+
+1. **T-CHAT-SET-001** backend: `Row.setting`, `Row.since`, `rows` in the request, `card.settings`, `poster_words` settings; rows `accent_word`, `accent_colour`, `brand_text`; row `format` with its `steps` sentence; stub patterns; sentences. Verify: `uv run pytest tests/test_reads.py tests/test_api.py -q`.
+2. **T-CHAT-SET-002** frontend: `Settings`, `rows: 2`, `setSettings` (the three headline settings), `carries`, `revise`'s new argument, list labels. Verify: Vitest, then the chat smoke's accent and brand cases. A, B and E's sentence are done here: no new plan path, no document change.
+3. **T-CHAT-SET-003** style (D): row `style` with its two lines; the style branch of `revise`. Verify: pytest, the smoke's style case.
+4. **T-CHAT-SET-004** paid reads of the new rows, and three images (accent, plain brand, style). Report; the row rules are corrected from it before C is built. Needs the user's word.
+5. **T-CHAT-SET-005** identity, backend (C): rows `logo`, `contact`, the identity rule, `poster_words` identity and snapshot. Verify: pytest.
+6. **T-CHAT-SET-006** identity, frontend (C): the identity part of `setSettings`, `freshPlan`, `words` with toggles, `staleIdentity` and its line. Verify: Vitest, the smoke's identity cases; then one paid image with logo and contact (the user's word).
+7. **T-CHAT-SET-007** another format from the chat (E) — **only on the user's word, after its own design round.** Sketch: (a) a poster without version gets a recap card in its conversation (name and price from the document; tap = the existing `start`, which skips `createPoster` when the poster exists, `App.vue:1389`); (b) row `format` → effect `copy`, free, « Créer la copie » → `pickVersion`, `remakeIn(to)`; the chat follows the opened copy to its conversation; (c) the recap card keeps the source version's `plan_id`, and `start` lays its `scene` and `palette` on the first plan (`freshPlan`). Open points for that round: a second tap or a retry after a lost answer may make a second copy (`remakeIn` is not idempotent across reloads); the paid card and its request then belong to another poster than the message that asked.
+
+Tasks 1 to 3 need no document change and no new plan path: the cheapest safe slice. Tasks 5 and 6 carry the risks named in the failure table. Task 7 may stay in « Pas à pas » for good.
+
 ## Tests
 
 - **D-005, backend:** the field table drives the schema, the card lines and the sentence (a row added in a test appears in all three); each check in its order; words with an instruction containing « titre »; brand set apart (the report's own message; the brand already stored and inside the title; the title that would be empty; the brand inside a token); the word guard (a new word named, case and accents, a word of the current title, « garantie 2 ans »; the recombination case passes and is documented); `remove`; `same`; `effect` for each row (drawn and layer title, drawn and layer price, version without words); the title limit 60 or 240; `visual_id` of another poster; a body without `visual_id` has the hash it had before and answers 409 with no ledger row; a stored old answer replays unchanged; the stub.
