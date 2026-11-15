@@ -768,7 +768,11 @@ def test_a_new_scene_keeps_the_adjustments_asked_by_message(poster, engine, sett
         base_visual_id=first, instruction_fr="fond bleu nuit avec des reflets"))
     refined = execute(engine, settings)
     kept = payload(scene(keep_adjustments_of=refined))
-    assert kept["adjustments"] == ["fond bleu nuit avec des reflets"]
+    assert kept["adjustments"] == ["fond bleu nuit avec des reflets"] and kept["replaces_visual_id"] == refined
+    with engine.connect() as conn:  # the list of modifications reads it from the version
+        newest = visuals.listed_visuals(conn, 1, store.get_creation(conn, 1, creation_id)["document"])[0]
+        assert visuals.get_visual(conn, 1, newest)["replaces_visual_id"] == refined
+        assert visuals.get_visual(conn, 1, first)["replaces_visual_id"] is None
     assert '"kept_adjustments":["fond bleu nuit avec des reflets"]' in kept["prompt"] and "the kept adjustment wins" in kept["prompt"]
     # Without the field nothing changes; a version of the first scene alone has nothing to keep.
     plain = payload(scene())

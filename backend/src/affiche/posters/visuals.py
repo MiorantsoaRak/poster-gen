@@ -285,6 +285,8 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]), style.get("align", "centre"))
         if adjustments:  # kept with the job, so the next word change carries them on
             payload["adjustments"] = adjustments
+        if request.keep_adjustments_of:  # the list of modifications says what changed against this version
+            payload["replaces_visual_id"] = request.keep_adjustments_of
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "scene", payload)
     # Omitted optional references must preserve pre-style idempotency hashes.
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/scenes", request.model_dump(exclude_none=True), apply, revision=revision)
@@ -396,6 +398,7 @@ def get_visual(conn, shop, id):
     payload = json.loads(store._owned(conn, "poster_jobs", shop, row["job_id"])["input_json"])
     return {key: row[key] for key in ("id", "input_id", "base_visual_id", "status", "model", "quality", "size", "created_at", "decided_at")} | {
         "image_url": f'/api/assets/{row["image_asset"]}',
+        "replaces_visual_id": payload.get("replaces_visual_id"),  # the version a chat card redrew, if any
         "plan_id": row["plan_id"],  # its style lives there: a new image of the same poster starts from it (ADR-100)
         "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
         # The owner's words for a refinement; null for a scene, and for a refinement older than this field.

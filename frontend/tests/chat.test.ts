@@ -221,6 +221,11 @@ it('lists the modifications from the versions: number, state and what changed', 
   // The same price drawn again, or a price that is a layer: a new version, nothing invented.
   expect(modifications([version('b'), version('a')])[0].label).toBe('Nouvelle version')
   expect(modifications([version('b', { headline: null }), version('a')])[0].label).toBe('Nouvelle version')
+  // A version a chat card made from an older one says what changed against that one, not against the line below it.
+  const branded = { title: 'WH-CH720N', brand: 'Sony', price_ar: 700000 }
+  const made = modifications([version('c', { headline: branded, replaces_visual_id: 'a' }), version('b', { headline: branded }), version('a')])
+  expect(made[0].label).toBe('Titre : WH-CH720N · Marque : Sony')
+  expect(modifications([version('c', { headline: branded, replaces_visual_id: 'gone' }), version('b', { headline: branded }), version('a')])[0].label).toBe('Nouvelle version')
   expect(modifications([])).toEqual([])
   // A new scene is named by its drawn words that differ from the version before, in the field table's order.
   const words = modifications([

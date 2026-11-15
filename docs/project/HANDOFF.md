@@ -24,7 +24,9 @@ The paid check (the user's word, USD 0.0304) showed the plan's style kept for re
 
 **T-CHAT-REFINE-KEPT done** (ADR-101, the user's decision): the chat's scene request names the version it replaces, and the server carries that version's scene adjustments into the new image. Reviewed, committed and pushed (commit "T-CHAT-REFINE-KEPT: …"). A second paid check (USD 0.0308) gave a night-blue image with the right words. `backend/data-probe` now has five versions of the JBL poster. Spend of the day for this work: USD 0.1586, all on the ledger.
 
-**Exact next step:** the user's deploy, backend and frontend together. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, the list label of a version made from an older one, keeping the text of messages the chat could not take.
+**T-CHAT-LIST-LABEL done**, committed and pushed (commit "T-CHAT-LIST-LABEL: …"): a version made by a chat card from an older one is labelled by its difference with that version (`replaces_visual_id` on the scene job and on the version).
+
+**Exact next step:** the user's deploy, backend and frontend together. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.

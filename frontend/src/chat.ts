@@ -225,13 +225,14 @@ export const staleLine = (stale: Stale) => {
   return shown.length ? `L’affiche montre encore : ${shown.join(', ')}.` : ''
 }
 /** The list of modifications, from the poster's versions as the server lists them (newest first): the first poster, a
- *  refinement by the owner's words, a new scene by its drawn words that differ from the version before. */
+ *  refinement by the owner's words, a new scene by its drawn words that differ from the version it was made from (the
+ *  one a chat card redrew; otherwise the version before it in the list). */
 export function modifications(visuals: Visual[]): Modification[] {
   return visuals.map((visual, index) => {
-    const before = visuals[index + 1]
+    const before = visuals[index + 1], from = visuals.find(other => other.id === visual.replaces_visual_id) ?? before
     const label = !before ? 'Première affiche' : visual.instruction_fr ? visual.instruction_fr
       : visual.base_visual_id ? 'Scène ajustée'  // a refinement older than the kept instruction
-      : differences(visual.headline, before.headline).join(' · ') || 'Nouvelle version'
+      : differences(visual.headline, from.headline).join(' · ') || 'Nouvelle version'
     return { id: visual.id, number: visuals.length - index, status: visual.status, state: STATES[visual.status], label }
   })
 }
