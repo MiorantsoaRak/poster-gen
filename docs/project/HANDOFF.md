@@ -4,7 +4,7 @@
 
 ## Creation by message — handoff of 2026-11-15 (READ FIRST)
 
-**State:** the feature is built and committed locally on `main`, **not pushed and not deployed**: T-CHAT-001 to 005 are done (TODO.md). Requirements R-TEXT-FIRST-001 to 005, [design v2](designs/text-first-generation.md), decisions ADR-091 to ADR-098. The user gave full autonomy for this feature, paid calls included (ADR-093); push and deploy stay his word. Nothing is in progress.
+**State:** the feature is pushed (`origin/main` = `0e5fa64`) and **deployed by the user on 2026-11-14 21:03 UTC**. Claude read the box on 2026-11-15 (read only): container `affiche-ia-affiche-ia-1`, image revision `0e5fa64`, healthy, no restart, 112 MiB of 1 GiB, no error in its logs, migration 0012 applied, `planner_mode` claude, no chat read yet. Built and committed: T-CHAT-001 to 005 are done (TODO.md). Requirements R-TEXT-FIRST-001 to 005, [design v2](designs/text-first-generation.md), decisions ADR-091 to ADR-098. The user gave full autonomy for this feature, paid calls included (ADR-093); push and deploy stay his word. Nothing is in progress.
 
 **What exists:** a choice screen and a switch « Message » / « Pas à pas »; a chat that reads each message with a paid Claude call (`POST /api/reads`, ledger `chat_reads`, migration 0012), shows one recap with its cost, makes the poster through the editor's own functions, hands the check and the download to the editor's dialogs, changes a scene or a price from a message, and lists the modifications. Reports: [reading test](reviews/chat-read-eval-2026-11-14.md), [failure audit](reviews/chat-failure-audit-2026-11-15.md), [first real poster and read-back measurement](reviews/chat-paid-run-2026-11-15.md).
 
@@ -18,7 +18,7 @@ cd backend && uv run python ../frontend/tests/browser_smoke.py && uv run python 
 cd backend && uv run python ../outputs/serve_demo.py ../outputs/demo-password.txt
 ```
 
-**Exact next step:** the user's look at the chat on the free demo; on his word, push and deploy (the release applies migration 0012 to the pilot's database: take the backup first, as the runbook says; the pilot already has `PLANNER_PROVIDER: claude`, so the chat is offered there as soon as it is deployed). Then T-CHAT-FOLLOW-UPS in TODO.md, each on his word.
+**Exact next step:** the user's report from his phone on the live chat (the first read on the pilot will show in `chat_reads`). Then T-CHAT-FOLLOW-UPS in TODO.md, each on his word.
 
 **Landmines of this feature:**
 - Read ADR-097 and ADR-098 before touching `frontend/src/ChatView.vue`: the chat never guesses what a paid request became. Five review rounds were lost to time-based and order-based inference.
