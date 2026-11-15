@@ -222,8 +222,138 @@ download   () → opens the existing final dialog (render, warnings, confirmatio
 
 ---
 
+## D-TEXT-FIRST-005 — A change is a set of fields, not a kind (covers the ADR-099 amendments of R-TEXT-FIRST-004 and 005)
+
+**Status:** v4, 2026-11-15, approved under the user's autonomy grant, restated on 2026-11-15 (ADR-099). [Round 3](../reviews/text-first-d005-design-r3-2026-11-15.md) rejected v3 on one P1 (a requirement gap, closed by an explicit exception in the requirements) and three P2; all four are fixed in v4 and listed under "What changed from v3". v4 itself has not been reviewed again: the code review of each task checks these four points. v1 was rejected by the fresh review ([round 1](../reviews/text-first-d005-design-r1-2026-11-15.md): four P1) and challenged by the devil's advocate ([report](../reviews/text-first-d005-devils-advocate-2026-11-15.md): three P1); v2 was rejected in [round 2](../reviews/text-first-d005-design-r2-2026-11-15.md) (two P1, five P2). "What changed" is at the end of the section. Replaces, for an existing poster only, the `intent` of D-002 and the two change cards of D-003. The reader of a new poster (D-002) is not touched.
+
+**Problem:** the chat holds a hand-made copy of what the editor can change: an `intent` value, a prompt sentence, a `build` branch, a card kind (`change: 'scene' | 'price'`) and an adapter function (`change`, `reprice`, `price`) per kind. The editor's « Textes » group has title, brand, subtitle and price; the copy has the price only, so a brand request falls to `other`. The sentence « Dites ce qu’il faut changer : … » is written by hand beside them.
+
+**Approach:** on an existing poster the reader fills the editor's own fields, against the words of one version that the server reads itself. No kind is asked from the model. One table on the server names the fields; the model's schema, the checks, the card's lines and the "what I can change" sentence are made from it. The server says what the change costs and which words the new image will carry; the client sets exactly those words in the editor and asks the editor's own « Nouvelle version ».
+
+**The field table (`reads.py`). Adding a field is one row here, one setter in the adapter, its TypeScript type and one stub pattern; a change that is not a field of the editor stays impossible:**
+| Field | Current value comes from | Check | Can be removed | Label |
+|---|---|---|---|---|
+| `title` | the version's stored `headline.title`; a version without drawn words: `document.offer.title` | drawn: `name_refusal` (1 to 60, `screen_headline`, no `"` or line break). A layer: `Offer` (1 to 240) | no | « le titre » / « Titre » |
+| `brand` | the version's stored `headline.brand` | `HeadlineText` + `screen_headline` | yes | « la marque » / « Marque » |
+| `subtitle` | the version's stored `headline.subtitle` | same | yes | « le sous-titre » / « Sous-titre » |
+| `price_ar` | the version's stored `headline.price_ar`; when the price is not drawn: `document.offer.price_ar` | the candidate amounts of the message (ADR-095), then `Offer` | no | « le prix » / « Prix » |
+| `instruction_fr` | — | `RefinementRequest.scene_adjustment`, 500 characters | no | « le fond, la lumière » / « Scène » |
+
+**No data model change. No migration.**
+
+**API contract (`POST /api/reads`, one addition):**
+```
+body  + visual_id?: uuid      -- the version the owner looks at; required with creation_id for a change.
+                              -- Left out of the canonical body when absent (`exclude_if`, as `Headline.brand_text`),
+                              -- so every request made before this change keeps its hash.
+201 { card: { kind: "change", text_fr, visual_id,
+              effect: "refine" | "scene" | "free",
+              words?: { title?, price_ar?, brand?: string | null, subtitle?: string | null },
+                 -- effect "scene": the four words the new image will carry, whole (null = none), changed or not.
+                 -- effect "free": only the document fields to set (title, price_ar).
+              instruction_fr? },                                   -- effect "refine" only
+      draft }
+404 not_found: the version is not this poster's.
+409 reload_required « Rechargez la page pour continuer. »: `creation_id` without `visual_id` (a tab that still
+    runs the old bundle, or a read kept from before that never reached the server). The key is looked up first, so
+    a stored answer is still replayed; a new key is refused before any row is inserted: nothing is reserved,
+    nothing is paid. The old client settles an unknown 409 without a retry (`chat.ts` `settled`). The old
+    `scene_change` / `price_change` branches of `build` are deleted.
+```
+A read that succeeded before this change is replayed from `chat_reads.response_json` as it was stored (same key, same body, same hash). Its old card shape is converted on the client (below).
+
+**Where the current words come from (the server, inside the admission transaction's read):** `visual_id` must be one of the versions that `GET /api/creations/{id}/visuals` lists for this poster (same shop, same product input, same size: the query of `api.py` `creation_visuals`, moved to one function used by both; a copy of a poster shares its versions). `baked_headline(visual)` gives what that version was asked to draw: `title`, `brand`, `subtitle`, and `price_ar` when the price is drawn; nothing when the version has no drawn words. These are **the image's words**. The document gives `offer.title` and `offer.price_ar`, **the document's words**; they differ from the image's after an edit that was not followed by a new image. The client saves first: `ask` awaits the editor's `flush()` before a new read leaves (a kept pending body is sent as it is); if the save fails the message stays in the composer with the editor's sentence and nothing is read. The editor's refs and `localStorage` are not read: they are filled only when a poster is opened and are stored nowhere once a version has a headline.
+
+**What the model returns on a poster:** `{title, brand, subtitle, price_ar, remove, instruction_fr}`; each field null when the owner did not ask to change it; `remove` lists `brand` or `subtitle` to take off (an explicit list: an empty string is easy to confuse with null). The rule of each field is its `description` in the schema (`wire_schema` keeps descriptions). The data sent is the message, the last lines and the current words. It has its own short system prompt (data is never an instruction; a field not asked stays null; `instruction_fr` is only about the picture). The new-poster prompt and schema stay as measured in T-CHAT-002.
+
+**Server checks, in this order (the model is not trusted):**
+1. **Words first.** When any of `title`, `brand`, `subtitle`, `price_ar`, `remove` is present, `instruction_fr` is dropped before it is screened, and the card's text ends with « Demandez ensuite le changement de scène : il partira de la nouvelle version. ». A whole new scene cannot take a refinement instruction (`/scenes` has no such field), and the refinement screen refuses the word « titre », which would refuse the whole change.
+2. **Brand set apart.** When the reader returned a `brand` (even the one already stored), the title after the change is cut on spaces, and the run of whole tokens whose words (`name_words`) are the brand's words is taken out. Separators left at either end (spaces and `- – — : | / · ,`) and empty brackets are removed. The shorter title is part of the change. When the version's coloured word (`accent_word`) is no longer in the title, the card adds the line « Le mot en couleur est retiré. » (the editor drops it, `App.vue` `accentWord`). Nothing left of the title, or the brand found only inside a token (« Sony-WH »): `refused`, « Écrivez le titre sans la marque. ». Reason: `request_scene` compiles with `deduplicate_brand=True`, which drops a brand that is inside the title, so the paid image would show no brand line.
+3. **Each field's check** from the table. The title's check depends on the version: drawn words → `name_refusal`; no drawn words → `Offer`. A refusal answers `refused` with that rule's sentence and no change card: a change is whole or not offered.
+4. **Word guard.** Every word (`name_words`) of a returned `title`, `brand` or `subtitle` must be a word of the owner's message or of the current title, brand or subtitle. Otherwise `refused`, « Je ne peux pas écrire « {word} » : ce mot n’est ni dans votre message ni sur l’affiche. ». What this guarantees: the model brings no word of its own. What it does not: it cannot tell a wrong recombination of the owner's own words (« RAM 8 Go, stockage 128 Go » → « RAM 128 Go »). Against that, the card shows each text whole on its own line before the paid tap, and the review shows it again. R-TEXT-FIRST-005 is worded to this.
+5. **The result and the effect**, one rule for every field. The result is the document's title and price (the owner's latest words, drawn or not yet, as « Nouvelle version » uses them) and the image's brand and subtitle, with the returned fields and removals applied. On a `scene` card each line is a difference with what the image shows, so a title edited in « Pas à pas » and never drawn has its line too (corrected during T-CHAT-006: starting from the image's title would silently undo that edit).
+   - an instruction only → `refine`;
+   - the result differs from the image's words in a word the version draws → `scene`, and the card carries the four resulting words;
+   - otherwise, the result differs from the document's words → `free`, and the card carries the document fields to set. This is the price as a layer, the title as a layer, and also a request that puts the document back to what the image shows (« remets 450 000 Ar »): no image is paid for that;
+   - otherwise → card `same`, « L’affiche a déjà ces textes. »;
+   - `brand`, `subtitle` or `remove` on a version without drawn words (a requirements exception, ADR-099: a brand and a subtitle exist only as drawn words; such a poster has neither as a layer) → card `steps`, « Cette affiche n’a pas de textes dessinés dans l’image : la marque et le sous-titre se règlent dans Pas à pas. ».
+
+`text_fr` is one line per field from the table's labels: « Marque : Sony », « Titre : WH-CH720N », « Sous-titre : retiré », « Prix : 450 000 Ar », « Scène : « fond plus sombre » ». `card_unclear_poster` becomes « Dites ce qu’il faut changer : {the table's labels}. Le reste se change dans Pas à pas. ».
+
+**The client (`chat.ts`, `ChatView.vue`):**
+- The read on a poster sends `visual_id` = the version shown (`looked ?? selected`), or the selected one when the shown one is refused. A change is asked on the version the owner looks at, checked or not.
+- One change card. Its button follows `effect`: `refine` « Créer · cost »; `scene` « Refaire l’affiche · cost »; `free` « Changer ».
+- **One converter `normal(card)`**, used by `readThread` and by `ask` (the two places a card enters): a stored `change: 'scene'` becomes `effect: 'refine'`; a stored `change: 'price'` becomes `words: {price_ar}` with **no** `effect`. A card without `effect` or `visual_id` is an old one: it targets the selected version, sets only its own fields (as `reprice` did), and its effect is today's rule, kept in one function `effectOf(card, version)`: `whole`, or a drawn price in the selected version → `scene`; otherwise `free` (the body of today's `freePrice`). A card that already holds its kept request is replayed as it left, whatever its shape. `whole` (after `headline_stale`) stays.
+
+**The adapter (`App.vue`):**
+- `revise(card, visual, words, smallPhotoAccepted, owned, sending)` replaces `reprice`:
+  1. `select(visual, owned)` if it is not the selected one: `select` takes the ownership check and calls it after its own awaited refresh, right before it changes and saves the document (a tab that lost the chat changes nothing). A version that is no longer listed: « Cette version n’existe plus. », nothing sent;
+  2. if « Textes dans l’image » is off in the editor (`headline.on` false): stop with « Les textes dessinés sont désactivés pour cette affiche : réglez-les dans Pas à pas. ». Nothing is sent: the request would not carry the words the card lists;
+  3. `flush()`, `owned()`;
+  4. the four words of the card through the editor's setters, each one set, changed or not: `edit(d => d.offer.title = …, 'title')`, `typePrice`, `headline.value.brand`, `headline.value.subtitle` (null → empty);
+  5. `createScene(card, sending)`.
+- `words(visual, values, owned)` replaces `price`: `select(visual, owned)`, `flush`, `owned`, the document setters, `flush`.
+- `change(card, visual, instruction, owned, sending)`: `select(visual, owned)`, then as today.
+- `saved()`: the editor's `flush()`, for the read.
+
+**What the card promises, and what it does not.** The words: the new image is asked with exactly the title, brand and subtitle that the card lists, and the document holds exactly the card's price, because all four are set from the card at the tap. Whether the price is drawn in the image or laid over it is the editor's switch (`headline.price`), like the other settings below; the amount is the card's in both cases; a subtitle typed in « Pas à pas » and never drawn cannot slip in. Everything else of the request (style, coloured word, contact line, logo seal, style reference, plain-lettering brand) is the editor's state at the tap, through `createScene`, exactly as for today's price card (ADR-098: "look, brand and contact stay the poster's") and for « Nouvelle version » in the editor. The plan itself is made from that state (`createScene` → `prepareScene`), so the server cannot rebuild it from the version alone, and `restoreHeadline()` restores only part of it. The card therefore says « Refaire l’affiche » and lists words; it does not claim the same scene. This is a stated limit, not a new one.
+
+**After a paid card that did not make an image.** Only the title and the price are saved in the document before the scene is asked; the brand and the subtitle live in the request alone. The editor already computes the truth: `staleTitle` and `stalePrice` compare the document with the selected version's stored words, and block the export. `ChatAdapter.state` gains `stale: { title?: string; price_ar?: number }`: the selected version's stored `headline.title` and `headline.price_ar`, each present only when it exists and differs from the document. A version without stored words gives nothing here (its hidden-layer case stays the editor's, as today). While it is not empty and no paid card is unresolved, the newest unspent change card, or a line under the poster when there is none, says « L’affiche montre encore : {the image's words}. » with « Remettre les textes de l’image » → `words(selected, stale)`. `Card.previous` is no longer written; `normal` drops it. This holds after any number of later cards, a reload, or an edit made in « Pas à pas ». ADR-097 and ADR-098 do not change: one unresolved paid card, the card's id is the key, the kept request is replayed as it left, a card is retired only on a final refusal.
+
+**List of modifications:** the label of a version made by a new scene is the difference of its `headline` with the version before, with the table's labels (« Marque : Sony · Titre : WH-CH720N »); no difference: « Nouvelle version ». `Visual.headline` gains `subtitle` in the TypeScript type (the server already sends it).
+
+**Stub reader:** on a poster, « marque X », « titre X », « sous-titre X » (to the end of the message), « sans marque », « sans sous-titre », the first candidate amount, « fond » or « lumière »; nothing else.
+
+**Failure modes & handling:**
+| Failure | Detection | Behavior |
+|---|---|---|
+| The model returns a word nobody wrote | word guard | `refused`, the word named; nothing is changed |
+| The model recombines the owner's words wrongly, or splits brand and title wrongly | none on the server | each text is whole on its own line of the card before the paid tap; « Annuler » puts the message back; the review shows the words again |
+| The reader puts the lettering request in `instruction_fr` only | the refinement screen | `refused` with the existing sentence; counted in the paid test |
+| The title is saved, then the scene request is refused, lost or fails | `state.stale` | « L’affiche montre encore … » and « Remettre les textes de l’image », until the document and the image agree |
+| The selected version changes between the read and the tap | the card holds `visual_id` | the adapter selects that version first; if that fails the card shows the editor's sentence and nothing is sent |
+| « Textes dans l’image » was switched off in « Pas à pas » after the version was made | `revise` step 2 | nothing is sent; the sentence points to « Pas à pas » |
+| The style or the contact line was changed in « Pas à pas » since the version | none; stated limit | the new image follows the editor's current settings, as « Nouvelle version » does |
+| An unsaved edit of « Pas à pas » when a message is sent | `saved()` before the read | the read waits for the save; a failed save keeps the message and reads nothing |
+| The tab lost the chat while a version was being selected | `owned()` before and after `select` | nothing more is changed, nothing is sent |
+| A read from an old bundle, or kept from before | `visual_id` absent | 409 `reload_required`, nothing paid |
+| The reader is down, slow, or over the cap | D-002, unchanged | D-002, unchanged |
+
+**Edge cases:** « enlève la marque » without a brand: `same`. « mets Samsung » on a Sony poster: passes the guard (the owner wrote it); the card line and the review are the guard. A brand already stored and inside the title, asked again: check 2 takes it out of the title, so the change is real. A price and a brand in one message: one card, one scene. A version without drawn words and a title change: `free`. A twelfth version: the existing limit line and refusal. Malagasy message: read like any other.
+
+**Security / data notes:** the current words sent to Anthropic are the shop's own text, read by the server from its own data (text only, as today). The output fills typed fields only. `visual_id` is checked for ownership before any spend.
+
+**What this does not do:** lettering requests that are not a field (size, place, font of the title), the accent word, the format, the style, the photos. `chat_reads` keeps a hash of each message, not its text, so the requests the chat could not take can be counted (`unclear` in `response_json`) but not read; keeping the text needs a migration and a decision on keeping the owner's words, and is left to the user.
+
+**What changed from v3 (round 3):** brand and subtitle on a poster without drawn words are an explicit exception in the requirements (P1); `select` takes the ownership check and runs it before its own mutations, and `words` checks after its flush (P2); the price promise is the amount, not whether it is drawn (P2); the smoke for texts switched off expects a refusal (P2).
+
+**What changed from v2 (round 2):** the claim "the version's settings plus the card" is replaced by a narrower one that is true: the four words come whole from the card, the rest is the editor's state as for every new version (P1-1); old price cards keep today's free rule through `effectOf` (P1-2); `owned()` around `select` (P2-3); a save before each read (P2-4); `stale` only from stored words, and the effect compares the result with the image's words, so going back to them is free (P2-5); a version is accepted by the listing's own rule, copies included (P2-6); separators after a removed brand, and the coloured word that goes with it (P2-7); the key is looked up before `reload_required`.
+
+**What changed from v1, and why:**
+| v1 | v2 | Source |
+|---|---|---|
+| The client sends the current words from the editor's refs | The client sends `visual_id`; the server reads the words from the version's job and the document | Devil's advocate 2: the refs are filled only at `adopt` and stored nowhere; false `same`, unlisted subtitle |
+| `words` in every body | `visual_id`, left out of the hash when absent | Review P1-1, devil's advocate: `payload_sha` of kept requests |
+| Old schema kept one release for bodies without `words` | 409 `reload_required` before admission; old branches deleted | The pilot has one user and no read yet; one path instead of two |
+| Old cards converted in `readThread` | One `normal(card)` at both entries | Review P1-1 |
+| Brand set apart only when the brand changed | Whenever the reader returns a brand, before the "equal" check; token rule written | Review P1-2, devil's advocate 1 and P2 |
+| Instruction screened, then dropped | Dropped first when words are present | Devil's advocate 1 |
+| The client decides the cost from the selected version | The server states `effect` and the resulting words; `revise` sets all four | Review P1-4, P2-7 |
+| `previous` kept on the card for « Remettre » | `state.stale` from the editor's `staleTitle` / `stalePrice` | Devil's advocate 3, review P2-5 |
+| Title always 1 to 60 | 60 when drawn, 240 as a layer | Review P2-6 |
+| `""` removes | `remove` list in the model's answer; null in the card's resulting words | Devil's advocate P2 |
+| The word guard "closes" invention | Its limit is written; the refused word is named; the requirement is reworded | Review P1-3 |
+| New-poster reader loses `intent` | Not touched | Review, "simpler logic" |
+
 ## Tests
 
+- **D-005, backend:** the field table drives the schema, the card lines and the sentence (a row added in a test appears in all three); each check in its order; words with an instruction containing « titre »; brand set apart (the report's own message; the brand already stored and inside the title; the title that would be empty; the brand inside a token); the word guard (a new word named, case and accents, a word of the current title, « garantie 2 ans »; the recombination case passes and is documented); `remove`; `same`; `effect` for each row (drawn and layer title, drawn and layer price, version without words); the title limit 60 or 240; `visual_id` of another poster; a body without `visual_id` has the hash it had before and answers 409 with no ledger row; a stored old answer replays unchanged; the stub.
+- **Order as built (T-CHAT-006):** the `steps` answer is given right after "words first", before the brand is set apart, so that a brand asked on a poster without drawn words is never answered « Écrivez le titre sans la marque ». A dropped instruction on a `same` card is not mentioned. The card's lines follow the table's order.
+- **D-005, backend, added in v3:** a version of a copied poster is accepted; going back to the image's words is `free`; separators and the coloured word after a removed brand; a known key without `visual_id` replays, a new one is refused with no row.
+- **D-005, frontend (Vitest):** `normal` (old price card, old scene card, a numeric `previous`); `effectOf` for an old price card on a drawn and on a layer price, and with `whole`; the button for each `effect`; the modification labels; `stale` with and without stored words.
+- **D-005, browser smoke, added in v3:** an old layer-price card is still free; an unsaved step edit before a message; the chat taken by another tab during a selection; a subtitle typed in steps and never drawn is not in the request.
+- **D-005, browser smoke (stub):** the report's message on an unchecked version to a new version to check, with its list line; a change asked while an older version is shown; a subtitle removed; a free title change on a poster without drawn words; « Textes dans l’image » switched off in steps, then a brand by message (refused with its sentence, no request, no spend); a refused scene after the title edit, then a later price card, « Remettre les textes de l’image » still offered; reload between the edit and the request; a kept old price card; an old stored answer received after the upgrade.
+- **D-005, paid (needs the user's word; about USD 0.10 for the reads and one scene at the pilot's price):** about twenty real change messages, the report's own included, with cost, delay and every wrong field; one real brand change through the chat.
 - **Backend:** migration 0012 on a copy of a 0011 database; the read state machine with a mocked transport (succeeded, usage unreadable, 429, timeout, late answer after the sweep, crash recovery); replay (same key and body, same key other body, same key while running); money: reservation, real cost from usage, estimate kept, `spent_micros` over three tables with a `running` read counted, cap refusal, daily limit at the day's edge; the candidate amounts (`Sony WH-1000XM6 noir, 700 000 Ar`, `Redmi Note 13 700 000 Ar`, `700.000 Ar`, `700k`, two prices, a bare number, a price the owner did not write); every card from the stub reader; `STUB_FAIL`; ownership of `creation_id`; the mode lock; every new code has its French sentence; `instruction_fr` in the visual view; the suggestions query.
 - **Frontend (Vitest):** `chat.ts`; the 30 s timeout and key reuse in `api.ts`.
 - **Browser smoke (stub, zero spend):** the choice screen and the remembered start view; one message with two images to a confirmed download; reload in the middle (unsent text, spent card); a scene change; a price change and its failure; no photo; no price; read failed (`STUB_FAIL`); cap reached; 360 px with the keyboard-sized viewport; desktop; both themes; the step editor's existing run unchanged.

@@ -10,7 +10,7 @@ import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, WORDS_PREFIX } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
-import type { ChatAdapter, SceneRequest } from './chat'
+import { GONE, staleOf, type ChatAdapter, type SceneRequest, type Words } from './chat'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
@@ -1038,9 +1038,10 @@ async function conflictCopy() {
   const result = await mutation<Creation>(`/api/creations/${creation.value!.id}/copies`, { source_revision: saver!.revision, reason: 'save_conflict', unsaved_document: doc.value })
   await adopt(result); notice.value = 'Vos modifications ont été conservées dans une copie.'
 }
-async function prepareScene() {
-  await flush()
+async function prepareScene(owned?: () => void) {
+  await flush(); owned?.()
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/plans`, { mode: plannerMode.value, direction: direction.value, format: format.value }, saver!.revision)
+  owned?.()  // a plan that arrives after the chat was taken is not adopted
   if (result.job_id) follow({ id: result.job_id, kind: 'plan', status: 'queued', result_ref: null, error_code: null })
   else {
     acceptPlan(result)
@@ -1059,7 +1060,8 @@ let planSignature = ''
 // One tap for the simple composition. An unchanged request reuses its plan, so a retry after a lost
 // response sends the same scene body and key instead of paying for a second image.
 // key: the chat's card id, so that one card pays once whatever the client does; the editor leaves it out.
-async function createScene(key?: string, sending?: (request: SceneRequest) => void) {
+// owned: the chat's check that this tab still holds it, run after each wait and before anything is changed or sent.
+async function createScene(key?: string, sending?: (request: SceneRequest) => void, owned?: () => void) {
   if (paletteBlocked.value) throw new Error(paletteBlocked.value)
   stylePill()
   // A seal whose footer conditions are not met cannot be asked for: it becomes a plain logo before the plan is made,
@@ -1068,21 +1070,22 @@ async function createScene(key?: string, sending?: (request: SceneRequest) => vo
     const logo = document.formats[format.value]!.layers.find(layer => layer.kind === 'logo')
     if (logo?.kind === 'logo') { delete logo.shape; placeFooter(document) }
   })
-  await flush()
+  await flush(); owned?.()
   const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, sceneAccent.value, productPalette.value, format.value])
-  if (!plan.value || planSignature !== signature) { await prepareScene(); planSignature = signature }
+  if (!plan.value || planSignature !== signature) { await prepareScene(owned); owned?.(); planSignature = signature }
   rememberStyle()
-  await generateScene(key, sending)
+  await generateScene(key, sending, owned)
 }
 function acceptPlan(value: any) { plan.value = value; savedPlanSnapshot = JSON.stringify(value.plan) }
-async function savePlan() {
-  await flush()
+async function savePlan(owned?: () => void) {
+  await flush(); owned?.()
   if (plan.value.origin_revision === saver!.revision && JSON.stringify(plan.value.plan) === savedPlanSnapshot) return
   const { scene, product_region, overlay_regions, palette } = plan.value.plan
-  acceptPlan(await mutation(`/api/plans/${plan.value.id}/revisions`, { scene, product_region, overlay_regions, palette }, saver!.revision))
+  const revised = await mutation(`/api/plans/${plan.value.id}/revisions`, { scene, product_region, overlay_regions, palette }, saver!.revision)
+  owned?.(); acceptPlan(revised)
 }
-async function generateScene(key?: string, sending?: (request: SceneRequest) => void) {
-  await savePlan()
+async function generateScene(key?: string, sending?: (request: SceneRequest) => void, owned?: () => void) {
+  await savePlan(owned)
   const path = `/api/creations/${creation.value!.id}/scenes`, revision = saver!.revision
   const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
   // The chat's last word before the paid request leaves (it may stop it, and keeps it as sent); nothing is awaited between.
@@ -1105,7 +1108,7 @@ const lowResAccepted = computed({ get: () => !!creation.value && lowResAcceptedO
   set: (agreed: boolean) => { lowResAcceptedOf.value = agreed ? creation.value?.id ?? '' : '' } })
 // key and sending: the chat's, as for createScene.
 async function refineScene(key?: string, sending?: (request: SceneRequest) => void) {
-  await flush()
+  await flush()  // sending() below is the chat's check after this wait, before the request
   const path = `/api/creations/${creation.value!.id}/refinements`, revision = saver!.revision
   const body = { base_visual_id: currentVisual.value!.id, instruction_fr: refinement.value, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}) }
   sending?.({ path, body, revision })
@@ -1346,8 +1349,30 @@ const told = (action: () => Promise<void>) => new Promise<void>((done, fail) => 
   let failure: unknown
   void perform(async () => { try { await action() } catch (reason) { failure = reason; throw new Shown() } }).then(() => failure === undefined ? done() : fail(failure))
 })
+// A version becomes the poster's, as a tap on it in the editor, saved. `owned` runs after the awaited refresh, right
+// before the document changes: a tab that lost the chat changes nothing. false: the poster does not list this version.
+async function choose(id: string, owned: () => void) {
+  if (!visuals.value.some(item => item.id === id)) await refreshVisuals(true)
+  const made = visuals.value.find(item => item.id === id)
+  if (!made) return false
+  owned()
+  if (currentVisual.value?.id !== id) chooseVisual(made)
+  // edit() keeps a refused change to itself: without this, a paid request would start from another version.
+  if (currentVisual.value?.id !== id) throw new Error(error.value || 'Cette version n’a pas pu être choisie.')
+  await flush()
+  return true
+}
+// The version of a change card (D-TEXT-FIRST-005): nothing is sent for one that is gone.
+async function pickVersion(id: string, owned: () => void) { if (!await choose(id, owned)) throw new Error(GONE) }
+// The card's words through the editor's own fields, each one given set, changed or not (null: none).
+function setWords(words: Words) {
+  if (typeof words.title === 'string') edit(document => { document.offer.title = words.title! }, 'title')
+  if (typeof words.price_ar === 'number') typePrice(words.price_ar)
+  if ('brand' in words) headline.value.brand = words.brand ?? ''
+  if ('subtitle' in words) headline.value.subtitle = words.subtitle ?? ''
+}
 const chat: ChatAdapter = {
-  state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
+  state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
     busy: computed(() => busy.value || checking.value), cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
   start: (key, style, smallPhotoAccepted, sending) => told(async () => {
@@ -1361,25 +1386,24 @@ const chat: ChatAdapter = {
     if (paletteBlocked.value) pickLook('clair')
     await createScene(key, sending)
   }),
-  change: (key, instruction, sending) => told(async () => {
-    if (!currentVisual.value) throw new Error('Choisissez d’abord la version à ajuster.')
+  change: (key, visual, instruction, owned, sending) => told(async () => {
+    await pickVersion(visual, owned); owned()  // again after the selection's save
     refinement.value = instruction  // the editor's own field: the request is the one of « Ajuster la scène »
     await refineScene(key, sending)
   }),
-  reprice: (key, price, smallPhotoAccepted, owned, sending) => told(async () => {
-    // Earlier saves first: the price edit is queued only by the tab that still holds the chat, and leaves at once.
+  revise: (key, visual, words, smallPhotoAccepted, owned, sending) => told(async () => {
+    await pickVersion(visual, owned)
+    // Without drawn texts the request would not carry the words the card lists.
+    if (!headline.value.on) throw new Error('Les textes dessinés sont désactivés pour cette affiche : réglez-les dans Pas à pas.')
+    // Earlier saves first: the words are queued only by the tab that still holds the chat, and leave at once.
     await flush(); owned()
-    typePrice(price)
+    setWords(words)
     if (smallPhotoAccepted) lowResAccepted.value = true
-    await createScene(key, sending)
+    await createScene(key, sending, owned)
   }),
-  price: (value, owned) => told(async () => { await flush(); owned(); typePrice(value); await flush() }),
-  select: id => told(async () => {
-    if (!visuals.value.some(item => item.id === id)) await refreshVisuals(true)
-    const made = visuals.value.find(item => item.id === id)
-    if (made && currentVisual.value?.id !== id) chooseVisual(made)
-    await flush()
-  }),
+  words: (visual, values, owned) => told(async () => { await pickVersion(visual, owned); await flush(); owned(); setWords(values); await flush() }),
+  select: (id, owned) => told(() => pickVersion(id, owned)),  // a version that is not listed is a failure, not a success
+  saved: flush,
   attempts: async () => (await api<{ items: Job[] }>(`/api/creations/${creation.value!.id}/jobs`, { quiet: true })).items,
   job: id => api<Job>(`/api/jobs/${id}`, { quiet: true }),
   follow: found => follow(found as Job, true),

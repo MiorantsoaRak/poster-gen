@@ -4,7 +4,7 @@
 
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
-| [text-first-generation.md](text-first-generation.md) | R-TEXT-FIRST-001 … 005 | Approved 2026-11-14 under the autonomy grant with working defaults (ADR-091 to 093), amended by ADR-094 | [text-first-generation](../designs/text-first-generation.md) |
+| [text-first-generation.md](text-first-generation.md) | R-TEXT-FIRST-001 … 005 | R-TEXT-FIRST-004 and 005 amended 2026-11-15 (ADR-099: title, brand and subtitle by message). Approved 2026-11-14 under the autonomy grant with working defaults (ADR-091 to 093), amended by ADR-094 | [text-first-generation](../designs/text-first-generation.md) |
 | [editor-refinements.md](editor-refinements.md) | R-EDITOR-REFINEMENTS-001 … 004 | Approved autonomously after independent review, 2026-11-14 | [editor-refinements](../designs/editor-refinements.md) |
 | [product-visuals.md](product-visuals.md) | R-PRODUCT-VISUALS-001 … 011 | 001–008: phase-1 baseline; 009–011: approved normal-poster amendments | [product-visuals](../designs/product-visuals.md) |
 | [catalogue-brand.md](catalogue-brand.md) | R-CATALOGUE-BRAND-001 … 005 | 001–004: Approved (003–004 on 2026-11-12, ADR-052; 003 amended by ADR-053 then ADR-055; design D-004 v3.1 approved, ADR-056); 005 (logo seal): Approved 2026-11-12 with its design (ADR-057) | [catalogue-brand](../designs/catalogue-brand.md) |

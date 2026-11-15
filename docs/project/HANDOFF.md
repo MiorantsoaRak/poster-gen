@@ -2,7 +2,33 @@
 
 **Two tracks share this checkout.** Claude's track (the deployed editor) is the next block. Codex's track (text-first generation: research and an isolated mockup, nothing built) follows it, newest first; its files are the only uncommitted ones.
 
-## Creation by message — handoff of 2026-11-15 (READ FIRST)
+## Changes by message are a set of fields — handoff of 2026-11-15, later session (READ FIRST)
+
+**Why:** the user wrote « Sony is the brand, put it on top, the product title on the second line » on a poster and the chat answered that the title is changed in « Pas à pas ». He asked for a durable change, not a prompt patch (ADR-099).
+
+**State: built, reviewed, committed on `main` (commit "T-CHAT-006, T-CHAT-007: a change asked in the chat is a set of the editor's fields (ADR-099)"), NOT pushed, NOT deployed.** T-CHAT-006 (backend) and T-CHAT-007 (frontend) are done in TODO.md. On a poster the reader fills the editor's fields (title, brand, subtitle, price, scene instruction) from one table in `backend/src/affiche/posters/reads.py` (`FIELDS`); the server reads the current words from the version the owner looks at and states the effect (`refine`, `scene`, `free`); the chat has one change card. Requirements amended (R-TEXT-FIRST-004, 005), design [D-TEXT-FIRST-005 v4](designs/text-first-generation.md), reviews in `reviews/text-first-d005-*` and `reviews/t-chat-006-*`, `t-chat-007-*`.
+
+**Verified on Linux (stub data, zero spend):** `tests/test_reads.py` 175 passed; full backend suite 970 passed / 3 deselected (before the last test-only addition); 182 Vitest; build; `chat_browser.py`; `browser_smoke.py`. **Never verified:** the real model reading a change message (the stub reads « marque X », not the user's sentence), a real phone, the hosted pilot.
+
+```sh
+cd backend && uv run pytest tests/test_reads.py -q && uv run pytest -q
+cd frontend && corepack npm@10 test && corepack npm@10 run build
+cd backend && uv run python ../frontend/tests/chat_browser.py && uv run python ../frontend/tests/browser_smoke.py
+```
+
+**Exact next step:** the user's word on (1) the push, (2) T-CHAT-008: the paid reading test of about twenty real change messages, his own included, and one real brand change (about USD 0.10 for the reads plus one image), (3) the deploy.
+
+**Landmines:**
+- Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.
+- The new-poster reader (prompt, schema, the unused `scene_change` / `price_change` intents) is left as it was on purpose: its prompt was measured in the paid test of 2026-11-14. Do not tidy it without a new paid test.
+- The design was approved under the autonomy grant after three REJECT rounds; v4's last four fixes were checked by the code reviews, not by a fourth design round.
+- The card promises the words only. Style, coloured word and contact line of a new image are the editor's state at the tap (as for the old price card).
+- The word guard cannot detect a wrong arrangement of the owner's own words; the card and the check show each text whole.
+- Open for the user: keep the text of messages the chat could not take (`chat_reads` holds a hash only); T-CHAT-CANVAS-LOAD (the chat loads the canvas modules, against the rule below); T-CHAT-D005-TESTS.
+
+**Uncommitted:** only Codex's old `docs/project/mockups/text-first/` (untracked).
+
+## Creation by message — handoff of 2026-11-15, earlier session
 
 **State:** the feature is pushed (`origin/main` = `0e5fa64`) and **deployed by the user on 2026-11-14 21:03 UTC**. Claude read the box on 2026-11-15 (read only): container `affiche-ia-affiche-ia-1`, image revision `0e5fa64`, healthy, no restart, 112 MiB of 1 GiB, no error in its logs, migration 0012 applied, `planner_mode` claude, no chat read yet. Built and committed: T-CHAT-001 to 005 are done (TODO.md). Requirements R-TEXT-FIRST-001 to 005, [design v2](designs/text-first-generation.md), decisions ADR-091 to ADR-098. The user gave full autonomy for this feature, paid calls included (ADR-093); push and deploy stay his word. Nothing is in progress.
 

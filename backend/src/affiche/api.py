@@ -31,7 +31,7 @@ from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
 from affiche.visuals.admission import spent_micros
-from affiche.visuals.gateway import POSTER_SIZES, usd_to_micros
+from affiche.visuals.gateway import usd_to_micros
 
 log = logging.getLogger(__name__)
 
@@ -119,11 +119,17 @@ MESSAGES = {
         "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
         "card_ask_photo": "Il me faut une photo du produit.",
         "card_recap": "Voici l’affiche que je vais créer.",
-        "card_change_scene": "Nouvelle version : « {} ». L’actuelle reste gardée.",
-        "card_change_price": "Le prix est dessiné dans l’image : je refais l’affiche avec {}.",
         "card_refused": "Je ne peux pas demander ce changement : décrivez seulement le fond, la lumière ou le décor, sans prix, promotion, titre ni texte à écrire.",
         "card_unclear": "Écrivez le produit et son prix.",
-        "card_unclear_poster": "Dites ce qu’il faut changer : le fond, la lumière, le prix. Le titre et le format se changent dans Pas à pas.",
+        "card_unclear_poster": "Dites ce qu’il faut changer : {}. Le reste se change dans Pas à pas.",  # the field table's labels
+        "card_same": "L’affiche a déjà ces textes.",
+        "card_steps": "Cette affiche n’a pas de textes dessinés dans l’image : la marque et le sous-titre se règlent dans Pas à pas.",
+        "card_title_without_brand": "Écrivez le titre sans la marque.",
+        "card_title_too_long": "Le titre dépasse 240 caractères. Raccourcissez le titre.",
+        "card_word_unknown": "Je ne peux pas écrire « {} » : ce mot n’est ni dans votre message ni sur l’affiche.",
+        "card_words_first": "Demandez ensuite le changement de scène : il partira de la nouvelle version.",
+        "card_accent_removed": "Le mot en couleur est retiré.",
+        "reload_required": "Rechargez la page pour continuer.",
 }
 
 
@@ -499,11 +505,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def creation_visuals(id: Id, request: Request):
         with app.state.engine.connect() as conn:
             creation = store.get_creation(conn, request.state.shop, id)
-            # Only the versions made at this poster's size: a copy in another format shares the product input.
-            ids = conn.execute(text("SELECT id FROM poster_visuals WHERE shop_id=:shop AND input_id=:input AND size=:size "
-                                    "ORDER BY created_at DESC"),
-                               {"shop": request.state.shop, "input": creation["document"]["input_id"],
-                                "size": POSTER_SIZES[creation["document"]["primary_format"]]}).scalars().all()
+            ids = visuals.listed_visuals(conn, request.state.shop, creation["document"])
             return {"items": [visuals.get_visual(conn, request.state.shop, item) for item in ids]}
 
     @protected.post("/api/visuals/{id}/decision")

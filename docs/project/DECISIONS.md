@@ -1,5 +1,18 @@
 # DECISIONS
 
+## ADR-099 — 2026-11-15 — A change asked in the chat is a set of the editor's fields, not a kind
+
+- User report: « Sony is the brand, put it on top, the product title on the second line » was answered « Le titre et le format se changent dans Pas à pas ». He asked for a durable change of process, not a prompt patch or one more condition. He restated the autonomy grant for this work on 2026-11-15; push, deploy and paid calls stay his word.
+- On an existing poster the reader fills the editor's own fields (title, brand, subtitle, price, scene instruction) from one table on the server; the schema, the checks, the card's lines and the "what I can change" sentence come from that table. The reader of a new poster is not touched.
+- The server reads the current words from the version the owner looks at (its stored job) and from the document, never from the editor's refs, and states the effect by one rule: a result that differs from the image's drawn words is a whole new image; otherwise a free edit; an instruction alone is a refinement.
+- The card promises the words (all four set from the card at the tap). Style, coloured word and contact line stay the editor's state, as for the price card of ADR-098. A complete restoration of a version's settings was rejected: the plan is made from the editor's state.
+- A brand asked for is taken out of the title; without that the scene route drops it and the paid image shows no change.
+- Word guard: a word of a title, brand or subtitle must be in the owner's message or already on the poster. It cannot detect a wrong arrangement of the owner's own words; the card and the check show each text whole.
+- Exception: brand and subtitle are not offered on a poster without drawn words.
+- A read from before this change that never reached the server is refused without spend (`reload_required`); one user, no read on the pilot yet.
+- Not decided: keeping the text of messages the chat could not take (`chat_reads` holds a hash only). The user's call.
+- Gates: requirements amended (R-TEXT-FIRST-004, 005); design D-TEXT-FIRST-005 v4 after three review rounds and a devil's advocate (reviews/text-first-d005-*-2026-11-15.md). Round 3 rejected v3 on four points, fixed in v4 and not reviewed again; each task's code review checks them.
+
 ## ADR-098 — 2026-11-15 — Changes from the chat: one unresolved paid card, one waiting message, a free price change when the price is not drawn
 
 - While a paid card has no known outcome, no other paid card is admitted (recap, change, replacement after a refused version); its own « Reprendre » / « Réessayer » stay. While a read waits for its answer, no thread sends another one; the composer points to the poster where it waits.

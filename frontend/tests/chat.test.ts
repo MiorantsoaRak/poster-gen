@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cardButton, complete, fate, final, freePrice, limitLine, modifications, nextStep, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, CHANGE_BUTTONS, complete, effectOf, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
@@ -137,7 +137,7 @@ it('replaces open cards with a new one, leaving spent cards and results as they 
   expect(thread.map(entry => !!entry.done)).toEqual([true, false, false, false])
 })
 it('gives a change card the paid button of a recap, and none once the poster has its twelve versions', () => {
-  const change = item({ card: { kind: 'change', change: 'scene', instruction_fr: 'fond plus sombre' } })
+  const change = item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'fond plus sombre' } })
   expect(cardButton(change)).toBe('create')
   expect(cardButton(change, undefined, undefined, 1)).toBe('create')
   expect(cardButton(change, undefined, undefined, 0)).toBeNull()
@@ -148,16 +148,51 @@ it('gives a change card the paid button of a recap, and none once the poster has
   expect(cardButton({ ...change, spent: true, request: kept, card: { ...change.card!, error: 'x' } })).toBe('retry')
   expect(cardButton({ ...change, spent: true, request: kept, job: 'j' })).toBeNull()
 })
-it('changes a price for free only when the selected version does not draw it', () => {
-  const card = { kind: 'change', change: 'price' as const, price_ar: 650000 }
-  expect(freePrice(card, undefined)).toBe(true)  // the price is a layer of the poster
-  expect(freePrice(card, null)).toBe(true)
-  expect(freePrice(card, 700000)).toBe(false)  // drawn in the image: a new scene, paid
-  expect(freePrice({ ...card, whole: true }, undefined)).toBe(false)  // the drawn words changed: always a whole new scene
-  expect(freePrice({ ...card, previous: 700000 }, undefined)).toBe(false)  // the retry of a paid redraw
-  expect(freePrice({ kind: 'change', change: 'scene' }, undefined)).toBe(false)
-  expect(freePrice({ kind: 'recap' }, undefined)).toBe(false)
-  expect(freePrice(undefined, undefined)).toBe(false)
+it('converts a card from before D-005 at both entries, and leaves the server\'s cards as they are', () => {
+  const said = 'prix 650 000 Ar'
+  // An old price card sets its price alone and has no effect of its own; the price the image showed is no longer kept.
+  expect(normal({ kind: 'change', change: 'price', price_ar: 650000, previous: 700000, said } as any)).toEqual({ kind: 'change', words: { price_ar: 650000 }, said })
+  expect(normal({ kind: 'change', change: 'price', price_ar: 650000, whole: true } as any)).toEqual({ kind: 'change', words: { price_ar: 650000 }, whole: true })
+  expect(normal({ kind: 'change', change: 'scene', instruction_fr: 'fond plus sombre', said } as any)).toEqual({ kind: 'change', effect: 'refine', instruction_fr: 'fond plus sombre', said })
+  const scene = { kind: 'change', effect: 'scene' as const, visual_id: 'v', words: { title: 'WH-CH720N', brand: 'Sony', subtitle: null, price_ar: 450000 } }
+  expect(normal(scene)).toEqual(scene)
+  expect(normal(normal({ kind: 'change', change: 'price', price_ar: 1 } as any))).toEqual({ kind: 'change', words: { price_ar: 1 } })  // twice is once
+  expect(normal({ kind: 'recap', name: 'Sony', price_ar: 700000 })).toEqual({ kind: 'recap', name: 'Sony', price_ar: 700000 })
+  // The stored thread goes through it; a spent card keeps its request untouched.
+  const kept = { path: '/api/creations/c/scenes', body: { plan_id: 'p', headline: { price: true } }, revision: 2 }
+  const [read] = readThread(JSON.stringify({ items: [item({ spent: true, request: kept, card: { kind: 'change', change: 'price', price_ar: 650000, previous: 700000 } as any })] })).items
+  expect(read.card).toEqual({ kind: 'change', words: { price_ar: 650000 } })
+  expect(read.request).toEqual(kept)
+})
+it('takes the effect of a change card from the server, and for a card from before from the selected version', () => {
+  const old = normal({ kind: 'change', change: 'price', price_ar: 650000 } as any)
+  expect(effectOf(old, { headline: { title: 'Sony', price_ar: 700000 } })).toBe('scene')  // drawn in the image: a new scene, paid
+  expect(effectOf(old, { headline: { title: 'Sony' } })).toBe('free')  // the price is a layer of the poster
+  expect(effectOf(old, { headline: null })).toBe('free')
+  expect(effectOf(old)).toBe('free')
+  expect(effectOf({ ...old, whole: true }, { headline: null })).toBe('scene')  // the drawn words changed: always a whole new scene
+  expect(effectOf(normal({ kind: 'change', change: 'scene', instruction_fr: 'fond' } as any))).toBe('refine')
+  // The server's word wins over what the selected version draws.
+  expect(effectOf({ kind: 'change', effect: 'free', visual_id: 'v', words: { price_ar: 1 } }, { headline: { title: 'Sony', price_ar: 700000 } })).toBe('free')
+  expect(effectOf({ kind: 'change', effect: 'scene', visual_id: 'v', words: {} }, { headline: null })).toBe('scene')
+})
+it('names the button of a change card by its effect', () => {
+  expect(CHANGE_BUTTONS).toEqual({ refine: 'Créer', scene: 'Refaire l’affiche', free: 'Changer' })
+  const free = item({ card: { kind: 'change', effect: 'free', visual_id: 'v', words: { title: 'Sony' } } })
+  expect(cardButton(free, undefined, undefined, null)).toBe('create')  // the caller hides the version limit from a free change
+  expect(cardButton(item({ card: { kind: 'change', effect: 'scene', visual_id: 'v', words: {} } }), undefined, undefined, 0)).toBeNull()
+})
+it('says what the image still shows, only from the stored words of the selected version', () => {
+  const offer = { title: 'WH-CH720N', price_ar: 450000 }
+  expect(staleOf({ title: 'Sony WH-CH720N', price_ar: 700000 }, offer)).toEqual({ title: 'Sony WH-CH720N', price_ar: 700000 })
+  expect(staleOf({ title: 'WH-CH720N', price_ar: 700000 }, offer)).toEqual({ price_ar: 700000 })
+  expect(staleOf({ title: 'Sony WH-CH720N' }, offer)).toEqual({ title: 'Sony WH-CH720N' })  // the price is a layer: nothing stored
+  expect(staleOf({ title: 'WH-CH720N', price_ar: 450000 }, offer)).toEqual({})
+  for (const none of [null, undefined]) expect(staleOf(none, offer)).toEqual({})  // a version without stored words
+  expect(staleOf({ title: 'Sony' }, undefined)).toEqual({})
+  expect(staleLine({ title: 'Sony WH-CH720N', price_ar: 700000 }).replace(/\s/g, ' ')).toBe('L’affiche montre encore : « Sony WH-CH720N », 700 000 Ar.')
+  expect(staleLine({ price_ar: 700000 }).replace(/\s/g, ' ')).toBe('L’affiche montre encore : 700 000 Ar.')
+  expect(staleLine({})).toBe('')
 })
 it('counts the versions left by the server rule, and says so only near the limit', () => {
   const jobs = (count: number) => [...Array.from({ length: count }, (_, index) => ({ kind: index % 2 ? 'refine' : 'scene', status: index ? 'succeeded' : 'running' })),
@@ -187,6 +222,17 @@ it('lists the modifications from the versions: number, state and what changed', 
   expect(modifications([version('b'), version('a')])[0].label).toBe('Nouvelle version')
   expect(modifications([version('b', { headline: null }), version('a')])[0].label).toBe('Nouvelle version')
   expect(modifications([])).toEqual([])
+  // A new scene is named by its drawn words that differ from the version before, in the field table's order.
+  const words = modifications([
+    version('e', { headline: { title: 'WH-CH720N', brand: 'Sony', price_ar: 700000 } }),
+    version('d', { headline: { title: 'WH-CH720N', brand: 'Sony', subtitle: null, price_ar: 700000 } }),
+    version('c', { headline: { title: 'WH-CH720N', brand: 'Sony', subtitle: 'Casque sans fil', price_ar: 450000 } }),
+    version('b', { headline: { title: 'WH-CH720N', brand: 'Sony', price_ar: 700000 } }),
+    version('a', { headline: { title: 'Sony WH-CH720N', brand: 'Sony', brand_in_title: true, price_ar: 700000 } }),
+  ]).map(line => line.label.replace(/\s/g, ' '))
+  expect(words).toEqual(['Nouvelle version', 'Sous-titre : retiré · Prix : 700 000 Ar', 'Sous-titre : Casque sans fil · Prix : 450 000 Ar', 'Titre : WH-CH720N · Marque : Sony', 'Première affiche'])
+  expect(modifications([version('b', { headline: { title: 'Sony' } }), version('a')])[0].label).toBe('Nouvelle version')  // a price no longer drawn is not a word of the image
+  expect(modifications([version('b', { headline: { title: 'Sony', brand: null, price_ar: 700000 } }), version('a', { headline: { title: 'Sony', brand: 'Sony', price_ar: 700000 } })])[0].label).toBe('Marque : retiré')
 })
 it('knows the poster a pending read was sent for', () => {
   expect(pendingFor(newPending({ text: 'fond plus sombre', creation_id: 'c' } as { text: string }))).toBe('c')

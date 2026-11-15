@@ -21,8 +21,8 @@ Research: [text-first generation findings](../reviews/text-first-generation-rese
 | R-TEXT-FIRST-001 | Choose how to create | P0 | Approved (ADR-093) |
 | R-TEXT-FIRST-002 | Ask for a poster in one message | P0 | Approved (ADR-093) |
 | R-TEXT-FIRST-003 | One recap, one paid tap, one check | P0 | Approved (ADR-093) |
-| R-TEXT-FIRST-004 | Polish in the same chat, with the list of modifications | P0 | Approved (ADR-093) |
-| R-TEXT-FIRST-005 | Paid reading of messages, limits and failures | P0 | Approved (ADR-093) |
+| R-TEXT-FIRST-004 | Polish in the same chat, with the list of modifications | P0 | Approved (ADR-093), amended 2026-11-15 (ADR-099) |
+| R-TEXT-FIRST-005 | Paid reading of messages, limits and failures | P0 | Approved (ADR-093), amended 2026-11-15 (ADR-099) |
 
 ## R-TEXT-FIRST-001 — Choose how to create
 
@@ -78,7 +78,18 @@ Research: [text-first generation findings](../reviews/text-first-generation-rese
 - [ ] The list of modifications is the same on every device. The conversation and an unsent message survive a reload on the same device; they do not follow the owner to another device (amended by ADR-094).
 - [ ] The twelve-scenes limit per poster applies and is said before it is reached, not after.
 
-**Out of scope:** undoing a paid generation, editing an older message, merging two versions.
+**Amendment of 2026-11-15 (ADR-099; user report: « Sony is the brand, put it on top, the product title on the second line » was answered « Le titre et le format se changent dans Pas à pas »):**
+- [ ] The chat changes the same words as the step editor's « Textes » fields: the title, the brand, the subtitle and the price. A scene change (background, light, setting) stays.
+- [ ] Exception: a brand and a subtitle exist only as words drawn in the image. On a poster whose image has no drawn words (made in « Pas à pas » with « Textes dans l’image » off), or while that switch is off, the chat says so in one sentence and points to « Pas à pas »; nothing is paid.
+- [ ] One message may change several of them; the owner gets one card that lists each change, and pays once.
+- [ ] The card is truthful about the cost by one rule, the same for every word: a word that is drawn in the selected version needs a whole new image and a new check; a word that is not drawn changes free and keeps the approved image.
+- [ ] A brand set apart is not repeated in the title.
+- [ ] The owner can remove the brand or the subtitle by message.
+- [ ] A change is asked on any version, checked or not. The current version is kept.
+- [ ] The sentence that says what the chat can change names exactly the changes it takes; it is built from the same list as the reader, so the two cannot differ.
+- [ ] Cards and waiting messages kept on a device from before this change still work.
+
+**Out of scope:** undoing a paid generation, editing an older message, merging two versions. Also out, and still done in « Pas à pas »: lettering requests that are not a field (size, position or font of the title), the accent word and its colour, the format, the style, the photos, the shop's contact line.
 
 ## R-TEXT-FIRST-005 — Paid reading of messages, limits and failures
 
@@ -89,6 +100,7 @@ Research: [text-first generation findings](../reviews/text-first-generation-rese
 - [ ] Reading a message is not confirmed tap by tap (an exception to "every paid action is confirmed", accepted with ADR-092). Its cost is bounded: a maximum per message and a maximum number of messages per day, set in design and stated to the owner when reached (amended by ADR-094; the spend cap is the other bound).
 - [ ] The model only extracts and classifies: product, price, style, kind of change. The price goes through the existing integer validation; the model's output never starts an image generation, never changes the cap and never bypasses the recap card.
 - [ ] Text inside an attached image or a message is data, never an instruction to the application.
+- [ ] (ADR-099) On an existing poster the model also extracts the poster's words (title, brand, subtitle). Each goes through the step editor's own rule for that field. A word that the owner did not write in this message and that is not already on the poster is never drawn: the model brings no word of its own. The application cannot tell a wrong arrangement of the owner's own words; each text is shown whole on the card before the paid tap, and again in the check.
 - [ ] When the reading fails or the cap is reached, the message is kept, one French sentence says what happened, and the owner can retry or switch to « Pas à pas » with what is already known filled in.
 - [ ] Composer, labels, recap and list work with a keyboard and a screen reader; the phone keyboard never hides the send button; motion respects the reduced-motion setting.
 - [ ] A free local simulation covers the normal path and every failure above before any paid evaluation; a paid evaluation needs the user's budget and word.

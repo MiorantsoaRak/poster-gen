@@ -350,6 +350,15 @@ def check_logo_placement(conn, shop, visual, document, format):
             raise store.Refused("logo_placement_stale", 409)
 
 
+def listed_visuals(conn, shop, document: dict) -> list[str]:
+    """The versions of a poster, newest first: those of its product input at its size. A copy shares them; a copy in
+    another format does not."""
+    return conn.execute(text("SELECT id FROM poster_visuals WHERE shop_id=:shop AND input_id=:input AND size=:size "
+                             "ORDER BY created_at DESC"),
+                        {"shop": shop, "input": document["input_id"],
+                         "size": POSTER_SIZES[document["primary_format"]]}).scalars().all()
+
+
 def get_visual(conn, shop, id):
     row = store._owned(conn, "poster_visuals", shop, id)
     payload = json.loads(store._owned(conn, "poster_jobs", shop, row["job_id"])["input_json"])

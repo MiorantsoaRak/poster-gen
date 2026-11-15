@@ -47,4 +47,4 @@ Paid tests are separate: verify the new Claude planner, sizes, selected-scene re
 
 See [requirements](../requirements/_INDEX.md), [decisions](../DECISIONS.md) and [AGENTS workflow gates](../../../AGENTS.md). Previous phase-1 design review rounds are not approval of these new sections.
 | [poster-format.md](poster-format.md) | R-POSTER-FORMAT-001/002; D-POSTER-FORMAT-001 formats and the model's shape | Approved v2 (ADR-080) |
-| [text-first-generation.md](text-first-generation.md) | R-TEXT-FIRST-001 … 005; D-TEXT-FIRST-001 to 005 creation by message | Approved v2 2026-11-14 under the autonomy grant (ADR-094) |
+| [text-first-generation.md](text-first-generation.md) | R-TEXT-FIRST-001 … 005 (004 and 005 amended by ADR-099, with D-TEXT-FIRST-005 v4 "a change is a set of fields", approved 2026-11-15 under the autonomy grant); D-TEXT-FIRST-001 to 005 creation by message | Approved v2 2026-11-14 under the autonomy grant (ADR-094) |

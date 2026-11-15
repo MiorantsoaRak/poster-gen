@@ -7,8 +7,8 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read } from './api'
-import { cardButton, CHAT_PREFIX, complete, fate, final, freePrice, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
-  type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style } from './chat'
+import { cardButton, CHANGE_BUTTONS, CHAT_PREFIX, complete, effectOf, fate, final, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, staleLine, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
+  type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
 import { staleWords } from './words'
 
@@ -47,9 +47,11 @@ const versions = computed(() => state.creation ? state.visuals : [])
 const looked = ref<string | null>(null), listed = ref(false), left = ref<number | null>(null)
 const shown = computed(() => versions.value.find(visual => visual.id === (looked.value ?? state.selected)) ?? versions.value[0])
 const mods = computed(() => modifications(versions.value))
-// The price the image shows: the selected version's persisted one; undefined when the price is a layer of the poster.
-const drawn = computed(() => versions.value.find(visual => visual.id === state.selected)?.headline?.price_ar)
-const free = (item: Item) => freePrice(item.card, drawn.value)
+// What a change card costs: the server's word; a card from before follows the selected version (chat.ts effectOf).
+const effect = (item: Item) => item.card?.kind === 'change' ? effectOf(item.card, versions.value.find(visual => visual.id === state.selected)) : null
+const free = (item: Item) => effect(item) === 'free'
+// The version a change card acts on: the one it was read for; a card from before has none, and takes the selected one.
+const target = (card: Card) => (card.effect && card.visual_id) || state.selected || ''
 const numberOf = (visual: Visual) => versions.value.length - versions.value.indexOf(visual)
 const versionOf = (item: Item) => versions.value.find(visual => visual.id === item.card?.visual_id)
 const stateNames = { pending_review: 'à vérifier', approved: 'approuvée', rejected: 'refusée' }
@@ -71,16 +73,23 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…'
   : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: 'Je dessine l’affiche…', receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
   : state.job?.kind === 'render' ? 'Je prépare le fichier…'
   : starting.value ? state.paletteLoading ? 'Je lis les couleurs de la photo…' : 'Je prépare la scène…' : '')
-const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer : le fond, la lumière, le prix.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
+const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
 const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
 const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
-// An untapped change card can be taken back: « Annuler », or « Remettre l’ancien prix » once its price is in the document.
-const aside = (item: Item) => item.card?.kind !== 'change' || item.spent || item.done ? null : item.card.previous === undefined ? 'cancel' : 'restore'
+// An untapped change card can be taken back: « Annuler ».
+const untapped = (item: Item) => item.card?.kind === 'change' && !item.spent && !item.done
+// The document holds words that the selected image does not show (a paid card that made no image, an edit in « Pas à
+// pas »): said from the editor's own comparison, never from what a card remembers, on the newest untapped change card
+// or under the poster. Not while a paid card waits for its answer: its image may still come.
+const stale = computed(() => openCard() ? '' : staleLine(state.stale))
+const staleCard = computed(() => items.value.filter(untapped).pop())
+// A small photo is agreed before a whole new scene only: a refinement and a free change ask nothing.
+const asksPhoto = (item: Item) => smallPhoto.value && [null, 'scene'].includes(effect(item))
 const limitOf = (item: Item) => paid(item.card) && !item.spent && !item.done && !free(item) ? limitLine(left.value) : ''
-// The server's card says the price is redrawn; a price that is a layer is only changed.
-const lineOf = (item: Item) => !item.spent && !item.done && free(item) ? `Je change le prix sur l’affiche : ${price(item.card!.price_ar)}.` : item.text
+// A price card from before says the price is redrawn; a price that is a layer is only changed.
+const lineOf = (item: Item) => !item.spent && !item.done && !item.card?.effect && free(item) ? `Je change le prix sur l’affiche : ${price(item.card!.words?.price_ar)}.` : item.text
 
 // ── kept in this browser ─────────────────────────────────────────────────────────────────────────────────
 // Only the tab that holds the chat writes it.
@@ -189,9 +198,24 @@ function swap(entry: Unsaved) {
 function drop(entry: Unsaved) { URL.revokeObjectURL(entry.url); tray.value = tray.value.filter(item => item !== entry) }
 
 // ── a message ────────────────────────────────────────────────────────────────────────────────────────────
-function send() {
+// A change is read against the stored poster (D-TEXT-FIRST-005): an unsaved edit of « Pas à pas » is saved before a new
+// read is made. false: nothing may be read (the save failed and the editor's sentence is shown, the chat was taken, or
+// another thread is open); what was typed stays where it is.
+async function savedFirst() {
+  if (!state.creation) return true
+  const at = token, from = key
+  let failure: unknown
+  reading.value = true
+  try { await props.adapter.saved() } catch (reason) { failure = reason }
+  if (!mine(at)) return false
+  reading.value = false
+  if (failure) { state.error = failure instanceof Error && failure.message ? failure.message : 'L’affiche n’a pas pu être enregistrée. Vérifiez-la dans Pas à pas.'; out(failure) }
+  return !failure && key === from
+}
+const sendable = () => !(held.value || pending.value || tray.value.some(item => item.status !== 'done') || (!text.value.trim() && !tray.value.length))
+async function send() {
+  if (!sendable() || (text.value.trim() && versions.value.length && !(await savedFirst() && sendable()))) return
   const message = text.value.trim()
-  if (held.value || pending.value || tray.value.some(item => item.status !== 'done') || (!message && !tray.value.length)) return
   const history = lines(items.value), pictures: Picture[] = tray.value.map(item => ({ asset: item.asset!, role: item.role, warnings: item.warnings }))
   add({ role: 'owner', text: message, pictures })
   draft.pictures.push(...pictures); tray.value.forEach(item => URL.revokeObjectURL(item.url)); tray.value = []; text.value = ''
@@ -206,7 +230,8 @@ function send() {
   if (awaited.value) void ask()
 }
 // A read's record; on a poster it names it, and the answer is a change card.
-const readOf = (text: string, history: ReturnType<typeof lines>) => newPending({ text, ...(state.creation ? { creation_id: state.creation.id } : {}), draft: wireDraft(draft), history } as { text: string })
+// It also names the version the owner looks at; a refused one is not changed: the poster's own version then.
+const readOf = (text: string, history: ReturnType<typeof lines>) => newPending({ text, ...(state.creation ? { creation_id: state.creation.id, visual_id: (shown.value?.status === 'rejected' ? state.selected : undefined) ?? shown.value?.id } : {}), draft: wireDraft(draft), history } as { text: string })
 // Sends the pending record, as it is: the first time, and at each « Réessayer » until an answer settles it.
 async function ask() {
   const record = pending.value, from = key, at = token
@@ -221,7 +246,7 @@ async function ask() {
     Object.assign(draft, { name: answer.draft.name, price_ar: answer.draft.price_ar, style: answer.draft.style ?? draft.style })
     const { text_fr, ...card } = answer.card
     if (card.kind !== 'unclear') supersede(items.value)
-    app(text_fr, card.kind === 'change' ? { ...card, said: record.text } : card)
+    app(text_fr, card.kind === 'change' ? { ...normal(card), said: record.text } : card)
   } catch (reason) {
     if (!mine(at) || key !== from) return
     const code = reason instanceof ApiError ? reason.code : ''
@@ -238,23 +263,24 @@ async function ask() {
   } finally { if (mine(at)) { reading.value = false; save() } }
 }
 // A failed read is settled: its retry is a new paid read. Any other retry is the record that is still pending.
-function resend(item: Item) {
+async function resend(item: Item) {
   if (working.value || elsewhere.value) return
-  if (!pending.value) setPending(readOf(item.card!.retry!, lines(items.value.filter(entry => entry !== item))))
+  if (!pending.value) {
+    if (!await savedFirst() || working.value || elsewhere.value || pending.value || !items.value.includes(item)) return
+    setPending(readOf(item.card!.retry!, lines(items.value.filter(entry => entry !== item))))
+  }
   void ask()
 }
 watch(text, value => { if (!mine()) return; try { if (value) localStorage.setItem(UNSENT_KEY, value); else localStorage.removeItem(UNSENT_KEY) } catch { /* the text holds for this visit */ } })
 
 // ── the paid tap ─────────────────────────────────────────────────────────────────────────────────────────
 async function create(item: Item) {
-  const at = token, card = item.card!
-  // Its own sentence stays on the card: the server's says the price is redrawn.
-  if (free(item)) return setPrice(Object.assign(item, { text: lineOf(item) }), card.price_ar!, `Prix changé sur l’affiche : ${price(card.price_ar)}.`)
+  const at = token, card = item.card!, kind = effect(item), visual = target(card)
+  // Its own sentence stays on a card from before: the server's said the price is redrawn.
+  if (kind === 'free') return setWords(visual, card.words ?? {}, 'C’est changé sur l’affiche.', Object.assign(item, { text: lineOf(item) }), true)
   if (held.value || !spend(items.value, item.id)) return
   const style = inspiration.value ? 'clair' : draft.style ?? 'clair'
   if (card.kind === 'recap') card.style = style
-  // The price the image shows: kept on the card before the editor's price edit, for « Remettre l’ancien prix ».
-  else if (card.change === 'price') card.previous ??= drawn.value
   item.creation = state.creation?.id; looked.value = null
   // Spent and saved before anything leaves; the poster's id and the job's id are added by the two watchers below.
   save()
@@ -267,8 +293,8 @@ async function create(item: Item) {
   const sending = (request: SceneRequest) => { owned(); item.request = request; save() }
   try {
     await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending)
-      : card.change === 'price' ? props.adapter.reprice(item.id, card.price_ar!, smallAccepted.value, owned, sending)
-      : props.adapter.change(item.id, card.instruction_fr!, sending))
+      : kind === 'refine' ? props.adapter.change(item.id, visual, card.instruction_fr!, owned, sending)
+      : props.adapter.revise(item.id, visual, card.words ?? {}, smallAccepted.value, owned, sending))
   } catch (reason) { failure = reason }
   if (!mine(at)) return  // closed, or the chat was taken (even if taken back since): the tab holding it goes on from what was kept
   starting.value = false
@@ -282,16 +308,17 @@ function cancel(item: Item) {
   text.value = item.card!.said ?? ''; items.value = items.value.filter(entry => entry !== item); save()
   nextTick(() => { grow(); field.value?.focus() })
 }
-// The editor's price edit alone, nothing paid: « Remettre l’ancien prix » (back to the price the image shows), and
-// « Changer le prix » when the price is a layer of the poster.
-async function setPrice(item: Item, value: number, said: string) {
-  const at = token, card = item.card!
+// The editor's own edit of the document's words, nothing paid: a free change (`close`: its card is over), and « Remettre
+// les textes de l’image » (back to what the selected image shows; a card beside it stays as it is).
+async function setWords(visual: string, values: Words, said: string, item?: Item, close = false) {
+  const at = token
   if (held.value) return
   let failure: unknown
-  try { await props.adapter.price(value, () => { if (!mine(at)) throw new Stopped() }) } catch (reason) { failure = reason }
+  try { await props.adapter.words(visual, values, () => { if (!mine(at)) throw new Stopped() }) } catch (reason) { failure = reason }
   if (!mine(at)) return
-  if (failure) { card.error = failure instanceof Error && failure.message ? failure.message : 'Le prix n’a pas pu être changé. Réessayez.'; out(failure) }
-  else { card.error = undefined; item.done = true; app(said) }
+  const sentence = failure ? failure instanceof Error && failure.message ? failure.message : 'Le changement n’a pas pu être fait. Réessayez.' : undefined
+  if (item) { item.card!.error = sentence; if (!failure && close) item.done = true } else if (sentence) state.error = sentence
+  if (failure) out(failure); else app(said)
   save()
 }
 // The card's kept request, sent again exactly as it first left (same key, body and revision): the server answers what it
@@ -318,27 +345,23 @@ function conclude(item: Item, failure: unknown) {
   item.done = true
   // The server asks the agreement to a small photo: a new card asks it.
   if (code === 'acknowledgement_required') { item.card!.error = sentence; needsAgreement.value = true; again(item) }
-  // A rule refused the poster's words: a new attempt cannot change that, the editor can. A price already in the
-  // document still needs its card.
-  else if (failure instanceof ApiError && failure.status === 422) { Object.assign(item.card!, { error: sentence, fix: true }); if (item.card!.change === 'price') again(item) }
+  // A rule refused the poster's words: a new attempt cannot change that, the editor can. A card from before sets its
+  // price alone, so it is offered again; the server's card would set the refused words again.
+  else if (failure instanceof ApiError && failure.status === 422) { Object.assign(item.card!, { error: sentence, fix: true }); if (!item.card!.effect && item.card!.kind === 'change') again(item) }
+  else if (sentence === GONE) app(sentence, { kind: 'steps' })  // the same card could only be refused again
   else { if (code !== 'headline_stale') app(sentence || 'Rien n’a été envoyé pour cette demande.'); again(item, code) }
   save()
 }
 // After a retired card: never an attempt, always a new card with its cost.
 function again(item: Item, code = '') {
-  const { kind, change, instruction_fr, price_ar, previous, said } = item.card!
-  if (kind === 'recap') return recap()
+  const { error, fix, ...card } = item.card!
+  if (card.kind === 'recap') return recap()
   supersede(items.value)
-  if (change === 'scene') {
-    // A refinement keeps the words drawn in its base: with other words in the document only a whole new scene can be
-    // made, by the editor's « Nouvelle version » (the price card's path, at the document's price).
-    if (code === 'headline_stale') app('Le texte a changé : je refais l’affiche entière.', { kind, change: 'price', whole: true, price_ar: state.offer?.price_ar, said })
-    else if (code !== 'attempt_limit') app(item.text, { kind, change, instruction_fr, said })
-    return
-  }
-  // The price edit is saved before the scene is asked: the document may hold the new price under the old image.
-  const stale = previous !== undefined && previous !== price_ar && state.offer?.price_ar === price_ar
-  app(stale ? 'L’affiche montre encore l’ancien prix.' : item.text, { kind, change, price_ar, said, ...(item.card!.whole ? { whole: true } : {}), ...(stale ? { previous } : {}) })
+  // A refinement keeps the words drawn in its base: with other words in the document only a whole new scene can be
+  // made, by the editor's « Nouvelle version » at the document's price (a card with no `effect`: chat.ts effectOf).
+  if (card.effect === 'refine' && code === 'headline_stale') app('Le texte a changé : je refais l’affiche entière.', { kind: card.kind, whole: true, words: { price_ar: state.offer?.price_ar }, said: card.said })
+  // The same card again, as it was read. Its words may be in the document under the old image: `stale` says so.
+  else if (card.effect !== 'refine' || code !== 'attempt_limit') app(item.text, card)
 }
 // The poster and the job of the card being started, written on it at once (sync): before the next request leaves.
 watch(() => state.creation?.id, (id, old) => {
@@ -376,8 +399,15 @@ async function reconcile() {
     // choice is saved before the card is closed: after a reload in between, it is made again.
     if (open.card!.kind === 'change' && job.result_ref) {
       checking = true
-      try { await props.adapter.select(job.result_ref) }
-      catch { if (mine(at)) { checking = false; open.card!.error = 'La nouvelle version n’est pas encore choisie pour l’affiche. Nouvel essai dans un instant.'; clearTimeout(later); later = setTimeout(reconcile, 10_000) } return }
+      try { await props.adapter.select(job.result_ref, () => { if (!mine(at)) throw new Stopped() }) }
+      catch (reason) {
+        if (!mine(at)) return
+        checking = false
+        // The job is known to have made its version, and the poster does not list it: trying again cannot help, and no
+        // new paid card is offered for an image that exists. The card is closed; the editor is the way on.
+        if (reason instanceof Error && reason.message === GONE) { open.done = true; open.card!.error = undefined; app('La nouvelle version est faite, mais elle n’apparaît pas dans cette affiche. Ouvrez Pas à pas pour la retrouver.', { kind: 'steps' }); return save() }
+        open.card!.error = 'La nouvelle version n’est pas encore choisie pour l’affiche. Nouvel essai dans un instant.'; clearTimeout(later); later = setTimeout(reconcile, 10_000); return
+      }
       if (!mine(at)) return
       checking = false
       if (key !== from || openCard() !== open) return void reconcile()
@@ -458,18 +488,19 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
   <section v-else-if="owner" ref="root" class="chat" :class="{ 'has-poster': !!shown, typing }" :style="{ height: `${height}px` }" aria-label="Création par message">
     <aside v-if="shown" class="chat-side">
       <button type="button" class="chat-poster" aria-label="Agrandir l’affiche" @click="adapter.review(shown)"><img :src="displayUrl(shown.image_url)" :alt="`Affiche, version ${numberOf(shown)}`" /></button>
-      <p><b>Version {{ numberOf(shown) }} · {{ stateNames[shown.status] }}</b><span translate="no">{{ state.creation?.document.offer.title }} · {{ price(shown.headline?.price_ar ?? state.creation?.document.offer.price_ar) }}</span></p>
+      <p><b>Version {{ numberOf(shown) }} · {{ stateNames[shown.status] }}</b><span translate="no">{{ shown.headline?.title ?? state.offer?.title }} · {{ price(shown.headline?.price_ar ?? state.offer?.price_ar) }}</span></p>
       <button type="button" class="mods-toggle" :aria-expanded="listed" aria-controls="chat-mods" @click="listed = !listed">Modifications ({{ mods.length }})</button>
       <div id="chat-mods" class="mods" :class="{ open: listed }" role="group" aria-label="Modifications">
         <h2>Modifications</h2>
         <button v-for="line in mods" :key="line.id" type="button" class="mod" :aria-current="line.id === shown.id || undefined" @click="looked = line.id"><i>V{{ line.number }}</i><span translate="no">{{ line.label }}</span><small :class="line.status">{{ line.state }}</small></button>
       </div>
+      <div v-if="stale && !staleCard" class="chat-stale"><p class="why" role="status">{{ stale }}</p><button type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.')">Remettre les textes de l’image</button></div>
     </aside>
     <div ref="thread" class="chat-thread" role="log" aria-live="polite" aria-label="Conversation" tabindex="0">
       <div class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
-        <p v-if="item.text && item.card?.kind !== 'result'">{{ lineOf(item) }}</p>
+        <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: item.card?.kind === 'change' }">{{ lineOf(item) }}</p>
         <template v-if="item.card?.kind === 'recap'">
           <div v-if="draft.pictures.length" class="pics"><span v-for="picture in draft.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
           <p class="recap"><b translate="no">{{ item.card.name }}</b><span class="recap-price">{{ price(item.card.price_ar) }}</span><small>Style : {{ styleName(item) }}</small></p>
@@ -487,20 +518,21 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <button v-for="photo in item.card.suggestions" :key="photo.asset" type="button" class="pic reuse" :disabled="locked || tray.length > 0" @click="reuse(photo.asset)"><img :src="src(photo.asset)" width="68" height="68" alt="Photo déjà utilisée" />Reprendre cette photo</button>
         </div>
         <p v-if="item.card?.error" class="why" role="alert">{{ item.card.error }}</p>
+        <p v-if="stale && item === staleCard" class="why" role="status">{{ stale }}</p>
         <template v-for="button in [buttonOf(item)]" :key="button ?? ''">
           <p v-if="button === 'resume'">L’affiche n’a peut-être pas été lancée.</p>
           <p v-if="limitOf(item)" class="chat-limit">{{ limitOf(item) }}</p>
-          <label v-if="button === 'create' && smallPhoto && item.card?.change !== 'scene' && !free(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-          <div v-if="button || aside(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" type="button" class="primary" :disabled="held || (smallPhoto && !smallAccepted && item.card?.change !== 'scene' && !free(item))" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : free(item) ? 'Changer le prix' : aside(item) === 'restore' ? 'Réessayer' : 'Créer' }}</button>
+          <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
+          <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
+            <button v-if="button === 'create'" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'retry' || button === 'resume'" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>
             <button v-else-if="button === 'review'" type="button" class="primary" @click="adapter.review(versionOf(item)!)">Vérifier</button>
             <button v-else-if="button === 'download'" type="button" class="primary" :disabled="locked" @click="adapter.download()">Télécharger</button>
-            <button v-if="aside(item) === 'cancel'" type="button" class="secondary" @click="cancel(item)">Annuler</button>
-            <button v-else-if="aside(item) === 'restore'" type="button" class="secondary" :disabled="held" @click="setPrice(item, item.card!.previous!, `Prix remis : ${price(item.card!.previous)}.`)">Remettre l’ancien prix</button>
+            <button v-if="untapped(item)" type="button" class="secondary" @click="cancel(item)">Annuler</button>
+            <button v-if="stale && item === staleCard" type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.', item)">Remettre les textes de l’image</button>
             <button v-if="item.card && !item.done && offersSteps(item.card)" type="button" class="secondary" @click="emit('steps')">Pas à pas</button>
           </div>
           <small v-if="(button === 'create' && !free(item)) || button === 'retry' || button === 'resume'">{{ state.cost }}</small>

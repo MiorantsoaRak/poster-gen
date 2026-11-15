@@ -682,6 +682,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat-thread > :first-child { margin-top: auto }
 .bubble { display: grid; gap: 8px; max-width: min(86%, 460px); padding: 10px 14px; border-radius: 18px; overflow-wrap: anywhere }
 .bubble p { margin: 0 }
+/* A change card lists one field per line (the server's text). */
+.bubble p.lines { white-space: pre-line }
 .bubble.me { align-self: flex-end; background: var(--bubble); border-bottom-right-radius: 6px }
 .bubble.bot { align-self: flex-start; border-bottom-left-radius: 6px; box-shadow: var(--msg-shadow) }
 .bubble.chat-wait { display: flex; align-items: center; gap: 10px }
@@ -713,7 +715,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 /* The list of modifications: folded behind its button beside the small poster, open in the wide column. */
 .chat .mods-toggle { flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); background: var(--glass-field); font-size: 13px; font-weight: 600 }
 .mods { display: none; flex-basis: 100%; gap: 2px; max-height: 34vh; overflow-y: auto; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line) }
-.mods.open { display: grid }
+/* One column no wider than the list: a long label (the words of a new scene) is cut, it does not widen the rows. */
+.mods.open { display: grid; grid-template-columns: minmax(0, 1fr) }
 .mods h2 { display: none; margin: 0; padding: 0 8px 4px; font-size: 13px; line-height: 18px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
 .chat .mod { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; border: 0; border-radius: 12px; background: none; text-align: left; font-size: 14px; line-height: 20px; font-weight: 500 }
 .chat .mod[aria-current=true] { background: var(--bubble) }
@@ -723,6 +726,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat .mod small.approved { color: var(--ok) }
 .chat .mod small.rejected { color: var(--text) }
 .chat-limit { font-weight: 600 }
+.chat-stale { flex-basis: 100%; display: grid; gap: 6px; justify-items: start }
+.chat-side .chat-stale p { display: block }
 .composer { grid-area: composer; display: grid; gap: 8px; padding: 8px; border-radius: 22px }
 .composer:focus-within { border-color: var(--text) }
 .chat-elsewhere-read { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 4px 6px 0; font-size: 13px; line-height: 18px }
