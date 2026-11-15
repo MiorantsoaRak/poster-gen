@@ -21,6 +21,8 @@ KINDS = PROVIDER_KINDS | {"render", "cutout"}
 # A price drawn in the image (ADR-044) costs a scene per change, so three per poster blocked ordinary use.
 # The spend cap stays the money guard; this only stops a runaway loop on one poster (ADR-045).
 SCENE_LIMIT = 12
+# What provider_guard refuses: a 429 retry refused by one of them fails at cost 0 (worker.py).
+SPEND_REFUSALS = {"shop_suspended", "budget_exhausted", "shop_daily_limit"}
 
 
 @dataclass(frozen=True)
@@ -52,9 +54,22 @@ def call_spec(settings, kind: str) -> CallSpec | None:
     return CallSpec(provider, model, dict(rates), 0 if provider == "stub" else usd_to_micros(estimate))
 
 
-def _reserve(conn, settings, job_id, call_no, spec: CallSpec):
-    if spent_micros(conn, settings) + spec.estimate_micros > usd_to_micros(settings.spend_cap_usd):
+def provider_guard(conn, settings, shop, estimate_micros):
+    """Whether a provider call may be reserved for this shop (D-MULTI-SHOP-005), inside the caller's admission
+    transaction: a refusal raises, so nothing is reserved. The service's cap comes before the shop's own day, so that
+    every shop is told the service is paused. Not the prepaid balance's seam: a credit is debited apart from it."""
+    if conn.execute(text("SELECT state FROM shop_profile WHERE id=:shop"), {"shop": shop}).scalar() != "active":
+        raise Refused("shop_suspended", 403)
+    if spent_micros(conn, settings) + estimate_micros > usd_to_micros(settings.spend_cap_usd):
         raise Refused("budget_exhausted", 429)
+    # A budget of the admission day: a reservation counts on the UTC day it was made, also when it is sent after midnight.
+    if (spent_micros(conn, settings, shop=shop, since=utc_now()[:10]) + estimate_micros
+            > usd_to_micros(settings.shop_daily_spend_usd)):
+        raise Refused("shop_daily_limit", 429)
+
+
+def _reserve(conn, settings, shop, job_id, call_no, spec: CallSpec):
+    provider_guard(conn, settings, shop, spec.estimate_micros)
     conn.execute(text("INSERT INTO poster_calls (id,job_id,call_no,provider,model,rate_card_json,status,cost_micros,"
                       "cost_is_estimate,created_at) VALUES (:id,:job,:n,:provider,:model,:rates,'reserved',:cost,1,:now)"),
                  {"id": str(uuid4()), "job": job_id, "n": call_no, "provider": spec.provider, "model": spec.model,
@@ -91,7 +106,7 @@ def enqueue(conn, settings, shop, creation_id, revision, kind, payload) -> dict:
                   "input": creation["document"]["input_id"], "kind": kind, "body": body,
                   "hash": hashlib.sha256(body.encode()).hexdigest(), "now": utc_now()})
     if spec:
-        _reserve(conn, settings, id, 1, spec)
+        _reserve(conn, settings, shop, id, 1, spec)
     return {"job_id": id, "status_url": f"/api/jobs/{id}"}
 
 
@@ -126,7 +141,10 @@ def claim(engine, kinds: tuple[str, ...]):
         running = conn.execute(text("SELECT COUNT(c.id),COUNT(*)-COUNT(c.id) FROM poster_jobs j LEFT JOIN poster_calls c"
                                     " ON c.job_id=j.id AND c.call_no=(SELECT MAX(call_no) FROM poster_calls WHERE job_id=j.id)"
                                     " WHERE j.status='running'")).one()
-        rows = conn.execute(text("SELECT * FROM poster_jobs WHERE status='queued' AND kind IN :kinds ORDER BY created_at,id")
+        # Shops take turns (D-MULTI-SHOP-005): the shop whose last job started longest ago goes first, one that never
+        # started any before all (SQLite sorts NULL first), so a long queue of one shop does not hold another's first job.
+        rows = conn.execute(text("SELECT j.* FROM poster_jobs j WHERE j.status='queued' AND j.kind IN :kinds ORDER BY"
+                                 " (SELECT MAX(s.started_at) FROM poster_jobs s WHERE s.shop_id=j.shop_id),j.created_at,j.id")
                             .bindparams(bindparam("kinds", expanding=True)), {"kinds": kinds}).mappings()
         for row in rows:
             if running[0 if row["kind"] in PROVIDER_KINDS else 1] >= (2 if row["kind"] in PROVIDER_KINDS else 1):
@@ -177,9 +195,9 @@ def fail(engine, id, code, *, ambiguous=False, unsent=False, usage=None, cost_mi
 def reserve_rate_limit_retry(engine, settings, id) -> bool:
     """Only an explicit provider 429 may use this. Caller applies a bounded delay before dispatch."""
     with write_tx(engine) as conn:
-        job = conn.execute(text("SELECT status FROM poster_jobs WHERE id=:id"), {"id": id}).scalar()
+        job = conn.execute(text("SELECT status,shop_id FROM poster_jobs WHERE id=:id"), {"id": id}).first()
         call = current_call(conn, id)
-        if job != "running" or call is None or call["status"] != "running":
+        if job is None or job.status != "running" or call is None or call["status"] != "running":
             raise Refused("invalid_job_state", 409)
         if call["call_no"] != 1:
             return False
@@ -188,7 +206,7 @@ def reserve_rate_limit_retry(engine, settings, id) -> bool:
         # A definite rejection is unbilled; update and replacement reservation commit together.
         conn.execute(text("UPDATE poster_calls SET status='failed',cost_micros=0,cost_is_estimate=0,finished_at=:now WHERE id=:id"),
                      {"id": call["id"], "now": utc_now()})
-        _reserve(conn, settings, id, 2, CallSpec(call["provider"], call["model"], rates, reservation))
+        _reserve(conn, settings, job.shop_id, id, 2, CallSpec(call["provider"], call["model"], rates, reservation))
         return True
 
 

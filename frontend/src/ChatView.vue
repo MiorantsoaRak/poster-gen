@@ -254,7 +254,9 @@ async function ask() {
     const sentence = code === 'validation_error' ? 'Ce message ne peut pas être lu tel quel. Écrivez-le plus court : le produit et son prix, ou le changement voulu.'
       : reason instanceof Error ? reason.message : 'La demande a échoué.'
     if (reason instanceof ApiError && settled(code)) clearPending(record.key)
-    if (code === 'budget_exhausted') {  // nothing can be read until the budget is raised: the text goes back to the field
+    // Refused before anything was read or reserved, until the service, the shop's day or its other reads allow it:
+    // the text goes back to the field, to be sent again as it is.
+    if (['budget_exhausted', 'shop_daily_limit', 'reads_busy'].includes(code)) {
       const at = items.value.map(item => item.role === 'owner' && item.text === record.text).lastIndexOf(true)
       if (at >= 0) items.value.splice(at, 1)
       text.value = record.text; app(sentence)

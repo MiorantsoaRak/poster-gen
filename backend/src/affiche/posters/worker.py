@@ -64,7 +64,7 @@ async def run_job(engine, settings, job, *, prepare, send, finalise) -> bool:
                 try:
                     retry = await asyncio.to_thread(jobs.reserve_rate_limit_retry, engine, settings, id)
                 except Refused as refused:
-                    if refused.code != "budget_exhausted":
+                    if refused.code not in jobs.SPEND_REFUSALS:
                         raise
                     retry = False
                 if retry:

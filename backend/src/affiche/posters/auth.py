@@ -174,6 +174,39 @@ def login(engine, identifier: str, password: str, ip: str, previous: str | None 
     return token, shop.id
 
 
+def change_password(engine, shop: int, token: str, current: str, new: str, ip: str):
+    """The owner's own change, signed in (D-MULTI-SHOP-002). The current password is verified under the sign-in's limits
+    and slots, keyed by the shop's identifier, so a stolen session cannot guess it here either. This session is kept;
+    the shop's other sessions end, and no other shop's."""
+    if len(new) < 10:
+        raise Refused("password_too_short", 422)
+    ip = limit_key(ip)
+    with engine.connect() as conn:
+        name = conn.execute(text("SELECT identifier FROM shop_profile WHERE id=:shop"), {"shop": shop}).scalar_one()
+        if limited(conn, ip, name):
+            raise Refused("rate_limited", 429)
+    with VERIFYING:  # as login: held until the failure or the change is committed, Argon2 outside the write
+        with engine.connect() as conn:
+            if limited(conn, ip, name):
+                raise Refused("rate_limited", 429)
+            stored = conn.execute(text("SELECT password_hash FROM shop_profile WHERE id=:shop"), {"shop": shop}).scalar()
+        ok, _ = PASSWORDS.verify_and_update(current, stored or DUMMY_HASH)
+        replacement = PASSWORDS.hash(new) if ok and stored is not None else None
+        with write_tx(engine) as conn:
+            # Only over the hash that was verified: a change made meanwhile (the operator, another device) wins.
+            changed = replacement is not None and conn.execute(text(
+                "UPDATE shop_profile SET password_hash=:new WHERE id=:shop AND password_hash=:stored"),
+                {"new": replacement, "shop": shop, "stored": stored}).rowcount == 1
+            if changed:
+                conn.execute(text("DELETE FROM sessions WHERE shop_id=:shop AND token_hash<>:mine"),
+                             {"shop": shop, "mine": token_hash(token)})
+            else:
+                conn.execute(text("INSERT INTO login_failures (ip,identifier,attempted_at) VALUES (:ip,:name,:now)"),
+                             {"ip": ip, "name": name, "now": datetime.now(UTC).isoformat(timespec="microseconds")})
+    if not changed:
+        raise Refused("wrong_password", 403)
+
+
 def logout(engine, token: str | None):
     if token:
         with write_tx(engine) as conn:

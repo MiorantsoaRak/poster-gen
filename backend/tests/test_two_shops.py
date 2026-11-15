@@ -25,6 +25,7 @@ from test_poster_drafts import key, photo
 EXEMPT = {
     ("GET", "/api/session"), ("POST", "/api/session"),  # the session itself: sign-in by identifier is test_api's
     ("DELETE", "/api/session"),  # ends the caller's own session only; a stale tab's is refused below
+    ("POST", "/api/session/password"),  # takes no id: always the session's own shop; another shop untouched in test_shops
     ("GET", "/api/capabilities"),  # the service's modes and estimates: nothing of any shop
     ("GET", "/api/status"),  # the operator's: 404 to both shops below, its spoofing matrix in test_api
 }

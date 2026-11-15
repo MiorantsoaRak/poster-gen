@@ -55,7 +55,8 @@ it('keeps a pending read as one unchangeable record of its key and exact body', 
 })
 it('keeps the pending read while its outcome is unknown, and drops it on a definite answer', () => {
   for (const code of ['network', 'timeout', 'invalid_response', 'server_error', 'read_running']) expect(settled(code)).toBe(false)
-  for (const code of ['read_failed', 'budget_exhausted', 'read_limit', 'chat_unavailable', 'validation_error', 'idempotency_reused']) expect(settled(code)).toBe(true)
+  for (const code of ['read_failed', 'budget_exhausted', 'read_limit', 'chat_unavailable', 'validation_error', 'idempotency_reused',
+    'shop_daily_limit', 'reads_busy']) expect(settled(code)).toBe(true)  // refused at admission: nothing kept under the key
 })
 it('leaves a pointer where the new thread went, and reads nothing else from it', () => {
   const id = '0b9f3c1e-2a4d-4e6f-8a1b-3c5d7e9f1a2b'
@@ -80,7 +81,7 @@ it('retires a card only on a refusal that an earlier delivery of the same reques
   // The request's own words against the document at its revision: asking again changes nothing (audit 2026-11-15).
   for (const code of ['invalid_headline', 'contact_unsupported']) expect(final(code), code).toBe(true)
   // A refusal stores nothing under the key: these may let a delivery still on its way pass later, so the card keeps it.
-  for (const code of ['image_job_running', 'budget_exhausted', 'rate_limited', 'provider_unavailable', 'unauthenticated', 'service_down',
+  for (const code of ['image_job_running', 'budget_exhausted', 'shop_daily_limit', 'shop_suspended', 'rate_limited', 'provider_unavailable', 'unauthenticated', 'service_down',
     'server_error', 'network', 'timeout', 'invalid_response', 'something_new', '', 'creation_abandoned', 'format_unavailable']) expect(final(code), code).toBe(false)
 })
 it('names the outcome of the job a card recorded', () => {

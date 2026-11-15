@@ -9,7 +9,7 @@ NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEN
          "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "MIN_SOURCE_SHORT_EDGE", "REMBG_MODEL", "MAX_HOLE_RATIO",
          "DATA_DIR", "OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "APP_ORIGIN", "SHOP_PASSWORD_HASH",
          "PLANNER_PROVIDER", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ESTIMATE_PLAN_USD", "ESTIMATE_TEXTURE_USD",
-         "FORMATS_ENABLED", "ESTIMATE_READ_USD", "SUPPORT_CONTACT_FR")
+         "FORMATS_ENABLED", "ESTIMATE_READ_USD", "SUPPORT_CONTACT_FR", "SHOP_DAILY_SPEND_USD")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 SECRET = "sk-test-must-never-be-printed"
@@ -34,6 +34,7 @@ def test_valid_config_with_defaults(env):
     assert settings.image_provider == "stub"
     assert settings.spend_cap_usd == Decimal("20")
     assert settings.spend_cap_since == TODAY
+    assert settings.shop_daily_spend_usd == Decimal("2.00")
     assert settings.estimate_scene_usd == Decimal("0.40")
     assert settings.estimate_background_usd == Decimal("0.30")
     assert settings.attempt_limit == 3
@@ -79,6 +80,7 @@ def test_relative_data_dir_is_resolved_from_backend(env):
     ({"SPEND_CAP_USD": "nan"}, "spend_cap_usd"),
     ({"SPEND_CAP_SINCE": None}, "spend_cap_since"),
     ({"SPEND_CAP_SINCE": TOMORROW}, "spend_cap_since"),
+    ({"SHOP_DAILY_SPEND_USD": "0"}, "shop_daily_spend_usd"),
     ({"ESTIMATE_SCENE_USD": "0"}, "estimate_scene_usd"),
     ({"ESTIMATE_SCENE_USD": "-0.40"}, "estimate_scene_usd"),
     ({"ESTIMATE_BACKGROUND_USD": "0"}, "estimate_background_usd"),

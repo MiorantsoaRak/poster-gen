@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
 
@@ -7,16 +8,17 @@ import pytest
 from sqlalchemy import text
 
 from affiche.config import load_settings
-from affiche.db import write_tx
+from affiche.db import utc_now, write_tx
 from affiche.posters import jobs, store
 from affiche.posters.worker import Outcome, run_job
-from affiche.posters.models import Document
+from affiche.posters.models import Document, NewCreation, Offer, ProductInput
 from affiche.visuals import admission
 from affiche.visuals.gateway import ProviderError
 from test_admission import _seed, _ledger_call
+from test_api import second_shop
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
-from test_poster_drafts import input_id, draft, key  # noqa: F401
+from test_poster_drafts import input_id, draft, key, photo  # noqa: F401
 
 
 @pytest.fixture
@@ -32,11 +34,25 @@ def creation(engine, tmp_path, input_id):
     return draft(engine, tmp_path, input_id)
 
 
-def enqueue(engine, settings, creation, *, kind="scene", operation=None, payload=None, revision=1):
+def enqueue(engine, settings, creation, *, kind="scene", operation=None, payload=None, revision=1, shop=1):
     payload = payload or {"prompt": "test"}
-    return store.mutate(engine, 1, operation or key(), "POST", f'/test/{creation["id"]}/{kind}', payload,
-                        lambda conn: (202, jobs.enqueue(conn, settings, 1, creation["id"], revision, kind, payload)),
+    return store.mutate(engine, shop, operation or key(), "POST", f'/test/{creation["id"]}/{kind}', payload,
+                        lambda conn: (202, jobs.enqueue(conn, settings, shop, creation["id"], revision, kind, payload)),
                         revision=revision)[1]["job_id"]
+
+
+def poster_of(engine, tmp_path, shop):
+    """A poster of another shop, from its own photo."""
+    asset = store.upload(engine, tmp_path, shop, photo(colour="green"), "original")["asset"]
+    source = store.create_input(engine, tmp_path, shop, key(), ProductInput(name="Sony", variant="v", photo_assets=[asset]))[1]["id"]
+    return store.create_creation(engine, tmp_path, shop, key(), NewCreation(
+        input_id=source, offer=Offer(title="Sony X", price_ar=1000),
+        brand_selection={"logo": False, "shop_name": False, "contact": False}))[1]
+
+
+def jobs_count(engine):
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one()
 
 
 def view(engine, id):
@@ -131,6 +147,7 @@ def test_active_image_blocks_abandon_and_other_image_work(engine, settings, crea
 
 
 def test_scene_limit_and_failed_jobs_do_not_consume_slots(engine, settings, creation, tmp_path):
+    settings.shop_daily_spend_usd = Decimal("20")  # twelve scenes cost more than a shop's day: the limit here is the count
     id = enqueue(engine, settings, creation)
     jobs.claim(engine, ("scene",))
     jobs.fail(engine, id, "preflight", unsent=True)
@@ -156,6 +173,112 @@ def test_two_provider_slots_and_one_local_slot(engine, settings, creation, tmp_p
     enqueue(engine, settings, creation, kind="cutout")
     assert jobs.claim(engine, ("render", "cutout"))
     assert jobs.claim(engine, ("render", "cutout")) is None
+
+
+def test_shops_take_turns_in_the_queue(engine, settings, creation, tmp_path, input_id):
+    """R-MULTI-SHOP-003: A's long queue does not hold B's first job behind all of it (the audit's FIFO test inverted)."""
+    shop_b, _ = second_shop(engine)
+    first, second, third = (enqueue(engine, settings, item) for item in (
+        creation, draft(engine, tmp_path, input_id), draft(engine, tmp_path, input_id)))
+    poster_b = poster_of(engine, tmp_path, shop_b)
+    b_job = enqueue(engine, settings, poster_b, shop=shop_b)  # queued after all of A's
+    assert jobs.claim(engine, ("scene",))["id"] == first
+    assert jobs.claim(engine, ("scene",))["id"] == b_job  # B never had a job started; A a moment ago
+    assert jobs.claim(engine, ("scene",)) is None  # still two provider slots for the whole service
+    jobs.fail(engine, first, "test", unsent=True)
+    assert jobs.claim(engine, ("scene",))["id"] == second
+    jobs.fail(engine, b_job, "test", unsent=True)
+    b_again = enqueue(engine, settings, poster_b, shop=shop_b)
+    assert jobs.claim(engine, ("scene",))["id"] == b_again != third  # B was served longer ago than A
+
+
+def test_the_guard_tells_a_suspension_then_the_services_pause_then_the_shops_day(engine, settings, creation):
+    """D-MULTI-SHOP-005's order: the service's cap before the shop's own day, so that every shop is told the service is
+    paused. A refusal reserves and writes nothing."""
+    with write_tx(engine) as conn:
+        _seed(conn)
+        _ledger_call(conn, 200000)  # the evaluation CLI's: the service's spend, no shop's
+        conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+    settings.spend_cap_usd, settings.shop_daily_spend_usd = Decimal("0.5"), Decimal("0.3")
+
+    def refused():
+        with pytest.raises(store.Refused) as caught:
+            enqueue(engine, settings, creation)
+        assert spent(engine, settings) == 200000 and jobs_count(engine) == 0
+        return caught.value.code, caught.value.status
+
+    assert refused() == ("shop_suspended", 403)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET state='active' WHERE id=1")
+    assert refused() == ("budget_exhausted", 429)  # 0.20 + 0.40 > 0.50
+    settings.spend_cap_usd = Decimal("20")
+    assert refused() == ("shop_daily_limit", 429)  # 0.40 > 0.30
+    settings.shop_daily_spend_usd = Decimal("0.4")  # exactly the day's ceiling; the CLI's 0.20 is no shop's
+    enqueue(engine, settings, creation)
+    assert spent(engine, settings) == 600000
+
+
+def test_one_shops_day_does_not_stop_another_and_the_services_cap_stops_both(engine, settings, creation, tmp_path, input_id):
+    """R-MULTI-SHOP-003: each shop has its own day of provider spend; at the service's cap every shop is told the
+    service is paused, and nothing is reserved."""
+    shop_b, _ = second_shop(engine)
+    other = draft(engine, tmp_path, input_id)
+    settings.shop_daily_spend_usd = Decimal("0.5")
+    enqueue(engine, settings, creation)  # A's day: 0.40
+    with pytest.raises(store.Refused, match="shop_daily_limit"):
+        enqueue(engine, settings, other)
+    enqueue(engine, settings, poster_of(engine, tmp_path, shop_b), shop=shop_b)  # B's day is B's own
+    with engine.connect() as conn:
+        assert [admission.spent_micros(conn, settings, shop=shop) for shop in (1, shop_b)] == [400000, 400000]
+    settings.spend_cap_usd, settings.shop_daily_spend_usd = Decimal("1.1"), Decimal("2")  # 0.80 + 0.40 > 1.10
+    for shop, item in ((1, other), (shop_b, poster_of(engine, tmp_path, shop_b))):
+        with pytest.raises(store.Refused) as caught:
+            enqueue(engine, settings, item, shop=shop)
+        assert (caught.value.code, caught.value.status) == ("budget_exhausted", 429)
+    assert spent(engine, settings) == 800000 and jobs_count(engine) == 2
+
+
+def test_a_reservation_counts_on_the_day_it_was_admitted(engine, settings, creation, tmp_path, input_id):
+    """The shop's ceiling is an admission-day budget: a job admitted at 23:59 UTC and finished after midnight stays in
+    the first day's sum, and the next day's ceiling does not see it."""
+    settings.spend_cap_since = datetime.now(UTC).date() - timedelta(days=7)
+    settings.shop_daily_spend_usd = Decimal("0.4")
+    id = enqueue(engine, settings, creation)
+    late = f"{datetime.now(UTC).date() - timedelta(days=1)}T23:59:59.999999+00:00"
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_calls SET created_at=? WHERE job_id=?", (late, id))
+    job = jobs.claim(engine, ("scene",))
+    jobs.dispatch(engine, id)
+    jobs.spool(tmp_path, job, {"visual": "v"}, cost_micros=170000)
+    jobs.finish_spool(engine, tmp_path, id, lambda *_: "v")
+    with engine.connect() as conn:
+        assert admission.spent_micros(conn, settings, shop=1, since=late[:10]) == 170000
+        assert admission.spent_micros(conn, settings, shop=1, since=utc_now()[:10]) == 0
+    enqueue(engine, settings, draft(engine, tmp_path, input_id))  # today's 0.40 fits today's 0.40
+
+
+@pytest.mark.parametrize("refusal", ["shop_daily_limit", "shop_suspended"])
+def test_a_rate_limit_retry_refused_by_the_guard_fails_at_no_cost(engine, settings, creation, refusal):
+    """worker.py: a 429 retry's reservation refused by any of the guard's checks fails the job with the provider's code
+    at cost 0, call 2 never reserved, instead of escaping to reconciliation_required."""
+    id = enqueue(engine, settings, creation)
+    job = jobs.claim(engine, ("scene",))
+    sent = []
+
+    async def send(_):
+        sent.append(1)
+        if refusal == "shop_daily_limit":
+            settings.shop_daily_spend_usd = Decimal("0.3")
+        else:
+            with write_tx(engine) as conn:
+                conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+        raise ProviderError("rate_limited", "secret provider body")
+
+    asyncio.run(run_job(engine, settings, job, prepare=lambda *_: {}, send=send, finalise=lambda *_: pytest.fail("finalised")))
+    assert len(sent) == 1 and (view(engine, id)["status"], view(engine, id)["error_code"]) == ("failed", "rate_limited")
+    assert spent(engine, settings) == 0
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT call_no FROM poster_calls WHERE job_id=:id"), {"id": id}).scalars().all() == [1]
 
 
 def test_dispatch_crash_never_replays_and_unsent_crash_requeues(engine, settings, creation, tmp_path):

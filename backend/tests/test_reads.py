@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 import httpx2
@@ -20,7 +21,7 @@ from affiche.posters.store import Refused
 from affiche.visuals.admission import spent_micros
 from fastapi.testclient import TestClient
 
-from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, settings  # noqa: F401
+from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
 from test_db import engine  # noqa: F401
@@ -496,6 +497,64 @@ def test_daily_limit_at_the_day_edge(engine, claude, monkeypatch):
     result, requests = ask(engine, claude, reply())
     assert (result.code, result.status, requests, len(rows(engine))) == ("read_limit", 429, [], 4)
     assert MESSAGES["read_limit"] == "Limite de messages atteinte pour aujourd’hui. Continuez dans Pas à pas."
+
+
+def test_reads_are_refused_in_the_designs_order(engine, claude, monkeypatch):
+    """D-MULTI-SHOP-005: the provider guard (a suspension, the service's cap, the shop's day), then the day's read
+    limit, then two reads of the shop in progress. A refusal reserves nothing and sends nothing."""
+    shop_b, _ = second_shop(engine)
+    monkeypatch.setattr(reads, "DAILY_LIMIT", 2)
+    for _ in range(2):  # two reads of shop 1 in progress: 0.04 of its day
+        insert(engine, utc_now(), "running", ESTIMATE)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+    claude.spend_cap_usd = claude.shop_daily_spend_usd = Decimal("0.05")  # 0.04 + 0.02 asked > 0.05
+
+    def refused():
+        result, requests = ask(engine, claude, reply())
+        assert requests == [] and [row["shop_id"] for row in rows(engine)].count(1) == 2
+        return result.code, result.status
+
+    def admitted(shop):
+        result, requests = ask(engine, claude, reply(), shop=shop)
+        assert result["card"]["kind"] == "ask_product" and len(requests) == 1
+
+    assert refused() == ("shop_suspended", 403)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET state='active' WHERE id=1")
+    assert refused() == ("budget_exhausted", 429)
+    claude.spend_cap_usd = Decimal("20")
+    assert refused() == ("shop_daily_limit", 429)
+    claude.shop_daily_spend_usd = Decimal("2")
+    assert refused() == ("read_limit", 429)
+    admitted(shop_b)  # another shop's day of reads is its own
+    monkeypatch.setattr(reads, "DAILY_LIMIT", 3)
+    assert refused() == ("reads_busy", 429)
+    admitted(shop_b)  # and so are its two places
+    with write_tx(engine) as conn:  # one of the two ends: its place is free again
+        conn.exec_driver_sql("UPDATE chat_reads SET status='succeeded' WHERE id=(SELECT MIN(id) FROM chat_reads "
+                             "WHERE shop_id=1 AND status='running')")
+    admitted(1)
+    assert MESSAGES["reads_busy"].startswith("Deux messages de la boutique sont déjà en cours de lecture.")
+
+
+def test_one_shops_day_does_not_stop_anothers_reads_and_the_services_cap_stops_both(engine, claude):
+    """R-MULTI-SHOP-003 for reads: each shop's own day of provider spend; at the service's cap every shop is told the
+    service is paused, and nothing is reserved."""
+    shop_b, _ = second_shop(engine)
+    insert(engine, utc_now(), cost=40_000)  # shop 1's day so far
+    claude.shop_daily_spend_usd = Decimal("0.05")  # 0.04 + 0.02 asked > 0.05
+    mine, sent = ask(engine, claude, reply())
+    assert (mine.code, mine.status, sent) == ("shop_daily_limit", 429, [])
+    theirs, sent = ask(engine, claude, reply(), shop=shop_b)
+    assert theirs["card"]["kind"] == "ask_product" and len(sent) == 1
+    claude.spend_cap_usd = Decimal("0.06")  # 0.04 + B's real cost + 0.02 > 0.06
+    for shop in (1, shop_b):
+        result, sent = ask(engine, claude, reply(), shop=shop)
+        assert (result.code, result.status, sent) == ("budget_exhausted", 429, [])
+    assert len(rows(engine)) == 2
+    with engine.connect() as conn:
+        assert spent_micros(conn, claude) == 40_000 + REAL
 
 
 def test_read_follows_the_planner_mode_lock(engine, env, claude):

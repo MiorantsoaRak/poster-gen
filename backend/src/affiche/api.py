@@ -81,6 +81,8 @@ MESSAGES = {
         "wrong_credentials": "Identifiant ou mot de passe incorrect.",
         "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
         "shop_changed": "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.",
+        "wrong_password": "Le mot de passe actuel n’est pas le bon.",
+        "password_too_short": "Le nouveau mot de passe doit avoir au moins 10 caractères.",
         "revision_conflict": "Une version plus récente existe. Vos modifications restent à récupérer.",
         "idempotency_reused": "Cette référence de demande a déjà été utilisée avec un autre contenu.",
         "precondition_required": "La version du document est requise.", "not_found": "Élément introuvable.",
@@ -108,7 +110,8 @@ MESSAGES = {
         "asset_missing": "Une image est introuvable. Restaurez le fichier original.",
         "asset_corrupt": "Une image est endommagée. Restaurez le fichier original.",
         "internal_error": "Une erreur est survenue. Conservez vos modifications.",
-        "budget_exhausted": "Le budget d’images de la boutique est atteint. Vous pouvez encore modifier et télécharger vos affiches. Pour créer de nouvelles images, contactez l’administrateur.",
+        "budget_exhausted": "La création d’images est en pause pour tout le service. Vous pouvez encore modifier et télécharger vos affiches. Réessayez plus tard.",
+        "shop_daily_limit": "La boutique a atteint sa limite d’images pour aujourd’hui. Vous pouvez encore modifier et télécharger vos affiches. Réessayez demain.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
         "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",
@@ -122,6 +125,7 @@ MESSAGES = {
         "read_failed": "Je n’ai pas pu lire votre message. Réessayez, ou passez par Pas à pas.",
         "read_running": "Votre message est encore en cours de lecture. Patientez quelques secondes.",
         "read_limit": "Limite de messages atteinte pour aujourd’hui. Continuez dans Pas à pas.",
+        "reads_busy": "Deux messages de la boutique sont déjà en cours de lecture. Patientez quelques secondes, puis renvoyez le vôtre.",
         # The chat's cards (posters/reads.py): the one place for their French sentences. {} is filled by the server.
         "card_ask_product": "Quel est le produit ? Marque et modèle.",
         "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
@@ -277,6 +281,11 @@ class AccessBoundary:
 class Login(Model):
     identifier: str = Field(min_length=1, max_length=64)
     password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class PasswordChange(Model):
+    current_password: SecretStr = Field(min_length=1, max_length=1024)
+    new_password: SecretStr = Field(min_length=1, max_length=1024)  # under 10 characters: password_too_short
 
 
 class ProfileView(Profile):
@@ -670,6 +679,15 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         response = JSONResponse({"authenticated": False})
         response.delete_cookie(auth.COOKIE, httponly=True, secure=settings.app_origin.startswith("https://"), samesite="strict")
         return response
+
+    # No Idempotency-Key: its stored payload hash would be an unsalted SHA-256 of both passwords. The session's token is
+    # kept, so no cookie changes. 403, not 401, for a wrong current password: the editor ends the session on any 401.
+    @protected.post("/api/session/password")
+    def change_password(body: PasswordChange, request: Request):
+        auth.change_password(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
+                             body.current_password.get_secret_value(), body.new_password.get_secret_value(),
+                             request.client.host if request.client else "unknown")
+        return {"changed": True}
 
     @protected.post("/api/assets", status_code=201, openapi_extra={"requestBody": {"required": True, "content": {
         "multipart/form-data": {"schema": {"type": "object", "required": ["file", "role"], "additionalProperties": False,

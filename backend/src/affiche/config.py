@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     openai_image_quality: str | None = None  # the default --quality of a new evaluation run
     spend_cap_usd: PositiveUsd  # no default: no cap, nothing starts (ADR-010)
     spend_cap_since: date
+    # Each shop's provider spend per UTC day, counted on the day a reservation was admitted (D-MULTI-SHOP-005): the one
+    # bound on paid calls that cost the shop no credit (plans, looks, textures, text patches, reads).
+    shop_daily_spend_usd: PositiveUsd = Decimal("2.00")
     estimate_scene_usd: PositiveUsd = Decimal("0.40")
     estimate_background_usd: PositiveUsd = Decimal("0.30")
     attempt_limit: int = Field(3, ge=1)

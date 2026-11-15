@@ -363,6 +363,9 @@ class Counting:
         self.calls += 1
         return self.real.verify_and_update(password, stored)
 
+    def hash(self, password):  # a password change hashes the new one: not a verification
+        return self.real.hash(password)
+
 
 def test_an_unknown_shop_a_wrong_password_and_a_shop_without_one_get_one_answer_after_one_verification(client, monkeypatch):
     engine = client.app.state.engine
