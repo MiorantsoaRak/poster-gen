@@ -55,6 +55,24 @@ def open_tunnel(wait_seconds: float = 60) -> tuple[subprocess.Popen, str]:
     return tunnel, address[0]
 
 
+def application(settings, password: str):
+    """The application with the session's one-off password. Since 0013 a password is shop 1's row, not a setting: it
+    is set in the API's own start-up, under its lock and after its migrations, so that a data folder another API
+    holds is left as it was (AlreadyRunning). Setting it ends shop 1's other sessions."""
+    from affiche.api import create_app
+    from affiche.db import write_tx
+    from affiche.posters.auth import PASSWORDS
+    from affiche.shops import set_password
+
+    password_hash = PASSWORDS.hash(password)  # Argon2 is slow on purpose: never inside the write transaction
+
+    def reset(engine):
+        with write_tx(engine) as conn:
+            set_password(conn, 1, password_hash)
+
+    return create_app(settings, prepare=reset)
+
+
 def main(argv: list[str]) -> None:
     if len(argv) != 2:
         raise SystemExit(__doc__)
@@ -63,11 +81,9 @@ def main(argv: list[str]) -> None:
 
     # Imported here: the checks above must work, and be testable, without the application's settings.
     import uvicorn
-    from pydantic import SecretStr
 
-    from affiche.api import UVICORN, create_app
+    from affiche.api import UVICORN
     from affiche.config import BACKEND_DIR, load_settings
-    from affiche.posters.auth import PASSWORDS
 
     frontend = BACKEND_DIR.parent / "frontend"
     if not (frontend / "dist" / "index.html").is_file():
@@ -81,7 +97,7 @@ def main(argv: list[str]) -> None:
         settings = load_settings().model_copy(update={
             "data_dir": BACKEND_DIR / "data-probe", "image_provider": "openai", "stub_fail": None,
             "openai_image_model": "gpt-image-2", "openai_image_quality": "high", "planner_provider": "claude",
-            "app_origin": origin, "shop_password_hash": SecretStr(PASSWORDS.hash(password))})
+            "app_origin": origin, "shop_password_hash": None})
         settings = settings.model_copy(update={"spend_cap_usd": min(settings.spend_cap_usd, LEDGER_CAP_USD)})
         # The production build, on loopback. Vite refuses unknown Host headers; the tunnel's host is allowed by name.
         children["the page server"] = subprocess.Popen(
@@ -89,7 +105,7 @@ def main(argv: list[str]) -> None:
              "--port", "5173", "--strictPort"], cwd=frontend,
             env={**os.environ, "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS": origin.removeprefix("https://")},
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        server = uvicorn.Server(uvicorn.Config(create_app(settings), **UVICORN, log_level="warning"))
+        server = uvicorn.Server(uvicorn.Config(application(settings, password), **UVICORN, log_level="warning"))
 
         def watch():  # the address must not outlive a dead part, nor the application a dead address
             while not server.should_exit:
@@ -100,7 +116,8 @@ def main(argv: list[str]) -> None:
                 time.sleep(1)
 
         threading.Thread(target=watch, daemon=True).start()
-        print(f"\nAddress for the phone: {origin}\nPassword: in {argv[1]}\nCtrl-C ends the session.\n", flush=True)
+        print(f"\nAddress for the phone: {origin}\nIdentifier: originalphone\nPassword: in {argv[1]}\n"
+              "Ctrl-C ends the session.\n", flush=True)
         server.run()
     finally:
         for child in children.values():  # the tunnel first: the public address closes before anything else

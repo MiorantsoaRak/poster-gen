@@ -1,6 +1,7 @@
-"""One shop credential, revocable opaque sessions, no client-supplied shop identity."""
+"""Shop credentials in the database, revocable opaque sessions, no client-supplied shop identity."""
 import hashlib
 import ipaddress
+import logging
 import secrets
 import threading
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from affiche.config import ConfigError, Settings
 from affiche.db import utc_now, write_tx
 from affiche.posters.store import Refused
 
+log = logging.getLogger(__name__)
 PASSWORDS = PasswordHash.recommended()
 COOKIE = "affiche_session"
 # One Argon2 check takes tens of MiB. Forty worker threads verifying at once would pass the container's memory
@@ -41,7 +43,9 @@ def validate_config(settings: Settings):
     except ValueError:
         raise ConfigError("APP_ORIGIN must be an exact HTTPS origin (HTTP only on loopback).") from None
     secret = settings.shop_password_hash
-    if secret is None or not secret.get_secret_value().startswith("$argon2"):
+    if secret is None:  # optional since 0013: shop 1's password is in the database (adopt_password_setting)
+        return
+    if not secret.get_secret_value().startswith("$argon2"):
         raise ConfigError("SHOP_PASSWORD_HASH must contain a valid Argon2 hash.")
     try:
         PASSWORDS.verify("configuration-validation-only", secret.get_secret_value())
@@ -74,30 +78,47 @@ def limit_key(ip: str) -> str:
     return str(ipaddress.ip_network(f"{address}/64", strict=False).network_address)
 
 
-def end_sessions_on_new_password(engine, settings: Settings):
-    """At start: a password hash other than the one last seen ends every session (a lost phone, a leaked password)."""
-    fingerprint = hashlib.sha256(settings.shop_password_hash.get_secret_value().encode("utf-8")).hexdigest()
+def adopt_password_setting(engine, settings: Settings):
+    """At start (D-MULTI-SHOP-001): SHOP_PASSWORD_HASH becomes shop 1's own password once, and is not read again."""
+    secret = settings.shop_password_hash.get_secret_value() if settings.shop_password_hash else None
     with write_tx(engine) as conn:
-        if conn.execute(text("SELECT value FROM meta WHERE key='password_fingerprint'")).scalar() != fingerprint:
-            conn.execute(text("DELETE FROM sessions"))
-            conn.execute(text("INSERT INTO meta (key,value) VALUES ('password_fingerprint',:value) "
-                              "ON CONFLICT(key) DO UPDATE SET value=excluded.value"), {"value": fingerprint})
+        stored = conn.execute(text("SELECT password_hash FROM shop_profile WHERE id=1")).scalar()
+        fingerprint = conn.execute(text("SELECT value FROM meta WHERE key='password_fingerprint'")).scalar()
+        if stored is not None:
+            if secret is not None:  # stale by design after a reset by the operator: never a reason to stop
+                log.warning("SHOP_PASSWORD_HASH is no longer read: shop 1 has its own password since migration 0013 "
+                            "(python -m affiche.shops set-password). Remove the setting.")
+        elif secret is not None:
+            # The rule of the versions before 0013, applied once more: a hash other than the one last seen ends
+            # every session (a lost phone, a leaked password). Every session is shop 1's here.
+            if fingerprint != hashlib.sha256(secret.encode("utf-8")).hexdigest():
+                conn.execute(text("DELETE FROM sessions"))
+            conn.execute(text("UPDATE shop_profile SET password_hash=:hash WHERE id=1 AND password_hash IS NULL"),
+                         {"hash": secret})
+            conn.execute(text("DELETE FROM meta WHERE key='password_fingerprint'"))
+        elif fingerprint is not None or conn.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM product_inputs WHERE shop_id=1)")).scalar_one():
+            raise ConfigError("Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set: set it to the "
+                              "pilot's hash for this start, or run python -m affiche.shops set-password originalphone.")
+        else:
+            log.warning("shop 1 has no password: python -m affiche.shops set-password originalphone")
 
 
-def login(engine, settings: Settings, password: str, ip: str, previous: str | None = None) -> str:
+def login(engine, password: str, ip: str, previous: str | None = None) -> str:
     now = datetime.now(UTC)
     since = (now-timedelta(minutes=15)).isoformat(timespec="microseconds")
     ip = limit_key(ip)
     with engine.connect() as conn:
         failures = conn.execute(text("SELECT count(*) FROM login_failures WHERE ip=:ip AND attempted_at>:since"),
                                 {"ip": ip, "since": since}).scalar_one()
+        stored = conn.execute(text("SELECT password_hash FROM shop_profile WHERE id=1")).scalar()
     if failures >= 5:
         raise Refused("rate_limited", 429)
     # Argon2 is slow on purpose. Verified outside the write transaction: inside it, a flood of logins would hold
     # the database's write lock and stall autosaves and job commits. Parallel wrong attempts can therefore pass
     # the count together; they are bounded by the worker threads and each one is recorded.
     with VERIFYING:
-        valid = PASSWORDS.verify(password, settings.shop_password_hash.get_secret_value())
+        valid = stored is not None and PASSWORDS.verify(password, stored)  # no password yet: nobody signs in
     with write_tx(engine) as conn:
         conn.execute(text("DELETE FROM login_failures WHERE attempted_at<=:since"), {"since": since})
         conn.execute(text("DELETE FROM sessions WHERE expires_at<=:now"), {"now": now.isoformat(timespec="microseconds")})

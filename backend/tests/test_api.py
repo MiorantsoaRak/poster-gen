@@ -18,12 +18,13 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import SecretStr
 
-from affiche import api as affiche_api, assets, backup
+from affiche import api as affiche_api, assets, backup, shops
 from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
-from affiche.db import write_tx
+from affiche.db import make_engine, write_tx
 from affiche.posters import auth, jobs, rendering, store
 from test_config import env  # noqa: F401
+from test_db import migrate_to
 from test_poster_drafts import photo
 
 ORIGIN = "https://shop.example"
@@ -227,7 +228,7 @@ def test_at_most_two_passwords_are_verified_at_once(client, settings, monkeypatc
 
     def attempt(i):
         with pytest.raises(store.Refused):
-            auth.login(engine, settings, "wrong", f"198.51.100.{i}")
+            auth.login(engine,"wrong", f"198.51.100.{i}")
 
     threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
     [thread.start() for thread in threads]
@@ -289,28 +290,110 @@ def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
     assert auth.limit_key("unknown") == "unknown"
     for i in range(5):
         with pytest.raises(store.Refused, match="unauthenticated"):
-            auth.login(engine, settings, "wrong", f"2001:db8:1:2:{i}::1")
+            auth.login(engine,"wrong", f"2001:db8:1:2:{i}::1")
     with pytest.raises(store.Refused, match="rate_limited"):
-        auth.login(engine, settings, PASSWORD, "2001:db8:1:2:ffff::1")
-    assert auth.login(engine, settings, PASSWORD, "2001:db8:1:3::1")
-    assert auth.login(engine, settings, PASSWORD, "192.0.2.8")
+        auth.login(engine,PASSWORD, "2001:db8:1:2:ffff::1")
+    assert auth.login(engine,PASSWORD, "2001:db8:1:3::1")
+    assert auth.login(engine,PASSWORD, "192.0.2.8")
 
 
-def test_session_lasts_90_days_and_a_new_password_ends_every_session(settings):
-    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as first:
+def stored_password(app):
+    with app.state.engine.connect() as conn:
+        return conn.exec_driver_sql("SELECT password_hash FROM shop_profile WHERE id=1").scalar_one()
+
+
+def at_0012(settings, monkeypatch, fingerprint=None, product=False):
+    """A data folder as the version before 0013 left it, with one session of the pilot's phone; returns its cookie."""
+    engine = make_engine(settings.data_dir)
+    try:
+        migrate_to(engine, "0012", monkeypatch)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO sessions VALUES (?,1,'2099-01-01T00:00:00.000000+00:00')",
+                                 (auth.token_hash("pilot-phone"),))
+            if fingerprint:
+                conn.exec_driver_sql("INSERT INTO meta VALUES ('password_fingerprint',?)", (fingerprint,))
+            if product:
+                conn.exec_driver_sql("INSERT INTO product_inputs VALUES ('in1',1,'P1','JBL','Bleu','[]','{}',NULL,'t')")
+    finally:
+        engine.dispose()
+    return {"Cookie": f"{auth.COOKIE}=pilot-phone"}
+
+
+@pytest.mark.parametrize("last_seen, kept", [("this", True), ("another", False), (None, False)])
+def test_the_first_start_after_0013_adopts_the_setting_with_the_rule_of_before(settings, monkeypatch, password_hash,
+                                                                              last_seen, kept):
+    fingerprints = {"this": hashlib.sha256(password_hash.encode()).hexdigest(), "another": "0" * 64, None: None}
+    cookie = at_0012(settings, monkeypatch, fingerprints[last_seen])
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        # The pilot's phone stays signed in across the release unless the password changed while the old version ran.
+        assert client.get("/api/session", headers=cookie).json()["authenticated"] is kept
+        assert stored_password(client.app) == password_hash
+        with client.app.state.engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT count(*) FROM meta WHERE key='password_fingerprint'").scalar_one() == 0
+        login(client)  # the same password, now read from shop 1's row
+
+
+def test_after_adoption_the_setting_is_not_read_again(settings, password_hash, caplog):
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as first:  # a new installation, given it
         login(first)
         token = first.cookies.get(auth.COOKIE)
         with first.app.state.engine.connect() as conn:
             expires = datetime.fromisoformat(conn.exec_driver_sql("SELECT expires_at FROM sessions").scalar_one())
         assert timedelta(days=90)-timedelta(minutes=1) < expires-datetime.now(UTC) <= timedelta(days=90)
+    assert "no longer read" not in caplog.text
     cookie = {"Cookie": f"{auth.COOKIE}={token}"}
-    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as same:
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as same:  # a restart, the setting kept
         assert same.get("/api/session", headers=cookie).json()["authenticated"]
-    settings.shop_password_hash = SecretStr(auth.PASSWORDS.hash(os.urandom(12).hex()))
+    assert "SHOP_PASSWORD_HASH is no longer read" in caplog.text
+    caplog.clear()
+    # Stale by design after an operator's reset: a warning, never a revocation nor a refusal to start.
+    newer = os.urandom(12).hex()
+    settings.shop_password_hash = SecretStr(auth.PASSWORDS.hash(newer))
     with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as changed:
-        assert not changed.get("/api/session", headers=cookie).json()["authenticated"]
-        with changed.app.state.engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT count(*) FROM sessions").scalar_one() == 0
+        assert changed.get("/api/session", headers=cookie).json()["authenticated"]
+        assert stored_password(changed.app) == password_hash
+        assert changed.post("/api/session", json={"password": newer}).status_code == 401
+        login(changed)
+    assert "SHOP_PASSWORD_HASH is no longer read" in caplog.text
+    caplog.clear()
+    settings.shop_password_hash = None
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as removed:
+        assert removed.get("/api/session", headers=cookie).json()["authenticated"]
+        login(removed)
+    assert "SHOP_PASSWORD_HASH" not in caplog.text
+
+
+@pytest.mark.parametrize("evidence", [{"fingerprint": "0" * 64}, {"product": True}])
+def test_an_upgraded_pilot_with_no_password_anywhere_refuses_to_start(settings, monkeypatch, evidence):
+    at_0012(settings, monkeypatch, **evidence)
+    settings.shop_password_hash = None
+    with pytest.raises(ConfigError, match="Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set"), \
+            TestClient(create_app(settings)):
+        pass
+    with sqlite3.connect(settings.data_dir / "affiche.db") as conn:  # migrated, nothing else: fixed forward
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0013",)
+        assert conn.execute("SELECT password_hash FROM shop_profile").fetchall() == [(None,)]
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (1,)
+
+
+def test_a_new_installation_without_the_setting_starts_and_waits_for_set_password(settings, password_hash, caplog):
+    settings.shop_password_hash = None
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        assert "shop 1 has no password: python -m affiche.shops set-password originalphone" in caplog.text
+        assert client.post("/api/session", json={"password": PASSWORD}).status_code == 401
+        engine = client.app.state.engine
+        with write_tx(engine) as conn:
+            shops.set_password(conn, 1, password_hash)
+        login(client)
+        mine, reset = client.cookies.get(auth.COOKIE), os.urandom(12).hex()
+        with write_tx(engine) as conn:  # the operator's reset ends that shop's sessions
+            shops.set_password(conn, 1, auth.PASSWORDS.hash(reset))
+            with pytest.raises(LookupError):
+                shops.set_password(conn, 2, password_hash)
+        assert not client.get("/api/session", headers={"Cookie": f"{auth.COOKIE}={mine}"}).json()["authenticated"]
+        assert client.post("/api/session", json={"password": reset}).status_code == 200
+        with write_tx(engine) as conn:
+            assert shops.end_sessions(conn) == 1 and shops.end_sessions(conn, 1) == 0
 
 
 @pytest.mark.parametrize("origin", [None, "http://shop.example", "https://user@shop.example", "https://shop.example/", "https://shop.example?x=1"])
@@ -320,13 +403,12 @@ def test_bad_origin_refuses_startup(settings, origin):
         pass
 
 
-@pytest.mark.parametrize("secret", [None, "plaintext-secret", "$argon2id$invalid"])
+@pytest.mark.parametrize("secret", ["plaintext-secret", "$argon2id$invalid"])
 def test_bad_hash_refuses_startup_without_leaking(settings, secret):
-    settings.shop_password_hash = SecretStr(secret) if secret else None
+    settings.shop_password_hash = SecretStr(secret)
     with pytest.raises(ConfigError, match="SHOP_PASSWORD_HASH") as error, TestClient(create_app(settings)):
         pass
-    if secret:
-        assert secret not in str(error.value)
+    assert secret not in str(error.value)
 
 
 def test_local_http_cookie_and_server_restart(settings):

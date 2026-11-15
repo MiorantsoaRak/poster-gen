@@ -547,8 +547,9 @@ def _admit(engine, settings, shop, key, request: ReadRequest):
     digest = _sha(canonical(request))
     with write_tx(engine) as conn:
         _sweep(conn)
-        old = conn.execute(text("SELECT shop_id,payload_sha,status,response_json FROM chat_reads WHERE key=:key"),
-                           {"key": key}).mappings().first()
+        # A key is the shop's own (0013): another shop's same key is a new key here.
+        old = conn.execute(text("SELECT payload_sha,status,response_json FROM chat_reads WHERE shop_id=:shop AND key=:key"),
+                           {"shop": shop, "key": key}).mappings().first()
         if old is None:
             spec, poster = _spec(settings), None
             if request.creation_id:
@@ -581,7 +582,7 @@ def _admit(engine, settings, shop, key, request: ReadRequest):
                           "rates": canonical(spec.rate_card | {"reservation_micros": spec.estimate_micros})})
             return id, spec, poster
     # Replay, after the commit so that the sweep above is kept.
-    if (old["shop_id"], old["payload_sha"]) != (shop, digest):
+    if old["payload_sha"] != digest:
         raise Refused("idempotency_reused", 409)
     if old["status"] == "running":
         raise Refused("read_running", 409)

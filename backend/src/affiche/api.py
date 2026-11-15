@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -16,7 +17,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Path, Query, Request
 from fastapi.security import APIKeyCookie
 from fastapi.exceptions import RequestValidationError
 from pydantic import Field, SecretStr
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
@@ -391,7 +392,9 @@ def _backup_state(folder) -> dict | None:
     return {"finished_at": finished, "age_hours": round(age, 1), "late": age > 48}
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, prepare: Callable[[Engine], None] | None = None) -> FastAPI:
+    """`prepare(engine)` runs once at start, under the API's lock and after the migrations, before anything else
+    (deploy/phone_session.py sets its one-off password there): a folder another process holds is left untouched."""
     settings = settings or load_settings()
 
     @asynccontextmanager
@@ -402,7 +405,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.started_at = datetime.now(UTC).isoformat(timespec="seconds")
         service = None
         try:
-            auth.end_sessions_on_new_password(runtime.engine, settings)
+            if prepare is not None:
+                prepare(runtime.engine)
+            auth.adopt_password_setting(runtime.engine, settings)
             app.state.pending_finalisations = jobs.recover(runtime.engine, settings.data_dir)
             reads.recover(runtime.engine)
             service = PosterService(runtime.engine, settings)
@@ -615,7 +620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/session", openapi_extra={"security": []})
     def login(body: Login, request: Request):
-        token = auth.login(app.state.engine, settings, body.password.get_secret_value(),
+        token = auth.login(app.state.engine, body.password.get_secret_value(),
                            request.client.host if request.client else "unknown", request.cookies.get(auth.COOKIE))
         response = JSONResponse({"authenticated": True})
         response.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_SECONDS, httponly=True,

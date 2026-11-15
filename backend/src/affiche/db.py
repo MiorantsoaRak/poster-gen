@@ -1,7 +1,7 @@
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
-from sqlite3 import Connection as SqliteConnection
+from sqlite3 import Connection as SqliteConnection, Error as SqliteError
 from typing import Any
 
 from alembic import command
@@ -54,8 +54,25 @@ def utc_now() -> str:
 
 
 def migrate(engine: Engine) -> None:
-    """Upgrade to head on a connection of this engine, so the pragmas and BEGIN IMMEDIATE apply."""
+    """Upgrade to head on a connection of this engine, so the pragmas and BEGIN IMMEDIATE apply. Foreign keys are off
+    while the migrations run, so that a table others reference can be rebuilt (SQLite's procedure for changing a
+    table), and every reference is checked before the commit (D-MULTI-SHOP-001)."""
     config = Config(BACKEND_DIR / "alembic.ini")
-    with write_tx(engine) as conn:
-        config.attributes["connection"] = conn
-        command.upgrade(config, "head")
+    with engine.connect() as conn:
+        raw = conn.connection.dbapi_connection
+        raw.execute("PRAGMA foreign_keys = OFF")  # before any BEGIN: inside a transaction the pragma does nothing
+        try:
+            with conn.execution_options(**{_WRITE_OPTION: True}).begin():
+                config.attributes["connection"] = conn
+                command.upgrade(config, "head")
+                if conn.exec_driver_sql("PRAGMA foreign_key_check").first() is not None:
+                    raise RuntimeError("a migration left a reference to a missing row; nothing was applied")
+        finally:
+            try:
+                raw.execute("PRAGMA foreign_keys = ON")
+                restored = raw.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+            except SqliteError:
+                restored = False
+            if not restored:  # never back to the pool with the keys off
+                conn.invalidate()
+                raise RuntimeError("foreign keys could not be turned on again; the connection was discarded")

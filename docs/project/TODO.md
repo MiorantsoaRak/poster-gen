@@ -7,7 +7,12 @@
 
 ### Release 1 « Invitation » — multi-shop (D-MULTI-SHOP v4, ADR-107). Nothing is deployed until the whole release is complete (ADR-105).
 
-- [ ] T-MULTI-SHOP-001 (designs/multi-shop.md) Migration 0013 with foreign keys off and checked, chat read keys per shop, the pilot password moved into the database, the rehearsal command.
+- [x] T-MULTI-SHOP-001 (designs/multi-shop.md) Migration 0013 with foreign keys off and checked, chat read keys per shop, the pilot password moved into the database, the rehearsal command.
+  - done 2026-11-15: migration 0013 (`backend/migrations/versions/0013_shops.py`), `migrate` with foreign keys off and checked, read keys per shop, the pilot's password adopted into the database at start (`auth.adopt_password_setting`), `affiche.shops` (`set_password`, `end_sessions`), `python -m affiche.rehearse`. Codex r1 APPROVE WITH FIXES: `deploy/phone_session.py` changed the database before the process lock, fixed (the reset runs inside the API's start-up) with a test (reviews/t-multi-shop-001-code-r1.md). Round 3's point on the rehearsal's hashes is closed by that review.
+  - verified on Linux by the lead: backend 1043 passed / 3 deselected; `REHEARSAL OK` on `data-probe` (28 tables with identical row hashes, ledgers 512881 / 7269000 / 513948 micro-USD before and after), the file's checksum unchanged; `browser_smoke.py`, `chat_browser.py`, `editor_refinements_browser.py` pass.
+  - not verified: the pilot's real database; SQLite 3.40.1 of the release image (the review found no SQL that needs a newer one); `deploy/phone_session.py` was not run (it spends real money).
+  - left for T-002, must land before release: the stored hash is not re-read inside the transaction that creates a session, so a password changed during a sign-in's verification can still give a session.
+  - the pilot's identifier is `originalphone`; it can still be changed in 0013 until that migration first runs on a real database.
   - verify (from `backend/`): `uv run pytest tests/test_db.py tests/test_api.py tests/test_reads.py -q && uv run python -m affiche.rehearse data-probe/affiche.db` → all passed; `REHEARSAL OK`
 - [ ] T-MULTI-SHOP-002 Sign-in by identifier end to end: limits, bundle 3, the form's identifier field and support line, the test sign-in helpers.
   - verify: `uv run pytest tests/test_api.py tests/test_shops.py -q && (cd ../frontend && corepack npm@10 test) && uv run python ../frontend/tests/browser_smoke.py && uv run python ../frontend/tests/chat_browser.py` → pass
@@ -708,8 +713,12 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Verify com
 
 ## Brand concept exploration — Codex, 2026-11-15
 
-- [~] T-DOKA-IDENTITY (chore; user selects Doka Studio and explicitly requests logo-design + image-gen style exploration) Develop three distinct identity styles under the selected name, with editable vector logo studies, generated brand boards and typography/palette/voice proposals. Preserve prior work; no app rollout.
+- [x] T-DOKA-SIGNAL-CHOICE (chore; user prefers Signal) Record Signal as Doka Studio's chosen identity direction in project metadata, identity notes, decisions and handoff. Preserve the other directions as exploration history.
+  - verified 2026-11-15: metadata and current next-step notes agree on Signal; referenced Signal board/vector assets exist; diff whitespace checked. Documentation only; no new artwork or app changes.
+
+- [x] T-DOKA-IDENTITY (chore; user selects Doka Studio and explicitly requests logo-design + image-gen style exploration) Develop three distinct identity styles under the selected name, with editable vector logo studies, generated brand boards and typography/palette/voice proposals. Preserve prior work; no app rollout.
   - verify: render/inspect native marks and generated boards, small-size/monochrome checks, palette contrast, local deliverable links and clear distinction between editable vectors and raster mockups.
+  - done 2026-11-15: [Signal / Editorial / Complice](mockups/doka-studio-identity/README.md), nine outlined vector studies, three inspected imagegen boards plus two retained refinements, type comparison, saved prompts/styles and voice/application proposals. Signal recommended; style remains the user's choice. Shared D inspected at 16/32/64 px and reversed; six flat-color text pairs pass 4.5:1. Native symbol audit clean; outlined-wordmark notices and generated Editorial label typo documented. Local links/XML/JSON checked. PROJECT metadata records Doka Studio as selected brand. No app source changes, rollout or application regression tests.
 
 - [x] T-BRAND-DOKA (chore; user request: add Doka Studio as direction D) Create a distinct Doka Studio concept and identity proposal alongside A/B/C, retaining the original overview. Render/audit/refine the vector mark and outlined lockup; add a four-option comparison and record naming considerations. No final selection, app rebrand or production kit.
   - verify: SVG structure/audit, two rendered scale/reverse checks, palette contrast and updated local links.

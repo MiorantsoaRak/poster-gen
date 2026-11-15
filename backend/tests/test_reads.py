@@ -61,7 +61,7 @@ ANSWER = {"type": "text", "text": json.dumps({"intent": "describe", "product_nam
                                               "style": None, "instruction_fr": None, "identity": None})}
 
 
-def ask(engine, settings, response, text="JBL Flip 7, 700 000 Ar", key=None, **draft):
+def ask(engine, settings, response, text="JBL Flip 7, 700 000 Ar", key=None, shop=1, **draft):
     """One read through the real adapter and a mocked transport. Returns (answer or Refused, requests)."""
     requests = []
 
@@ -74,7 +74,7 @@ def ask(engine, settings, response, text="JBL Flip 7, 700 000 Ar", key=None, **d
         return response
 
     try:
-        result = asyncio.run(reads.read(engine, settings, 1, key or str(uuid4()), reads.ReadRequest(**body(text, **draft)),
+        result = asyncio.run(reads.read(engine, settings, shop, key or str(uuid4()), reads.ReadRequest(**body(text, **draft)),
                                         MESSAGES, transport=httpx2.MockTransport(handle)))
     except Refused as refused:
         result = refused
@@ -106,7 +106,7 @@ def test_migration_0012_on_a_0011_database(tmp_path, monkeypatch):
         migrate(engine)
         migrate(engine)  # start-up replay
         with engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0012"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0013"
             assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='planner_mode'").scalar_one() == "stub"
             columns = {row[1]: row[3] for row in conn.exec_driver_sql("PRAGMA table_info(chat_reads)")}
             assert conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name='chat_reads_created'").scalar_one() \
@@ -536,12 +536,29 @@ def test_creation_must_be_the_shops_and_active(engine, claude, tmp_path, input_i
     read = lambda shop: asyncio.run(reads.read(engine, claude, shop, str(uuid4()), request, MESSAGES,  # noqa: E731
                                                transport=httpx2.MockTransport(lambda _request: pytest.fail("called"))))
     with pytest.raises(Refused) as refused:
-        read(2)  # shop_profile is CHECK (id = 1): no second shop can exist, so only the ownership filter is shown
+        read(2)  # shop 2 does not even exist here: only the ownership filter is shown
     assert (refused.value.code, refused.value.status) == ("not_found", 404)
     store.abandon_creation(engine, 1, str(uuid4()), creation["id"], 1)
     with pytest.raises(Refused) as refused:
         read(1)
     assert (refused.value.code, refused.value.status, rows(engine)) == ("creation_abandoned", 409, [])
+
+
+def test_a_key_is_the_shops_own(engine, claude):
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO shop_profile (revision,updated_at,identifier,state,created_at) "
+                             "VALUES (1,'now','shopdeux','active','now')")
+    key = str(uuid4())
+    first, sent = ask(engine, claude, reply(), key=key)
+    assert len(sent) == 1
+    # Shop 2 with shop 1's key and another message: a new read of its own, never shop 1's answer nor a refusal.
+    other, sent = ask(engine, claude, reply({"product_name": "Galaxy A55"}), text="Galaxy A55", key=key, shop=2)
+    assert len(sent) == 1 and other["draft"]["name"] == "Galaxy A55" != first["draft"]["name"]
+    assert sorted((row["shop_id"], row["key"]) for row in rows(engine)) == [(1, key), (2, key)]
+    again, sent = ask(engine, claude, reply(), key=key)  # shop 1's own key still replays, free
+    assert again == first and sent == []
+    reused, sent = ask(engine, claude, reply(), text="Galaxy A55", key=key)
+    assert (reused.code, sent) == ("idempotency_reused", [])
 
 
 def test_photos_already_used_are_offered_for_the_same_product(stub, client, monkeypatch):
