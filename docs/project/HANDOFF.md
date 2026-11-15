@@ -2,6 +2,35 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
+## Codex brand concepts — 2026-11-15
+
+**Done:** T-BRAND-CONCEPTS and T-BRAND-DOKA, explicit `logo-design` invocation. [Four-direction overview](mockups/brand-directions/concepts-four.png), [names and identity proposals](mockups/brand-directions/README.md). The original three directions: **Affisoa** (recommended; folded-corner a, terracotta/cream, friendly local partner), **Saryko** (ribbon S, forest/cream/gold, editorial studio), **Vitraka** (open frame, cobalt/ice, assertive business identity). No chosen name, app rename or rollout. This exploration is independent of Claude's Release 1 work below.
+
+**Added on the user’s request:** **D — Doka Studio**, a custom cut-corner D and outlined doka/STUDIO lockup, with yellow `#F2C744`, charcoal `#20201D`, paper `#F5F1E8`; tagline « Vos produits au premier plan. ». [Detail](mockups/brand-directions/doka-studio-concept.png). Two render/test rounds inspected; improved centering and larger STUDIO; symbol audit no issues, lockup font/complexity notices recorded. Charcoal on yellow is 10.13:1; white on yellow fails and is not recommended. Original overview and A/B/C SVGs retained. No choice, production kit or app rollout implied. Material name overlap: Doka was an image editor name before Pintura, and Doka Studio has existing music-event use; clearance remains open.
+
+**Verified:** two SVG render/test rounds, true-size 16/32/64 px views, one-colour/reverse/mirror/blur/avatar/header contexts and shelf comparison. Three symbols audit with no issues; outlined wordmarks have only documented font/precision/complexity notices. Six proposed text/background color pairs pass 4.5:1; earlier terracotta darkened after failing on cream. Final overview is 1600×984. SVG structure and relative links checked. No application tests (isolated concept assets only), app changes, paid calls, push or deploy. Intermediate build scripts and test sheets are in git-ignored `outputs/brand-directions-2026-11-15/`; first-round vectors are preserved in the concept folder.
+
+**Exact next step:** user chooses A/B/C/D or a combination, then explicitly requests the full kit. The invoked skill requires “Build the kit (Phase 7) only after they pick a direction and say yes.” Full color/reversed exports, final icon set and usage guide have not been produced. App rollout remains a separate change through its applicable workflow. No task in this exploration remains in progress.
+
+**Landmines:** names are coined proposals, not cleared trademarks or guaranteed domains. Saryko is inspired by *sary*, not claimed to be the grammatical phrase “my picture”; Affisoa combines *affiche* and *soa*; Vitraka only evokes *vitrine*. No customer pronunciation/recognition study, legal/reverse-image clearance or print testing. Do not deploy a proposed name or place the app logo on customer posters as if their brand were the service's.
+
+**Uncommitted snapshot** (other agents may change this after this note):
+
+```text
+ M docs/project/DECISIONS.md
+ M docs/project/HANDOFF.md
+ M docs/project/TODO.md
+?? docs/project/designs/multi-shop.md
+?? docs/project/mockups/brand-directions/
+?? docs/project/mockups/text-first/
+?? docs/project/reviews/multi-shop-design-devils-advocate-2026-11-15.md
+?? docs/project/reviews/multi-shop-design-r1-2026-11-15.md
+?? docs/project/reviews/multi-shop-design-r2-2026-11-15.md
+?? docs/project/reviews/multi-shop-design-r3-2026-11-15.md
+?? docs/project/reviews/social-publishing-saas-research-2026-11-15.md
+```
+
+
 ## Codex publishing and SaaS research — 2026-11-15
 
 **Done:** T-SAAS-RESEARCH, T-SAAS-VERIFY and T-PAPI-RESEARCH; research plus user-authorized local verification, no application implementation. Deliverable: [Social publishing and SaaS research](reviews/social-publishing-saas-research-2026-11-15.md). The user confirmed **Madagascar** as the selling business country and **ordinary posts first, paid ads later**. No implementation or scope expansion approved. Claude's chat work remains independent.
@@ -45,7 +74,9 @@
 
 **Done, NOT committed:** [ROADMAP.md](ROADMAP.md); six requirement files, Draft v1 with working defaults, no design (`requirements/multi-shop.md`, `prepaid-balance.md`, `admin-dashboard.md`, `service-terms.md`, `shop-dashboard.md`, `share-poster.md`); `requirements/_INDEX.md`; a scope-change note in PROJECT.md; ADR-105; T-SAAS-ROADMAP in TODO.md.
 
-**Exact next step:** the user reads the drafts and answers the open decisions at the end of ROADMAP.md (what the image may write; the shop's identifier; welcome credits; a first price). Then the design of multi-shop, first in the build order, with its review and devil's advocate.
+**Since then (user: "You have the autonomy, start with what you consider more important", ADR-106):** `requirements/multi-shop.md` approved and amended; [design multi-shop v4](designs/multi-shop.md) approved under the grant (ADR-107) after three review rounds and a devil's advocate (reviews/multi-shop-design-*.md). Six tasks T-MULTI-SHOP-001 to 006 are in TODO.md; **none is started.**
+
+**Exact next step:** T-MULTI-SHOP-001 (the migration and the password in the database), by an Opus subagent, then its Codex code review, which also checks round 3's point on the rehearsal's hashes. Then 002 to 006 in order. Local commits only; push on the user's word; no deploy (ADR-105). Still the user's: what the image may write (R-TERMS-002); the pilot's identifier `originalphone`.
 
 **Landmines:** the audit's two-shop test is git-ignored in `outputs/saas-review-2026-11-15/`; it must enter `backend/tests/` with multi-shop. Subagents run on Opus (the user's rule). The requirements do not follow `_TEMPLATE.md`'s GIVEN/WHEN/THEN wording; they keep the checklist style of `text-first-generation.md`.
 

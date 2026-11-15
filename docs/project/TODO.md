@@ -5,6 +5,21 @@
 
 ## Now (current focus — max 3 items)
 
+### Release 1 « Invitation » — multi-shop (D-MULTI-SHOP v4, ADR-107). Nothing is deployed until the whole release is complete (ADR-105).
+
+- [ ] T-MULTI-SHOP-001 (designs/multi-shop.md) Migration 0013 with foreign keys off and checked, chat read keys per shop, the pilot password moved into the database, the rehearsal command.
+  - verify (from `backend/`): `uv run pytest tests/test_db.py tests/test_api.py tests/test_reads.py -q && uv run python -m affiche.rehearse data-probe/affiche.db` → all passed; `REHEARSAL OK`
+- [ ] T-MULTI-SHOP-002 Sign-in by identifier end to end: limits, bundle 3, the form's identifier field and support line, the test sign-in helpers.
+  - verify: `uv run pytest tests/test_api.py tests/test_shops.py -q && (cd ../frontend && corepack npm@10 test) && uv run python ../frontend/tests/browser_smoke.py && uv run python ../frontend/tests/chat_browser.py` → pass
+- [ ] T-MULTI-SHOP-003 Two-shop route test in the suite, spend per shop, `/api/usage` per shop, `/api/status` for the operator only, the stale-tab header check on the server.
+  - verify: `uv run pytest tests/test_two_shops.py tests/test_admission.py tests/test_api.py -q && uv run pytest -q` → pass; the mutation script makes `test_two_shops` fail
+- [ ] T-MULTI-SHOP-004 Provider guard, daily spend ceiling per shop, read limits, fair queue, the password-change route.
+  - verify: `uv run pytest tests/test_poster_jobs.py tests/test_reads.py tests/test_config.py tests/test_api.py tests/test_shops.py tests/test_two_shops.py -q && (cd ../frontend && corepack npm@10 test)` → pass
+- [ ] T-MULTI-SHOP-005 Suspension stops calls where they are sent (jobs and reads), the operator command, `deploy/release.sh` with the rehearsal gate, the runbooks.
+  - verify: `uv run pytest tests/test_shops.py tests/test_poster_jobs.py tests/test_reads.py tests/test_two_shops.py tests/test_release_script.py -q && python3 -m py_compile ../deploy/deploy.py && sh -n ../deploy/*.sh && uv run pytest -q` → pass
+- [ ] T-MULTI-SHOP-006 The identity gate, the cross-tab lock on sign-in and sign-out, sign-out with the kept card, storage keys per shop, the two-shop browser walk. The riskiest task.
+  - verify: `(cd ../frontend && corepack npm@10 test && corepack npm@10 run build) && uv run python ../frontend/tests/browser_smoke.py && uv run python ../frontend/tests/chat_browser.py && uv run pytest -q` → pass
+
 - [x] T-SAAS-ROADMAP (chore; user request 2026-11-15; ADR-105) The findings as a [roadmap](ROADMAP.md), and one requirements file per feature of Release 1 « Invitation »: [multi-shop](requirements/multi-shop.md), [prepaid-balance](requirements/prepaid-balance.md), [admin-dashboard](requirements/admin-dashboard.md), [service-terms](requirements/service-terms.md), [shop-dashboard](requirements/shop-dashboard.md), [share-poster](requirements/share-poster.md). PROJECT.md has a scope-change note.
   - done 2026-11-15: all six are Draft v1 with working defaults; none has a design. Not reviewed by anyone but the author. Not committed.
   - next: the user's reading of the drafts and his open decisions (ROADMAP.md, last section); then the design of multi-shop, first in the build order.
@@ -690,6 +705,19 @@ Phase 1 of designs/product-visuals.md (approved 2026-11-06, ADR-012). Verify com
 - [x] T-BOOT-001 (chore) Bootstrap local project documentation from the available templates and revised brief.
   - verified 2026-11-05: 11 expected files present; 19 local Markdown links resolve; requirements/designs contain only _INDEX.md and _TEMPLATE.md; all confirmed constraints recorded; BRIEF.md matches its source; no application manifests introduced.
   - handoff: HANDOFF.md records the exact approval gate, decisions and all local files. No application tests apply because no application code exists.
+
+## Brand concept exploration — Codex, 2026-11-15
+
+- [~] T-DOKA-IDENTITY (chore; user selects Doka Studio and explicitly requests logo-design + image-gen style exploration) Develop three distinct identity styles under the selected name, with editable vector logo studies, generated brand boards and typography/palette/voice proposals. Preserve prior work; no app rollout.
+  - verify: render/inspect native marks and generated boards, small-size/monochrome checks, palette contrast, local deliverable links and clear distinction between editable vectors and raster mockups.
+
+- [x] T-BRAND-DOKA (chore; user request: add Doka Studio as direction D) Create a distinct Doka Studio concept and identity proposal alongside A/B/C, retaining the original overview. Render/audit/refine the vector mark and outlined lockup; add a four-option comparison and record naming considerations. No final selection, app rebrand or production kit.
+  - verify: SVG structure/audit, two rendered scale/reverse checks, palette contrast and updated local links.
+  - done 2026-11-15: [direction D](mockups/brand-directions/README.md#d-doka-studio), geometric cut-corner D and outlined doka/STUDIO wordmark, proposed yellow/charcoal/paper identity, single concept and four-way overview. Two rounds inspected; final symbol audit no issues; charcoal/yellow contrast 10.13:1. Existing Doka image-editor naming history and exact Doka Studio use recorded; no name clearance or app rollout.
+
+- [x] T-BRAND-CONCEPTS (chore; user explicitly invokes logo-design and requests several naming/logo/identity proposals) Explore three distinct names and vector-logo directions, preliminary palettes/type/voice, render and inspect two refinement rounds, and present the concept checkpoint. Exploratory assets only; no application rename, branding rollout or production kit before selection.
+  - verify: SVG audit, rendered concept overview, true 16/32/64 px visual checks, one-colour/reverse/shelf comparison, preliminary naming search and clear unverified items.
+  - done 2026-11-15: [three concepts and identity notes](mockups/brand-directions/README.md), Affisoa / Saryko / Vitraka, three symbols and outlined wordmarks, preserved round 1, final overview PNG/SVG. Two test rounds rendered/inspected; symbol audits no issues; six text/background palette pairs pass 4.5:1. Affisoa recommended. Await user selection before full kit per logo-design checkpoint. Names/domains/trademarks not cleared. No app changes or rebrand.
 
 ## Publishing and SaaS research — Codex, 2026-11-15
 

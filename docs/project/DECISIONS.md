@@ -1,5 +1,16 @@
 # DECISIONS
 
+## ADR-107 — 2026-11-15 — Multi-shop design v4 approved; one identity gate in the browser
+
+- `designs/multi-shop.md` v4 is approved under the user's autonomy grant (ADR-106) after three review rounds by Codex and a devil's advocate (reviews/multi-shop-design-r1 to r3 and multi-shop-design-devils-advocate, 2026-11-15). Round 3 rejected v3 on four points; v4 answers them and was not reviewed again as a design: the code reviews of T-MULTI-SHOP-001, 005 and 006 check them.
+- The migration (0013) rebuilds the shop table and the read ledger with foreign keys switched off around the migration and checked before commit, which needs a change of `affiche.db.migrate`. Three independent readings and two runs on copies of the test database (one with the process killed mid-way) found it sound. It has not run on the pilot's real database nor on the release image's SQLite 3.40.1: a rehearsal on a fresh copy of the hosted database, in the release image, is an automatic step of the release, before anything is stopped.
+- **One identity gate replaces a list of cases.** Each review round found another path by which a browser could show the previous shop. A page is now bound to one shop for its life, shows it only while the server's session answer names it, and on any other evidence shows the signed-out screen; it never reloads into another shop. Cost: without the browser's cross-tab lock a late answer can leave someone signed out.
+- Kept from the interim mechanisms: a daily ceiling of provider spend per shop (plans, textures, looks and text patches will cost the provider and no credit). Cut: a cap on queued generations (the fair queue serves every shop in turn), a password dialog (the route is built; its screen is the shop's dashboard).
+- Suspension keeps sessions and makes them unusable, so enabling a shop undoes a mistake; no provider call is sent for a suspended shop, for a job or for a chat read.
+- The pilot shop's identifier is `originalphone` until the user says otherwise.
+- `requirements/multi-shop.md` is amended with the wording the reviews accepted (R-001, 003, 004, 005, 006).
+- The release commands move from `deploy/deploy.py` into `deploy/release.sh` so that a failed rehearsal can be tested; the user's command stays pyinfra.
+
 ## ADR-106 — 2026-11-15 — Release 1 is built under the autonomy grant, multi-shop first
 
 - User, on the roadmap and the six draft requirements: "You have the autonomy, start with what you consider more important. As always, you can run paid test." Requirements, designs, implementation, local commits and paid tests inside the cap are Claude's to pass; push stays the user's word; nothing is deployed (ADR-105).
@@ -974,3 +985,22 @@
 
 - User supplied papi.mg as another Malagasy payment processor. Official coverage, hosted checkout, direct/transit collection, pricing and callback/status contracts make Papi hosted checkout the first candidate to evaluate for local prepaid packs; direct MVola remains a cost/settlement comparison. This supersedes the research recommendation only, not an approved provider selection or implementation design.
 - Published callback signature vector matched locally; public demo payment was not completed. Merchant verification, transit settlement/refunds and automatic recurring debit remain unresolved. No app source, merchant account or production payment was created.
+
+
+## Brand exploration — Codex, 2026-11-15 — Three concepts, no selected name
+
+- User explicitly requested logo-design, several logo/brand-identity options and possible new names. Fast-track assumptions: Malagasy shops, French UI, approachable/capable tone, phone-first symbol and room beyond generation.
+- [Concepts](mockups/brand-directions/README.md): Affisoa (recommended), Saryko and Vitraka. Names, palette/type/voice directions and vector art are proposals; the application remains Affiche IA. Two render/test rounds were completed; the full identity kit awaits selection under the invoked skill’s concept checkpoint. No app branding rollout is authorized by a concept choice alone.
+- Name availability/legal clearance, customer language reactions and physical reproduction remain unverified. No application code or dependencies were changed.
+
+
+## Brand exploration addition — Codex, 2026-11-15 — Doka Studio
+
+- User asked to add Doka Studio as a fourth proposal; this does not select it as the application name. Added a geometric cut-corner D, outlined doka/STUDIO lockup and yellow/charcoal/paper identity proposal alongside the original three.
+- Two iterations were rendered/inspected, with corrected centering and a larger descriptor. Naming overlap with the former Doka image editor (now Pintura) and existing Doka Studio event usage is documented for eventual clearance. No application source or installed identity changed.
+
+
+## Brand direction selected — Codex, 2026-11-15 — Doka Studio
+
+- User: “Let’s go with Doka studio, explore more style and more design identity using logo-design and image-gen.” Doka Studio is the selected name for this identity work; the other three names are no longer the recommendation.
+- Authorized: further visual exploration and AI-generated brand mockups. Three styles will share the selected name and build from the cut-corner D, with different typography, composition, graphic language and palettes. A final style and application rollout are not yet selected. No paid application-provider evaluation or app rename is implied.
