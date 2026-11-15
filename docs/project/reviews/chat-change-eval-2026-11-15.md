@@ -66,4 +66,19 @@
 
 **Also seen:** the list line of version 4 reads « Nouvelle version », because its words are those of version 3, the version before it in the list, although it was made from version 2.
 
-**Spend of this check:** USD 0.0304 on the ledger. **Total of the day for this work:** USD 0.1278.
+**Spend of this check:** USD 0.0304 on the ledger.
+
+## After the second fix (ADR-101, T-CHAT-REFINE-KEPT): the adjustment is kept
+
+**What was run:** the same scripts with the code of T-CHAT-REFINE-KEPT (not yet committed at the time): version 2 chosen in the list, then the same message.
+
+| Step | Result | Delay | Cost (ledger) |
+|---|---|---|---|
+| The message, version 2 shown | card « Titre : Tune 770NC noir », « Marque : JBL » | 2.9 s | USD 0.0026 |
+| « Refaire l’affiche » | version 5, to check; its job holds `adjustments: ["Mettre un fond bleu nuit avec des reflets"]`, and the prompt carries them | 17.5 s | USD 0.0282 |
+
+**Seen by Claude on the image** (`kept-2-poster.png`): a night-blue scene with warm gold arcs and a reflecting floor; « JBL » above « Tune 770NC noir » in white; « 350 000 AR » exact in a dark-blue pill with a gold edge; the product keeps its shape and mark; nothing else is written. The blue asked by message on version 2 is there; in the check before this fix it was a charcoal-black scene.
+
+**Differences with version 2 that remain:** the image is redrawn, not copied, so the arcs and the framing differ. The brand is written « JBL » in plain letters here, where the two earlier runs drew the JBL mark: the image model chose, the request was the same. The list line of version 5 reads « Nouvelle version » (its words are those of version 4, the line before it).
+
+**Spend of this check:** USD 0.0308 on the ledger. **Total of the day for this work:** USD 0.1586, all on the ledger. `backend/data-probe` now has five versions of the JBL poster.

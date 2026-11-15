@@ -590,6 +590,7 @@ def walk_changes(browser, errors, session, data):
     arrived(4)
     branded = spent()
     assert branded["request"]["body"]["headline"]["brand"] == "Sony" and branded["request"]["body"]["headline"]["subtitle"] is None, branded
+    assert branded["request"]["body"]["keep_adjustments_of"] == third["id"], branded  # ADR-101: its scene adjustments are kept
     fourth = versions()[0]
     assert fourth["headline"]["title"] == "WH-1000XM6 noir" and fourth["headline"]["brand"] == "Sony" and fourth["headline"]["price_ar"] == 650000, fourth
     assert creation()["document"]["offer"]["title"] == "WH-1000XM6 noir"

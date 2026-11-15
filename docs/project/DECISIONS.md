@@ -1,5 +1,12 @@
 # DECISIONS
 
+## ADR-101 — 2026-11-15 — A word change from the chat also keeps the scene adjustments asked by message
+
+- Found by the paid check of ADR-100: the brand change on the night-blue version kept « Luxe sombre » but lost the night blue, which came from the refinement « mets un fond bleu nuit avec des reflets ». A refinement changes the image, not the plan. User decision 2026-11-15: carry the adjustments into the new image.
+- The chat's scene request names the version it replaces (`keep_adjustments_of`, left out of the hash when absent). The server walks that version's chain (each refinement's stored `instruction_fr`, back to its scene) and adds them to the scene prompt as `kept_adjustments`, with one line saying they win over the art direction where they differ. They are stored with the new scene's job (`adjustments`), so the next word change carries them on. No migration.
+- Not chosen: starting the new image from the refined image as a reference (least known, needs its own paid tests); only saying it on the card (the owner pays a second image to get the adjustment back).
+- Limits: the new image is redrawn from words, so it follows the adjustment, it does not copy the refined image. A refinement made before instructions were stored (ADR-098) gives nothing to carry. « Nouvelle version » in the step editor does not carry them: only a chat card names the version it replaces.
+
 ## ADR-100 — 2026-11-15 — A word change from the chat keeps the version's style
 
 - Found by the paid test T-CHAT-008: in a new browser, « JBL c'est la marque… » turned a night-blue poster into a light one. A whole new image followed the editor's current style (ADR-099's stated limit). User decision 2026-11-15: carry the version's style into the new image.

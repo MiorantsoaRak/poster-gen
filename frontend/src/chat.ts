@@ -130,6 +130,7 @@ export const nextStep = (item: Item): 'follow' | 'replay' | 'new' => item.job ? 
 // a plan that never changes. asset_missing and asset_corrupt (a file on the disk) are not: they can be repaired.
 const FINAL = ['plan_stale', 'revision_conflict', 'attempt_limit', 'acknowledgement_required', 'validation_error', 'format_locked', 'not_found', 'idempotency_reused',
   'invalid_headline', 'contact_unsupported',  // the request's own words against the document at its revision
+  'adjustments_limit', 'adjustment_refused',  // the chain of the card's version, which a retry cannot change
   'headline_stale', 'base_not_selected', 'scene_format_mismatch', 'logo_disc_uncovered', 'logo_placement_stale', 'invalid_plan', 'invalid_reference', 'unsupported_visual', 'format_missing']
 export const final = (code: string) => FINAL.includes(code) || code.startsWith('title_')
 export type Fate = 'running' | 'made' | 'failed'

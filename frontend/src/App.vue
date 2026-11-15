@@ -307,6 +307,8 @@ const ACCENTS = [['#1e6fe0', 'Bleu'], ['#1f3250', 'Bleu nuit'], ['#d92b2b', 'Rou
 const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : keptAlign ?? (chosenAlign.value === 'center' ? 'centre' : chosenAlign.value), ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
 // The contact's place in the version a chat card redraws (ADR-100); null: the editor's own choice.
 let keptAlign: 'left' | 'centre' | 'right' | null = null
+// The version a chat card redraws: the server keeps the scene adjustments asked on it by message (ADR-101).
+let keptFrom: string | null = null
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
@@ -1093,7 +1095,7 @@ async function savePlan(owned?: () => void) {
 async function generateScene(key?: string, sending?: (request: SceneRequest) => void, owned?: () => void) {
   await savePlan(owned)
   const path = `/api/creations/${creation.value!.id}/scenes`, revision = saver!.revision
-  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
+  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), ...(keptFrom ? { keep_adjustments_of: keptFrom } : {}), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
   // The chat's last word before the paid request leaves (it may stop it, and keeps it as sent); nothing is awaited between.
   sending?.({ path, body, revision })
   let result: any
@@ -1413,7 +1415,7 @@ const chat: ChatAdapter = {
     if (smallPhotoAccepted) lowResAccepted.value = true
     const kept = base.plan_id ? await api<any>(`/api/plans/${base.plan_id}`, { quiet: true }) : null
     owned()
-    keptAlign = base.headline?.signature_align ?? null
+    keptAlign = base.headline?.signature_align ?? null; keptFrom = base.id
     try {
       // A version made on a copy's original poster, or before plans were kept: its plan cannot be revised here, so the
       // image is asked as « Nouvelle version » does, with the editor's style.
@@ -1421,7 +1423,7 @@ const chat: ChatAdapter = {
       await flush(); owned()
       acceptPlan(kept); planSignature = ''  // generateScene saves it as a revision at the document's revision
       await generateScene(key, sending, owned)
-    } finally { keptAlign = null }
+    } finally { keptAlign = keptFrom = null }
   }),
   words: (visual, values, owned) => told(async () => { await pickVersion(visual, owned); await flush(); owned(); setWords(values); await flush() }),
   select: (id, owned) => told(() => pickVersion(id, owned)),  // a version that is not listed is a failure, not a success

@@ -750,6 +750,58 @@ def poster(stub, engine, settings, input_id):
     return creation["id"], execute(engine, settings)
 
 
+def test_a_new_scene_keeps_the_adjustments_asked_by_message(poster, engine, settings):
+    """ADR-101: a refinement's instruction is carried into the whole new scene that replaces its version, and on."""
+    creation_id, first = poster
+    def scene(**more):
+        creation = store.get_creation(engine.connect(), 1, creation_id)
+        visuals.request_scene(engine, settings, 1, key(), creation_id, creation["revision"], visuals.SceneRequest(
+            plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"],
+            headline=Headline(brand="JBL", price=True), **more))
+        return execute(engine, settings)
+    def payload(visual):
+        with engine.connect() as conn:
+            return json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE id=(SELECT job_id FROM "
+                                                "poster_visuals WHERE id=:id)"), {"id": visual}).scalar_one())
+    creation = store.get_creation(engine.connect(), 1, creation_id)
+    visuals.request_refinement(engine, settings, 1, key(), creation_id, creation["revision"], visuals.RefinementRequest(
+        base_visual_id=first, instruction_fr="fond bleu nuit avec des reflets"))
+    refined = execute(engine, settings)
+    kept = payload(scene(keep_adjustments_of=refined))
+    assert kept["adjustments"] == ["fond bleu nuit avec des reflets"]
+    assert '"kept_adjustments":["fond bleu nuit avec des reflets"]' in kept["prompt"] and "the kept adjustment wins" in kept["prompt"]
+    # Without the field nothing changes; a version of the first scene alone has nothing to keep.
+    plain = payload(scene())
+    assert "adjustments" not in plain and "kept_adjustments" not in plain["prompt"]
+    assert "adjustments" not in payload(scene(keep_adjustments_of=first))
+    # The next word change starts from the scene that kept them: they go on.
+    with engine.connect() as conn:
+        newest = visuals.listed_visuals(conn, 1, store.get_creation(conn, 1, creation_id)["document"])
+    carried = next(visual for visual in newest if payload(visual).get("adjustments"))
+    assert payload(scene(keep_adjustments_of=carried))["adjustments"] == ["fond bleu nuit avec des reflets"]
+    # A version that is not this poster's is refused before anything is queued.
+    with pytest.raises(Refused) as refusal:
+        scene(keep_adjustments_of=str(uuid4()))
+    assert refusal.value.code == "not_found"
+    # Two adjustments in the order asked, and the model is told that the later one wins.
+    creation = store.get_creation(engine.connect(), 1, creation_id)
+    visuals.request_refinement(engine, settings, 1, key(), creation_id, creation["revision"], visuals.RefinementRequest(
+        base_visual_id=creation["document"]["formats"]["feed"]["scene"]["visual_id"], instruction_fr="fond rouge"))
+    red = payload(scene(keep_adjustments_of=execute(engine, settings)))
+    assert red["adjustments"][-1] == "fond rouge" and "the later one wins" in red["prompt"]
+    # A chain too long, or a stored adjustment the screen no longer accepts: refused by name, nothing queued.
+    def queued():
+        with engine.connect() as conn:
+            return conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one()
+    before = queued()
+    for notes, code in ((["fond bleu"] * 13, "adjustments_limit"), (["x" * 500] * 7, "adjustments_limit"),
+                        (["fond bleu, promo -50%"], "adjustment_refused")):
+        with pytest.MonkeyPatch.context() as patched, pytest.raises(Refused) as refusal:
+            patched.setattr(visuals, "kept_adjustments", lambda conn, shop, visual_id, notes=notes: notes)
+            scene(keep_adjustments_of=first)
+        assert refusal.value.code == code and queued() == before
+
+
 def read(engine, settings, message, creation, visual=None, key=None):
     try:
         return asyncio.run(reads.read(engine, settings, 1, key or str(uuid4()),

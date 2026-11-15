@@ -47,6 +47,21 @@ class SceneRequest(Model):
     style_reference_asset: Sha | None = None
     headline: Headline | None = None
     acknowledged_warnings: list[Literal["low_resolution"]] = Field(default_factory=list, max_length=1)
+    # The version this scene replaces (a word change asked in the chat, ADR-101): the scene adjustments the owner
+    # asked on it by message are kept. Left out when absent, so other requests keep their idempotency hash.
+    keep_adjustments_of: Id | None = None
+
+
+def kept_adjustments(conn, shop, visual_id) -> list[str]:
+    """The owner's scene adjustments that led to this version, oldest first: each refinement's instruction up to the
+    scene it started from, and what that scene itself had kept. Refinements older than the kept instruction give none."""
+    notes = []
+    while visual_id:
+        row = store._owned(conn, "poster_visuals", shop, visual_id)
+        payload = json.loads(store._owned(conn, "poster_jobs", shop, row["job_id"])["input_json"])
+        notes = payload.get("adjustments", []) + ([payload["instruction_fr"]] if payload.get("instruction_fr") else []) + notes
+        visual_id = row["base_visual_id"]
+    return notes
 
 
 class PlanRevision(Model):
@@ -231,10 +246,25 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             if not (logo and logo.shape == "circle" and document.include.logo) or document.include.shop_name:
                 raise store.Refused("invalid_headline")
         style = look_style(conn, shop, request.headline.look_id if request.headline else None)
+        adjustments = []
+        if request.keep_adjustments_of:
+            if request.keep_adjustments_of not in listed_visuals(conn, shop, document.model_dump()):
+                raise store.Refused("not_found", 404)
+            adjustments = kept_adjustments(conn, shop, request.keep_adjustments_of)
+            # Copies share their versions, so the twelve-scenes limit of one poster does not bound a chain. Refused,
+            # never cut: a prompt that silently lost an adjustment would be a poster the owner did not ask for.
+            if len(adjustments) > 12 or sum(map(len, adjustments)) > 3000:
+                raise store.Refused("adjustments_limit")
+            try:  # screened when asked; the screen may have grown since
+                for note in adjustments:
+                    screen_art(note)
+            except ValueError:
+                raise store.Refused("adjustment_refused") from None
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
-                                     headline=request.headline, title=title, signature=signature, deduplicate_brand=True, **price, **style)
+                                     headline=request.headline, title=title, signature=signature, deduplicate_brand=True,
+                                     adjustments=adjustments, **price, **style)
         except ValueError as refusal:
             # The owner can cause these four by what he typed: each gets its own sentence and its field.
             code, field = {"headline_title_too_long": ("title_too_long", "offer.title"),
@@ -253,6 +283,8 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                 payload["headline"]["brand_in_title"] = True
         if seal:
             payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]), style.get("align", "centre"))
+        if adjustments:  # kept with the job, so the next word change carries them on
+            payload["adjustments"] = adjustments
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "scene", payload)
     # Omitted optional references must preserve pre-style idempotency hashes.
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/scenes", request.model_dump(exclude_none=True), apply, revision=revision)

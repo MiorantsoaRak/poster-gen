@@ -67,6 +67,8 @@ MESSAGES = {
         "layout_not_plannable": "Les éléments choisis ne tiennent pas ensemble sur l’affiche. Décochez un élément de la boutique (logo, nom ou contact) ou raccourcissez le titre.",
         "invalid_plan": "Cette composition n’est pas valable (un élément sort de l’affiche ou en recouvre un autre). Annulez le dernier déplacement et réessayez.",
         "invalid_reference": "L’image de référence choisie n’est plus utilisable. Choisissez-en une autre.",
+        "adjustments_limit": "Cette version porte trop d’ajustements de scène pour être refaite avec eux. Créez une nouvelle version dans Pas à pas.",
+        "adjustment_refused": "Un ajustement de scène demandé plus tôt n’est plus accepté. Créez une nouvelle version dans Pas à pas.",
         "input_changed": "Le produit de cette affiche a changé pendant la génération. Relancez la génération.",
         "provider_unavailable": "Le service d’images n’est pas disponible pour le moment. Réessayez dans quelques minutes.",
         "format_unavailable": "Ce format d’affiche n’est pas encore disponible. Faites l’affiche au format Publication (4:5).",

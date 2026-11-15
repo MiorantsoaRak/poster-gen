@@ -20,9 +20,11 @@ cd backend && uv run python ../frontend/tests/chat_browser.py && uv run python .
 
 **T-CHAT-STYLE-KEPT done** (ADR-100, the user's decision): a word change from the chat now reuses the version's plan, drawn settings, model image and contact alignment, so the new image keeps the version's style. Built, reviewed, committed and pushed (commit "T-CHAT-008, T-CHAT-STYLE-KEPT: …"). Stub checks pass (backend 971 / 3 deselected, 182 Vitest, build, the three browser smokes).
 
-The paid check (the user's word, USD 0.0304) showed the plan's style kept for real: the brand change on the night-blue version gave a charcoal and gold image, not a light one. It also showed a gap: the night blue itself, which came from a refinement by message, was lost (T-CHAT-REFINE-KEPT, the user's decision). `backend/data-probe` now has four versions of the JBL poster.
+The paid check (the user's word, USD 0.0304) showed the plan's style kept for real: the brand change on the night-blue version gave a charcoal and gold image, not a light one. It also showed a gap: the night blue itself, which came from a refinement by message, was lost.
 
-**Exact next step:** the user's decision on T-CHAT-REFINE-KEPT, and his deploy, backend and frontend together.
+**T-CHAT-REFINE-KEPT done** (ADR-101, the user's decision): the chat's scene request names the version it replaces, and the server carries that version's scene adjustments into the new image. Reviewed, committed and pushed (commit "T-CHAT-REFINE-KEPT: …"). A second paid check (USD 0.0308) gave a night-blue image with the right words. `backend/data-probe` now has five versions of the JBL poster. Spend of the day for this work: USD 0.1586, all on the ledger.
+
+**Exact next step:** the user's deploy, backend and frontend together. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, the list label of a version made from an older one, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.
