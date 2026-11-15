@@ -364,6 +364,7 @@ def get_visual(conn, shop, id):
     payload = json.loads(store._owned(conn, "poster_jobs", shop, row["job_id"])["input_json"])
     return {key: row[key] for key in ("id", "input_id", "base_visual_id", "status", "model", "quality", "size", "created_at", "decided_at")} | {
         "image_url": f'/api/assets/{row["image_asset"]}',
+        "plan_id": row["plan_id"],  # its style lives there: a new image of the same poster starts from it (ADR-100)
         "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
         # The owner's words for a refinement; null for a scene, and for a refinement older than this field.
         "instruction_fr": payload.get("instruction_fr"),

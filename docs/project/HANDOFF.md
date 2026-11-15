@@ -8,7 +8,7 @@
 
 **State: built, reviewed, committed on `main` (commit "T-CHAT-006, T-CHAT-007: a change asked in the chat is a set of the editor's fields (ADR-099)"), NOT pushed, NOT deployed.** T-CHAT-006 (backend) and T-CHAT-007 (frontend) are done in TODO.md. On a poster the reader fills the editor's fields (title, brand, subtitle, price, scene instruction) from one table in `backend/src/affiche/posters/reads.py` (`FIELDS`); the server reads the current words from the version the owner looks at and states the effect (`refine`, `scene`, `free`); the chat has one change card. Requirements amended (R-TEXT-FIRST-004, 005), design [D-TEXT-FIRST-005 v4](designs/text-first-generation.md), reviews in `reviews/text-first-d005-*` and `reviews/t-chat-006-*`, `t-chat-007-*`.
 
-**Verified on Linux (stub data, zero spend):** `tests/test_reads.py` 175 passed; full backend suite 970 passed / 3 deselected (before the last test-only addition); 182 Vitest; build; `chat_browser.py`; `browser_smoke.py`. **Never verified:** the real model reading a change message (the stub reads « marque X », not the user's sentence), a real phone, the hosted pilot.
+**Verified on Linux (stub data, zero spend):** `tests/test_reads.py` 175 passed; full backend suite 970 passed / 3 deselected (before the last test-only addition); 182 Vitest; build; `chat_browser.py`; `browser_smoke.py`. **Never verified:** a real phone, the hosted pilot, the check and download of a version made by a word change.
 
 ```sh
 cd backend && uv run pytest tests/test_reads.py -q && uv run pytest -q
@@ -16,17 +16,23 @@ cd frontend && corepack npm@10 test && corepack npm@10 run build
 cd backend && uv run python ../frontend/tests/chat_browser.py && uv run python ../frontend/tests/browser_smoke.py
 ```
 
-**Exact next step:** the user's word on (1) the push, (2) T-CHAT-008: the paid reading test of about twenty real change messages, his own included, and one real brand change (about USD 0.10 for the reads plus one image), (3) the deploy.
+**Pushed** (`origin/main` holds the commit above). **T-CHAT-008 done** on the user's word: [report](reviews/chat-change-eval-2026-11-15.md), 25 of 26 change messages read as expected, his own sentence included; one real brand change made version 3 of the JBL poster in `backend/data-probe`; USD 0.0974 on the ledger.
+
+**T-CHAT-STYLE-KEPT done** (ADR-100, the user's decision): a word change from the chat now reuses the version's plan, drawn settings, model image and contact alignment, so the new image keeps the version's style. Built, reviewed, committed and pushed (commit "T-CHAT-008, T-CHAT-STYLE-KEPT: …"). Stub checks pass (backend 971 / 3 deselected, 182 Vitest, build, the three browser smokes).
+
+The paid check (the user's word, USD 0.0304) showed the plan's style kept for real: the brand change on the night-blue version gave a charcoal and gold image, not a light one. It also showed a gap: the night blue itself, which came from a refinement by message, was lost (T-CHAT-REFINE-KEPT, the user's decision). `backend/data-probe` now has four versions of the JBL poster.
+
+**Exact next step:** the user's decision on T-CHAT-REFINE-KEPT, and his deploy, backend and frontend together.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.
 - The new-poster reader (prompt, schema, the unused `scene_change` / `price_change` intents) is left as it was on purpose: its prompt was measured in the paid test of 2026-11-14. Do not tidy it without a new paid test.
 - The design was approved under the autonomy grant after three REJECT rounds; v4's last four fixes were checked by the code reviews, not by a fourth design round.
-- The card promises the words only. Style, coloured word and contact line of a new image are the editor's state at the tap (as for the old price card).
+- Since ADR-100 a word change keeps the version's style. Left to the editor's state: a version whose plan belongs to another poster (a copy) or format, and the coloured pill of a layer price. A kept plan can be refused if the layout was changed in « Pas à pas » since; the card then points there.
 - The word guard cannot detect a wrong arrangement of the owner's own words; the card and the check show each text whole.
 - Open for the user: keep the text of messages the chat could not take (`chat_reads` holds a hash only); T-CHAT-CANVAS-LOAD (the chat loads the canvas modules, against the rule below); T-CHAT-D005-TESTS.
 
-**Uncommitted:** only Codex's old `docs/project/mockups/text-first/` (untracked).
+**Uncommitted:** only Codex's old `docs/project/mockups/text-first/` (untracked). The paid scripts are in `outputs/chat-change-eval-2026-11-15/` (git-ignored); do not rerun them to look at results.
 
 ## Creation by message — handoff of 2026-11-15, earlier session
 

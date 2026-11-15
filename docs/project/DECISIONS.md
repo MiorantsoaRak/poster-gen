@@ -1,5 +1,14 @@
 # DECISIONS
 
+## ADR-100 — 2026-11-15 — A word change from the chat keeps the version's style
+
+- Found by the paid test T-CHAT-008: in a new browser, « JBL c'est la marque… » turned a night-blue poster into a light one. A whole new image followed the editor's current style (ADR-099's stated limit). User decision 2026-11-15: carry the version's style into the new image.
+- A version's style is in its plan (direction, colours, surface, light, camera), its stored headline settings and its model image. `revise` now takes all three from the version the card targets: `restoreHeadline()`, the version's `style_reference_asset`, and the version's plan, saved again as a revision at the document's revision (the existing `/api/plans/{id}/revisions`). No fresh plan is asked, so no planner call is paid for a word change.
+- `GET` of a version now gives its `plan_id`. No migration.
+- `restoreHeadline()` restored `signature`, a key nothing reads; it now restores `contact` and `brand_text`. This also applies when a poster is opened in « Pas à pas ».
+- Stated limit: a version whose plan belongs to another poster (a copy) or to another format, or that has no plan, is redrawn with the editor's style, as « Nouvelle version » does.
+- Not carried: the coloured price pill of a layer price follows the editor's style as before.
+
 ## ADR-099 — 2026-11-15 — A change asked in the chat is a set of the editor's fields, not a kind
 
 - User report: « Sony is the brand, put it on top, the product title on the second line » was answered « Le titre et le format se changent dans Pas à pas ». He asked for a durable change of process, not a prompt patch or one more condition. He restated the autonomy grant for this work on 2026-11-15; push, deploy and paid calls stay his word.

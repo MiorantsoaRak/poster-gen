@@ -126,19 +126,23 @@ function chooseLook(id: string) {
 function useStyleAccent() { headline.value.accent_colour = styleAccent.value; accentPicked.value = false; styleAccent.value = '' }
 // A reopened poster brings back what its scene was made with (brand, subtitle, accent, look), so that a new
 // scene after a price change is the same poster and not a different one.
-async function restoreHeadline() {
+// owned: the chat's check (ADR-100), run after the one wait and before anything is changed. With it, a version made
+// without a saved style also leaves the editor's saved style, whose lettering would otherwise go into the request.
+async function restoreHeadline(owned?: () => void) {
   const drawn = currentVisual.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return
   if (drawn.look_id && savedLooks.value.some(item => item.id === drawn.look_id)) pickLook(drawn.look_id)
   else if (drawn.look_id) {
     // Removed since: the server still has it. If it cannot be read, the poster opens without it and says nothing false.
-    try {
-      const kept = await api<SavedLook>(`/api/looks/${drawn.look_id}`)
-      pickLook('libre'); direction.value = kept.brief.direction_fr; keptLook.value = kept
-    } catch { keptLook.value = null }
-  }
+    let kept: SavedLook | null = null
+    // For a chat card the failure stops the request: the image would be asked with another style's lettering.
+    try { kept = await api<SavedLook>(`/api/looks/${drawn.look_id}`) } catch (reason) { if (owned) throw reason }
+    owned?.()
+    if (kept) { pickLook('libre'); direction.value = kept.brief.direction_fr }
+    keptLook.value = kept
+  } else if (owned) pickLook('libre')  // also leaves « Aux couleurs du produit », which would replace the version's accent
   Object.assign(headline.value, { on: true, brand: drawn.brand ?? '', subtitle: drawn.subtitle ?? '', accent_word: drawn.accent_word ?? '',
-    price: drawn.price_ar !== undefined, signature: drawn.shop_name !== undefined || drawn.contact !== undefined })
+    price: drawn.price_ar !== undefined, contact: drawn.shop_name !== undefined || drawn.contact !== undefined, brand_text: !!drawn.brand_text })
   if (/^#[0-9A-Fa-f]{6}$/.test(drawn.accent_colour ?? '')) headline.value.accent_colour = drawn.accent_colour.toLowerCase()
 }
 async function chooseLookReference(event: Event) {
@@ -300,7 +304,9 @@ function stylePill() {
 const accentWord = computed(() => (doc.value?.offer.title ?? '').includes(headline.value.accent_word.trim()) ? headline.value.accent_word.trim() : '')
 const accentWords = computed(() => [...new Set([...(doc.value?.offer.title ?? '').split(/\s+/).filter(Boolean), ...(accentWord.value ? [accentWord.value] : [])])])
 const ACCENTS = [['#1e6fe0', 'Bleu'], ['#1f3250', 'Bleu nuit'], ['#d92b2b', 'Rouge'], ['#f08a1c', 'Orange'], ['#c8a45a', 'Or']] as const
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : chosenAlign.value === 'center' ? 'centre' : chosenAlign.value, ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : keptAlign ?? (chosenAlign.value === 'center' ? 'centre' : chosenAlign.value), ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+// The contact's place in the version a chat card redraws (ADR-100); null: the editor's own choice.
+let keptAlign: 'left' | 'centre' | 'right' | null = null
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
@@ -1393,13 +1399,29 @@ const chat: ChatAdapter = {
   }),
   revise: (key, visual, words, smallPhotoAccepted, owned, sending) => told(async () => {
     await pickVersion(visual, owned)
-    // Without drawn texts the request would not carry the words the card lists.
+    // Without drawn texts the request would not carry the words the card lists. Asked before the version's settings
+    // are restored below: the owner switched them off on purpose, and a card does not switch them back on.
     if (!headline.value.on) throw new Error('Les textes dessinés sont désactivés pour cette affiche : réglez-les dans Pas à pas.')
     // Earlier saves first: the words are queued only by the tab that still holds the chat, and leave at once.
     await flush(); owned()
+    // The new image keeps the version's style (ADR-100): its drawn settings, its model image and its plan, which
+    // holds the direction, the colours and the light. The editor's current style is not used.
+    const base = currentVisual.value!
+    await restoreHeadline(owned)
+    styleReference.value = base.style_reference_asset ?? null
     setWords(words)
     if (smallPhotoAccepted) lowResAccepted.value = true
-    await createScene(key, sending, owned)
+    const kept = base.plan_id ? await api<any>(`/api/plans/${base.plan_id}`, { quiet: true }) : null
+    owned()
+    keptAlign = base.headline?.signature_align ?? null
+    try {
+      // A version made on a copy's original poster, or before plans were kept: its plan cannot be revised here, so the
+      // image is asked as « Nouvelle version » does, with the editor's style.
+      if (kept?.creation_id !== creation.value!.id || kept.format !== format.value) return await createScene(key, sending, owned)
+      await flush(); owned()
+      acceptPlan(kept); planSignature = ''  // generateScene saves it as a revision at the document's revision
+      await generateScene(key, sending, owned)
+    } finally { keptAlign = null }
   }),
   words: (visual, values, owned) => told(async () => { await pickVersion(visual, owned); await flush(); owned(); setWords(values); await flush() }),
   select: (id, owned) => told(() => pickVersion(id, owned)),  // a version that is not listed is a failure, not a success

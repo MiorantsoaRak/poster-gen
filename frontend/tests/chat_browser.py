@@ -406,7 +406,7 @@ def walk_desktop(browser, errors, product, inspiration):
 def walk_changes(browser, errors, session, data):
     """An existing poster is changed by message (T-CHAT-004): a new scene of it, a new price, the list of modifications.
     The poster is the first one of walk_desktop: one version, approved and downloaded."""
-    reads, bodies, sent = [], [], {"refinements": [], "scenes": [], "plans": [], "api/assets": []}
+    reads, bodies, sent = [], [], {"refinements": [], "scenes": [], "plans": [], "revisions": [], "api/assets": []}
 
     def seen(request):
         if request.method != "POST":
@@ -593,6 +593,9 @@ def walk_changes(browser, errors, session, data):
     fourth = versions()[0]
     assert fourth["headline"]["title"] == "WH-1000XM6 noir" and fourth["headline"]["brand"] == "Sony" and fourth["headline"]["price_ar"] == 650000, fourth
     assert creation()["document"]["offer"]["title"] == "WH-1000XM6 noir"
+    # The new image keeps the version's style (ADR-100): its plan is a revision of the plan of the version it replaces.
+    plan_of = lambda visual: page.request.get(f"{smoke.ORIGIN}/api/plans/{visual['plan_id']}").json()
+    assert plan_of(fourth)["parent_plan_id"] == third["plan_id"] and plan_of(fourth)["plan"]["palette"] == plan_of(third)["plan"]["palette"], (plan_of(fourth), third["plan_id"])
     selected(fourth["id"])
     expect(side).to_contain_text(re.compile(r"Version 4 · à vérifier\s*WH-1000XM6 noir · 650\s000 Ar"))
     expect(mods.first).to_have_text(re.compile(r"^V4\s*Titre : WH-1000XM6 noir · Marque : Sony\s*À vérifier$"))
@@ -601,8 +604,8 @@ def walk_changes(browser, errors, session, data):
     # The card's words are saved in the document before the scene is asked. A reload between the two: nothing paid
     # left, a new card is offered, and the chat says what the image still shows, from the editor's own comparison.
     still, back = thread.locator(".why", has_text="L’affiche montre encore"), page.get_by_role("button", name="Remettre les textes de l’image")
-    held_plans = []
-    context.route("**/plans", lambda route: held_plans.append(route))
+    held_plans = []  # the version's plan, saved again at the new revision (ADR-100): held, so the scene never leaves
+    context.route("**/plans/*/revisions", lambda route: held_plans.append(route))
     say(page, "titre WH-1000XM6 Pro")
     expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Titre : WH-1000XM6 Pro")
     expect(still).to_have_count(0)
@@ -613,9 +616,9 @@ def walk_changes(browser, errors, session, data):
         page.wait_for_timeout(100)
     assert creation()["document"]["offer"]["title"] == "WH-1000XM6 Pro" and len(sent["scenes"]) == 2
     page.reload()
-    context.unroute("**/plans")
+    context.unroute("**/plans/*/revisions")
     page.get_by_role("button", name="Fermer").click()
-    # The leaving page may see its own /plans request cut and say so itself; otherwise the next view finds nothing kept.
+    # The leaving page may see its own plan request cut and say so itself; otherwise the next view finds nothing kept.
     expect(thread).to_contain_text(re.compile("Rien n’a été envoyé pour cette demande\\.|Connexion interrompue"))
     assert "request" not in spent() and len(sent["scenes"]) == 2, spent()
     expect(redo).to_have_count(1)
@@ -829,7 +832,7 @@ def walk_changes(browser, errors, session, data):
     # this tab asks no plan and no scene. The price is saved (it left before the chat was taken); the image's is put back.
     say(page, "480 000 Ar")
     expect(redo).to_be_visible()
-    plans, scenes, saves = len(sent["plans"]), len(sent["scenes"]), []
+    plans, scenes, saves = len(sent["plans"]) + len(sent["revisions"]), len(sent["scenes"]), []
     hold_save = lambda route: route.continue_() if saves or route.request.method != "PUT" else saves.append((route, route.fetch()))
     context.route(f"**/api/creations/{poster}", hold_save)
     redo.click()
@@ -848,7 +851,7 @@ def walk_changes(browser, errors, session, data):
     saves[0][0].fulfill(response=saves[0][1])
     context.unroute(f"**/api/creations/{poster}")
     page.wait_for_timeout(1500)
-    assert (len(sent["plans"]), len(sent["scenes"])) == (plans, scenes), sent
+    assert (len(sent["plans"]) + len(sent["revisions"]), len(sent["scenes"])) == (plans, scenes), sent
     other_tab.close()
     page.get_by_role("button", name="Continuer ici").click()
     expect(redo).to_have_count(1)
