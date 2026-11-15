@@ -103,16 +103,21 @@ def test_owned_job_status_usage_and_cancel(client, settings):
     assert post(client, result["status_url"] + "/cancel", {}).status_code == 409
 
 
+def operator_client(client):
+    """The operator's call from the machine that runs the API (D-MULTI-SHOP-004), as verify.sh makes it."""
+    return TestClient(client.app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 50000))
+
+
 def test_status_tells_the_administrator_what_runs_and_how_old_the_backup_is(client, settings, tmp_path, monkeypatch):
-    assert client.get("/api/status").status_code == 401
-    login(client)
-    status = client.get("/api/status").json()
+    local = operator_client(client)
+    status = local.get("/api/status").json()
     assert status["commit"] == "dev" and status["migration"] and status["backup"] is None
     assert status["spend"] == {"recorded_micros": 0, "cap_micros": 20000000, "since": settings.spend_cap_since.isoformat()}
     assert status["failed_jobs_24h"] == 0 and datetime.fromisoformat(status["started_at"]) <= datetime.now(UTC)
 
+    login(client)
     settings.backup_dir = tmp_path / "backups"
-    assert client.get("/api/status").json()["backup"] is None  # no marker yet: not an error
+    assert local.get("/api/status").json()["backup"] is None  # no marker yet: not an error
     backup.run(settings.data_dir, settings.backup_dir)
     monkeypatch.setenv("REVISION", "abc123")
     creation = create_draft(client)
@@ -122,16 +127,45 @@ def test_status_tells_the_administrator_what_runs_and_how_old_the_backup_is(clie
             job = jobs.enqueue(conn, settings, 1, creation["id"], 1, "render", {"n": str(uuid4())})
             conn.exec_driver_sql("UPDATE poster_jobs SET status=?, finished_at=? WHERE id=?",
                                  (state, finished.isoformat(timespec="microseconds"), job["status_url"].rsplit("/", 1)[1]))
-    status = client.get("/api/status").json()
+    status = local.get("/api/status").json()
     assert status["commit"] == "abc123" and status["failed_jobs_24h"] == 2
     assert status["backup"]["late"] is False and status["backup"]["age_hours"] == 0.0
 
     marker = settings.backup_dir / "last-backup.json"
     old = (datetime.now(UTC)-timedelta(hours=49)).isoformat(timespec="seconds")
     marker.write_text('{"finished_at": "%s"}' % old, encoding="utf-8")
-    assert client.get("/api/status").json()["backup"] == {"finished_at": old, "age_hours": 49.0, "late": True}
+    assert local.get("/api/status").json()["backup"] == {"finished_at": old, "age_hours": 49.0, "late": True}
     marker.write_text("not json", encoding="utf-8")
-    assert client.get("/api/status").json()["backup"] is None
+    assert local.get("/api/status").json()["backup"] is None
+
+
+def test_status_answers_only_a_caller_on_the_machine_that_names_a_local_host(client):
+    """D-MULTI-SHOP-004: both the client address (after the forwarding headers) and the Host must be local; either
+    alone is refused like a route that does not exist, a shop's session changing nothing. Real forwarding through
+    uvicorn: test_actual_uvicorn_http_session."""
+    def status(peer, host, headers=None):
+        answer = TestClient(client.app, base_url=f"http://{host}", client=peer).get("/api/status", headers=headers)
+        return answer.status_code, answer.json().get("error", {}).get("code")
+
+    local = ("127.0.0.1", 50000)
+    for peer, host in ((local, "127.0.0.1:8000"), (local, "127.0.0.1"), (local, "localhost:5173"), (local, "LOCALHOST"),
+                       (local, "[::1]:8000"), (("::1", 50000), "[::1]"), (("127.0.0.9", 50000), "127.0.0.1:8000")):
+        assert status(peer, host) == (200, None), (peer, host)
+    for peer, host in ((local, "shop.example"), (local, "affiches.miorantsoa.app"), (local, "127.0.0.1.shop.example"),
+                       (local, "localhost.shop.example"), (local, "127.0.0.2:8000"), (("203.0.113.9", 50000), "127.0.0.1"),
+                       (("203.0.113.9", 50000), "localhost:8000"), (("testclient", 50000), "127.0.0.1"),
+                       (("10.0.0.5", 50000), "[::1]:8000")):
+        assert status(peer, host) == (404, "not_found"), (peer, host)
+    for spoofed in ("127.0.0.1@shop.example", "shop.example#@127.0.0.1", "[::1", ""):  # a Host httpx would not build
+        assert status(local, "127.0.0.1:8000", {"Host": spoofed}) == (404, "not_found"), spoofed
+    # Whatever else it sends: the stale-tab header, another method, no Origin, an older bundle.
+    for answer in (client.get("/api/status"), client.get("/api/status", headers={"X-Affiche-Shop": "1"}),
+                   client.post("/api/status", headers={"Origin": "https://evil.example", "X-Affiche-Bundle": "1"})):
+        assert (answer.status_code, answer.json()["error"]["code"]) == (404, "not_found")  # a public caller with no session
+    login(client)  # a shop's session through the front process, with its own header, another shop's, or none
+    for headers in ({}, {"X-Affiche-Shop": "1"}, {"X-Affiche-Shop": "2"}):
+        answer = client.get("/api/status", headers=headers)
+        assert (answer.status_code, answer.json()["error"]["code"]) == (404, "not_found"), headers
 
 
 # Refusals that only a programming error in the editor can produce: the owner cannot cause them by what he types
@@ -281,9 +315,11 @@ def test_the_built_frontend_is_public_and_everything_under_api_stays_closed(sett
         assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
         assert missing.headers["cache-control"] == "no-cache"
         assert client.get("/../backend/pyproject.toml").status_code == 404
-        for path in ("/api/shop-profile", "/api/creations", "/api/openapi.json", "/api/status", "/api/nothing"):
+        for path in ("/api/shop-profile", "/api/creations", "/api/openapi.json", "/api/nothing"):
             closed = client.get(path)
             assert closed.status_code == 401 and closed.headers["cache-control"] == "no-store", path
+        closed = client.get("/api/status")  # the operator's, from the machine only (D-MULTI-SHOP-004)
+        assert closed.status_code == 404 and closed.headers["cache-control"] == "no-store"
         assert client.post("/", headers={"Origin": "https://evil.example"}).status_code == 403
         assert client.post("/").status_code in (404, 405)
         login(client)
@@ -918,6 +954,11 @@ def test_actual_uvicorn_http_session(settings, env):
                     time.sleep(0.1)
             assert state.json() == {"authenticated": False}
             assert remote.get("/api/shop-profile").status_code == 401
+            # /api/status (D-MULTI-SHOP-004): the forwarded client and the Host each refuse it; the plain local call is answered.
+            assert remote.get("/api/status", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 404
+            assert remote.get("/api/status", headers={"X-Forwarded-For": "127.0.0.1",
+                                                      "Host": "affiches.miorantsoa.app"}).status_code == 404
+            assert remote.get("/api/status").json()["commit"] == "dev"
             assert remote.post("/api/session", json=credentials(PASSWORD)).status_code == 200
             assert remote.get("/api/shop-profile").json()["revision"] == 1
             assert remote.delete("/api/session").status_code == 200

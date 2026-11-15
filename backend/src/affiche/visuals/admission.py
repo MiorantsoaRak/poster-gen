@@ -292,11 +292,15 @@ def _short_edges(conn: Connection, shas: list[str]) -> dict[str, int]:
     return edges
 
 
-def spent_micros(conn: Connection, settings: Settings) -> int:
-    """Micro-USD on the ledger since SPEND_CAP_SINCE: what the cap is checked against."""
+def spent_micros(conn: Connection, settings: Settings, *, shop: int | None = None, since: str | None = None) -> int:
+    """Micro-USD on the ledger since SPEND_CAP_SINCE (or `since`, an ISO date or instant): what the cap is checked
+    against. With `shop`, that shop's own: its jobs' calls and its reads. The evaluation CLI's calls are no shop's."""
+    evaluation, calls, reads = (
+        ("(SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since)", "", "") if shop is None
+        else ("0", " AND job_id IN (SELECT id FROM poster_jobs WHERE shop_id = :shop)", " AND shop_id = :shop"))
     # ISO text comparison: utc_now() text order is time order, and the date is a prefix of its first instant.
-    return conn.execute(text("SELECT (SELECT COALESCE(SUM(cost_micros), 0) FROM provider_calls WHERE started_at >= :since)"
-                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM poster_calls WHERE created_at >= :since)"
+    return conn.execute(text(f"SELECT {evaluation}"
+                             f" + (SELECT COALESCE(SUM(cost_micros), 0) FROM poster_calls WHERE created_at >= :since{calls})"
                              # A running read counts with its reservation (D-TEXT-FIRST-002).
-                             " + (SELECT COALESCE(SUM(cost_micros), 0) FROM chat_reads WHERE created_at >= :since)"),
-                        {"since": settings.spend_cap_since.isoformat()}).scalar_one()
+                             f" + (SELECT COALESCE(SUM(cost_micros), 0) FROM chat_reads WHERE created_at >= :since{reads})"),
+                        {"since": since or settings.spend_cap_since.isoformat(), "shop": shop}).scalar_one()

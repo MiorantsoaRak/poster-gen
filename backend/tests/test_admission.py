@@ -13,12 +13,17 @@ from pathlib import Path
 import pytest
 from sqlalchemy import exc, text
 
+from affiche import shops
 from affiche.config import load_settings
 from affiche.db import write_tx
-from affiche.visuals.admission import Admitted, Refused, request_background, request_revision, request_scene, reserve
+from affiche.posters import jobs, store
+from affiche.posters.models import NewCreation, Offer, ProductInput
+from affiche.visuals.admission import (Admitted, Refused, request_background, request_revision, request_scene, reserve,
+                                       spent_micros)
 from affiche.visuals.prompts import Direction, SceneSubject, build_background_prompt, build_scene_prompt
 from test_config import TODAY, env  # noqa: F401  (fixture: a clean, valid environment, inherited by the workers)
 from test_db import _stdout_lines, engine  # noqa: F401  (fixture: a migrated engine on tmp_path)
+from test_poster_drafts import key, photo
 from test_store_lock import PIPES, _reap
 
 WORKER = Path(__file__).with_name("admission_worker.py")
@@ -590,6 +595,59 @@ def test_calls_started_before_spend_cap_since_do_not_count(engine, env):
         _ledger_call(conn, 900_000, started_at=f"{TODAY - timedelta(days=1)}T23:59:59.999999+00:00")
         _ledger_call(conn, 100_000, started_at=f"{TODAY}T00:00:00.000000+00:00")  # the first instant counts
     assert _scene(engine, settings).spent == 500_000
+
+
+def _poster_job(engine, settings, shop) -> str:
+    """A job of one of `shop`'s posters, made through the store as the routes make one. A render: it reserves no call."""
+    sha = store.upload(engine, settings.data_dir, shop, photo(), "original")["asset"]
+    input_id = store.create_input(engine, settings.data_dir, shop, key(), ProductInput(
+        name="JBL", variant="v", photo_assets=[sha]))[1]["id"]
+    creation = store.create_creation(engine, settings.data_dir, shop, key(), NewCreation(
+        input_id=input_id, offer=Offer(title="Une enceinte", price_ar=899000),
+        brand_selection={"logo": False, "shop_name": False, "contact": False}))[1]
+    with write_tx(engine) as conn:
+        return jobs.enqueue(conn, settings, shop, creation["id"], 1, "render", {"n": key()})["job_id"]
+
+
+def _poster_call(conn, job_id, call_no, cost, created_at):
+    conn.execute(text(
+        "INSERT INTO poster_calls (id, job_id, call_no, provider, model, rate_card_json, status, cost_micros,"
+        " cost_is_estimate, created_at) VALUES (:id, :job, :no, 'openai', 'gpt-image-2', '{}', 'succeeded', :cost, 0, :at)"),
+        {"id": key(), "job": job_id, "no": call_no, "cost": cost, "at": created_at})
+
+
+def _chat_read(conn, shop, cost, created_at):
+    conn.execute(text(
+        "INSERT INTO chat_reads (id, shop_id, key, payload_sha, status, provider, model, rate_card_json, cost_micros,"
+        " cost_is_estimate, created_at) VALUES (:id, :shop, :key, 'x', 'succeeded', 'stub', 'm', '{}', :cost, 0, :at)"),
+        {"id": key(), "shop": shop, "key": key(), "cost": cost, "at": created_at})
+
+
+def test_a_shops_spend_is_its_jobs_calls_and_its_reads_and_never_the_evaluation_clis(engine, settings):
+    """D-MULTI-SHOP-005: GET /api/usage answers with it, and the shop's daily ceiling will count it (T-MULTI-SHOP-004)."""
+    yesterday = f"{TODAY - timedelta(days=1)}T23:59:59.999999+00:00"
+    with write_tx(engine) as conn:
+        _seed(conn)
+        other = shops.create_shop(conn, "Boutique Deux", None, None)  # no password: nobody signs in, the ledger is the same
+    mine, theirs = _poster_job(engine, settings, 1), _poster_job(engine, settings, other)
+    with write_tx(engine) as conn:
+        _ledger_call(conn, 1)  # the evaluation CLI's call: the service's spend, no shop's
+        _poster_call(conn, mine, 1, 10, _stamp())
+        _poster_call(conn, mine, 2, 100_000, yesterday)
+        _poster_call(conn, theirs, 1, 200, _stamp())
+        _chat_read(conn, 1, 3_000, _stamp())
+        _chat_read(conn, other, 40_000, _stamp())
+        _chat_read(conn, other, 500_000, yesterday)
+    day = f"{TODAY - timedelta(days=1)}"
+    with engine.connect() as conn:
+        assert spent_micros(conn, settings) == 1 + 10 + 200 + 3_000 + 40_000  # without a shop: the service, as before
+        assert spent_micros(conn, settings, shop=1) == 10 + 3_000
+        assert spent_micros(conn, settings, shop=other) == 200 + 40_000
+        assert spent_micros(conn, settings, shop=other + 1) == 0  # no such shop: nothing
+        assert spent_micros(conn, settings, since=day) == 1 + 10 + 100_000 + 200 + 3_000 + 40_000 + 500_000
+        assert spent_micros(conn, settings, shop=other, since=day) == 200 + 40_000 + 500_000
+        assert spent_micros(conn, settings, shop=1, since=TODAY.isoformat()) == 10 + 3_000  # one day's sum
+        assert spent_micros(conn, settings, shop=1, since=_stamp()) == 0  # an instant: what came after it
 
 
 def test_the_reservation_floor_follows_the_highest_usage_based_cost_of_the_model_and_purpose(engine, settings):

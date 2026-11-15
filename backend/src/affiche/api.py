@@ -1,6 +1,7 @@
 """Authenticated HTTP boundary for the pilot. Run with python -m affiche.api."""
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from PIL import Image
@@ -78,6 +80,7 @@ MESSAGES = {
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
         "wrong_credentials": "Identifiant ou mot de passe incorrect.",
         "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
+        "shop_changed": "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.",
         "revision_conflict": "Une version plus récente existe. Vos modifications restent à récupérer.",
         "idempotency_reused": "Cette référence de demande a déjà été utilisée avec un autre contenu.",
         "precondition_required": "La version du document est requise.", "not_found": "Élément introuvable.",
@@ -206,14 +209,25 @@ class AccessBoundary:
             return message
 
         try:
+            # The operator's view answers anyone else as a route that does not exist, before any rule below could
+            # answer otherwise (D-MULTI-SHOP-004). The operator has no session: the session rule lets it through.
+            if scope["path"] == "/api/status" and not operator(request):
+                raise store.Refused("not_found", 404)
             if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("origin") != self.settings.app_origin:
                 raise store.Refused("forbidden_origin", 403)
             # Everything under /api/ needs a session; the built frontend (SERVE_FRONTEND) is public and holds no data.
             # The Origin check above and the size limits below stay on every path.
             request.state.shop = await run_in_threadpool(auth.session_shop, self.owner.state.engine,
                                                          request.cookies.get(auth.COOKIE)) if api_path else None
-            if api_path and scope["path"] != "/api/session" and request.state.shop is None:
-                raise store.Refused("unauthenticated", 401)
+            if api_path and scope["path"] not in ("/api/session", "/api/status") and request.state.shop is None:
+                raise store.Refused("unauthenticated", 401)  # /api/status: only the operator reaches this line
+            # A stale-tab guard, not authentication (D-MULTI-SHOP-002): a page bound to another shop than the cookie's
+            # session reads and changes nothing, and an old tab of one shop cannot sign another out. A forged value only
+            # gets the request refused; an absent one passes (images loaded by <img>, bundles that do not send it).
+            claimed = request.headers.get("x-affiche-shop")
+            if (api_path and claimed is not None and not (scope["path"] == "/api/session" and request.method in ("GET", "POST"))
+                    and (request.state.shop is None or claimed != str(request.state.shop))):
+                raise store.Refused("shop_changed", 409)
             # An older open tab changes nothing and pays nothing: refused here, before any handler. It can still read
             # and sign out; its sign-in, which has no identifier, gets this sentence too, so a reload always works.
             bundle = request.headers.get("x-affiche-bundle", "")
@@ -379,6 +393,21 @@ def _display(data_dir, sha: str, png: bytes) -> tuple[bytes, str]:
     return data, f"image/{ext}"
 
 
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def operator(request: Request) -> bool:
+    """The operator, until the administration has its own sign-in (D-MULTI-SHOP-004): a caller on the machine that runs
+    the API, by both its address (after the forwarding headers believed from the front process) and the Host it names.
+    Through Caddy a phone has neither; in development the developer's own browser through Vite has both, on purpose."""
+    try:
+        peer = request.client is not None and ipaddress.ip_address(request.client.host).is_loopback
+        host = urlsplit("//" + request.headers.get("host", "")).hostname
+    except ValueError:  # a client name that is no address, or a Host that is no host
+        return False
+    return peer and host in LOCAL_HOSTS
+
+
 def _kept(current: bool) -> dict:
     return {"Cache-Control": IMMUTABLE.decode()} if current else {}
 
@@ -443,13 +472,15 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
 
     @protected.get("/api/usage")
     def usage(request: Request):
+        # The shop's own spend; the cap and its date are the service's configuration, not another shop's totals.
         with app.state.engine.connect() as conn:
-            return {"recorded_micros": spent_micros(conn, settings),
+            return {"recorded_micros": spent_micros(conn, settings, shop=request.state.shop),
                     "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()}
 
     @protected.get("/api/status")
     def status():
-        """For the administrator: which code runs, the last backup, the spend, recent failures. No provider call."""
+        """For the operator only (AccessBoundary answers 404 to any other caller, signed in or not: operator()): which
+        code runs, the last backup, the service's spend, recent failures. No provider call."""
         since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="microseconds")
         with app.state.engine.connect() as conn:
             return {"commit": os.environ.get("REVISION") or "dev",
