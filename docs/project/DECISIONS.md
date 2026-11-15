@@ -1,5 +1,22 @@
 # DECISIONS
 
+## ADR-106 — 2026-11-15 — Release 1 is built under the autonomy grant, multi-shop first
+
+- User, on the roadmap and the six draft requirements: "You have the autonomy, start with what you consider more important. As always, you can run paid test." Requirements, designs, implementation, local commits and paid tests inside the cap are Claude's to pass; push stays the user's word; nothing is deployed (ADR-105).
+- `requirements/multi-shop.md` is approved as drafted, with its working default: the shop's identifier is chosen by the operator. The other five files are approved when their turn comes, each with its defaults unless the user changes one first.
+- Build order as in ROADMAP.md: multi-shop, prepaid balance, administration dashboard, conditions of use, the shop's dashboard, « Partager ».
+- R-TERMS-002 (what the image may write) stays the user's decision; its default is not built before he has seen it again.
+
+## ADR-105 — 2026-11-15 — Invite-only service first; no deploy until it is ready with both dashboards
+
+- User decision after Codex's research and Claude's review: the findings become a roadmap, each feature its own requirements; "for now on, we won't deploy the change until an invite only feature is ready, with per user dashboard and an admin dashboard".
+- Release 1 « Invitation » is six requirement files, drafted with working defaults: several shops with their own sign-in; a prepaid balance of generations; an administration dashboard; conditions of use and the owner's check; the shop's dashboard; « Partager ». Order and reasons in [ROADMAP.md](ROADMAP.md).
+- Claude's review had advised a command line for the operator and a single credit line for the shop instead of two dashboards. The user asked for both dashboards as a condition of the release; they are specified, kept small (tables from the ledgers, no settings for secrets, models or prompts).
+- The deploy freeze covers what is already pushed: the chat work of 2026-11-15 is on `origin/main` and stays undeployed; the pilot remains on the version deployed on 2026-11-14.
+- PROJECT.md gains a scope-change note; its original charter text is kept.
+- Still out: public sign-up, online payment, subscriptions, publishing through Meta's API (Phase 2 and 3 of the roadmap).
+- Open, the user's: what the image may write (R-TERMS-002); the shop's identifier at sign-in; welcome credits; a first price to test.
+
 ## ADR-104 — 2026-11-15 — A price right after a number of the name, with no comma (amends ADR-095)
 
 - Found by the paid test T-CHAT-REST-002: « iPhone 15 1 200 000 Ar » asked for the price again. The digit tokens `15 1 200 000` are not one correctly grouped amount, so the server offered no candidate.

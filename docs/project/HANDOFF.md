@@ -39,6 +39,24 @@
 ```
 
 
+## Roadmap and Release 1 requirements — 2026-11-15, latest (READ FIRST)
+
+**The release rule (user, ADR-105): nothing is deployed until Release 1 « Invitation » is complete: several shops by invitation, a prepaid balance, a dashboard per shop and an administration dashboard.** The chat work already on `origin/main` stays undeployed; the pilot stays on the version of 2026-11-14. Do not offer a deploy before then.
+
+**Done, NOT committed:** [ROADMAP.md](ROADMAP.md); six requirement files, Draft v1 with working defaults, no design (`requirements/multi-shop.md`, `prepaid-balance.md`, `admin-dashboard.md`, `service-terms.md`, `shop-dashboard.md`, `share-poster.md`); `requirements/_INDEX.md`; a scope-change note in PROJECT.md; ADR-105; T-SAAS-ROADMAP in TODO.md.
+
+**Exact next step:** the user reads the drafts and answers the open decisions at the end of ROADMAP.md (what the image may write; the shop's identifier; welcome credits; a first price). Then the design of multi-shop, first in the build order, with its review and devil's advocate.
+
+**Landmines:** the audit's two-shop test is git-ignored in `outputs/saas-review-2026-11-15/`; it must enter `backend/tests/` with multi-shop. Subagents run on Opus (the user's rule). The requirements do not follow `_TEMPLATE.md`'s GIVEN/WHEN/THEN wording; they keep the checklist style of `text-first-generation.md`.
+
+## Claude's review of the SaaS research — 2026-11-15
+
+**Done, NOT committed:** [review](reviews/saas-review-claude-2026-11-15.md) of Codex's [research](reviews/social-publishing-saas-research-2026-11-15.md) (T-SAAS-REVIEW in TODO.md). Research only; no application code changed; no paid call. Uncommitted: the review file, `docs/project/TODO.md`, `docs/project/HANDOFF.md`. Codex's research file is still untracked and is Codex's to commit.
+
+**Exact next step:** the user's five decisions at the end of the review (the order of work; sharing before publishing; invented features before other shops; starting Meta's business verification; changing PROJECT.md, which excludes all of this). Nothing is to be built before he changes the charter and requirements are approved.
+
+**Landmines:** the audit's two-shop test is git-ignored in `outputs/saas-review-2026-11-15/` and is not part of the suite; its browser-storage finding is from reading. The Meta and market facts were gathered through fetch tools on 2026-11-15; Meta's business help pages could not be read.
+
 ## Changes by message are a set of fields — handoff of 2026-11-15, later session (READ FIRST)
 
 **Why:** the user wrote « Sony is the brand, put it on top, the product title on the second line » on a poster and the chat answered that the title is changed in « Pas à pas ». He asked for a durable change, not a prompt patch (ADR-099).
