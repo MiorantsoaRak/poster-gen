@@ -59,7 +59,10 @@ done
 [ "$code" = 200 ] || fail "$PUBLIC/ answered $code"
 [ "$(answers "$PUBLIC/manifest.webmanifest")" = 200 ] || fail "$PUBLIC/manifest.webmanifest is not served"
 body=$(curl -s --max-time 10 "$PUBLIC/api/session")
-[ "$body" = '{"authenticated":false}' ] || fail "$PUBLIC/api/session through Caddy answered: $body"
+case "$body" in  # the answer may also say whom to contact (SUPPORT_CONTACT_FR)
+  '{"authenticated":false}' | '{"authenticated":false,"support_fr":"'*'"}') ;;  # a whole object, nothing after it
+  *) fail "$PUBLIC/api/session through Caddy answered: $body" ;;
+esac
 [ "$(answers "$PUBLIC/api/creations")" = 401 ] || fail "$PUBLIC/api/creations is not closed without a session"
 echo "ok: $PUBLIC serves the page and its manifest, the API answers through Caddy and is closed without a session"
 

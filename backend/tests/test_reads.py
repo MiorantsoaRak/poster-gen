@@ -20,7 +20,7 @@ from affiche.posters.store import Refused
 from affiche.visuals.admission import spent_micros
 from fastapi.testclient import TestClient
 
-from test_api import ORIGIN, PASSWORD, client, create_draft, login, password_hash, post, settings  # noqa: F401
+from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
 from test_db import engine  # noqa: F401
@@ -242,7 +242,8 @@ def test_every_card_from_the_stub_reader(stub, client, settings):
 
 def test_an_older_bundle_changes_nothing_and_pays_nothing(stub, client):
     """ADR-103: a tab from before a change that makes it unsafe is refused at the door, for every state-changing data
-    route at once; it can still read, and sign in again after its reload."""
+    route at once, its sign-in included (it has no identifier, D-MULTI-SHOP-002); it can still read and sign out, and
+    signs in again after its reload."""
     login(client)
     creation = create_draft(client)
     id, engine = creation["id"], client.app.state.engine
@@ -250,10 +251,10 @@ def test_an_older_bundle_changes_nothing_and_pays_nothing(stub, client):
     old = TestClient(client.app, base_url=ORIGIN, headers={"Origin": ORIGIN}, cookies=dict(client.cookies))  # no header
     refusal = {"code": "bundle_outdated", "retryable": False, "message_fr": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page."}
     routes = [(method.upper(), path) for path, methods in client.app.openapi()["paths"].items() for method in methods
-              if method in ("post", "put", "patch", "delete") and path != "/api/session"]
-    assert len(routes) > 25 and ("PUT", "/api/creations/{id}") in routes and ("POST", "/api/assets") in routes, routes
+              if method in ("post", "put", "patch", "delete") and (method, path) != ("delete", "/api/session")]
+    assert len(routes) > 25 and ("PUT", "/api/creations/{id}") in routes and ("POST", "/api/session") in routes, routes
     before = {table: count(table) for table in ("chat_reads", "poster_jobs", "scene_plans", "mutation_keys", "creations", "creation_versions", "assets", "looks")}
-    for bundle in (None, "1", "0", "", "deux", "2.0", "-2", "٢".encode(), "1" * 12):
+    for bundle in (None, "2", "1", "0", "", "deux", "3.0", "-3", "٣".encode(), "1" * 12):
         headers = {"Idempotency-Key": str(uuid4()), "If-Match": '"1"'} | ({} if bundle is None else {"X-Affiche-Bundle": bundle})
         for method, path in routes:
             answer = old.request(method, re.sub(r"\{\w+\}", id, path), json={}, headers=headers)
@@ -274,12 +275,14 @@ def test_an_older_bundle_changes_nothing_and_pays_nothing(stub, client):
         assert old.get(path, headers={"X-Affiche-Bundle": "1"}).status_code == 200, path
     assert old.delete("/api/session").status_code == 200 and old.get("/api/creations").status_code == 401
     assert old.post("/api/reads", json=body("JBL"), headers={"Idempotency-Key": str(uuid4())}).status_code == 401  # as before
-    assert old.post("/api/session", json={"password": PASSWORD}).status_code == 200
+    for sign_in in ({"password": PASSWORD}, credentials()):  # what the older form sends, and a whole body
+        assert old.post("/api/session", json=sign_in).json()["error"] == refusal
+    assert old.post("/api/session", json=credentials(), headers={"X-Affiche-Bundle": "2"}).status_code == 409
     # The current bundle, and a later one, pass.
     login(client)  # the session above was the same one
     assert post(client, "/api/reads", body("JBL Flip 7, 700 000 Ar")).status_code == 201
     assert client.post("/api/reads", json=body("JBL Flip 7, 700 000 Ar"),
-                       headers={"Idempotency-Key": str(uuid4()), "X-Affiche-Bundle": "3"}).status_code == 201
+                       headers={"Idempotency-Key": str(uuid4()), "X-Affiche-Bundle": "4"}).status_code == 201
     changed = creation["document"] | {"offer": creation["document"]["offer"] | {"price_ar": 700000}}
     assert client.put(f"/api/creations/{id}", json=changed,
                       headers={"Idempotency-Key": str(uuid4()), "If-Match": '"1"'}).json()["revision"] == 2

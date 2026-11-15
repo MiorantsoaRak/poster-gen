@@ -15,7 +15,7 @@ import uvicorn
 from playwright.sync_api import sync_playwright, expect
 from PIL import Image, ImageChops, ImageDraw
 
-from affiche.api import create_app
+from affiche.api import BUNDLE, create_app
 from affiche.config import Settings
 from affiche.posters.auth import PASSWORDS
 
@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "outputs" / "editor-smoke"
 ORIGIN = "http://127.0.0.1:5173"
 PASSWORD = os.urandom(12).hex()  # a throwaway credential per run against temporary stub data
+IDENTIFIER = "originalphone"  # the pilot shop's (migration 0013)
+SUPPORT = "l’administrateur au 034 00 000 00"  # SUPPORT_CONTACT_FR of the smokes' server
 
 
 def check_material_pixels(page, document):
@@ -805,6 +807,7 @@ def walk_formats(browser, errors):
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(ORIGIN)
+    page.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
     expect(page.get_by_label("Photos du produit")).to_be_enabled()
@@ -1183,7 +1186,8 @@ def serve(data, **extra):
     """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data; the defaults unless told."""
     settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
                         anthropic_api_key=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
-                        data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD), **{"stub_fail": None, **extra})
+                        data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD),
+                        support_contact_fr=SUPPORT, **{"stub_fail": None, **extra})
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -1266,6 +1270,17 @@ def run():
                         for icon in [*manifest["icons"], {"src": "/icons/apple-touch-icon.png"}]:
                             served = page.request.get(ORIGIN + icon["src"])
                             assert served.status == 200 and served.headers["content-type"] == "image/png", icon
+                        # Whom to call for a forgotten password; one sentence for a wrong identifier and for a wrong
+                        # password, so nothing says whether a shop exists (R-MULTI-SHOP-001).
+                        expect(page.get_by_text(f"Mot de passe oublié ? Contactez {SUPPORT}.")).to_be_visible()
+                        for identifier, password in (("inconnue", PASSWORD), ("Original Phone", PASSWORD[::-1])):
+                            page.get_by_label("Identifiant de la boutique", exact=True).fill(identifier)
+                            page.get_by_label("Mot de passe", exact=True).fill(password)
+                            page.get_by_role("button", name="Ouvrir l’atelier").click()
+                            expect(page.locator(".message.error")).to_contain_text("Identifiant ou mot de passe incorrect.")
+                            page.locator(".message.error").get_by_role("button", name="Fermer").click()
+                            expect(page.locator(".message.error")).to_have_count(0)
+                        page.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
                         page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
                         page.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
@@ -1611,7 +1626,7 @@ def run():
                         remote["document"]["offer"]["title"] = "Titre modifié dans un autre onglet"
                         from uuid import uuid4
                         response = page.request.put(f"{ORIGIN}/api/creations/{creation_id}", data=remote["document"],
-                            headers={"Origin": ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
+                            headers={"Origin": ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
                         assert response.status == 200
                         page.get_by_label("Titre", exact=True).fill("Mon titre conservé")
                         # With a mouse there is no on-screen keyboard: the poster does not collapse for a focused field.
@@ -1921,7 +1936,7 @@ def run():
                         moved_logo = next(l for l in altered['formats']['feed']['layers'] if l['role'] == 'logo')
                         moved_logo.pop('shape', None)
                         moved_logo.update(x=54, y=67.5)
-                        response = page.request.put(seal_endpoint, data=altered, headers={"Origin": ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{historical["revision"]}"', "Idempotency-Key": str(uuid4())})
+                        response = page.request.put(seal_endpoint, data=altered, headers={"Origin": ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "If-Match": f'"{historical["revision"]}"', "Idempotency-Key": str(uuid4())})
                         assert response.ok, response.text()
                         page.reload()
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
@@ -2230,6 +2245,7 @@ def run():
                         # A poster's address opened without a session: after the sign-in the owner is on that poster.
                         other = browser.new_page(viewport={"width": 390, "height": 844})
                         other.goto(f"{ORIGIN}/#{copy_id}")
+                        other.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
                         other.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
                         other.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(other.get_by_label("Titre", exact=True)).to_be_visible()

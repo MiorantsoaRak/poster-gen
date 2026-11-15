@@ -30,6 +30,7 @@ UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cett
 
 def sign_in(page):
     page.goto(smoke.ORIGIN)
+    page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
 
@@ -353,7 +354,7 @@ def walk_desktop(browser, errors, product, inspiration):
     context.unroute("**/scenes")
     busy = spent()
     other = browser.new_context(storage_state=context.storage_state())
-    headers = lambda: {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{revision()}"', "Idempotency-Key": str(uuid4())}
+    headers = lambda: {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE), "If-Match": f'"{revision()}"', "Idempotency-Key": str(uuid4())}
     plan = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/plans", headers=headers(), data={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
     assert plan.ok, plan.text()
     started = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/scenes", headers=headers(), data={"plan_id": plan.json()["id"], "format": "feed"})
@@ -1008,6 +1009,7 @@ def walk_changes(browser, errors, session, data):
     # « Réessayer » sends the message.
     context.clear_cookies()
     say(page, "fond rouge")
+    page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
     page.wait_for_url(f"**/#message-{other}")

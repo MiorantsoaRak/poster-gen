@@ -21,6 +21,8 @@ In order of importance. The last column is the order I would build in, with the 
 | 5 | The shop's dashboard | [shop-dashboard.md](requirements/shop-dashboard.md) R-SHOP-DASH-001 … 004 | A shop must see what it has left and what it spent, and manage its own password. | **Fifth.** Mostly a view of what 1 and 2 hold. |
 | 6 | « Partager » | [share-poster.md](requirements/share-poster.md) R-SHARE-001 … 005 | The way a poster reaches Facebook and WhatsApp without Meta's approval. | **Last, or in parallel.** It depends on nothing above; its risk is on real phones, not in the code. |
 
+**The product's name and look (user, 2026-11-15):** the service is « Doka Studio », identity direction « Signal ». It is applied when the screens are built (T-BRAND-DOKA in TODO.md): the sign-in screen once multi-shop is finished, each dashboard as it is made. It is part of Release 1; it is not a seventh feature with its own gate.
+
 **Importance and build order differ in one place:** the shop's dashboard is more visible than the conditions of use, but the conditions gate inviting anyone, so they come first.
 
 ## Beside Release 1 — things only the user can do, free

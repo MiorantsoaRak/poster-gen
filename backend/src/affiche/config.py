@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     serve_frontend: bool = False  # also serve the built frontend at / (no separate web server in the container)
     backup_dir: Path | None = None  # where `python -m affiche.backup` writes; /api/status reads its marker
     shop_password_hash: SecretStr | None = None
+    # Under the sign-in form: « Mot de passe oublié ? Contactez {this}. » (the operator resets passwords). Not shown unset.
+    support_contact_fr: str | None = Field(None, max_length=200)
     planner_provider: Literal["disabled", "stub", "claude"] = "disabled"
     anthropic_api_key: SecretStr | None = None
     claude_model: str = "claude-sonnet-5-5"

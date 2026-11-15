@@ -23,8 +23,9 @@ function end() {
 
 // Sent with every request (X-Affiche-Bundle); the server refuses a state-changing request from a lower one with
 // `bundle_outdated` (backend api.py BUNDLE). Raise both together when a change makes an older open tab unsafe: one that
-// would pay beside a card it does not know, or carry out a card without what it promises (ADR-103).
-export const BUNDLE = 2
+// would pay beside a card it does not know, or carry out a card without what it promises (ADR-103), or sign in without
+// the shop's identifier (D-MULTI-SHOP-002).
+export const BUNDLE = 3
 
 // timeout (ms) is opt-in: the request is given up after it, headers and body together. Without it nothing changes.
 export async function api<T>(path: string, { quiet = false, timeout, ...options }: RequestInit & { quiet?: boolean; timeout?: number } = {}): Promise<T> {

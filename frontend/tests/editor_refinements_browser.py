@@ -44,6 +44,7 @@ def run():
                             if attempt == 39 or vite.poll() is not None:
                                 raise
                             time.sleep(.2)
+                    page.get_by_label('Identifiant de la boutique', exact=True).fill(smoke.IDENTIFIER)
                     page.get_by_label('Mot de passe', exact=True).fill(smoke.PASSWORD)
                     page.get_by_role('button', name='Ouvrir l’atelier').click()
                     expect(page.get_by_label('Photos du produit')).to_be_enabled()
@@ -186,7 +187,7 @@ def run():
                     saved = page.request.get(endpoint).json()
                     original_logo = next(l for l in saved['document']['formats']['feed']['layers'] if l['role'] == 'logo')
                     original_logo.update(x=54, y=1152.9, width=129.6, height=129.6)
-                    response = page.request.put(endpoint, data=saved['document'], headers={'Origin': smoke.ORIGIN, 'X-Affiche-Bundle': '2', 'If-Match': f'"{saved["revision"]}"', 'Idempotency-Key': str(uuid4())})
+                    response = page.request.put(endpoint, data=saved['document'], headers={'Origin': smoke.ORIGIN, 'X-Affiche-Bundle': str(smoke.BUNDLE), 'If-Match': f'"{saved["revision"]}"', 'Idempotency-Key': str(uuid4())})
                     assert response.ok, response.text()
                     page.reload()
                     page.get_by_role('button', name='Nouvelle version', exact=False).click()

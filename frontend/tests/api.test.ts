@@ -13,9 +13,9 @@ it('names its bundle on every request, so that the server can refuse an older op
   await api('/api/assets', { method: 'POST', body: new FormData() })
   const sent = fetch.mock.calls.map(call => (call as unknown as [string, RequestInit])[1].headers as Record<string, string>)
   expect(sent.map(headers => headers['X-Affiche-Bundle'])).toEqual(Array(5).fill(String(BUNDLE)))
-  expect(BUNDLE).toBe(2)  // backend api.py BUNDLE: raised together
+  expect(BUNDLE).toBe(3)  // backend api.py BUNDLE: raised together
   expect(sent[2]).toMatchObject({ 'Idempotency-Key': 'k', 'If-Match': '"3"', 'Content-Type': 'application/json' })
-  expect(sent[4]).toEqual({ 'X-Affiche-Bundle': '2' })  // an upload keeps the browser's own Content-Type
+  expect(sent[4]).toEqual({ 'X-Affiche-Bundle': '3' })  // an upload keeps the browser's own Content-Type
 })
 it('reuses an uncertain mutation key after a lost response, then starts a new action after success', async () => {
   const fetch = vi.fn().mockRejectedValueOnce(new Error('lost')).mockImplementation(answer())

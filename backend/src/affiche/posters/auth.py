@@ -2,8 +2,10 @@
 import hashlib
 import ipaddress
 import logging
+import re
 import secrets
 import threading
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -22,6 +24,15 @@ COOKIE = "affiche_session"
 # limit and restart it in the middle of a paid job; two at a time is plenty for one shop.
 VERIFYING = threading.BoundedSemaphore(2)
 SESSION_SECONDS = 90 * 24 * 60 * 60  # fixed from sign-in: no write on the path that reads a session (ADR-065)
+# Failures in 15 minutes: one identifier from one address, and one address for every identifier (D-MULTI-SHOP-002).
+PAIR_LIMIT, ADDRESS_LIMIT = 5, 20
+# Verified when the shop is unknown or has no password, so that every sign-in costs one Argon2 verification.
+DUMMY_HASH = PASSWORDS.hash(secrets.token_hex(16))
+
+
+def identifier_key(identifier: str) -> str:
+    """The stored identifier and the sign-in's lookup key: case, accents, spaces and punctuation do not count."""
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", identifier[:64]).lower())
 
 
 def validate_config(settings: Settings):
@@ -60,8 +71,9 @@ def token_hash(token: str) -> str:
 def session_shop(engine, token: str | None) -> int | None:
     if not token or len(token) > 128:
         return None
-    with engine.connect() as conn:
-        return conn.execute(text("SELECT shop_id FROM sessions WHERE token_hash=:hash AND expires_at>:now"),
+    with engine.connect() as conn:  # a suspended shop's sessions stop at once and work again when it is enabled
+        return conn.execute(text("SELECT s.shop_id FROM sessions s JOIN shop_profile p ON p.id=s.shop_id "
+                                 "WHERE s.token_hash=:hash AND s.expires_at>:now AND p.state='active'"),
                             {"hash": token_hash(token), "now": utc_now()}).scalar()
 
 
@@ -104,37 +116,62 @@ def adopt_password_setting(engine, settings: Settings):
             log.warning("shop 1 has no password: python -m affiche.shops set-password originalphone")
 
 
-def login(engine, password: str, ip: str, previous: str | None = None) -> str:
-    now = datetime.now(UTC)
-    since = (now-timedelta(minutes=15)).isoformat(timespec="microseconds")
-    ip = limit_key(ip)
+def limited(conn, ip: str, name: str) -> bool:
+    since = (datetime.now(UTC)-timedelta(minutes=15)).isoformat(timespec="microseconds")
+    pair, address = conn.execute(text("SELECT count(*) FILTER (WHERE identifier=:name), count(*) FROM login_failures "
+                                      "WHERE ip=:ip AND attempted_at>:since"),
+                                 {"ip": ip, "name": name, "since": since}).one()
+    return pair >= PAIR_LIMIT or address >= ADDRESS_LIMIT
+
+
+def login(engine, identifier: str, password: str, ip: str, previous: str | None = None) -> tuple[str, int]:
+    """Returns the new session's token and its shop. An unknown identifier, a wrong password and a shop without
+    password get the same answer after the same work; a suspension is told only to whoever gave the right password."""
+    ip, name = limit_key(ip), identifier_key(identifier)
     with engine.connect() as conn:
-        failures = conn.execute(text("SELECT count(*) FROM login_failures WHERE ip=:ip AND attempted_at>:since"),
-                                {"ip": ip, "since": since}).scalar_one()
-        stored = conn.execute(text("SELECT password_hash FROM shop_profile WHERE id=1")).scalar()
-    if failures >= 5:
-        raise Refused("rate_limited", 429)
+        if limited(conn, ip, name):
+            raise Refused("rate_limited", 429)
     # Argon2 is slow on purpose. Verified outside the write transaction: inside it, a flood of logins would hold
-    # the database's write lock and stall autosaves and job commits. Parallel wrong attempts can therefore pass
-    # the count together; they are bounded by the worker threads and each one is recorded.
+    # the database's write lock and stall autosaves and job commits. The slot is held until the failure or the session
+    # is committed and the limits are counted again once it is held, so a request that gets a slot sees the failures of
+    # every request that held one before: a burst records at most one failure past each limit, even while another
+    # writer holds the database.
     with VERIFYING:
-        valid = stored is not None and PASSWORDS.verify(password, stored)  # no password yet: nobody signs in
-    with write_tx(engine) as conn:
-        conn.execute(text("DELETE FROM login_failures WHERE attempted_at<=:since"), {"since": since})
-        conn.execute(text("DELETE FROM sessions WHERE expires_at<=:now"), {"now": now.isoformat(timespec="microseconds")})
-        if valid:
-            token = secrets.token_urlsafe(32)
-            if previous:
-                conn.execute(text("DELETE FROM sessions WHERE token_hash=:hash"), {"hash": token_hash(previous)})
-            conn.execute(text("INSERT INTO sessions VALUES (:hash,1,:expires)"),
-                         {"hash": token_hash(token), "expires": (now+timedelta(seconds=SESSION_SECONDS)).isoformat(timespec="microseconds")})
-        else:
-            conn.execute(text("INSERT INTO login_failures (ip,attempted_at) VALUES (:ip,:now)"),
-                         {"ip": ip, "now": now.isoformat(timespec="microseconds")})
+        with engine.connect() as conn:
+            if limited(conn, ip, name):
+                raise Refused("rate_limited", 429)
+            shop = conn.execute(text("SELECT id, password_hash FROM shop_profile WHERE identifier=:name"),
+                                {"name": name}).first()
+        stored = shop.password_hash if shop else None
+        ok, upgraded = PASSWORDS.verify_and_update(password, stored or DUMMY_HASH)
+        now = datetime.now(UTC)
+        stamp = now.isoformat(timespec="microseconds")
+        with write_tx(engine) as conn:
+            conn.execute(text("DELETE FROM login_failures WHERE attempted_at<=:since"),
+                         {"since": (now-timedelta(minutes=15)).isoformat(timespec="microseconds")})
+            conn.execute(text("DELETE FROM sessions WHERE expires_at<=:now"), {"now": stamp})
+            # Read again in the transaction that writes: a password changed during the verification gives no session.
+            state = conn.execute(text("SELECT state FROM shop_profile WHERE id=:shop AND password_hash=:stored"),
+                                 {"shop": shop.id, "stored": stored}).scalar() if ok and stored is not None else None
+            if state == "active":
+                token = secrets.token_urlsafe(32)
+                if upgraded:  # made with other Argon2 parameters than the current ones (an adopted setting)
+                    conn.execute(text("UPDATE shop_profile SET password_hash=:hash WHERE id=:shop"),
+                                 {"hash": upgraded, "shop": shop.id})
+                if previous:
+                    conn.execute(text("DELETE FROM sessions WHERE token_hash=:hash"), {"hash": token_hash(previous)})
+                conn.execute(text("INSERT INTO sessions VALUES (:hash,:shop,:expires)"),
+                             {"hash": token_hash(token), "shop": shop.id,
+                              "expires": (now+timedelta(seconds=SESSION_SECONDS)).isoformat(timespec="microseconds")})
+            elif state is None:  # recorded for an unknown identifier too: the limit behaves the same
+                conn.execute(text("INSERT INTO login_failures (ip,identifier,attempted_at) VALUES (:ip,:name,:now)"),
+                             {"ip": ip, "name": name, "now": stamp})
     # The failed attempt is committed before the failure is reported.
-    if not valid:
-        raise Refused("unauthenticated", 401)
-    return token
+    if state is None:
+        raise Refused("wrong_credentials", 401)
+    if state != "active":
+        raise Refused("shop_suspended", 403)
+    return token, shop.id
 
 
 def logout(engine, token: str | None):

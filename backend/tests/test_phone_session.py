@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from affiche import rehearse
 from affiche.api import create_app
 from affiche.runtime import AlreadyRunning, acquire_lock
-from test_api import HEADERS, ORIGIN, at_0012, password_hash, settings  # noqa: F401
+from test_api import HEADERS, ORIGIN, at_0012, credentials, password_hash, settings  # noqa: F401
 from test_config import env  # noqa: F401
 
 ONE_OFF = os.urandom(12).hex()  # the session's one-off credential; nothing is written literally
@@ -80,6 +80,6 @@ def test_the_one_off_password_is_set_at_start_and_ends_the_other_sessions(settin
     settings.shop_password_hash = None
     with TestClient(phone_session.application(settings, ONE_OFF), base_url=ORIGIN, headers=HEADERS) as client:
         assert not client.get("/api/session", headers=phone).json()["authenticated"]
-        assert client.post("/api/session", json={"password": ONE_OFF}).status_code == 200
+        assert client.post("/api/session", json=credentials(ONE_OFF)).status_code == 200
         with client.app.state.engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0013"

@@ -19,7 +19,7 @@ const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'A
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
-const authenticated = ref(false), checking = ref(true), down = ref(false), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
+const authenticated = ref(false), checking = ref(true), down = ref(false), identifier = ref(''), password = ref(''), support = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
 const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -852,8 +852,8 @@ async function loadShop() {
   Object.assign(include, { logo: false, shop_name: false, contact: false })
 }
 async function signIn() {
-  await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: password.value }) })
-  password.value = ''; authenticated.value = true; await loadShop(); await route()
+  await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: identifier.value, password: password.value }) })
+  identifier.value = ''; password.value = ''; authenticated.value = true; await loadShop(); await route()
 }
 async function saveProfile() {
   if (JSON.stringify(profile) === profileSaved) return
@@ -1513,7 +1513,11 @@ function warnUnload(event: BeforeUnloadEvent) { if (saver?.unsaved) { event.prev
 // 502 to 504, or nothing): say so with a retry, instead of a sign-in form that cannot work.
 async function start() {
   checking.value = true; down.value = false
-  try { authenticated.value = (await api<{ authenticated: boolean }>('/api/session')).authenticated; if (authenticated.value) { await loadShop(); await route() } }
+  try {
+    const session = await api<{ authenticated: boolean; support_fr?: string }>('/api/session')
+    authenticated.value = session.authenticated; support.value = session.support_fr ?? ''
+    if (authenticated.value) { await loadShop(); await route() }
+  }
   catch (reason) { const failure = reason as ApiError; if (failure.code === 'network' || [502, 503, 504].includes(failure.status)) down.value = true; else error.value = failure.message }
   finally { checking.value = false }
 }
@@ -1541,7 +1545,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <section v-if="!checking && down" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="start">Réessayer</button></section>
-    <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous pour retrouver les visuels de la boutique.</p><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button></form>
+    <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p></form>
     <section v-if="pickStart" class="start" aria-labelledby="titre-depart">
       <h1 id="titre-depart">Comment voulez-vous créer vos affiches ?</h1>
       <div class="start-choices">

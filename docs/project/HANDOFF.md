@@ -2,41 +2,48 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
-## Codex Doka Studio identity — 2026-11-15, latest
+## Codex Doka Studio — Signal kit v1 delivered, 2026-11-15
 
-**User decision:** “Let’s go with Doka studio, explore more style and more design identity using logo-design and image-gen.” **Doka Studio is now the selected brand name.** The user subsequently wrote “I think I prefer more the Signal version”: **Signal is the chosen identity direction**, with no hybrid requested. PROJECT.md metadata records both choices; application code and technical identifiers remain as before. This exploration is independent of Claude’s Release 1 work below.
+**User decisions:** Doka Studio is the selected brand name; Signal is the chosen identity direction. The user then said **“go”** to the offered final logo kit, authorizing Phase 7 of the invoked logo-design skill. PROJECT.md metadata records the delivered digital kit; application code and technical identifiers remain as before for this track. Claude’s Release 1 changes below are independent and must be preserved.
 
-**Done:** T-DOKA-IDENTITY, using the explicitly requested logo-design and imagegen skills. [Identity presentation and exact assets](mockups/doka-studio-identity/README.md). Three directions: **Signal** (recommended: yellow/charcoal/paper, Space Grotesk, bold graphic studio), **Editorial** (oxblood/ivory/apricot, Noto Serif, boutique studio), **Complice** (teal/mint/peach, Noto Sans, approachable creative partner). All retain the cut-corner D. Nine outlined SVG studies, a rendered type comparison and three generated 1536×1024 boards are saved, with original/refinement prompts and exact style metadata. Signal and Editorial have preserved v1/v2 boards; Complice is v1. Original generated files remain in the Codex generated-image directory.
+**Done:** T-DOKA-SIGNAL-KIT. [Kit README](brand/doka-studio-signal/README.md), [visual overview](brand/doka-studio-signal/preview.html), [PNG overview](brand/doka-studio-signal/preview.png), [portable ZIP](brand/Doka-Studio-Signal-v1.zip). Horizontal, stacked, name-only and symbol layouts in charcoal/black/paper/white; nine masters, 16 digital SVG variants, two web SVGs, transparent PNGs, 16/32/48 ICO, Apple and PWA/maskable icons, bundled Space Grotesk/Noto Sans fonts with SIL OFL notices, palette metadata, six-context presentation and compact French usage guide. Archive: 77 files, 1,830,320 bytes, SHA256 `4322954545bec49cd8182e896fc6386d53d2d2e5ed95609f0513e5cf3cf2d4ab`.
 
-**Verified:** all boards and vector renders inspected; shared D at 16/32/64 px, monochrome/reverse/crops/header contexts; symbol audit no issues, wordmarks retain documented font-contour/complexity notices. Six specified flat-color pairs pass 4.5:1 (5.66–14.49:1). Nine SVGs parse with outlined text and no raster/filter/mask; JSON and local links checked. French accented glyph coverage checked. Signal v2 fixes weak launch-copy contrast. Editorial retains a small generated “SÉRIE” instead of “SÉRIF” label; notes explain it. Native vectors are authoritative, raster screens illustrative. No app tests (no app source changed for this task), app rollout, provider evaluation, push or deploy.
+**Refinements:** preserved the selected cut-corner D and bold wordmark; reverse counter grows by one source unit to reduce apparent weight; small artwork enlarges the same simple silhouette. Yellow-backed favicons remain visible on light and dark browser chrome. Platform icons have opaque backgrounds and safe masking space. Screen minima: 220 px horizontal, 160 px stacked/name-only, 16 px favicon. Print minima/CMYK numbers are provisional, without invented Pantone equivalents.
 
-**Latest completed task:** T-DOKA-SIGNAL-CHOICE records the user’s Signal preference in PROJECT, identity notes, archived naming notes, TODO and DECISIONS. Documentation only; no artwork was changed or generated. Referenced Signal assets exist and diff whitespace was checked.
+**Verified:** two exact-artwork proofs, native 16/20/24/32/48/64/96 px samples, reverse/circle crops, exported icon sheet and mobile preview inspected. Assertions in `outputs/doka-signal-kit-2026-11-15/verify_kit.py` passed: 27 outlined SVGs without raster/text/effects, 33 PNG files, transparent counters/lower reverse ink coverage, dimensions/ICO sizes, maskable ink radius 166.39 px inside the 204.8 px safe circle, French glyph/licence metadata, 51 relative links, contrast 10.13:1 and 14.49:1, preview at 1400 and 390 px without overflow, missing images/fonts or page errors. Master audits 90–100 with no FAIL; outlined-font angles/complexity, small-symbol precision and a deliberately raised stacked composition are documented notices. ZIP CRC and 76 content hashes match. Evidence is in `brand/doka-studio-signal/checks/`; the kit contains SHA256SUMS.txt.
 
-**Exact next step:** proposed refinement/production kit for **Signal**, on the user’s request: precise color/reversed artwork, icon exports, clear-space/minimum-size rules and a short guide. The user selected a direction; final production artwork is still pending. No task in this exploration remains in progress. No confirmation question was raised in this preference-recording turn. App rollout remains a separate scoped task under project gates.
+**Exact next step:** this asset deliverable is complete; no brand task remains in progress and no approval is pending. A separately requested app integration should follow applicable project requirements/design/task gates and coordinate with Release 1. Do not deploy or silently change app branding as part of asset delivery. No commit, push, deploy, application tests or production access was performed for this task.
 
-**Landmines:** prior naming overlaps and unresolved name/domain/trademark clearance remain recorded in [the naming exploration](mockups/brand-directions/README.md). Generated products/people are fictional, not customer endorsements or verified offers. Interface mockups are not feature specifications. Do not constrain customers’ poster styles to Doka’s palette or add Doka’s logo to exports. White on Signal yellow fails contrast; use charcoal. Small-size use is the D alone, not the full STUDIO lockup. A complete production export set, physical print tests and customer reaction study remain undone.
+**Landmines:** name/domain/trademark clearance and physical print proof remain open. RGB vectors are digital artwork, not certified CMYK/Pantone files. The generated exploration boards are illustrative and not logo masters. Presentation contact/handle/domain examples are placeholders. The manifest/head snippet needs real app paths and merging; it does not implement offline/PWA behavior. Do not force Doka’s colors or logo into customer posters. White text on Signal yellow fails; use charcoal. Icon tiles and transparent artwork serve different uses; keep their export choices intact.
 
-**History:** T-BRAND-CONCEPTS and T-BRAND-DOKA completed the earlier [four-name comparison](mockups/brand-directions/concepts-four.png), now archived. Affisoa, Saryko and Vitraka are superseded by the user’s Doka Studio choice. Earlier assets and test rounds remain intact. Intermediate scripts/references/audits for this refinement are in git-ignored `outputs/doka-studio-identity-2026-11-15/`.
+**History:** T-BRAND-CONCEPTS, T-BRAND-DOKA, T-DOKA-IDENTITY and T-DOKA-SIGNAL-CHOICE are complete. [Earlier identity studies](mockups/doka-studio-identity/README.md) and [four-name comparison](mockups/brand-directions/README.md) are retained. Earlier Affisoa/Saryko/Vitraka recommendations are superseded. Exact build/export/verification scripts, two proofs and archive verification are in git-ignored `outputs/doka-signal-kit-2026-11-15/`. No new imagegen call was needed for the exact vector kit; the earlier generated boards remain untouched.
 
-**Files changed by this task:** PROJECT.md metadata, TODO.md, this HANDOFF, the appended brand-selection entry in DECISIONS.md, the archived brand README, and new `mockups/doka-studio-identity/` assets. Some shared docs were committed by concurrent work during the session; no commit was made by this task. Other working changes belong to concurrent/earlier tracks and must be preserved.
+**Files changed by this task:** new `docs/project/brand/` kit and ZIP; updates to PROJECT metadata, the identity exploration README, TODO, DECISIONS and this HANDOFF. Other source/test changes are concurrent work, not this task. No task-owned app changes were made.
 
 **Uncommitted snapshot** (other agents may change it after this note):
 
 ```text
  M backend/src/affiche/api.py
- M backend/src/affiche/db.py
+ M backend/src/affiche/config.py
  M backend/src/affiche/posters/auth.py
- M backend/src/affiche/posters/reads.py
- M backend/tests/test_db.py
+ M backend/src/affiche/shops.py
+ M backend/tests/test_api.py
+ M backend/tests/test_config.py
+ M backend/tests/test_phone_session.py
  M backend/tests/test_reads.py
- M deploy/phone_session.py
+ M deploy/verify.sh
  M docs/project/DECISIONS.md
- M docs/project/HANDOFF.md
  M docs/project/PROJECT.md
+ M docs/project/ROADMAP.md
  M docs/project/TODO.md
-?? backend/migrations/versions/0013_shops.py
-?? backend/src/affiche/rehearse.py
-?? backend/src/affiche/shops.py
+ M frontend/src/App.vue
+ M frontend/src/api.ts
+ M frontend/tests/api.test.ts
+ M frontend/tests/browser_smoke.py
+ M frontend/tests/chat_browser.py
+ M frontend/tests/editor_refinements_browser.py
+?? backend/tests/test_shops.py
+?? docs/project/brand/
 ?? docs/project/mockups/brand-directions/
 ?? docs/project/mockups/doka-studio-identity/
 ?? docs/project/mockups/text-first/
@@ -87,9 +94,11 @@
 
 **Done, NOT committed:** [ROADMAP.md](ROADMAP.md); six requirement files, Draft v1 with working defaults, no design (`requirements/multi-shop.md`, `prepaid-balance.md`, `admin-dashboard.md`, `service-terms.md`, `shop-dashboard.md`, `share-poster.md`); `requirements/_INDEX.md`; a scope-change note in PROJECT.md; ADR-105; T-SAAS-ROADMAP in TODO.md.
 
-**Since then (user: "You have the autonomy, start with what you consider more important", ADR-106):** `requirements/multi-shop.md` approved and amended; [design multi-shop v4](designs/multi-shop.md) approved under the grant (ADR-107) after three review rounds and a devil's advocate (reviews/multi-shop-design-*.md). Six tasks T-MULTI-SHOP-001 to 006 are in TODO.md. **001 is done and committed locally** (the migration, the password in the database, the rehearsal); 002 to 006 are not started.
+**Since then (user: "You have the autonomy, start with what you consider more important", ADR-106):** `requirements/multi-shop.md` approved and amended; [design multi-shop v4](designs/multi-shop.md) approved under the grant (ADR-107) after three review rounds and a devil's advocate (reviews/multi-shop-design-*.md). Six tasks T-MULTI-SHOP-001 to 006 are in TODO.md. **001 and 002 are done and committed locally** (the migration, the password in the database, the rehearsal; sign-in by identifier, bundle 3); 003 is in progress with an Opus subagent; 004 to 006 are not started.
 
-**Exact next step:** T-MULTI-SHOP-002 (sign-in by identifier end to end, bundle 3), by an Opus subagent, then its Codex code review. It must close the gap left by 001: re-read the stored hash inside the transaction that creates a session. Then 003 to 006 in order. Local commits only; push on the user's word; no deploy (ADR-105). Still the user's: what the image may write (R-TERMS-002); the pilot's identifier `originalphone`.
+**Exact next step:** the result of T-MULTI-SHOP-003 (the two-shop route test in the suite, spend per shop, `/api/usage` per shop, `/api/status` for the operator only, the stale-tab header), then its Codex code review. Then 004 to 006 in order.
+
+**The product is named « Doka Studio », identity « Signal » (user, 2026-11-15).** The final kit is in `docs/project/brand/doka-studio-signal/` (Codex's, uncommitted). It is applied when the screens are built: T-BRAND-DOKA in TODO.md. Posters never get the Doka logo. Local commits only; push on the user's word; no deploy (ADR-105). Still the user's: what the image may write (R-TERMS-002); the pilot's identifier `originalphone`.
 
 **Landmines:** the audit's two-shop test is git-ignored in `outputs/saas-review-2026-11-15/`; it must enter `backend/tests/` with multi-shop. Subagents run on Opus (the user's rule). The requirements do not follow `_TEMPLATE.md`'s GIVEN/WHEN/THEN wording; they keep the checklist style of `text-first-generation.md`.
 

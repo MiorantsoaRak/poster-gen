@@ -76,6 +76,8 @@ MESSAGES = {
         "format_locked": "Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.",
         "scene_format_mismatch": "Cette version a été faite pour un autre format d’affiche. Choisissez une version de ce format, ou générez-en une nouvelle.",
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
+        "wrong_credentials": "Identifiant ou mot de passe incorrect.",
+        "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
         "revision_conflict": "Une version plus récente existe. Vos modifications restent à récupérer.",
         "idempotency_reused": "Cette référence de demande a déjà été utilisée avec un autre contenu.",
         "precondition_required": "La version du document est requise.", "not_found": "Élément introuvable.",
@@ -159,9 +161,9 @@ def error_response(request: Request, error: store.Refused):
 
 
 # The frontend bundle a state-changing request must come from (its header X-Affiche-Bundle, frontend/src/api.ts BUNDLE).
-# Raise both together when a change makes an older open tab unsafe: here a tab from before the `restyle` card and the
-# recap's `identity` could pay beside an unresolved card, or for a poster without what was asked (ADR-103).
-BUNDLE = 2
+# Raise both together when a change makes an older open tab unsafe (ADR-103): here a tab from before the shops'
+# identifiers signs in with no identifier, and keeps what it stores on the device for every shop (D-MULTI-SHOP-007).
+BUNDLE = 3
 
 
 class AccessBoundary:
@@ -212,10 +214,11 @@ class AccessBoundary:
                                                          request.cookies.get(auth.COOKIE)) if api_path else None
             if api_path and scope["path"] != "/api/session" and request.state.shop is None:
                 raise store.Refused("unauthenticated", 401)
-            # An older open tab changes nothing and pays nothing: refused here, before any handler. It can still read,
-            # and sign in or out, so a reload always works.
+            # An older open tab changes nothing and pays nothing: refused here, before any handler. It can still read
+            # and sign out; its sign-in, which has no identifier, gets this sentence too, so a reload always works.
             bundle = request.headers.get("x-affiche-bundle", "")
-            if (api_path and scope["path"] != "/api/session" and request.method not in ("GET", "HEAD", "OPTIONS")
+            if (api_path and (scope["path"], request.method) != ("/api/session", "DELETE")
+                    and request.method not in ("GET", "HEAD", "OPTIONS")
                     and not (bundle.isascii() and bundle.isdigit() and len(bundle) < 10 and int(bundle) >= BUNDLE)):
                 raise store.Refused("bundle_outdated", 409)
             length = request.headers.get("content-length", "0")
@@ -258,6 +261,7 @@ class AccessBoundary:
 
 
 class Login(Model):
+    identifier: str = Field(min_length=1, max_length=64)
     password: SecretStr = Field(min_length=1, max_length=1024)
 
 
@@ -616,13 +620,15 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
 
     @app.get("/api/session", openapi_extra={"security": []})
     def session(request: Request):
-        return {"authenticated": request.state.shop is not None}
+        if request.state.shop is not None:
+            return {"authenticated": True, "shop_id": request.state.shop}
+        return {"authenticated": False} | ({"support_fr": settings.support_contact_fr} if settings.support_contact_fr else {})
 
     @app.post("/api/session", openapi_extra={"security": []})
     def login(body: Login, request: Request):
-        token = auth.login(app.state.engine, body.password.get_secret_value(),
-                           request.client.host if request.client else "unknown", request.cookies.get(auth.COOKIE))
-        response = JSONResponse({"authenticated": True})
+        token, shop = auth.login(app.state.engine, body.identifier, body.password.get_secret_value(),
+                                 request.client.host if request.client else "unknown", request.cookies.get(auth.COOKIE))
+        response = JSONResponse({"authenticated": True, "shop_id": shop})
         response.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_SECONDS, httponly=True,
                             secure=settings.app_origin.startswith("https://"), samesite="strict", path="/")
         return response

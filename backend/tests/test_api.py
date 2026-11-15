@@ -16,6 +16,8 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
 from pydantic import SecretStr
 
 from affiche import api as affiche_api, assets, backup, shops
@@ -31,6 +33,11 @@ ORIGIN = "https://shop.example"
 # What the frontend sends with every request (api.ts): the test clients are a current bundle.
 HEADERS = {"Origin": ORIGIN, "X-Affiche-Bundle": str(affiche_api.BUNDLE)}
 PASSWORD = os.urandom(12).hex()  # a throwaway credential per test process; nothing is written literally
+IDENTIFIER = "originalphone"  # the pilot shop's (migration 0013)
+
+
+def credentials(password: str = PASSWORD, identifier: str = IDENTIFIER) -> dict:
+    return {"identifier": identifier, "password": password}
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +60,7 @@ def client(settings):
 
 
 def login(client):
-    response = client.post("/api/session", json={"password": PASSWORD})
+    response = client.post("/api/session", json=credentials(PASSWORD))
     assert response.status_code == 200, response.text
     return response
 
@@ -157,7 +164,8 @@ def test_cookie_is_opaque_hash_only_and_logout_revokes(client):
     assert client.get("/api/shop-profile").status_code == 401
     assert client.get("/api/session").json() == {"authenticated": False}
     response = login(client)
-    assert response.json() == {"authenticated": True}
+    assert response.json() == {"authenticated": True, "shop_id": 1}
+    assert client.get("/api/session").json() == {"authenticated": True, "shop_id": 1}
     cookie = response.headers["set-cookie"]
     assert all(flag in cookie for flag in ("HttpOnly", "Secure", "SameSite=strict", "Max-Age=7776000", "Path=/"))
     token = client.cookies.get(auth.COOKIE)
@@ -170,7 +178,7 @@ def test_cookie_is_opaque_hash_only_and_logout_revokes(client):
 
 def test_origin_required_even_for_login_and_logout(client):
     for origin in ("", "https://evil.example", "null", ORIGIN+"/"):
-        assert client.post("/api/session", json={"password": PASSWORD}, headers={"Origin": origin}).status_code == 403
+        assert client.post("/api/session", json=credentials(PASSWORD), headers={"Origin": origin}).status_code == 403
     login(client)
     assert client.delete("/api/session", headers={"Origin": "https://evil.example"}).status_code == 403
     assert client.get("/api/session").json()["authenticated"] is True
@@ -185,29 +193,29 @@ def test_expired_session_fails_closed(client):
 
 def test_failed_logins_are_persistent_and_forwarded_ip_cannot_bypass(client, settings):
     for i in range(5):
-        response = client.post("/api/session", json={"password": "wrong"}, headers={"X-Forwarded-For": f"192.0.2.{i}"})
+        response = client.post("/api/session", json=credentials("wrong"), headers={"X-Forwarded-For": f"192.0.2.{i}"})
         assert response.status_code == 401
-    assert client.post("/api/session", json={"password": PASSWORD}).status_code == 429
+    assert client.post("/api/session", json=credentials(PASSWORD)).status_code == 429
     with client.app.state.engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT count(*) FROM login_failures").scalar_one() == 5
-    assert response.json()["error"]["code"] == "unauthenticated"
+    assert response.json()["error"]["code"] == "wrong_credentials"
 
 
 def test_password_is_verified_outside_the_write_transaction_and_not_at_all_once_limited(client, settings, monkeypatch):
     engine, calls = client.app.state.engine, []
 
     class Probe:
-        def verify(self, password, stored):
+        def verify_and_update(self, password, stored):
             # With the write lock held by the login, this second writer would wait 5 s and fail "database is locked".
             with write_tx(engine) as conn:
                 conn.exec_driver_sql("INSERT INTO meta (key,value) VALUES ('probe','1') ON CONFLICT(key) DO NOTHING")
             calls.append(password)
-            return False
+            return False, None
 
     monkeypatch.setattr(auth, "PASSWORDS", Probe())
     for _ in range(5):
-        assert client.post("/api/session", json={"password": "wrong"}).status_code == 401
-    assert client.post("/api/session", json={"password": "wrong"}).status_code == 429
+        assert client.post("/api/session", json=credentials("wrong")).status_code == 401
+    assert client.post("/api/session", json=credentials("wrong")).status_code == 429
     assert len(calls) == 5
 
 
@@ -215,20 +223,20 @@ def test_at_most_two_passwords_are_verified_at_once(client, settings, monkeypatc
     engine, lock, state = client.app.state.engine, threading.Lock(), {"now": 0, "peak": 0}
 
     class Slow:
-        def verify(self, password, stored):
+        def verify_and_update(self, password, stored):
             with lock:
                 state["now"] += 1
                 state["peak"] = max(state["peak"], state["now"])
             time.sleep(.15)
             with lock:
                 state["now"] -= 1
-            return False
+            return False, None
 
     monkeypatch.setattr(auth, "PASSWORDS", Slow())
 
     def attempt(i):
         with pytest.raises(store.Refused):
-            auth.login(engine,"wrong", f"198.51.100.{i}")
+            auth.login(engine, IDENTIFIER, "wrong", f"198.51.100.{i}")
 
     threads = [threading.Thread(target=attempt, args=(i,)) for i in range(8)]
     [thread.start() for thread in threads]
@@ -289,12 +297,242 @@ def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
     assert auth.limit_key("::ffff:192.0.2.7") == auth.limit_key("192.0.2.7") == "192.0.2.7"
     assert auth.limit_key("unknown") == "unknown"
     for i in range(5):
-        with pytest.raises(store.Refused, match="unauthenticated"):
-            auth.login(engine,"wrong", f"2001:db8:1:2:{i}::1")
+        with pytest.raises(store.Refused, match="wrong_credentials"):
+            auth.login(engine, IDENTIFIER, "wrong", f"2001:db8:1:2:{i}::1")
     with pytest.raises(store.Refused, match="rate_limited"):
-        auth.login(engine,PASSWORD, "2001:db8:1:2:ffff::1")
-    assert auth.login(engine,PASSWORD, "2001:db8:1:3::1")
-    assert auth.login(engine,PASSWORD, "192.0.2.8")
+        auth.login(engine, IDENTIFIER, PASSWORD, "2001:db8:1:2:ffff::1")
+    assert auth.login(engine, IDENTIFIER, PASSWORD, "2001:db8:1:3::1")[1] == 1
+    assert auth.login(engine, IDENTIFIER, PASSWORD, "192.0.2.8")[1] == 1
+
+
+def second_shop(engine, identifier="Boutique Deux", name="Boutique Deux"):
+    """Another shop, made as the operator makes one (D-MULTI-SHOP-003); returns its id and its password."""
+    password = os.urandom(12).hex()
+    password_hash = auth.PASSWORDS.hash(password)  # Argon2 outside the transaction, as the operator's command does
+    with write_tx(engine) as conn:
+        return shops.create_shop(conn, identifier, name, password_hash), password
+
+
+def failures(engine):
+    with engine.connect() as conn:
+        return conn.exec_driver_sql("SELECT identifier FROM login_failures ORDER BY id").scalars().all()
+
+
+class Counting:
+    """The real Argon2, with the number of verifications."""
+    def __init__(self, real):
+        self.real, self.calls = real, 0
+
+    def verify_and_update(self, password, stored):
+        self.calls += 1
+        return self.real.verify_and_update(password, stored)
+
+
+def test_an_unknown_shop_a_wrong_password_and_a_shop_without_one_get_one_answer_after_one_verification(client, monkeypatch):
+    engine = client.app.state.engine
+    _, other_password = second_shop(engine)
+    bare, _ = second_shop(engine, "sans-mot-de-passe", None)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET password_hash=NULL WHERE id=?", (bare,))
+    monkeypatch.setattr(auth, "PASSWORDS", counting := Counting(auth.PASSWORDS))
+    answers = set()
+    tried = (("inconnue", PASSWORD), (IDENTIFIER, "wrong"), ("Sans mot de passe", PASSWORD),
+             (IDENTIFIER, other_password), ("boutique deux", PASSWORD), ("- -", PASSWORD), ("x" * 40, PASSWORD))
+    for identifier, password in tried:
+        before = counting.calls
+        answer = client.post("/api/session", json=credentials(password, identifier))
+        assert counting.calls == before+1, identifier  # the same work, a dummy hash when there is nothing to verify
+        body = answer.json()
+        assert body.pop("request_id") == answer.headers["x-request-id"]
+        answers.add((answer.status_code, repr(body), answer.headers.get("retry-after")))
+        assert answer.headers.get("set-cookie") is None
+    assert answers == {(401, repr({"error": {"code": "wrong_credentials", "message_fr": "Identifiant ou mot de passe incorrect.",
+                                             "retryable": False}}), None)}
+    # Recorded for an unknown identifier too, under the key it was looked up by: the limit behaves the same.
+    assert failures(engine) == ["inconnue", IDENTIFIER, "sansmotdepasse", IDENTIFIER, "boutiquedeux", "", "x" * 40]
+    for spelling in ("Original Phone", "ORIGINAL-PHONE", "Óriginal phöne"):
+        before = counting.calls
+        assert client.post("/api/session", json=credentials(PASSWORD, spelling)).json() == {"authenticated": True, "shop_id": 1}
+        assert counting.calls == before+1
+
+
+def test_each_shop_signs_in_with_its_own_identifier_and_a_device_holds_one_session(client):
+    engine = client.app.state.engine
+    other, other_password = second_shop(engine)
+    assert client.post("/api/session", json=credentials(other_password)).status_code == 401  # B's password, A's identifier
+    assert client.post("/api/session", json=credentials(PASSWORD, "boutique-deux")).status_code == 401
+    login(client)
+    mine = client.cookies.get(auth.COOKIE)
+    assert client.get("/api/shop-profile").json()["name"] is None
+    answer = client.post("/api/session", json=credentials(other_password, "Boutique Deux"))
+    assert answer.json() == {"authenticated": True, "shop_id": other}
+    assert client.get("/api/session").json() == {"authenticated": True, "shop_id": other}
+    assert client.get("/api/shop-profile").json()["name"] == "Boutique Deux"
+    # Shop B signing in on shop A's device ends A's session there.
+    assert client.get("/api/session", headers={"Cookie": f"{auth.COOKIE}={mine}"}).json() == {"authenticated": False}
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT shop_id FROM sessions").scalars().all() == [other]
+
+
+def test_wrong_attempts_are_limited_per_identifier_from_an_address_and_more_loosely_per_address(client):
+    engine = client.app.state.engine
+    other, other_password = second_shop(engine)
+    for spelling in ("originalphone", "Original Phone", "ORIGINAL-PHONE", "original.phone", "Originalphone"):
+        with pytest.raises(store.Refused, match="wrong_credentials"):
+            auth.login(engine, spelling, "wrong", "192.0.2.1")
+    with pytest.raises(store.Refused, match="rate_limited"):  # even the right password, without verifying it
+        auth.login(engine, IDENTIFIER, PASSWORD, "192.0.2.1")
+    # One owner's mistakes lock only his shop from that address.
+    assert auth.login(engine, "boutique-deux", other_password, "192.0.2.1")[1] == other
+    assert auth.login(engine, IDENTIFIER, PASSWORD, "192.0.2.2")[1] == 1
+    for i in range(auth.ADDRESS_LIMIT-auth.PAIR_LIMIT):  # many identifiers guessed from one place
+        with pytest.raises(store.Refused, match="wrong_credentials"):
+            auth.login(engine, f"inconnue{i}", "wrong", "192.0.2.1")
+    with pytest.raises(store.Refused, match="rate_limited"):
+        auth.login(engine, "boutique-deux", other_password, "192.0.2.1")
+    assert auth.login(engine, "boutique-deux", other_password, "192.0.2.2")[1] == other
+    assert len(failures(engine)) == auth.ADDRESS_LIMIT
+
+
+def slow_wrong(monkeypatch, seconds):
+    calls = []
+
+    class Slow:
+        def verify_and_update(self, password, stored):
+            calls.append(password)
+            time.sleep(seconds)
+            return False, None
+
+    monkeypatch.setattr(auth, "PASSWORDS", Slow())
+    return calls
+
+
+def burst(engine, count):
+    outcomes, lock = [], threading.Lock()
+
+    def attempt():
+        try:
+            auth.login(engine, IDENTIFIER, "wrong", "198.51.100.7")
+        except store.Refused as refused:
+            with lock:
+                outcomes.append(refused.code)
+
+    threads = [threading.Thread(target=attempt) for _ in range(count)]
+    [thread.start() for thread in threads]
+    [thread.join(timeout=30) for thread in threads]
+    return sorted(outcomes)
+
+
+def at_most_one_past_the_limit(engine, calls, outcomes):
+    recorded = len(failures(engine))
+    assert auth.PAIR_LIMIT <= recorded <= auth.PAIR_LIMIT+1 and len(calls) == recorded, (recorded, len(calls))
+    assert outcomes == sorted(["rate_limited"] * (10-recorded) + ["wrong_credentials"] * recorded)
+
+
+def test_a_burst_of_wrong_attempts_records_at_most_one_failure_past_the_limit(client, monkeypatch):
+    calls = slow_wrong(monkeypatch, .15)
+    outcomes = burst(client.app.state.engine, 10)
+    at_most_one_past_the_limit(client.app.state.engine, calls, outcomes)
+
+
+def test_while_another_writer_holds_the_database_the_slots_wait_with_their_failures(client, settings, monkeypatch):
+    """The slot is held until the failure is committed: requests queued behind it count it, they never verify
+    beside a failure that waits for SQLite's lock (round 2, finding 3)."""
+    engine, calls = client.app.state.engine, slow_wrong(monkeypatch, .1)
+    writer, locked, seen = make_engine(settings.data_dir), threading.Event(), {}
+
+    def hold():
+        with write_tx(writer) as conn:
+            conn.exec_driver_sql("INSERT INTO meta (key,value) VALUES ('writer','1')")
+            locked.set()
+            time.sleep(2)  # under the 5 s busy_timeout
+            seen["verified"] = len(calls)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert locked.wait(5)
+        outcomes = burst(engine, 10)
+    finally:
+        holder.join(timeout=10)
+        writer.dispose()
+    assert seen["verified"] == 2  # the two slots, waiting for the writer with their failures
+    at_most_one_past_the_limit(engine, calls, outcomes)
+
+
+def test_an_adopted_hash_with_other_parameters_is_upgraded_at_its_first_sign_in(settings):
+    older = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8192, parallelism=1),)).hash(PASSWORD)
+    settings.shop_password_hash = SecretStr(older)
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        assert stored_password(client.app) == older
+        login(client)
+        upgraded = stored_password(client.app)
+        assert upgraded != older and not auth.PASSWORDS.current_hasher.check_needs_rehash(upgraded)
+        assert auth.PASSWORDS.verify(PASSWORD, upgraded)
+        login(client)
+        assert stored_password(client.app) == upgraded
+
+
+def test_a_suspended_shop_does_not_sign_in_and_its_sessions_wait_until_it_is_enabled(client, monkeypatch):
+    engine = client.app.state.engine
+
+    def state(value):
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("UPDATE shop_profile SET state=? WHERE id=1", (value,))
+
+    login(client)
+    state("suspended")
+    assert client.get("/api/session").json() == {"authenticated": False}
+    assert client.get("/api/shop-profile").status_code == 401
+    monkeypatch.setattr(auth, "PASSWORDS", counting := Counting(auth.PASSWORDS))
+    right = client.post("/api/session", json=credentials())
+    assert right.status_code == 403 and right.json()["error"]["message_fr"] == "Cette boutique est suspendue. Contactez l’administrateur."
+    wrong = client.post("/api/session", json=credentials("wrong"))
+    assert wrong.status_code == 401 and wrong.json()["error"]["code"] == "wrong_credentials"  # told only to the right password
+    assert counting.calls == 2 and failures(engine) == [IDENTIFIER]
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT count(*) FROM sessions").scalar_one() == 1  # kept, not usable
+    state("active")
+    assert client.get("/api/session").json() == {"authenticated": True, "shop_id": 1}
+
+
+@pytest.mark.parametrize("change", ["password", "suspension"])
+def test_a_change_committed_during_the_verification_gives_no_session(client, monkeypatch, password_hash, change):
+    """The stored hash and the state are read again in the transaction that would create the session
+    (T-MULTI-SHOP-001 review, P3): a reset by the operator, or by the owner elsewhere, wins over a sign-in in flight."""
+    engine, real = client.app.state.engine, auth.PASSWORDS
+    newer = real.hash(os.urandom(12).hex())
+
+    class Racing:
+        def verify_and_update(self, password, stored):
+            verified = real.verify_and_update(password, stored)
+            with write_tx(engine) as conn:
+                if change == "password":
+                    shops.set_password(conn, 1, newer)
+                else:
+                    conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+            return verified
+
+    monkeypatch.setattr(auth, "PASSWORDS", Racing())
+    answer = client.post("/api/session", json=credentials())
+    assert (answer.status_code, answer.json()["error"]["code"]) == (
+        (401, "wrong_credentials") if change == "password" else (403, "shop_suspended"))
+    assert failures(engine) == ([IDENTIFIER] if change == "password" else [])
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT count(*) FROM sessions").scalar_one() == 0
+    assert stored_password(client.app) == (newer if change == "password" else password_hash)
+
+
+def test_the_signed_out_answer_says_whom_to_contact_only_when_it_is_set(settings, env):
+    for contact in (None, "l’administrateur au 034 00 000 00"):
+        settings.support_contact_fr = contact
+        with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+            assert client.get("/api/session").json() == {"authenticated": False} | ({"support_fr": contact} if contact else {})
+            login(client)
+            assert client.get("/api/session").json() == {"authenticated": True, "shop_id": 1}
+    env.setenv("SUPPORT_CONTACT_FR", "x" * 201)
+    with pytest.raises(ConfigError, match="support_contact_fr"):
+        load_settings(env_file=None)
 
 
 def stored_password(app):
@@ -352,7 +590,7 @@ def test_after_adoption_the_setting_is_not_read_again(settings, password_hash, c
     with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as changed:
         assert changed.get("/api/session", headers=cookie).json()["authenticated"]
         assert stored_password(changed.app) == password_hash
-        assert changed.post("/api/session", json={"password": newer}).status_code == 401
+        assert changed.post("/api/session", json=credentials(newer)).status_code == 401
         login(changed)
     assert "SHOP_PASSWORD_HASH is no longer read" in caplog.text
     caplog.clear()
@@ -380,7 +618,7 @@ def test_a_new_installation_without_the_setting_starts_and_waits_for_set_passwor
     settings.shop_password_hash = None
     with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
         assert "shop 1 has no password: python -m affiche.shops set-password originalphone" in caplog.text
-        assert client.post("/api/session", json={"password": PASSWORD}).status_code == 401
+        assert client.post("/api/session", json=credentials(PASSWORD)).status_code == 401
         engine = client.app.state.engine
         with write_tx(engine) as conn:
             shops.set_password(conn, 1, password_hash)
@@ -391,7 +629,7 @@ def test_a_new_installation_without_the_setting_starts_and_waits_for_set_passwor
             with pytest.raises(LookupError):
                 shops.set_password(conn, 2, password_hash)
         assert not client.get("/api/session", headers={"Cookie": f"{auth.COOKIE}={mine}"}).json()["authenticated"]
-        assert client.post("/api/session", json={"password": reset}).status_code == 200
+        assert client.post("/api/session", json=credentials(reset)).status_code == 200
         with write_tx(engine) as conn:
             assert shops.end_sessions(conn) == 1 and shops.end_sessions(conn, 1) == 0
 
@@ -413,19 +651,19 @@ def test_bad_hash_refuses_startup_without_leaking(settings, secret):
 
 def test_local_http_cookie_and_server_restart(settings):
     settings.app_origin = "http://localhost:5173"
-    with TestClient(create_app(settings), base_url=settings.app_origin, headers={"Origin": settings.app_origin}) as first:
+    with TestClient(create_app(settings), base_url=settings.app_origin, headers={**HEADERS, "Origin": settings.app_origin}) as first:
         response = login(first)
         assert "; Secure" not in response.headers["set-cookie"]
         token = first.cookies.get(auth.COOKIE)
         for _ in range(5):
-            first.post("/api/session", json={"password": "wrong"})
-    with TestClient(create_app(settings), base_url=settings.app_origin, headers={"Origin": settings.app_origin}) as second:
+            first.post("/api/session", json=credentials("wrong"))
+    with TestClient(create_app(settings), base_url=settings.app_origin, headers={**HEADERS, "Origin": settings.app_origin}) as second:
         assert second.get("/api/session", headers={"Cookie": f"{auth.COOKIE}={token}"}).json()["authenticated"]
-        assert second.post("/api/session", json={"password": PASSWORD}).status_code == 429
+        assert second.post("/api/session", json=credentials(PASSWORD)).status_code == 429
 
 
 def test_validation_never_echoes_password(client):
-    response = client.post("/api/session", json={"password": PASSWORD, "unexpected": "private"})
+    response = client.post("/api/session", json=credentials() | {"unexpected": "private"})
     assert response.status_code == 422
     assert PASSWORD not in response.text and "private" not in response.text
     assert response.json()["request_id"] == response.headers["x-request-id"]
@@ -667,7 +905,7 @@ def test_actual_uvicorn_http_session(settings, env):
     proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     try:
-        with httpx2.Client(base_url=origin, headers={"Origin": origin}, timeout=2, trust_env=False) as remote:
+        with httpx2.Client(base_url=origin, headers={**HEADERS, "Origin": origin}, timeout=2, trust_env=False) as remote:
             deadline = time.monotonic()+20
             while True:
                 assert proc.poll() is None, "HTTP server exited before startup"
@@ -680,12 +918,12 @@ def test_actual_uvicorn_http_session(settings, env):
                     time.sleep(0.1)
             assert state.json() == {"authenticated": False}
             assert remote.get("/api/shop-profile").status_code == 401
-            assert remote.post("/api/session", json={"password": PASSWORD}).status_code == 200
+            assert remote.post("/api/session", json=credentials(PASSWORD)).status_code == 200
             assert remote.get("/api/shop-profile").json()["revision"] == 1
             assert remote.delete("/api/session").status_code == 200
             assert remote.get("/api/shop-profile").status_code == 401
             # The front process on loopback is believed: the failure is counted for the phone, not for the proxy.
-            assert remote.post("/api/session", json={"password": "wrong"},
+            assert remote.post("/api/session", json=credentials("wrong"),
                                headers={"X-Forwarded-For": "198.51.100.7, 203.0.113.9"}).status_code == 401
     finally:
         proc.kill()
