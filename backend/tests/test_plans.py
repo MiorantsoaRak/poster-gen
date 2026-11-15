@@ -152,6 +152,16 @@ def test_compact_contact_line_has_a_position_and_the_price_stays_above_the_foote
     refined = compiled(Headline(signature=True, signature_align="centre", price=True), price_ar=190000,
                        refinement=True, refinement_note="Plus de lumière")
     assert "Hard limit: the whole price label" not in refined and "Contact line, centred inside" in refined
+    # ADR-101/102: a refinement says again what was asked before on its chain, and its own adjustment wins over them.
+    assert "kept_adjustments" not in refined
+    drawn = Headline(signature=True, signature_align="centre", price=True)
+    chained = compiled(drawn, price_ar=190000, refinement=True, refinement_note="Produit plus grand",
+                       adjustments=["Fond bleu nuit", "Icônes : réduction de bruit, Bluetooth 5.2"])
+    assert '"kept_adjustments":["Fond bleu nuit","Icônes : réduction de bruit, Bluetooth 5.2"]' in chained
+    assert '"requested_adjustment":"Produit plus grand"' in chained and "the requested adjustment wins over all of them" in chained
+    assert "always win over a kept adjustment" in chained and "no adjustment adds or changes a price" in chained
+    with pytest.raises(ValueError):
+        compiled(drawn, price_ar=190000, refinement=True, refinement_note="x", adjustments=["promo -50%"])
     # A rendered contact or a logo below the price also gets the limit; with nothing below, no limit.
     assert "Hard limit: the whole price label" in compile_scene(
         plan, ctx, photo_count=1, headline=Headline(price=True), title="JBL Flip 7", price_ar=190000)

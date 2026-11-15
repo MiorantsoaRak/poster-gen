@@ -24,6 +24,8 @@ PENDING = "() => JSON.parse(localStorage.getItem('affiche.chat.pending'))?.key ?
 SCENE_JOBS = "id => fetch('/api/creations/' + id + '/jobs').then(r => r.json()).then(body => body.items.filter(job => job.kind === 'scene').length)"
 POSTER_FONTS = re.compile(r"/fonts/(NotoSerif|Montserrat|NotoSans-Bold)")
 PLAN_STALE = "L’affiche a changé depuis la préparation de cette génération."
+INVALID_PLAN = "Cette composition n’est pas valable (un élément sort de l’affiche ou en recouvre un autre). Annulez le dernier déplacement et réessayez."
+UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cette affiche. Ouvrez Pas à pas pour la retrouver."
 
 
 def sign_in(page):
@@ -898,7 +900,7 @@ def walk_changes(browser, errors, session, data):
     selected(ninth["id"])
     # What the chat cannot do on a poster is said by the server's card, with the way to the steps.
     say(page, "change le titre")
-    expect(thread.locator(".bubble.bot").last).to_contain_text("Dites ce qu’il faut changer : le titre, la marque, le sous-titre, le prix, le fond, la lumière.")
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Dites ce qu’il faut changer : le titre, la marque, le sous-titre, le prix, l’image (fond, lumière, logo, caractéristiques, mise en scène).")
     expect(thread.locator(".bubble.bot").last.get_by_role("button", name="Pas à pas")).to_be_visible()
 
     # The one pending read is never replaced (finding 2). Its answer is lost on this poster; on another poster nothing
@@ -1214,6 +1216,193 @@ def walk_two_tabs(browser, errors, session, product):
     context.close()
 
 
+def walk_guards(browser, errors, session):
+    """What a change card does with an answer that comes late, fails or is refused (T-CHAT-D005-TESTS). The poster is
+    the one of walk_two_tabs: one version made by message, still to check. Its thread is empty in this browser."""
+    sent, looks = {"refinements": [], "scenes": [], "plans": [], "revisions": []}, []
+
+    def seen(request):
+        for path in sent:
+            if request.method == "POST" and request.url.endswith("/" + path):
+                sent[path].append(request.headers["idempotency-key"])
+
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    context.on("request", seen)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(smoke.ORIGIN)
+    page.wait_for_url("**/#message")
+    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    page.get_by_role("button", name=re.compile("Enceinte Sony XB100")).first.click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    poster = page.url.split("#message-")[1]
+    thread, field, send, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.get_by_role("button", name="Envoyer"), page.locator(".chat-side")
+    switch = page.get_by_role("group", name="Façon de créer")
+    create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
+    redo = thread.get_by_role("button", name="Refaire l’affiche")
+    spent = lambda: [item for item in page.evaluate(THREAD, poster)["items"] if item.get("spent")][-1]
+    versions = lambda: page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/visuals").json()["items"]
+    made = lambda kind: [job for job in page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/jobs").json()["items"] if job["kind"] == kind]
+    paid = lambda: {path: len(keys) for path, keys in sent.items()}
+    expect(side).to_contain_text("Version 1 · à vérifier")
+    assert len(versions()) == 1 and versions()[0]["headline"]["title"] == "Enceinte Sony XB100", versions()
+
+    def listed(change):  # this tab's listing of the versions, rewritten: the stub's versions have no saved style and no coloured word
+        def answer(route):
+            response = route.fetch()
+            route.fulfill(response=response, json={"items": change(response.json()["items"])})
+        context.route("**/creations/*/visuals", answer)
+        page.reload()
+        expect(side).to_contain_text("à vérifier")
+
+    # The version was made with a saved style that was removed since, and the server cannot give it (here a 500): the
+    # tap stops there. No plan, no scene: the image would be asked with the lettering of the editor's current style.
+    gone, unread = str(uuid4()), "Le style de cette version n’a pas pu être lu."
+
+    def no_look(route):
+        looks.append(route.request.url)
+        route.fulfill(status=500, json={"error": {"code": "server_error", "message_fr": unread}})
+    context.route("**/api/looks/*", no_look)
+    listed(lambda found: [item | {"headline": item["headline"] | {"look_id": gone}} for item in found])
+    say(page, "sous-titre Sans fil")
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : Sans fil")
+    asked = len(looks)
+    redo.click()
+    expect(thread).to_contain_text(unread)
+    stopped = spent()
+    assert len(looks) == asked + 1 and looks[-1].endswith(gone), looks  # the style was asked for this tap
+    assert stopped.get("done") and "request" not in stopped and "job" not in stopped and not any(paid().values()), (stopped, sent)
+    expect(redo).to_have_count(1)  # nothing left: the same card again
+    page.wait_for_timeout(500)
+    assert not any(paid().values()), sent
+    cancel.click()
+    field.fill("")
+    context.unroute("**/api/looks/*")
+    context.unroute("**/creations/*/visuals")
+
+    # The editor is on « Aux couleurs du produit », whose accent is the photo's colour. The version has a coloured word
+    # and no saved style: its new image keeps its own colour (ADR-100), read on the request as it left.
+    accent = {"accent_word": "Enceinte", "accent_colour": "#D92B2B"}
+    listed(lambda found: [item | {"headline": item["headline"] | accent} for item in found])
+    switch.get_by_role("button", name="Pas à pas").click()
+    page.wait_for_url(f"**/#{poster}")
+    page.get_by_role("tab", name="Style").click()
+    page.get_by_role("button", name="Aux couleurs du produit", exact=True).click()
+    swatches = page.get_by_role("group", name="Palette de la prochaine version").locator("span")
+    expect(swatches).to_have_count(3)
+    photo_colour = swatches.nth(2).inner_text().strip().upper()
+    assert re.fullmatch(r"#[0-9A-F]{6}", photo_colour) and photo_colour != accent["accent_colour"], photo_colour
+    switch.get_by_role("button", name="Message").click()
+    page.wait_for_url(f"**/#message-{poster}")
+    say(page, "sous-titre Sans fil")
+    redo.click()
+    expect(thread).to_contain_text("Version 2 prête.", timeout=30000)
+    drawn = spent()["request"]["body"]["headline"]
+    assert drawn["accent_word"] == "Enceinte" and drawn["accent_colour"] == accent["accent_colour"] and drawn["subtitle"] == "Sans fil", drawn
+    context.unroute("**/creations/*/visuals")
+    second = versions()[0]
+    assert second["headline"]["accent_colour"] == accent["accent_colour"] and paid() == {"refinements": 0, "scenes": 1, "plans": 0, "revisions": 1}, (second, sent)
+
+    # The chat is taken by another tab after the server answered the card's plan request and before this tab hears of
+    # it. The late answer starts nothing: no scene leaves from this tab. Then this tab takes the chat back.
+    def taken(pattern):
+        held, before = [], paid()
+        context.route(pattern, lambda route: route.continue_() if held or route.request.method != "POST" else held.append((route, route.fetch())))
+        redo.click()
+        for _ in range(100):
+            if held:
+                break
+            page.wait_for_timeout(100)
+        assert held, f"no request for {pattern}"
+        other_tab = context.new_page()
+        other_tab.set_default_timeout(10000)
+        other_tab.on("pageerror", lambda error: errors.append(str(error)))
+        other_tab.goto(f"{smoke.ORIGIN}/#message-{poster}")
+        other_tab.get_by_role("button", name="Continuer ici").click()
+        expect(page.get_by_text("Le chat est ouvert dans un autre onglet.")).to_be_visible()
+        expect(other_tab.get_by_role("log")).to_contain_text("Rien n’a été envoyé pour cette demande.")
+        held[0][0].fulfill(response=held[0][1])
+        context.unroute(pattern)
+        page.wait_for_timeout(1500)
+        assert paid()["scenes"] == before["scenes"] and "request" not in spent(), (sent, spent())
+        other_tab.close()
+        page.get_by_role("button", name="Continuer ici").click()
+        expect(redo).to_have_count(1)
+        return before
+    # First the version's own plan, saved again as a revision (ADR-100).
+    say(page, "sous-titre Portable")
+    expect(redo).to_be_visible()
+    before = taken("**/plans/*/revisions")
+    assert paid() == before | {"revisions": before["revisions"] + 1}, sent
+    # Then a version whose plan cannot be revised here (it is answered as another poster's, as for a copy): the image
+    # is asked as « Nouvelle version » does, with a fresh plan. The late plan is not kept for the next tap, which asks
+    # its own and pays once.
+    def foreign_plan(route):
+        response = route.fetch()
+        route.fulfill(response=response, json=response.json() | {"creation_id": str(uuid4())})
+    context.route("**/api/plans/*", foreign_plan)
+    before = taken("**/plans")
+    assert paid() == before | {"plans": before["plans"] + 1}, sent
+    redo.click()
+    expect(thread).to_contain_text("Version 3 prête.", timeout=30000)
+    context.unroute("**/api/plans/*")
+    assert paid() == before | {"plans": before["plans"] + 2, "scenes": before["scenes"] + 1} and sent["scenes"][-1] == spent()["id"], (sent, spent())
+    third = versions()[0]
+    assert third["headline"]["subtitle"] == "Portable" and len(made("scene")) == 3, third
+
+    # The version's plan no longer fits the poster (as after a layout change in « Pas à pas »; here the revision is
+    # delivered with a title region too small, and the server answers its own invalid_plan). A rule refused it: the
+    # card is closed with the server's sentence and the way to the steps. No new card, nothing paid.
+    def small_title(route):
+        body = route.request.post_data_json
+        for region in body["overlay_regions"]:
+            if region["field"] == "title":
+                region["box"]["h"] = .001
+        route.continue_(post_data=json.dumps(body))
+    context.route("**/plans/*/revisions", small_title)
+    say(page, "sous-titre Nomade")
+    card, before = thread.locator(".bubble.bot").last, paid()
+    redo.click()
+    expect(card.locator(".why")).to_have_text(INVALID_PLAN)
+    context.unroute("**/plans/*/revisions")
+    expect(card.get_by_role("button")).to_have_text(["Corriger dans Pas à pas"])
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : Nomade")  # no card after it
+    expect(redo).to_have_count(0)
+    refused = spent()
+    assert refused.get("done") and refused["card"].get("fix") and "request" not in refused and "job" not in refused, refused
+    page.wait_for_timeout(500)
+    assert paid() == before | {"revisions": before["revisions"] + 1} and len(made("scene")) == 3, sent
+    looks_right(page, "kept plan refused", "chat-invalid-plan-1366.png")
+    card.get_by_role("button", name="Corriger dans Pas à pas").click()
+    page.wait_for_url(f"**/#{poster}")
+    switch.get_by_role("button", name="Message").click()
+    page.wait_for_url(f"**/#message-{poster}")
+
+    # A card's job made its version, and the poster does not list it (this tab's listing is answered without it).
+    # Trying again cannot help and the image exists: the card is closed, the thread says where to look, no paid card
+    # is offered for it, and the composer is free again.
+    known = {item["id"] for item in versions()}
+    say(page, "fond plus sombre")
+    expect(create).to_be_visible()
+    context.route("**/creations/*/visuals", lambda route: route.fulfill(response=(response := route.fetch()), json={"items": [item for item in response.json()["items"] if item["id"] in known]}))
+    create.click()
+    expect(thread).to_contain_text(UNLISTED, timeout=30000)
+    expect(thread.locator(".bubble.bot").last.get_by_role("button")).to_have_text(["Pas à pas"])
+    closed = spent()
+    assert closed.get("done") and closed.get("job") and not closed["card"].get("error"), closed
+    assert [job["status"] for job in made("refine")] == ["succeeded"] and len(versions()) == len(known) + 1, made("refine")
+    expect(thread.get_by_role("button", name=re.compile("^(Créer|Créer l’affiche|Refaire l’affiche|Réessayer|Reprendre)$"))).to_have_count(0)
+    page.wait_for_timeout(500)
+    assert sent["refinements"] == [closed["id"]] and len(made("scene")) == 3, sent
+    field.fill("fond rouge")
+    expect(send).to_be_enabled()  # no unresolved card holds the composer
+    looks_right(page, "version made but not listed", "chat-unlisted-1366.png")
+    field.fill("")
+    context.unroute("**/creations/*/visuals")
+    context.close()
+
+
 def walk_lockless(browser, errors, session):
     """Without Web Locks the chat cannot be kept to one tab: it is not offered, and nothing is sent."""
     posts = []
@@ -1382,6 +1571,7 @@ def run():
                         walk_lockless(browser, errors, session)
                         walk_slow_read(browser, errors, session)
                         walk_uploads(browser, errors, session, small, broken, animated)
+                        walk_guards(browser, errors, session)
                         walk_changes(browser, errors, session, data)  # last of this server: it signs in again
                         walk_choice_phone(browser, errors)
                         smoke.stop(*server)
@@ -1389,7 +1579,7 @@ def run():
                         walk_failed(browser, errors, product)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

@@ -15,7 +15,7 @@ from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
 from affiche.visuals.prompts import ReasonCode
 from . import jobs, looks, store
 from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, Sha, canonical
-from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, seal_place, fixed_plan, screen_art, validate_plan
+from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, screen_adjustment, seal_place, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
 # Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
@@ -64,6 +64,21 @@ def kept_adjustments(conn, shop, visual_id) -> list[str]:
     return notes
 
 
+def checked_adjustments(conn, shop, visual_id) -> list[str]:
+    """kept_adjustments within their limits. Copies share their versions, so the twelve-scenes limit of one poster does
+    not bound a chain. Refused, never cut: a prompt that silently lost an adjustment would be a poster the owner did
+    not ask for."""
+    notes = kept_adjustments(conn, shop, visual_id)
+    if len(notes) > 12 or sum(map(len, notes)) > 3000:
+        raise store.Refused("adjustments_limit")
+    try:  # screened when asked; the screen may have grown since
+        for note in notes:
+            screen_adjustment(note)
+    except ValueError:
+        raise store.Refused("adjustment_refused") from None
+    return notes
+
+
 class PlanRevision(Model):
     scene: SceneDescription
     product_region: Box
@@ -80,10 +95,7 @@ class RefinementRequest(Model):
     @field_validator("instruction_fr")
     @classmethod
     def scene_adjustment(cls, value):
-        screen_art(value)
-        if re.search(r"\b(?:titre|title|price|prix|police|font|typograph\w*)\b", value, re.I):
-            raise ValueError("use_selected_text_polish")
-        return value
+        return screen_adjustment(value)  # the one screen of this field, for the editor and the chat (ADR-102)
 
 
 class Decision(Model):
@@ -250,16 +262,7 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
         if request.keep_adjustments_of:
             if request.keep_adjustments_of not in listed_visuals(conn, shop, document.model_dump()):
                 raise store.Refused("not_found", 404)
-            adjustments = kept_adjustments(conn, shop, request.keep_adjustments_of)
-            # Copies share their versions, so the twelve-scenes limit of one poster does not bound a chain. Refused,
-            # never cut: a prompt that silently lost an adjustment would be a poster the owner did not ask for.
-            if len(adjustments) > 12 or sum(map(len, adjustments)) > 3000:
-                raise store.Refused("adjustments_limit")
-            try:  # screened when asked; the screen may have grown since
-                for note in adjustments:
-                    screen_art(note)
-            except ValueError:
-                raise store.Refused("adjustment_refused") from None
+            adjustments = checked_adjustments(conn, shop, request.keep_adjustments_of)
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
@@ -316,6 +319,9 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), refinement=True, refinement_note=request.instruction_fr,
+                                     # What was asked before on this chain is said again (paid test of ADR-102: a
+                                     # list of features asked in one adjustment was dropped by the next one).
+                                     adjustments=checked_adjustments(conn, shop, base["id"]),
                                      style_reference=bool(request.style_reference_asset),
                                      headline=Headline(**{k: v for k, v in baked.items() if k in Headline.model_fields}) if baked else None,
                                      title=baked["title"] if baked else None, signature=signature,

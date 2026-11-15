@@ -121,7 +121,7 @@ MESSAGES = {
         "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
         "card_ask_photo": "Il me faut une photo du produit.",
         "card_recap": "Voici l’affiche que je vais créer.",
-        "card_refused": "Je ne peux pas demander ce changement : décrivez seulement le fond, la lumière ou le décor, sans prix, promotion, titre ni texte à écrire.",
+        "card_refused": "Je ne peux pas demander ce changement à l’image : retirez les mots de prix, de promotion ou de garantie. Le prix se change à part, par message.",
         "card_unclear": "Écrivez le produit et son prix.",
         "card_unclear_poster": "Dites ce qu’il faut changer : {}. Le reste se change dans Pas à pas.",  # the field table's labels
         "card_same": "L’affiche a déjà ces textes.",

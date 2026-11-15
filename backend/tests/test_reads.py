@@ -539,7 +539,7 @@ def words(image=None, title="Sony WH-CH720N", price_ar=450000, accent=None):
 
 
 def change(message, poster, **fields):
-    fields = {row.name: None for row in reads.FIELDS} | {"remove": []} | fields
+    fields = {row.name: None for row in reads.FIELDS} | {"remove": [], "commercial": False} | fields
     request = reads.ReadRequest(**body(message, CREATION, visual_id=VISUAL))
     return reads.build(reads.poster_fields()(**fields), request, MESSAGES, poster)["card"]
 
@@ -556,18 +556,64 @@ SAME = {"kind": "same", "text_fr": "L’affiche a déjà ces textes."}
 STEPS = {"kind": "steps", "text_fr": MESSAGES["card_steps"]}
 
 
+def refine(message):
+    return {"kind": "change", "text_fr": f"Scène : « {message} »", "visual_id": VISUAL, "effect": "refine",
+            "instruction_fr": message}
+
+
+def test_the_owners_own_message_is_the_scene_adjustment():
+    """ADR-102: on a poster, a message that changes no word goes whole to the scene adjustment, as typed in « Réglages »."""
+    apart = words(DRAWN | {"title": "WH-CH720N", "brand": "Sony"}, title="WH-CH720N")
+    # The user's report: the reader hears "brand: Sony", which the poster has; the message still asks for a drawing.
+    assert change("Use sony logo", apart, brand="Sony") == refine("Use sony logo")
+    assert change("Use sony logo", apart, instruction_fr="utiliser le logo Sony") == refine("Use sony logo")
+    # A list of features with icons: his words, not the reader's. A feature the reader adds is not sent.
+    features = "ajoute à droite des icônes : réduction de bruit, autonomie longue durée, Bluetooth 5.2"
+    card = change(features, apart, instruction_fr="ajouter des icônes : réduction de bruit, garantie 2 ans, Wi-Fi 7")
+    assert card == refine(features) and "Wi-Fi" not in json.dumps(card)
+    # Also on a version without drawn words, and with no word at all in the reader's answer but the signal.
+    assert change("agrandis le produit", words(), instruction_fr="produit plus grand") == refine("agrandis le produit")
+    # Words that do change keep their own path; the scene is asked after.
+    both = change("mets Samsung en marque et un logo plus grand", apart, brand="Samsung", instruction_fr="logo plus grand")
+    assert both["effect"] == "scene" and both["text_fr"].endswith(MESSAGES["card_words_first"])
+    # A promotion or a price in the message: refused when the message is about the picture, never sent.
+    assert change("ajoute un badge promo -50%", apart, instruction_fr="badge") == refused("card_refused")
+    # Nothing asked of the words or of the picture: the sentence of what can be changed.
+    assert change("merci", apart)["kind"] == "unclear"
+    # The reader's judgement is the second screen (ADR-102): a wording the list of phrasings does not know is refused
+    # when the reader says it asks for an offer. It only refuses: it cannot let through what the list refuses.
+    offer = "ajoute la mention deux pour le tarif d'un"
+    assert change(offer, apart, instruction_fr="mention") == refine(offer)  # the list alone does not see it
+    assert change(offer, apart, instruction_fr="mention", commercial=True) == refused("card_refused")
+    assert change("ajoute un badge promo -50%", apart, instruction_fr="badge", commercial=False) == refused("card_refused")
+    # It does not stop a change of the words: a new price given in its field is not an offer in the picture.
+    assert change("le prix c'est 420 000 Ar", apart, price_ar=420000, commercial=True)["words"]["price_ar"] == 420000
+    # A new price and an offer in one message: the price change alone, the scene to ask after; the offer is not sent.
+    mixed = change("prix 420 000 Ar et ajoute promo", apart, price_ar=420000, instruction_fr="promo", commercial=True)
+    assert mixed["effect"] == "free" and mixed["words"] == {"price_ar": 420000}  # the price is a layer on this poster
+    assert "instruction_fr" not in mixed and mixed["text_fr"].endswith(MESSAGES["card_words_first"])
+    # An answer without the judgement, or with something else than true or false, is not read as "false".
+    answer = {row.name: None for row in reads.FIELDS} | {"remove": []}
+    for bad in (answer, answer | {"commercial": None}, answer | {"commercial": "false"}, answer | {"commercial": 0}):
+        with pytest.raises(ValueError):
+            reads.poster_fields().model_validate_json(json.dumps(bad))
+    # A price already there, judged commercial: the plain answer, nothing offered.
+    assert change("le prix est 450 000 Ar", apart, price_ar=450000, commercial=True) == SAME
+
+
 def test_the_field_table_drives_the_schema_the_card_and_the_sentence(monkeypatch):
     schema = wire_schema(reads.poster_fields())
-    assert schema["required"] == ["title", "brand", "subtitle", "price_ar", "instruction_fr", "remove"]
+    assert schema["required"] == ["title", "brand", "subtitle", "price_ar", "instruction_fr", "remove", "commercial"]
     assert schema["properties"]["remove"]["items"]["enum"] == ["brand", "subtitle"]
     assert all(schema["properties"][row.name]["description"] == row.rule for row in reads.FIELDS)
     assert change("Merci", words(DRAWN))["text_fr"] == ("Dites ce qu’il faut changer : le titre, la marque, le "
-                                                        "sous-titre, le prix, le fond, la lumière. Le reste se change dans Pas à pas.")
+                                                        "sous-titre, le prix, l’image (fond, lumière, logo, caractéristiques, "
+                                                        "mise en scène). Le reste se change dans Pas à pas.")
     # One row added: it is in the model's schema, in the sentence and on the card.
     monkeypatch.setattr(reads, "FIELDS", (*reads.FIELDS, reads.Row(
         "accent_word", str, "The word of the title in colour.", "le mot en couleur", "Mot en couleur", reads._headline_text)))
     assert wire_schema(reads.poster_fields())["properties"]["accent_word"]["description"] == "The word of the title in colour."
-    assert "la lumière, le mot en couleur. Le reste" in change("Merci", words(DRAWN))["text_fr"]
+    assert "mise en scène), le mot en couleur. Le reste" in change("Merci", words(DRAWN))["text_fr"]
     card = change("mets WH en couleur", words(DRAWN | {"accent_word": "Sony"}), accent_word="WH")
     assert card == scene("Mot en couleur : WH", title="Sony WH-CH720N", brand=None, subtitle=None, price_ar=450000,
                          accent_word="WH")
@@ -582,7 +628,7 @@ def test_the_report_message_sets_the_brand_apart():
     assert change("mets Sony en haut", words(DRAWN | {"brand": "Sony"}), brand="Sony") == scene(
         "Titre : WH-CH720N", title="WH-CH720N", brand="Sony", subtitle=None, price_ar=450000)
     assert change("mets Sony en haut", words(DRAWN | {"title": "WH-CH720N", "brand": "Sony"}, title="WH-CH720N"),
-                  brand="Sony") == SAME
+                  brand="Sony") == refine("mets Sony en haut")  # no word changes: his message adjusts the scene
     # Nothing left of the title, or the brand only inside a token: the owner writes the title.
     assert change("Sony en marque", words(DRAWN | {"title": "Sony"}, title="Sony"), brand="Sony") == refused("card_title_without_brand")
     assert change("Sony en marque", words(DRAWN | {"title": "Sony-WH CH720N"}, title="Sony-WH CH720N"), brand="Sony") == refused(
@@ -618,8 +664,9 @@ def test_words_first_drop_the_instruction():
     assert change("un fond sombre", words(DRAWN), instruction_fr=" un fond sombre ") == {
         "kind": "change", "text_fr": "Scène : « un fond sombre »", "visual_id": VISUAL, "effect": "refine",
         "instruction_fr": "un fond sombre"}
-    assert change("mets le titre sur un fond", words(DRAWN), instruction_fr="mets le titre sur un fond") == refused("card_refused")
-    assert change("fond", words(DRAWN), instruction_fr="x" * 501) == refused("card_refused")
+    assert change("mets le titre sur un fond", words(DRAWN), instruction_fr="x") == refine("mets le titre sur un fond")
+    assert change("mets le prix en rouge", words(DRAWN), instruction_fr="x") == refused("card_refused")
+    assert change("fond", words(DRAWN), instruction_fr="x" * 501) == refine("fond")  # the reader's text is never sent
     assert change("fond", words(DRAWN), instruction_fr="  ", title="")["kind"] == "unclear"  # blank is no answer
 
 
@@ -658,8 +705,12 @@ def test_remove_and_same():
         "Sous-titre : retiré", title="WH-CH720N", brand="Sony", subtitle=None, price_ar=450000)
     assert change("sans marque ni sous-titre", stored, remove=["brand", "subtitle"])["text_fr"] == (
         "Marque : retiré\nSous-titre : retiré")
-    assert change("enlève la marque", words(DRAWN), remove=["brand"]) == SAME  # no brand to take off
+    # No brand to take off among the words: the message goes to the scene (a mark drawn on the image, perhaps).
+    assert change("enlève la marque", words(DRAWN), remove=["brand"]) == refine("enlève la marque")
+    # A price already there: nothing for the words, and a price is never a scene adjustment.
     assert change("le prix est 450 000 Ar", words(DRAWN), price_ar=450000) == SAME
+    assert change("le prix est 450 000 Ar", words(), price_ar=450000) == SAME
+    assert change("450000", words(DRAWN), price_ar=450000) == SAME  # a bare amount is a price too, never an adjustment
     assert change("sans marque", words(), remove=["brand"]) == STEPS
     assert change("sans sous-titre", words(), remove=["subtitle"]) == STEPS
 
@@ -787,12 +838,18 @@ def test_a_new_scene_keeps_the_adjustments_asked_by_message(poster, engine, sett
     with pytest.raises(Refused) as refusal:
         scene(keep_adjustments_of=str(uuid4()))
     assert refusal.value.code == "not_found"
+    # A refinement says again what its chain was asked before, and that its own adjustment wins (ADR-102 paid test).
+    with engine.connect() as conn:
+        again = json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE kind='refine' ORDER BY rowid")).scalars().all()[0])
+    assert "kept_adjustments" not in again["prompt"]  # the first refinement has nothing before it
     # Two adjustments in the order asked, and the model is told that the later one wins.
     creation = store.get_creation(engine.connect(), 1, creation_id)
     visuals.request_refinement(engine, settings, 1, key(), creation_id, creation["revision"], visuals.RefinementRequest(
         base_visual_id=creation["document"]["formats"]["feed"]["scene"]["visual_id"], instruction_fr="fond rouge"))
     red = payload(scene(keep_adjustments_of=execute(engine, settings)))
     assert red["adjustments"][-1] == "fond rouge" and "the later one wins" in red["prompt"]
+    # (That refinement starts from the poster's selected version, the first scene, so it has nothing to say again;
+    # a refinement's own prompt with adjustments before it is in test_plans.)
     # A chain too long, or a stored adjustment the screen no longer accepts: refused by name, nothing queued.
     def queued():
         with engine.connect() as conn:
@@ -804,6 +861,72 @@ def test_a_new_scene_keeps_the_adjustments_asked_by_message(poster, engine, sett
             patched.setattr(visuals, "kept_adjustments", lambda conn, shop, visual_id, notes=notes: notes)
             scene(keep_adjustments_of=first)
         assert refusal.value.code == code and queued() == before
+
+
+def test_a_refinement_says_again_what_its_chain_was_asked(poster, engine, settings):
+    """ADR-102, found by the paid test: an adjustment told the image only its own request, and the next one lost what
+    the one before had added. Through the service: the second refinement of a chain carries the first."""
+    from affiche.posters.models import Document
+    creation_id, first = poster
+    def refine(base, instruction):
+        with engine.connect() as conn:
+            saved = store.get_creation(conn, 1, creation_id)
+        document = Document.model_validate(saved["document"])
+        if document.formats["feed"].scene.visual_id != base:  # as the chat does: the new version becomes the poster's
+            document.formats["feed"].scene.visual_id = base
+            saved = store.save_creation(engine, settings.data_dir, 1, key(), creation_id, document, saved["revision"])[1]
+        visuals.request_refinement(engine, settings, 1, key(), creation_id, saved["revision"], visuals.RefinementRequest(
+            base_visual_id=base, instruction_fr=instruction))
+        made = execute(engine, settings)
+        with engine.connect() as conn:
+            return made, json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE id=(SELECT job_id FROM "
+                                                      "poster_visuals WHERE id=:id)"), {"id": made}).scalar_one())["prompt"]
+    second, prompt = refine(first, "icônes : réduction de bruit, Bluetooth 5.2")
+    assert "kept_adjustments" not in prompt
+    _third, prompt = refine(second, "produit plus grand")
+    assert '"kept_adjustments":["icônes : réduction de bruit, Bluetooth 5.2"]' in prompt
+    assert '"requested_adjustment":"produit plus grand"' in prompt and "the requested adjustment wins over all of them" in prompt
+
+
+def test_a_copy_inherits_the_adjustments_and_its_chain_is_bounded(poster, engine, settings):
+    """ADR-101 across copies (T-CHAT-D005-TESTS): a copy shares its original's versions, so a scene made on the copy
+    carries the adjustments asked on the original; the twelve-scenes limit is per poster, the chain's limit is not."""
+    original, first = poster
+    def latest(id):
+        with engine.connect() as conn:
+            return store.get_creation(conn, 1, id)
+    def refine(id, instruction):
+        creation = latest(id)
+        visuals.request_refinement(engine, settings, 1, key(), id, creation["revision"], visuals.RefinementRequest(
+            base_visual_id=creation["document"]["formats"]["feed"]["scene"]["visual_id"], instruction_fr=instruction))
+        return execute(engine, settings)
+    def scene(id, keep):
+        creation = latest(id)
+        visuals.request_scene(engine, settings, 1, key(), id, creation["revision"], visuals.SceneRequest(
+            plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"],
+            headline=Headline(brand="JBL", price=True), keep_adjustments_of=keep))
+        return execute(engine, settings)
+    def adjustments(visual):
+        with engine.connect() as conn:
+            return json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE id=(SELECT job_id FROM "
+                                                "poster_visuals WHERE id=:id)"), {"id": visual}).scalar_one()).get("adjustments")
+    refined = refine(original, "fond bleu nuit")
+    copy = store.copy_creation(engine, settings.data_dir, 1, key(), original, CopyCreation(
+        source_revision=latest(original)["revision"], reason="new_campaign"))[1]["id"]
+    on_copy = scene(copy, refined)
+    assert adjustments(on_copy) == ["fond bleu nuit"]
+    # Carried on from the copy's own scene: the next word change on the copy still has them.
+    assert adjustments(scene(copy, on_copy)) == ["fond bleu nuit"]
+    # Each copy starts a new count of twelve scenes, the chain goes on: at thirteen notes the scene is refused by name.
+    with engine.connect() as conn:
+        jobs_before = conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one()
+    with pytest.MonkeyPatch.context() as patched, pytest.raises(Refused) as refusal:
+        real = visuals.kept_adjustments
+        patched.setattr(visuals, "kept_adjustments", lambda conn, shop, id: real(conn, shop, id) + ["lumière douce"] * 12)
+        scene(copy, on_copy)
+    with engine.connect() as conn:
+        assert refusal.value.code == "adjustments_limit"
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one() == jobs_before
 
 
 def read(engine, settings, message, creation, visual=None, key=None):
@@ -823,7 +946,7 @@ def test_the_stub_reader_on_a_poster(poster, engine, settings):
     assert card("titre Grande enceinte")["words"] == stored | {"title": "Grande enceinte"}
     assert card("sous-titre Son puissant")["words"] == stored | {"subtitle": "Son puissant"}
     assert card("sans marque")["words"] == stored | {"brand": None}
-    assert card("sans sous-titre") == SAME
+    assert card("sans sous-titre")["effect"] == "refine"  # no subtitle among the words: the scene's business
     assert card("non, 650 000 Ar")["words"] == stored | {"price_ar": 650000}
     assert card("Un fond plus chaud") == {"kind": "change", "text_fr": "Scène : « Un fond plus chaud »",
                                           "visual_id": visual, "effect": "refine", "instruction_fr": "Un fond plus chaud"}
@@ -885,7 +1008,7 @@ def test_a_poster_read_sends_its_own_prompt_and_the_servers_words(engine, claude
     poster_words = words(DRAWN | {"brand": "Sony"})
     monkeypatch.setattr(reads, "poster_words", lambda *_: poster_words)
     creation = draft(engine, tmp_path, input_id)["id"]  # it must exist and be active; its words are patched above
-    answer = {row.name: None for row in reads.FIELDS} | {"remove": ["brand"]}
+    answer = {row.name: None for row in reads.FIELDS} | {"remove": ["brand"], "commercial": False}
     requests = []
 
     def handle(request):

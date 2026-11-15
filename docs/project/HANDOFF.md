@@ -26,7 +26,13 @@ The paid check (the user's word, USD 0.0304) showed the plan's style kept for re
 
 **T-CHAT-LIST-LABEL done**, committed and pushed (commit "T-CHAT-LIST-LABEL: …"): a version made by a chat card from an older one is labelled by its difference with that version (`replaces_visual_id` on the scene job and on the version).
 
-**Exact next step:** the user's deploy, backend and frontend together. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
+**T-CHAT-D005-TESTS done, T-CHAT-REDO dropped, T-CHAT-SCENE-FIELD done (ADR-102); committed and pushed (commit "T-CHAT-SCENE-FIELD, T-CHAT-D005-TESTS: …").** On a poster, a message that changes no word now goes whole, in the owner's words, to the scene adjustment (« Ajustement de la scène » of « Réglages »); its screen is one function and wider (in the step editor too); a refinement repeats the adjustments asked before on its chain. Paid test: 15 of 15 reads, five real adjustments, USD 0.2542 ([report](reviews/chat-change-eval-2026-11-15.md), last section). [Audit of what the chat cannot do yet](reviews/chat-capability-audit-2026-11-15.md). **Review of T-CHAT-SCENE-FIELD:** three rounds rejected on wordings past the list of phrasings (`screen_adjustment` in `backend/src/affiche/posters/plans.py`); the user then chose to add the reader's judgement as a second screen in the chat (`commercial` in the reader's answer); round 4 on that design: APPROVE WITH FIXES, its fix applied (reviews/t-chat-scene-field-code-r1.md to r4.md). Paid test of the second screen: USD 0.0563, 18 of 18.
+
+**Uncommitted:** only Codex's old `docs/project/mockups/text-first/` (untracked). Final check before the commit, Linux, stub: backend 1004 passed / 3 deselected.
+
+**Landmine:** the user's note of 2026-11-15, "just noted": the image model invents the features it draws when asked for "4 lines of features" (AGENTS.md forbids invented specifications; the check's extra-text point is the only guard). Do not present this as verified product facts.
+
+**Exact next step:** the user's deploy, backend and frontend together. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.
