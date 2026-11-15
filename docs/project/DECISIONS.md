@@ -1,5 +1,12 @@
 # DECISIONS
 
+## ADR-104 — 2026-11-15 — A price right after a number of the name, with no comma (amends ADR-095)
+
+- Found by the paid test T-CHAT-REST-002: « iPhone 15 1 200 000 Ar » asked for the price again. The digit tokens `15 1 200 000` are not one correctly grouped amount, so the server offered no candidate.
+- When the whole run of digit tokens before the unit is not one amount, its ending that is a correctly grouped amount of two groups or more is taken as the amount (« 1 200 000 »), with its own endings as before (« 200 000 »). What stands before it is a number of the name.
+- Not relaxed: a lone last group (« Prix 1234 567 Ar » gives nothing, the adversarial case of ADR-095); a run with no unit; badly grouped digits (« 700 00 Ar », « 20 00 000 Ar »).
+- The rest of ADR-095 holds: the model's price must be one of the candidates, and the recap shows it large.
+
 ## ADR-103 — 2026-11-15 — The rest of the chat audit: measure, then build only the style, identity in the first message, a sentence for the format
 
 - User: "go ahead with the rest of the audit", then "you can go full automation" (requirements, design, implementation, local commits and paid calls inside the cap; push and deploy stay his word).

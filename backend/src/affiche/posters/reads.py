@@ -112,7 +112,14 @@ def _tokens(message: str) -> list[str]:
 
 def _values(span: list[str], *, suffixes: bool) -> list[int]:
     """The amounts of consecutive digit tokens: one token, or groups of three ("13 700 000"). Never zero."""
-    if len(span) > 1 and not re.fullmatch(r"[0-9]{1,3}(?: [0-9]{3})+", " ".join(span), re.ASCII):
+    def grouped(tokens):
+        return re.fullmatch(r"[0-9]{1,3}(?: [0-9]{3})+", " ".join(tokens), re.ASCII)
+    # "iPhone 15 1 200 000 Ar": the whole is not one amount (15, then 1), but it ends with one, "1 200 000", and
+    # what stands before it is a number of the name. Only an ending of two groups or more counts: the lone "567" of
+    # "1234 567 Ar" is a piece of a badly written amount, never a price.
+    if suffixes and len(span) > 2 and not grouped(span):
+        span = next((span[first:] for first in range(1, len(span) - 1) if grouped(span[first:])), span)
+    if len(span) > 1 and not grouped(span):
         return []
     # "Redmi Note 13 700 000 Ar": the server cannot tell the model number from the price, so each suffix that
     # reads as an amount is a candidate too. The model chooses; the recap shows the price large.

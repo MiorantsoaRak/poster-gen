@@ -75,7 +75,11 @@ The paid check (the user's word, USD 0.0304) showed the plan's style kept for re
 
 Spend of the day for this work: USD 0.8574, all on the ledger. `backend/data-probe` has fifteen versions of the JBL product, one copy of its poster and one more poster made by the last test.
 
-**Exact next step:** the user's word to push (two local commits since `ecd73d0`), then his deploy, backend and frontend together. Open in TODO.md: T-CHAT-PRICE-NO-COMMA, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
+**Pushed** on the user's word (`origin/main` holds the commit "T-CHAT-REST-001, T-CHAT-REST-002…").
+
+**T-CHAT-PRICE-NO-COMMA done**, committed and pushed (commit "T-CHAT-PRICE-NO-COMMA: …"; ADR-104): « iPhone 15 1 200 000 Ar » now gives its price. Backend 1019 passed / 3 deselected; four real reads right (USD 0.0108). Spend of the day for this work: USD 0.8682.
+
+**Exact next step:** the user's deploy, backend and frontend together. Open in TODO.md: T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.

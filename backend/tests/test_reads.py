@@ -814,6 +814,20 @@ def test_going_back_to_the_images_words_is_free():
     assert change("mets 480 000 Ar", both, price_ar=480000)["text_fr"] == "Titre : Sony WH-CH720N bleu\nPrix : 480\u202f000 Ar"
 
 
+@pytest.mark.parametrize(("message", "amounts"), [
+    # T-CHAT-PRICE-NO-COMMA: a number of the name stands right before the price, with no comma. The whole run of
+    # digits is not one amount; its ending of two groups or more is.
+    ("iPhone 15 1 200 000 Ar", [1200000, 200000]), ("Galaxy S24 256 1 450 000 Ar", [1450000, 450000]),
+    ("Tecno 20 20 000 Ar", [20000]), ("A55 5 1 000 Ar", [1000]), ("Note 13 5 700 000 Ar", [5700000, 700000]),
+    # Still nothing: a lone last group is a piece of a badly written amount; no unit, no amount.
+    ("Prix 1234 567 Ar", []), ("x 1 2 3 Ar", []), ("700 00 Ar", []), ("20 00 000 Ar", []), ("15 1 200 000", []),
+    # Unchanged: a whole run that is one amount, with its endings.
+    ("Redmi Note 13 700 000 Ar", [13700000, 700000]),
+])
+def test_a_price_after_a_number_of_the_name_without_a_comma(message, amounts):
+    assert reads.candidate_amounts(message) == amounts
+
+
 def test_code_review_r1_regressions():
     # The guard reads both sides alike: circled letters are a word nobody wrote; a decomposed accent is the same word.
     assert change("ajoute le sous-titre", words(DRAWN), subtitle="ⓑⓛⓤⓔⓣⓞⓞⓣⓗ")["kind"] == "refused"
