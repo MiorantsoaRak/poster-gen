@@ -152,3 +152,32 @@
 **Consequence:** of the draft's rows, only the style needs building. The shop's identity and the format were never candidates for a scene adjustment (a real logo file, real contact data; another poster).
 
 **Total of the day for this work:** USD 0.6413, all on the ledger. The copy made for this test is poster `6302af5f-…` in `backend/data-probe`; the JBL product now has fourteen versions.
+
+## The rest of the audit, built (T-CHAT-REST-002, ADR-103): style, the shop's identity in the first message, the format sentence
+
+**What was run:** `eval_new_poster.py`, `eval_rest.py`, `run.py` and `run_first.py` in the same folder, with the code of T-CHAT-REST-001 (not committed at the time), on `backend/data-probe`. Under the user's autonomy grant, inside the cap.
+
+**The reader of a first message, again (it gained the field `identity`): 25 messages, USD 0.0678, median 2.6 s.** The 19 new-poster messages of the 2026-11-14 test all gave the same cards as then. Identity: « …avec le logo et le contact de la boutique », « …mets notre logo », « …avec mon numéro en bas » and « avec le logo de la boutique » on a recap → on; « …avec le logo Samsung » → not the shop's, left alone; « …sans logo ni contact » → off.
+- **One miss, not from this change:** « iPhone 15 1 200 000 Ar sans logo ni contact » asked for the price again. `15 1 200 000` is not a correctly grouped amount, so the server finds no candidate (ADR-095); with a comma after « 15 » the same message was read right on 2026-11-14. A limit of the price allowlist, noted, not changed.
+
+**The reader on a poster (it gained `style`, `identity`, `format`): 21 messages, USD 0.0849, median 2.4 s. 21 of 21.**
+
+| Message | Card |
+|---|---|
+| « passe en luxe sombre »; « mets un style plus clair, studio »; « je veux le style aux couleurs du produit » | style card, the right style |
+| « passe en luxe sombre et mets le prix à 420 000 Ar » | style card with the new price |
+| « fond plus sombre » | a scene adjustment, not a style |
+| « mets le logo de la boutique »; « ajoute mon numéro de téléphone en bas »; « enlève notre logo » | the sentence to « Pas à pas », « Boutique » |
+| « mets le logo Sony » | a scene adjustment (a manufacturer's mark) |
+| « fais-le en format story »; « il me faut une version carrée » | the sentence to « Pas à pas », « Refaire en … » |
+| the user's first report, « Use sony logo », « mets le mot Tune en rouge », « ajoute 4 lignes de caractéristiques max avec des icônes », a price, a title, « enlève la marque » | as before this change |
+| « ajoute un badge promo -20% » | refused |
+| « affiche 9999 en bas »; « merci » | the sentence of what can be changed; nothing sent |
+
+**A read on a poster now costs about USD 0.0040** (USD 0.0027 to 0.0031 before): the answer has more fields.
+
+**One real style change** (`restyle-2-poster.png`): « passe en luxe sombre » asked on the light version 3 of the JBL poster. Card « Style : Luxe sombre », « Refaire l’affiche », 2.5 s; version 15 in 19.5 s; USD 0.0040 + 0.0278. Seen by Claude: a charcoal-black scene with gold arcs and a floor reflection, the JBL mark above « Tune 770NC noir » in white, « 350 000 AR » exact, nothing else written. Its plan is new (the « Luxe sombre » colours) and shares nothing with an older version. Its line in the list reads « Nouvelle version »: the style is not kept with a version, so the list cannot name it.
+
+**One real first poster with the shop's identity** (`first-scene.png`): « JBL Tune 770NC noir, 350 000 Ar, style clair, avec le logo et le contact de la boutique » with one photo. Recap with the line « Avec le logo et le contact de la boutique », 2.9 s; version 1 in 17.6 s; USD 0.0028 + 0.0288. The document has the logo and the contact on, the shop's name off; the scene has the contact drawn as one line at the bottom right, and the top-right corner is left free, where the editor lays the logo file (the version has its `logo_box`). The title and the price are exact.
+
+**Spend of this test:** USD 0.2161 on the ledger. **Total of the day for this work:** USD 0.8574, all on the ledger. `backend/data-probe` has one more poster (`8d10a9bc-…`) and fifteen versions of the JBL product.

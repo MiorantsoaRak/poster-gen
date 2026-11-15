@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -17,7 +18,9 @@ from affiche.posters.planner import MODEL
 from affiche.posters.plans import Headline, wire_schema
 from affiche.posters.store import Refused
 from affiche.visuals.admission import spent_micros
-from test_api import client, create_draft, login, password_hash, post, settings  # noqa: F401
+from fastapi.testclient import TestClient
+
+from test_api import ORIGIN, PASSWORD, client, create_draft, login, password_hash, post, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
 from test_db import engine  # noqa: F401
@@ -47,7 +50,7 @@ def body(text, creation_id=None, history=(), visual_id=None, **draft):
 
 def reply(fields=None, **updates):
     fields = {"intent": "describe", "product_name": None, "price_ar": None, "style": None,
-              "instruction_fr": None} | (fields or {})
+              "instruction_fr": None, "identity": None} | (fields or {})
     return httpx2.Response(200, headers={"request-id": "req-read"}, json={
         "model": MODEL, "stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(fields)}],
         "usage": {"input_tokens": 1200, "output_tokens": 150}} | updates)
@@ -55,7 +58,7 @@ def reply(fields=None, **updates):
 
 THOUGHT = {"type": "thinking", "thinking": "", "signature": "sig"}
 ANSWER = {"type": "text", "text": json.dumps({"intent": "describe", "product_name": "JBL Flip 7", "price_ar": 700000,
-                                              "style": None, "instruction_fr": None})}
+                                              "style": None, "instruction_fr": None, "identity": None})}
 
 
 def ask(engine, settings, response, text="JBL Flip 7, 700 000 Ar", key=None, **draft):
@@ -167,14 +170,14 @@ def test_candidate_amounts(message, amounts):
 
 @pytest.mark.parametrize("message", ["0700000 Ar", "0700000"])
 def test_a_leading_zero_does_not_hide_the_price(message):
-    fields = reads.Fields(intent="describe", product_name=None, price_ar=700000, style=None, instruction_fr=None)
+    fields = reads.Fields(intent="describe", product_name=None, price_ar=700000, style=None, instruction_fr=None, identity=None)
     answer = reads.build(fields, reads.ReadRequest(**body(message, name="JBL Flip 7")), MESSAGES)
     assert (answer["card"]["kind"], answer["card"]["price_ar"]) == ("recap", 700000)
 
 
 @pytest.mark.parametrize(("message", "partial"), REJECTED)
 def test_a_partial_amount_from_the_model_is_never_the_price(message, partial):
-    fields = reads.Fields(intent="describe", product_name="JBL", price_ar=partial, style=None, instruction_fr=None)
+    fields = reads.Fields(intent="describe", product_name="JBL", price_ar=partial, style=None, instruction_fr=None, identity=None)
     for draft in ({}, {"price_ar": 500000}):  # asked again even when the draft holds an earlier price
         answer = reads.build(fields, reads.ReadRequest(**body(message, **draft)), MESSAGES)
         assert answer["card"]["kind"] == "ask_price" and answer["draft"]["price_ar"] == draft.get("price_ar")
@@ -206,6 +209,15 @@ def test_every_card_from_the_stub_reader(stub, client, settings):
     assert recap == {"kind": "recap", "text_fr": MESSAGES["card_recap"], "name": "JBL Flip 7", "price_ar": 700000,
                      "style": "clair"}
     assert draft == {"name": "JBL Flip 7", "price_ar": 700000, "style": "clair", "product_photos": 2, "inspiration": True}
+    # D-TEXT-FIRST-006: the shop's logo and contact asked with the product; the words are not part of its name.
+    for message in ("JBL Flip 7, 700 000 Ar, avec le logo et le contact de la boutique", "JBL Flip 7, 700 000 Ar avec le contact"):
+        recap, draft = card(message)
+        assert recap == {"kind": "recap", "text_fr": MESSAGES["card_recap"], "name": "JBL Flip 7", "price_ar": 700000,
+                         "style": None, "identity": True} and draft["identity"] is True
+    assert card("650 000 Ar", name="JBL Flip 7", identity=True)[0]["identity"] is True
+    for message in ("JBL Flip 7, 700 000 Ar, sans logo ni contact", "JBL Flip 7, 700 000 Ar sans le logo de la boutique"):
+        recap, draft = card(message, identity=True)
+        assert (recap["name"], recap["identity"], draft["identity"]) == ("JBL Flip 7", False, False)
     # An answer to a question changes only its own field.
     recap, _ = card("650 000 Ar", name="JBL Flip 7", price_ar=700000)
     assert (recap["kind"], recap["name"], recap["price_ar"]) == ("recap", "JBL Flip 7", 650000)
@@ -226,6 +238,51 @@ def test_every_card_from_the_stub_reader(stub, client, settings):
     assert answer.status_code == 409 and answer.json()["error"] == {
         "code": "reload_required", "retryable": False, "message_fr": "Rechargez la page pour continuer."}
     assert len(rows(client.app.state.engine)) == count  # nothing reserved, nothing paid
+
+
+def test_an_older_bundle_changes_nothing_and_pays_nothing(stub, client):
+    """ADR-103: a tab from before a change that makes it unsafe is refused at the door, for every state-changing data
+    route at once; it can still read, and sign in again after its reload."""
+    login(client)
+    creation = create_draft(client)
+    id, engine = creation["id"], client.app.state.engine
+    count = lambda table: engine.connect().exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one()  # noqa: E731
+    old = TestClient(client.app, base_url=ORIGIN, headers={"Origin": ORIGIN}, cookies=dict(client.cookies))  # no header
+    refusal = {"code": "bundle_outdated", "retryable": False, "message_fr": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page."}
+    routes = [(method.upper(), path) for path, methods in client.app.openapi()["paths"].items() for method in methods
+              if method in ("post", "put", "patch", "delete") and path != "/api/session"]
+    assert len(routes) > 25 and ("PUT", "/api/creations/{id}") in routes and ("POST", "/api/assets") in routes, routes
+    before = {table: count(table) for table in ("chat_reads", "poster_jobs", "scene_plans", "mutation_keys", "creations", "creation_versions", "assets", "looks")}
+    for bundle in (None, "1", "0", "", "deux", "2.0", "-2", "٢".encode(), "1" * 12):
+        headers = {"Idempotency-Key": str(uuid4()), "If-Match": '"1"'} | ({} if bundle is None else {"X-Affiche-Bundle": bundle})
+        for method, path in routes:
+            answer = old.request(method, re.sub(r"\{\w+\}", id, path), json={}, headers=headers)
+            assert (answer.status_code, answer.json()["error"]) == (409, refusal), (bundle, method, path, answer.text)
+        # The requests an old tab would really send, whole and valid: nothing reserved, no job, the revision as it was.
+        assert old.post("/api/reads", json=body("JBL Flip 7, 700 000 Ar"), headers=headers).status_code == 409
+        assert old.post(f"/api/creations/{id}/plans", json={"mode": "fixed", "direction": "Studio clair", "format": "feed"},
+                        headers=headers).status_code == 409
+        assert old.post(f"/api/creations/{id}/scenes", json={"plan_id": str(uuid4()), "format": "feed"}, headers=headers).status_code == 409
+        assert old.put(f"/api/creations/{id}", json=creation["document"] | {"offer": {"title": "JBL", "price_ar": 1}},
+                       headers=headers).status_code == 409
+        assert old.post("/api/assets", files={"file": ("a.png", photo(), "image/png")}, data={"role": "original"},
+                        headers=headers).status_code == 409
+    assert {table: count(table) for table in before} == before and rows(engine) == []
+    assert old.get(f"/api/creations/{id}").json()["revision"] == creation["revision"] == 1
+    # Reading, and the session's own routes, never ask for it: the reload and the sign-in after it always work.
+    for path in ("/api/session", "/api/capabilities", "/api/creations", f"/api/creations/{id}/jobs"):
+        assert old.get(path, headers={"X-Affiche-Bundle": "1"}).status_code == 200, path
+    assert old.delete("/api/session").status_code == 200 and old.get("/api/creations").status_code == 401
+    assert old.post("/api/reads", json=body("JBL"), headers={"Idempotency-Key": str(uuid4())}).status_code == 401  # as before
+    assert old.post("/api/session", json={"password": PASSWORD}).status_code == 200
+    # The current bundle, and a later one, pass.
+    login(client)  # the session above was the same one
+    assert post(client, "/api/reads", body("JBL Flip 7, 700 000 Ar")).status_code == 201
+    assert client.post("/api/reads", json=body("JBL Flip 7, 700 000 Ar"),
+                       headers={"Idempotency-Key": str(uuid4()), "X-Affiche-Bundle": "3"}).status_code == 201
+    changed = creation["document"] | {"offer": creation["document"]["offer"] | {"price_ar": 700000}}
+    assert client.put(f"/api/creations/{id}", json=changed,
+                      headers={"Idempotency-Key": str(uuid4()), "If-Match": '"1"'}).json()["revision"] == 2
 
 
 def test_route_validation_ownership_and_replay(stub, client):
@@ -302,7 +359,7 @@ def test_succeeded_read_pays_the_real_cost(engine, claude):
         "message": "JBL Flip 7, 700 000 Ar", "has_poster": False, "history": [],
         "draft": {"name": None, "price_ar": None, "style": None, "product_photos": 2, "inspiration": False}}
     assert sent["output_config"]["format"]["schema"]["properties"].keys() == {
-        "intent", "product_name", "price_ar", "style", "instruction_fr"}
+        "intent", "product_name", "price_ar", "style", "instruction_fr", "identity"}
     row, = rows(engine)
     assert (row["status"], row["cost_micros"], row["cost_is_estimate"], row["provider"], row["model"]) == (
         "succeeded", REAL, 0, "claude", MODEL)
@@ -532,14 +589,16 @@ CREATION, VISUAL = str(uuid4()), str(uuid4())
 DRAWN = {"title": "Sony WH-CH720N", "brand": None, "subtitle": None}  # drawn words, the price laid over the image
 
 
-def words(image=None, title="Sony WH-CH720N", price_ar=450000, accent=None):
+def words(image=None, title="Sony WH-CH720N", price_ar=450000, accent=None, model_image=False, adjusted=False):
     """The poster words of reads.poster_words: the image's (empty: no drawn words) and the document's."""
-    return {"visual_id": VISUAL, "accent_word": accent, "image": dict(image or {}),
+    return {"visual_id": VISUAL, "accent_word": accent, "model_image": model_image, "adjusted": adjusted,
+            "image": dict(image or {}),
             "document": {"title": title, "price_ar": price_ar}}
 
 
 def change(message, poster, **fields):
-    fields = {row.name: None for row in reads.FIELDS} | {"remove": [], "commercial": False} | fields
+    fields = {row.name: None for row in reads.FIELDS} | {"remove": [], "format": None, "identity": None,
+                                                         "commercial": False} | fields
     request = reads.ReadRequest(**body(message, CREATION, visual_id=VISUAL))
     return reads.build(reads.poster_fields()(**fields), request, MESSAGES, poster)["card"]
 
@@ -593,7 +652,7 @@ def test_the_owners_own_message_is_the_scene_adjustment():
     assert mixed["effect"] == "free" and mixed["words"] == {"price_ar": 420000}  # the price is a layer on this poster
     assert "instruction_fr" not in mixed and mixed["text_fr"].endswith(MESSAGES["card_words_first"])
     # An answer without the judgement, or with something else than true or false, is not read as "false".
-    answer = {row.name: None for row in reads.FIELDS} | {"remove": []}
+    answer = {row.name: None for row in reads.FIELDS} | {"remove": [], "format": None, "identity": None}
     for bad in (answer, answer | {"commercial": None}, answer | {"commercial": "false"}, answer | {"commercial": 0}):
         with pytest.raises(ValueError):
             reads.poster_fields().model_validate_json(json.dumps(bad))
@@ -603,17 +662,19 @@ def test_the_owners_own_message_is_the_scene_adjustment():
 
 def test_the_field_table_drives_the_schema_the_card_and_the_sentence(monkeypatch):
     schema = wire_schema(reads.poster_fields())
-    assert schema["required"] == ["title", "brand", "subtitle", "price_ar", "instruction_fr", "remove", "commercial"]
+    assert schema["required"] == ["title", "brand", "subtitle", "price_ar", "instruction_fr", "style", "remove",
+                                  "format", "identity", "commercial"]
+    assert schema["properties"]["style"]["anyOf"][0]["enum"] == ["clair", "couleur", "sombre"]
     assert schema["properties"]["remove"]["items"]["enum"] == ["brand", "subtitle"]
     assert all(schema["properties"][row.name]["description"] == row.rule for row in reads.FIELDS)
     assert change("Merci", words(DRAWN))["text_fr"] == ("Dites ce qu’il faut changer : le titre, la marque, le "
                                                         "sous-titre, le prix, l’image (fond, lumière, logo, caractéristiques, "
-                                                        "mise en scène). Le reste se change dans Pas à pas.")
+                                                        "mise en scène), le style. Le reste se change dans Pas à pas.")
     # One row added: it is in the model's schema, in the sentence and on the card.
     monkeypatch.setattr(reads, "FIELDS", (*reads.FIELDS, reads.Row(
         "accent_word", str, "The word of the title in colour.", "le mot en couleur", "Mot en couleur", reads._headline_text)))
     assert wire_schema(reads.poster_fields())["properties"]["accent_word"]["description"] == "The word of the title in colour."
-    assert "mise en scène), le mot en couleur. Le reste" in change("Merci", words(DRAWN))["text_fr"]
+    assert "mise en scène), le style, le mot en couleur. Le reste" in change("Merci", words(DRAWN))["text_fr"]
     card = change("mets WH en couleur", words(DRAWN | {"accent_word": "Sony"}), accent_word="WH")
     assert card == scene("Mot en couleur : WH", title="Sony WH-CH720N", brand=None, subtitle=None, price_ar=450000,
                          accent_word="WH")
@@ -780,6 +841,93 @@ def test_code_review_r2_probes():
     for message, subtitle in (("sous-titre 128 Go", "256 Go"), ("sous-titre WH-CH720N", "WH-CH520N"),
                               ("sous-titre blue tooth", "bluetooth")):
         assert change(message, words(DRAWN), subtitle=subtitle)["kind"] == "refused"
+
+
+def test_a_style_change_is_its_own_card():
+    """D-TEXT-FIRST-006: another style is a whole new image on a fresh plan; the card says what is not carried."""
+    kept = {"title": "Sony WH-CH720N", "brand": None, "subtitle": None, "price_ar": 450000}
+
+    def restyle(text_fr, style="sombre", **words):
+        return {"kind": "restyle", "text_fr": text_fr, "visual_id": VISUAL, "style": style, "words": kept | words}
+
+    assert change("mets le style luxe sombre", words(DRAWN), style="sombre") == restyle("Style : Luxe sombre")
+    assert change("studio clair", words(DRAWN), style="clair") == restyle("Style : Studio clair", "clair")
+    assert change("aux couleurs du produit", words(DRAWN), style="couleur")["text_fr"] == "Style : Couleurs du produit"
+    # What the fresh plan does not carry, each said only when the version has it.
+    assert change("luxe sombre", words(DRAWN, model_image=True), style="sombre")["text_fr"] == (
+        "Style : Luxe sombre\nL’affiche modèle n’est plus suivie.")
+    assert change("luxe sombre", words(DRAWN, model_image=True, adjusted=True), style="sombre")["text_fr"] == (
+        "Style : Luxe sombre\nL’affiche modèle n’est plus suivie.\nLes ajustements de scène demandés avant ne sont pas "
+        "repris.")
+    # A word change in the same message: in the words, with its line, through its own checks.
+    both = change("Sony c’est la marque, en luxe sombre", words(DRAWN, adjusted=True), brand="Sony", style="sombre")
+    assert both == restyle("Style : Luxe sombre\nTitre : WH-CH720N\nMarque : Sony\nLes ajustements de scène demandés "
+                           "avant ne sont pas repris.", title="WH-CH720N", brand="Sony")
+    assert change("luxe sombre, marque Bose", words(DRAWN), brand="Samsung", style="sombre") == refused(
+        "card_word_unknown", "samsung")
+    assert change("luxe sombre à 300 000 Ar", words(DRAWN), price_ar=350000, style="sombre") == refused("card_ask_price")
+    # A scene adjustment in the same message is asked after, as with a word change.
+    assert change("luxe sombre avec un fond bleu", words(DRAWN), style="sombre", instruction_fr="fond bleu") == restyle(
+        "Style : Luxe sombre\n" + MESSAGES["card_words_first"])
+    # The document's words that the image does not show yet are drawn too, as on a scene card.
+    assert change("luxe sombre", words(DRAWN, title="Sony WH-CH720N noir"), style="sombre") == restyle(
+        "Style : Luxe sombre\nTitre : Sony WH-CH720N noir", title="Sony WH-CH720N noir")
+    # A version without drawn words: the editor's matter, with or without a word asked.
+    steps = {"kind": "steps", "text_fr": MESSAGES["card_steps_style"]}
+    assert change("luxe sombre", words(), style="sombre") == steps
+    assert change("luxe sombre, marque Sony", words(), style="sombre", brand="Sony") == steps
+
+
+def test_format_and_identity_are_one_sentence_to_the_steps():
+    """D-TEXT-FIRST-006: alone, whatever else the reader found; the format first, then the shop's identity, then the style."""
+    form = {"kind": "steps", "text_fr": "Un autre format est une nouvelle affiche : dans Pas à pas, « Style », « Refaire en … »."}
+    shop = {"kind": "steps", "text_fr": "Le logo et le contact de la boutique se règlent dans Pas à pas, « Boutique »."}
+    everything = {"style": "sombre", "brand": "Sony", "instruction_fr": "logo", "price_ar": 1}
+    for poster in (words(DRAWN), words()):
+        assert change("en story", poster, format=True) == form
+        assert change("en story avec le logo de la boutique Sony", poster, format=True, identity=True, **everything) == form
+        assert change("mets le logo de la boutique Sony", poster, identity=True, **everything) == shop
+        assert change("enlève le contact de la boutique", poster, identity=False) == shop
+    # false is "no other format"; the shop's identity not asked is null.
+    assert change("luxe sombre", words(DRAWN), format=False, style="sombre")["kind"] == "restyle"
+    assert change("Use sony logo", words(DRAWN), instruction_fr="logo Sony") == refine("Use sony logo")
+
+
+def test_the_shops_identity_asked_for_a_new_poster_is_in_the_draft():
+    def answer(found, **draft):
+        fields = reads.Fields(intent="describe", product_name="JBL Flip 7", price_ar=700000, style=None,
+                              instruction_fr=None, identity=found)
+        return reads.build(fields, reads.ReadRequest(**body("JBL Flip 7, 700 000 Ar", **draft)), MESSAGES)
+
+    plain = answer(None)
+    assert "identity" not in plain["draft"] and "identity" not in plain["card"]
+    asked = answer(True)
+    assert asked["draft"]["identity"] is True and asked["card"] == {
+        "kind": "recap", "text_fr": MESSAGES["card_recap"], "name": "JBL Flip 7", "price_ar": 700000, "style": None,
+        "identity": True}
+    assert answer(None, identity=True)["card"]["identity"] is True  # kept from an earlier message
+    # « Sans logo ni contact » is an answer too, not the absence of one: it is kept, and a later message that says
+    # nothing of it keeps it.
+    for before in ({}, {"identity": True}):
+        taken_off = answer(False, **before)
+        assert taken_off["draft"]["identity"] is False and taken_off["card"]["identity"] is False
+    assert answer(None, identity=False)["card"]["identity"] is False
+    assert answer(True, identity=False)["card"]["identity"] is True
+    # Asked before the photo: it waits in the draft.
+    assert answer(True, product_photos=0) == {"card": {"kind": "ask_photo", "text_fr": MESSAGES["card_ask_photo"]}, "draft": {
+        "name": "JBL Flip 7", "price_ar": 700000, "style": None, "product_photos": 0, "inspiration": False, "identity": True}}
+    # A body without the field has the hash it had before the field existed (the literal of the visual_id test below);
+    # false is the same body, true is another.
+    old = {"text": "Mets la marque Sony", "creation_id": "00000000-0000-4000-8000-000000000001",
+           "history": [{"role": "app", "text": "Bonjour"}]}
+    sha = lambda **draft: reads._sha(reads.canonical(reads.ReadRequest(  # noqa: E731
+        **old, draft={"product_photos": 1, "inspiration": False} | draft)))
+    assert sha() == sha(identity=None) == "152398624c19856d4be7be49fcfdd2f57b6917181344150f5425f2a0775f8515"
+    assert len({sha(), sha(identity=True), sha(identity=False)}) == 3
+    # The model sees the draft as it was sent: no new key unless the owner asked.
+    assert "identity" not in reads.ReadRequest(**body("JBL")).draft.model_dump()
+    assert "identity: true when the owner asks for the shop's logo or contact" in reads.SYSTEM
+    assert wire_schema(reads.Fields)["required"][-1] == "identity"
 
 
 def test_the_title_limit_is_60_when_drawn_and_240_as_a_layer():
@@ -953,6 +1101,33 @@ def test_the_stub_reader_on_a_poster(poster, engine, settings):
     assert card("Ajoute le texte promo sur le fond") == refused("card_refused")
     for message in ("Change le prix", "Merci", "JBL Flip 8"):
         assert card(message)["kind"] == "unclear"
+    # D-TEXT-FIRST-006: the style, and the two sentences to « Pas à pas ».
+    assert card("mets le style sombre") == {"kind": "restyle", "text_fr": "Style : Luxe sombre", "visual_id": visual,
+                                            "style": "sombre", "words": stored}
+    assert (card("Studio clair")["style"], card("style couleur")["style"], card("en luxe sombre")["style"]) == (
+        "clair", "couleur", "sombre")
+    assert card("luxe sombre, marque Sony") == {
+        "kind": "restyle", "text_fr": "Style : Luxe sombre\nMarque : Sony", "visual_id": visual, "style": "sombre",
+        "words": stored | {"brand": "Sony"}}
+    assert card("Un fond plus sombre")["effect"] == "refine"  # a word of a style alone is the scene's
+    assert card("un autre format, style sombre") == {"kind": "steps", "text_fr": MESSAGES["card_format"]}
+    for message in ("mets le logo de la boutique", "ajoute le contact de la boutique en style sombre"):
+        assert card(message) == {"kind": "steps", "text_fr": MESSAGES["card_identity"]}
+    # The two warnings come from the version: its model image, and the adjustments on its chain.
+    with engine.connect() as conn:
+        document = store.get_creation(conn, 1, creation)["document"]
+        found = reads.poster_words(conn, 1, document, visual)
+    assert (found["model_image"], found["adjusted"]) == (False, False)
+    revision = store.get_creation(engine.connect(), 1, creation)["revision"]
+    visuals.request_refinement(engine, settings, 1, key(), creation, revision, visuals.RefinementRequest(
+        base_visual_id=visual, instruction_fr="fond bleu nuit"))
+    refined = execute(engine, settings)
+    assert read(engine, settings, "style clair", creation, refined)["card"]["text_fr"] == (
+        "Style : Studio clair\nLes ajustements de scène demandés avant ne sont pas repris.")
+    with write_tx(engine) as conn:  # a version made with a model image
+        conn.execute(text("UPDATE poster_jobs SET input_json=json_set(input_json,'$.style_reference_asset',:sha) WHERE id="
+                          "(SELECT job_id FROM poster_visuals WHERE id=:id)"), {"sha": "a" * 64, "id": visual})
+    assert card("style clair")["text_fr"] == "Style : Studio clair\nL’affiche modèle n’est plus suivie."
     assert {row["creation_id"] for row in rows(engine)} == {creation}
     assert all(row["status"] == "succeeded" and row["cost_micros"] == 0 for row in rows(engine))
 
@@ -1008,7 +1183,8 @@ def test_a_poster_read_sends_its_own_prompt_and_the_servers_words(engine, claude
     poster_words = words(DRAWN | {"brand": "Sony"})
     monkeypatch.setattr(reads, "poster_words", lambda *_: poster_words)
     creation = draft(engine, tmp_path, input_id)["id"]  # it must exist and be active; its words are patched above
-    answer = {row.name: None for row in reads.FIELDS} | {"remove": ["brand"], "commercial": False}
+    answer = {row.name: None for row in reads.FIELDS} | {"remove": ["brand"], "format": None, "identity": None,
+                                                         "commercial": False}
     requests = []
 
     def handle(request):

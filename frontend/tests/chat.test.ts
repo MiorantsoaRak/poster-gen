@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cardButton, CHANGE_BUTTONS, complete, effectOf, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
@@ -38,11 +38,11 @@ it('keeps the last 100 items of a thread', () => {
   expect(readThread(JSON.stringify({ items: many })).items).toHaveLength(100)
 })
 it('never trusts the storage: a damaged thread is empty and wrong fields are left out', () => {
-  expect(readThread('{nope')).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, pictures: [] } })
+  expect(readThread('{nope')).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [] } })
   const read = readThread(JSON.stringify({ items: [item(), { id: 1, role: 'app', text: 'x' }, { id: 'b', role: 'robot', text: 'x' }, item({ id: 'c', card: {} as any }), null],
     draft: { name: 'Sony', price_ar: '700000', style: 'rose', pictures: [{ asset: 'a', role: 'product' }, { asset: 'b', role: 'logo' }, 7] } }))
   expect(read.items.map(entry => entry.id)).toEqual(['i'])
-  expect(read.draft).toEqual({ name: 'Sony', price_ar: null, style: null, pictures: [{ asset: 'a', role: 'product' }] })
+  expect(read.draft).toEqual({ name: 'Sony', price_ar: null, style: null, identity: null, pictures: [{ asset: 'a', role: 'product' }] })
 })
 it('keeps a pending read as one unchangeable record of its key and exact body', () => {
   const pending = newPending({ text: 'Sony, 700 000 Ar', draft: { name: null } } as { text: string })
@@ -59,7 +59,7 @@ it('keeps the pending read while its outcome is unknown, and drops it on a defin
 })
 it('leaves a pointer where the new thread went, and reads nothing else from it', () => {
   const id = '0b9f3c1e-2a4d-4e6f-8a1b-3c5d7e9f1a2b'
-  expect(readThread(movedTo(id))).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, pictures: [] }, moved: id })
+  expect(readThread(movedTo(id))).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [] }, moved: id })
   expect(readThread(JSON.stringify({ moved: '../x', items: [item()] })).moved).toBeUndefined()
   expect(readThread(JSON.stringify({ items: [item()] })).moved).toBeUndefined()
 })
@@ -91,8 +91,12 @@ it('names the outcome of the job a card recorded', () => {
 it('sends the reader the last six lines and the draft with its uploaded pictures counted', () => {
   const thread = Array.from({ length: 8 }, (_, index) => item({ id: String(index), role: index % 2 ? 'app' : 'owner', text: index === 7 ? ' ' : `m${index}` }))
   expect(lines(thread)).toEqual([1, 2, 3, 4, 5, 6].map(index => ({ role: index % 2 ? 'app' : 'owner', text: `m${index}` })))
-  const draft = { name: 'Sony', price_ar: 700000, style: 'sombre' as const, pictures: [{ asset: 'a', role: 'product' as Role }, { asset: 'b', role: 'inspiration' as Role }] }
+  const draft = { name: 'Sony', price_ar: 700000, style: 'sombre' as const, identity: null, pictures: [{ asset: 'a', role: 'product' as Role }, { asset: 'b', role: 'inspiration' as Role }] }
   expect(wireDraft(draft)).toEqual({ name: 'Sony', price_ar: 700000, style: 'sombre', product_photos: 1, inspiration: true })
+  // The shop's identity is sent only when the owner said it, on or off: without it the body is the one from before the
+  // field (toEqual above would pass with `identity: undefined`; the key itself is checked here).
+  expect('identity' in wireDraft(draft)).toBe(false)
+  expect([wireDraft({ ...draft, identity: true }).identity, wireDraft({ ...draft, identity: false }).identity]).toEqual([true, false])
   expect(complete(draft)).toBe(true)
   expect(complete({ ...draft, pictures: draft.pictures.slice(1) })).toBe(false)
   expect(complete({ ...draft, price_ar: null })).toBe(false)
@@ -121,6 +125,36 @@ it('shows one button per card, and none on a spent or replaced one', () => {
   expect(cardButton(item({ card: { kind: 'failed', retry: 'Sony' } }))).toBe('resend')
   expect(cardButton(item({ card: { kind: 'failed', code: 'read_limit' } }))).toBeNull()
   expect(cardButton(item())).toBeNull()
+})
+it('pays for a style change as for a change, and shows a kind it does not know as text (D-TEXT-FIRST-006)', () => {
+  const restyle = item({ card: { kind: 'restyle', style: 'sombre', visual_id: 'v', words: { title: 'Sony' } } })
+  expect(paid(restyle.card) && changes(restyle.card)).toBe(true)
+  expect(cardButton(restyle)).toBe('create')
+  expect(CHANGE_BUTTONS[effectOf(restyle.card!)]).toBe('Refaire l’affiche')
+  expect(effectOf(restyle.card!, { headline: null })).toBe('scene')  // never free, whatever the selected version
+  expect(cardButton(restyle, undefined, undefined, 0)).toBeNull()  // the version limit holds for it
+  expect(cardButton({ ...restyle, spent: true, request })).toBe('resume')
+  expect(cardButton({ ...restyle, spent: true, request, card: { ...restyle.card!, error: 'x' } })).toBe('retry')
+  expect(cardButton({ ...restyle, done: true })).toBeNull()
+  expect(normal(restyle.card!)).toEqual(restyle.card)
+  // A card of a later bundle, with everything a paid card carries: no button, spent or not. This is what keeps a tab
+  // on an older bundle from paying for a card it would carry out wrongly.
+  const unknown = item({ card: { kind: 'recolour', style: 'sombre', visual_id: 'v', effect: 'scene', words: { title: 'Sony' } } })
+  expect(paid(unknown.card) || changes(unknown.card)).toBe(false)
+  for (const state of [{}, { spent: true }, { spent: true, request }, { done: true }]) expect(cardButton({ ...unknown, ...state })).toBeNull()
+})
+it('says on the recap what the shop’s profile gives the poster', () => {
+  const shop = (logo: boolean, contact: boolean, ticked = false) => ({ logo, contact, ticked })
+  expect(identityLine(shop(true, true), true)).toBe('Avec le logo et le contact de la boutique')
+  expect(identityLine(shop(true, false), true)).toBe('Avec le logo de la boutique')
+  expect(identityLine(shop(false, true), true)).toBe('Avec le contact de la boutique')
+  expect(identityLine(shop(false, false, true), true)).toBe('La boutique n’a pas encore de logo ni de contact : ajoutez-les dans Pas à pas.')
+  // Asked off: a line only when the form's ticks would have put one on.
+  expect(identityLine(shop(true, true, true), false)).toBe('Sans le logo ni le contact de la boutique')
+  expect(identityLine(shop(true, true), false)).toBe('')
+  // The draft keeps the wish across a reload, on or off; anything else in the storage is "not said".
+  const stored = (identity: unknown) => readThread(JSON.stringify({ items: [], draft: { name: 'Sony', identity } })).draft.identity
+  expect([stored(true), stored(false), stored('true'), stored(undefined)]).toEqual([true, false, null, null])
 })
 it('follows the version of a result card: check, then download of the selected version only, nothing once refused', () => {
   const result = item({ done: true, card: { kind: 'result', visual_id: 'v' } })
@@ -243,4 +277,16 @@ it('knows the poster a pending read was sent for', () => {
   expect(pendingFor(newPending({ text: 'fond plus sombre', creation_id: 'c' } as { text: string }))).toBe('c')
   expect(pendingFor(newPending({ text: 'Sony' }))).toBeNull()
   expect(pendingFor({ key: 'k', body: '{nope', text: 'x' })).toBeNull()
+})
+
+it('takes the identity choice back from the last recap when the draft was saved by an older bundle', () => {
+  const recap = (identity?: boolean) => ({ id: String(identity), role: 'app', text: 'x', at: 1, card: { kind: 'recap', name: 'Sony', price_ar: 1, ...(identity === undefined ? {} : { identity }) } })
+  const stored = (draft: object, ...items: object[]) => readThread(JSON.stringify({ items, draft })).draft.identity
+  // An old tab, refused, rebuilt its recap and saved its draft without the key: the owner's choice is still in the thread.
+  expect(stored({ name: 'Sony' }, recap(true), recap())).toBe(true)
+  expect(stored({ name: 'Sony' }, recap(true), recap(false))).toBe(false)
+  expect(stored({ name: 'Sony' }, recap())).toBeNull()
+  // A draft saved by this bundle says it, null included: the thread is not asked.
+  expect(stored({ name: 'Sony', identity: null }, recap(true))).toBeNull()
+  expect(stored({ name: 'Sony', identity: false }, recap(true))).toBe(false)
 })

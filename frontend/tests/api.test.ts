@@ -1,8 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { api, clockSkew, mutation } from '../src/api'
+import { api, BUNDLE, clockSkew, mutation, read } from '../src/api'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 const answer = (headers: Record<string, string> = {}) => async () => new Response(JSON.stringify({ id: 'saved' }), { headers })
+it('names its bundle on every request, so that the server can refuse an older open tab (ADR-103)', async () => {
+  const fetch = vi.fn(answer())
+  vi.stubGlobal('fetch', fetch)
+  await api('/api/creations')
+  await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+  await mutation('/api/creations/c', { a: 1 }, 3, 'k', 'PUT')
+  await read({ key: 'r', body: '{}' })
+  await api('/api/assets', { method: 'POST', body: new FormData() })
+  const sent = fetch.mock.calls.map(call => (call as unknown as [string, RequestInit])[1].headers as Record<string, string>)
+  expect(sent.map(headers => headers['X-Affiche-Bundle'])).toEqual(Array(5).fill(String(BUNDLE)))
+  expect(BUNDLE).toBe(2)  // backend api.py BUNDLE: raised together
+  expect(sent[2]).toMatchObject({ 'Idempotency-Key': 'k', 'If-Match': '"3"', 'Content-Type': 'application/json' })
+  expect(sent[4]).toEqual({ 'X-Affiche-Bundle': '2' })  // an upload keeps the browser's own Content-Type
+})
 it('reuses an uncertain mutation key after a lost response, then starts a new action after success', async () => {
   const fetch = vi.fn().mockRejectedValueOnce(new Error('lost')).mockImplementation(answer())
   vi.stubGlobal('fetch', fetch)

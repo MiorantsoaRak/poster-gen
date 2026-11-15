@@ -1,5 +1,15 @@
 # DECISIONS
 
+## ADR-103 — 2026-11-15 — The rest of the chat audit: measure, then build only the style, identity in the first message, a sentence for the format
+
+- User: "go ahead with the rest of the audit", then "you can go full automation" (requirements, design, implementation, local commits and paid calls inside the cap; push and deploy stay his word).
+- A first design (settings as rows of the field table, an identity rule, a fresh-plan helper) was rejected by the design review and the devil's advocate. A paid baseline (USD 0.17) showed that the scene adjustment of ADR-102 already does a coloured word and the brand's lettering, and does not change the style.
+- Built: a `style` field on a poster, answered by a new card kind `restyle` (a whole new image on a fresh plan; the model image and kept adjustments are not carried, and the card says so; a new kind so that an old tab cannot pay for it); the shop's logo and contact asked in the first message, through the editor's own selection when the poster is made; one sentence to « Pas à pas » for identity on an existing poster and for another format.
+- Not built, on purpose: rows for the coloured word and the brand's lettering; identity changes on an existing poster (a free removal breaks the version's plan for later changes); format copies from the chat.
+- The new-poster reader gains one field, so its reading test of 2026-11-14 is run again (done: its 19 new-poster messages read as then).
+- **An older open tab changes nothing and pays nothing (found by the code review, twice).** Every request carries the bundle's number (`X-Affiche-Bundle`, `BUNDLE` in `frontend/src/api.ts`); the server refuses every state-changing request under `/api/` except the session from a lower or absent number, before any handler: 409 `bundle_outdated`, with a sentence that says nothing is saved and to note the last changes before reloading. Reads still work. One guard for the class, instead of a compatibility patch per card. Raise both constants together whenever a change makes an older open tab unsafe. Consequence at the next deploy: the bundle now on the pilot is refused on every change until the page is reloaded, in « Pas à pas » too.
+- An explicit « sans logo ni contact » in the first message is kept and clears those two ticks of the form; saying nothing leaves the form's ticks as they are (they already went into a poster made from the chat before this change).
+
 ## ADR-102 — 2026-11-15 — In the chat, a message that changes no word is the scene adjustment, in the owner's own words
 
 - User reports 2026-11-15: « Use sony logo » was answered « L’affiche a déjà ces textes. »; then a poster he made with « Ajustement de la scène » in « Réglages » (a list of features with icons, the Sony mark, a stylised product name) showed that this field is the general tool, and that the chat used a small part of it. He said: go ahead with T-CHAT-SCENE-FIELD.
@@ -921,3 +931,22 @@
 - Because: The user specified this stack before requesting bootstrap.
 - Alternatives: HTMX, Svelte, or a React application are not the selected application stack.
 - Revisit if: The user explicitly changes the stack constraint.
+
+
+## Research scope confirmation — Codex, 2026-11-15 — Publishing and SaaS
+
+- User requested research and suggestions alongside Claude's chat audit, then explicitly confirmed a Madagascar selling business and ordinary Facebook/Instagram posts first; paid advertising comes later.
+- Research is saved in [the publishing and SaaS report](reviews/social-publishing-saas-research-2026-11-15.md). Prepaid-first packaging, wallet rules, login/payment options, dashboards and the feature split are proposals, not approved architecture, prices, provider choices or implementation authorization. Existing PROJECT.md scope and workflow gates remain unchanged.
+- No provider credentials requested, application code changed, paid calls made, social posts sent or production resources accessed in this research track.
+
+
+## Verification scope confirmation — Codex, 2026-11-15 — No provider accounts yet
+
+- User authorized necessary verification and explicitly confirmed that no provider accounts are set up. Ran existing isolated regression checks and a synthetic local JPEG probe; verified further public setup documentation. No account was created, credential requested in chat, external message sent, real post/payment made or production resource accessed.
+- Live Meta and payment verification requires provider setup first. The passing pilot checks do not establish multi-tenant, customer-wallet or publishing readiness; no implementation authorization or formal design approval is inferred.
+
+
+## Research update — Codex, 2026-11-15 — Papi as the first local checkout candidate
+
+- User supplied papi.mg as another Malagasy payment processor. Official coverage, hosted checkout, direct/transit collection, pricing and callback/status contracts make Papi hosted checkout the first candidate to evaluate for local prepaid packs; direct MVola remains a cost/settlement comparison. This supersedes the research recommendation only, not an approved provider selection or implementation design.
+- Published callback signature vector matched locally; public demo payment was not completed. Merchant verification, transit settlement/refunds and automatic recurring debit remain unresolved. No app source, merchant account or production payment was created.

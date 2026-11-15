@@ -353,7 +353,7 @@ def walk_desktop(browser, errors, product, inspiration):
     context.unroute("**/scenes")
     busy = spent()
     other = browser.new_context(storage_state=context.storage_state())
-    headers = lambda: {"Origin": smoke.ORIGIN, "If-Match": f'"{revision()}"', "Idempotency-Key": str(uuid4())}
+    headers = lambda: {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{revision()}"', "Idempotency-Key": str(uuid4())}
     plan = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/plans", headers=headers(), data={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
     assert plan.ok, plan.text()
     started = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/scenes", headers=headers(), data={"plan_id": plan.json()["id"], "format": "feed"})
@@ -900,7 +900,7 @@ def walk_changes(browser, errors, session, data):
     selected(ninth["id"])
     # What the chat cannot do on a poster is said by the server's card, with the way to the steps.
     say(page, "change le titre")
-    expect(thread.locator(".bubble.bot").last).to_contain_text("Dites ce qu’il faut changer : le titre, la marque, le sous-titre, le prix, l’image (fond, lumière, logo, caractéristiques, mise en scène).")
+    expect(thread.locator(".bubble.bot").last).to_contain_text("Dites ce qu’il faut changer : le titre, la marque, le sous-titre, le prix, l’image (fond, lumière, logo, caractéristiques, mise en scène), le style.")
     expect(thread.locator(".bubble.bot").last.get_by_role("button", name="Pas à pas")).to_be_visible()
 
     # The one pending read is never replaced (finding 2). Its answer is lost on this poster; on another poster nothing
@@ -1520,6 +1520,238 @@ def walk_failed(browser, errors, product):
     context.close()
 
 
+def walk_rest(browser, errors, product, inspiration):
+    """D-TEXT-FIRST-006: the shop's logo and contact asked in the first message (an empty profile, then a filled one;
+    asked off against the form's ticks), a change of style, a tab of an older bundle refused by the server, the two
+    sentences to « Pas à pas », a card kind this bundle does not know. Its own session and browser storage; the shop's
+    profile is empty until this walk fills it, at its end."""
+    bodies, sent, drafts = [], {"scenes": [], "plans": [], "revisions": []}, []
+
+    def seen(request):
+        if request.method != "POST":
+            return
+        if request.url.endswith("/api/reads"):
+            bodies.append(request.post_data_json)
+        if request.url.endswith("/api/creations"):
+            drafts.append(request.post_data_json)
+        for path in sent:
+            if request.url.endswith("/" + path):
+                sent[path].append(request.headers["idempotency-key"])
+
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    context.on("request", seen)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
+    sign_in(page)
+    page.get_by_role("button", name=re.compile("^Par message")).click()
+    page.wait_for_url("**/#message")
+    thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
+    switch = page.get_by_role("group", name="Façon de créer")
+    recap = thread.locator(".bubble.bot", has=page.locator(".recap")).last
+    create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
+    redo, first_tap = thread.get_by_role("button", name="Refaire l’affiche"), thread.get_by_role("button", name="Créer l’affiche")
+    last = thread.locator(".bubble.bot").last
+    get = lambda path: page.request.get(f"{smoke.ORIGIN}/api/{path}").json()
+    paid = lambda: {path: len(keys) for path, keys in sent.items()}
+    with_identity = "avec le logo et le contact de la boutique"
+
+    def new_poster(message, line, *files):
+        """One message with its images to the first version. Returns the poster's id."""
+        page.goto(f"{smoke.ORIGIN}/#message")
+        expect(thread).to_contain_text("Quel produit, à quel prix ?")
+        page.locator(".composer input[type=file]").set_input_files(list(files))
+        expect(page.locator(".tray .pic")).to_have_count(len(files))
+        expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+        say(page, message)
+        expect(recap.locator(".recap small")).to_have_text([re.compile("^Style : "), line])  # the style's line, then this one
+        assert "identity" not in bodies[-1]["draft"], bodies[-1]  # asked in this message: the draft sent is the old shape
+        first_tap.click()
+        page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+        expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+        return page.url.split("#message-")[1]
+
+    # The shop has no logo and no contact: the recap says so, and the poster is made without them.
+    empty = get("shop-profile")
+    assert not empty["logo_asset"] and not empty["contact"], empty
+    poster = new_poster(f"Casque Bose QC45, 300 000 Ar, {with_identity}",
+                        "La boutique n’a pas encore de logo ni de contact : ajoutez-les dans Pas à pas.", product, inspiration)
+    spent = lambda: [item for item in page.evaluate(THREAD, poster)["items"] if item.get("spent")][-1]
+    versions = lambda: get(f"creations/{poster}/visuals")["items"]
+    plan_of = lambda visual: get(f"plans/{visual['plan_id']}")
+
+    def lineage(visual):  # a version's plan and the plans it was revised from
+        plans, plan = [], visual["plan_id"]
+        while plan:
+            plans.append(plan)
+            plan = get(f"plans/{plan}")["parent_plan_id"]
+        return plans
+    nothing = {"logo": False, "shop_name": False, "contact": False}
+    assert drafts[-1]["offer"]["title"] == "Casque Bose QC45" and drafts[-1]["brand_selection"] == nothing, drafts[-1]
+    assert get(f"creations/{poster}")["document"]["include"] == nothing
+    looks_right(page, "recap, empty shop profile")
+
+    # A change of style. The version has a model image (the inspiration) and a scene adjustment asked by message: the
+    # card says that neither is carried, and is paid as a whole new image.
+    say(page, "fond bleu nuit")
+    create.click()
+    expect(thread).to_contain_text("Version 2 prête.", timeout=30000)
+    second = versions()[0]
+    assert second["instruction_fr"] == "fond bleu nuit" and second["style_reference_asset"], second
+    say(page, "mets le style luxe sombre")
+    expect(last.locator("p.lines")).to_have_text("Style : Luxe sombre L’affiche modèle n’est plus suivie. Les ajustements de scène demandés avant ne sont pas repris.")
+    expect(last.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler"])
+    expect(last).to_contain_text("Mode de démonstration : aucune dépense.")
+    assert bodies[-1]["visual_id"] == second["id"], bodies[-1]
+    both_themes(page, "style change card", "chat-restyle-1366")
+    # « Annuler » gives the words back, as on a change card; nothing was asked for the poster.
+    before = paid()
+    cancel.click()
+    expect(field).to_have_value("mets le style luxe sombre")
+    expect(redo).to_have_count(0)
+    page.get_by_role("button", name="Envoyer").click()
+    expect(redo).to_be_visible()
+    redo.click()
+    expect(thread).to_contain_text("Version 3 prête.", timeout=30000)
+    request, third = spent()["request"], versions()[0]
+    assert spent()["card"]["kind"] == "restyle" and sent["scenes"][-1] == spent()["id"], spent()
+    # A fresh plan in the new style, not the version's plan saved again; no model image and no kept adjustment.
+    # (The editor saves a fresh plan again at the document's revision before the scene, as for a first poster.)
+    assert paid() | {"revisions": 0} == before | {"plans": before["plans"] + 1, "scenes": before["scenes"] + 1, "revisions": 0}, (sent, before)
+    assert request["path"].endswith("/scenes") and not {"style_reference_asset", "keep_adjustments_of"} & request["body"].keys(), request
+    assert request["body"]["plan_id"] == third["plan_id"] and not set(lineage(third)) & set(lineage(second)), (lineage(third), lineage(second))
+    assert plan_of(third)["plan"]["palette"] != plan_of(second)["plan"]["palette"], plan_of(third)["plan"]["palette"]
+    assert third["style_reference_asset"] is None and third["replaces_visual_id"] is None and third["headline"]["title"] == "Casque Bose QC45", third
+    # The new version becomes the poster's, as for a change card.
+    for _ in range(50):
+        if get(f"creations/{poster}")["document"]["formats"]["feed"]["scene"]["visual_id"] == third["id"]:
+            break
+        page.wait_for_timeout(200)
+    else:
+        raise AssertionError("the restyled version is not the poster's selected one")
+    expect(side).to_contain_text("Version 3 · à vérifier")
+
+    # A tab of an older bundle (here this page, the bundle's header taken off what it sends) taps a paid card. The
+    # server refuses the first request that would change something, here the save of the poster with the new style's
+    # colours: its sentence is shown, no request was kept, the poster's revision is the same, no plan and no job were
+    # made, and the same card is offered again, with its cost.
+    made = lambda: (len(get(f"creations/{poster}/jobs")["items"]), len(versions()), get(f"creations/{poster}")["revision"])
+    say(page, "style studio clair")
+    expect(redo).to_be_visible()
+    before, refusals = made(), []
+    page.on("response", lambda response: refusals.append(response.url.split("/api/")[1]) if response.status == 409 else None)
+    context.route("**/api/**", lambda route: route.continue_() if route.request.method == "GET" else
+                  route.continue_(headers={name: value for name, value in route.request.headers.items() if name != "x-affiche-bundle"}))
+    redo.click()
+    expect(thread).to_contain_text("Cette page est une ancienne version de l’application")
+    context.unroute("**/api/**")
+    refused = spent()
+    assert refused["card"]["kind"] == "restyle" and refused.get("done") and "request" not in refused and "job" not in refused, refused
+    assert made() == before and refusals == [f"creations/{poster}"], (made(), before, refusals)
+    expect(redo).to_have_count(1)
+    page.wait_for_timeout(500)
+    assert made() == before, made()
+    # The page as the current bundle again: that card goes through. Its version was made with a saved style that was
+    # removed since and cannot be read (a 500): a change of style does not look it up, so nothing stops it.
+    looks, gone = [], str(uuid4())
+    context.route("**/api/looks/*", lambda route: (looks.append(route.request.url), route.fulfill(status=500, json={"error": {"code": "server_error", "message_fr": "Le style de cette version n’a pas pu être lu."}})))
+    context.route("**/creations/*/visuals", lambda route: route.fulfill(response=(response := route.fetch()), json={"items": [item | {"headline": item["headline"] | {"look_id": gone}} for item in response.json()["items"]]}))
+    page.reload()
+    expect(side).to_contain_text("Version 3 · à vérifier")
+    asked = len(looks)
+    assert asked, "the editor did not ask for the version's style when the poster opened"
+    redo.click()
+    expect(thread).to_contain_text("Version 4 prête.", timeout=30000)
+    context.unroute("**/api/looks/*")
+    context.unroute("**/creations/*/visuals")
+    assert len(looks) == asked and spent()["request"]["body"]["headline"]["price"] is True, (looks, spent())
+    assert made()[:2] == (before[0] + 1, 4), made()
+
+    # Another format and the shop's identity on an existing poster: one sentence each, the way to the steps, nothing paid.
+    before = paid()
+    for message, sentence in (("fais-la aussi en format story", "Un autre format est une nouvelle affiche : dans Pas à pas, « Style », « Refaire en … »."),
+                              ("ajoute le logo de la boutique", "Le logo et le contact de la boutique se règlent dans Pas à pas, « Boutique ».")):
+        say(page, message)
+        expect(last.locator("p")).to_have_text([sentence])
+        expect(last.get_by_role("button")).to_have_text(["Pas à pas"])
+    # A card kind of a later bundle (here the answer's kind is rewritten on its way): text, and no button to pay with.
+    context.route("**/api/reads", lambda route: route.fulfill(response=(response := route.fetch()), json=response.json() | {"card": response.json()["card"] | {"kind": "recolour"}}))
+    say(page, "style studio clair")
+    expect(last.locator("p")).to_have_text(["Style : Studio clair"])
+    expect(last.get_by_role("button")).to_have_count(0)
+    context.unroute("**/api/reads")
+    assert page.evaluate(THREAD, poster)["items"][-1]["card"]["kind"] == "recolour" and paid() == before, sent
+
+    # The chat is taken by another tab while the photo's colours are read for « Couleurs du produit » (the answer about
+    # the photo is held). When the colours come, this tab asks no plan and no scene.
+    held = []
+    context.route("**/api/product-inputs/*", lambda route: route.continue_() if held or route.request.method != "GET" else held.append(route))
+    page.reload()
+    say(page, "style couleur")
+    expect(redo).to_be_visible()
+    redo.click()
+    expect(thread.locator(".chat-wait")).to_contain_text("Je lis les couleurs de la photo…")
+    assert held and "request" not in spent(), (held, spent())
+    other_tab = context.new_page()
+    other_tab.set_default_timeout(10000)
+    other_tab.on("pageerror", lambda error: errors.append(str(error)))
+    other_tab.goto(f"{smoke.ORIGIN}/#message-{poster}")
+    other_tab.get_by_role("button", name="Continuer ici").click()
+    expect(page.get_by_text("Le chat est ouvert dans un autre onglet.")).to_be_visible()
+    expect(other_tab.get_by_role("log")).to_contain_text("Rien n’a été envoyé pour cette demande.")
+    held[0].continue_()
+    context.unroute("**/api/product-inputs/*")
+    page.wait_for_timeout(1500)
+    assert paid() == before and "request" not in spent() and len(versions()) == 4, (sent, spent())
+    other_tab.close()
+    page.get_by_role("button", name="Continuer ici").click()
+    expect(redo).to_have_count(1)  # the same card again, with its cost
+    cancel.click()
+    field.fill("")
+
+    # The shop now has a logo and a contact (typed in the form of « Pas à pas », saved with the poster): the recap says
+    # so, the wish is kept in the draft for the next message, and the poster is made with both. The shop's name is not
+    # turned on by it.
+    page.goto(f"{smoke.ORIGIN}/#message")
+    switch.get_by_role("button", name="Pas à pas").click()
+    page.get_by_role("textbox", name="Nom de la boutique").fill("Original Phone Mada")
+    page.get_by_label("Contact", exact=True).first.fill("034 12 345 67")
+    page.locator("label.file-pick", has_text="Logo").locator("input[type=file]").set_input_files(product)
+    expect(page.get_by_alt_text("Logo de la boutique")).to_be_visible()
+    switch.get_by_role("button", name="Message").click()
+    branded = new_poster(f"Enceinte Bose Flex, 250 000 Ar, {with_identity}", "Avec le logo et le contact de la boutique", product)
+    document = get(f"creations/{branded}")["document"]
+    chosen = {"logo": True, "shop_name": False, "contact": True}
+    assert drafts[-1]["brand_selection"] == chosen and document["include"] == chosen, (drafts[-1], document["include"])
+    assert document["brand_snapshot"]["contact"] == "034 12 345 67" and document["brand_snapshot"]["logo_asset"], document["brand_snapshot"]
+    assert any(layer["kind"] == "logo" for layer in document["formats"]["feed"]["layers"]), document["formats"]["feed"]["layers"]
+    looks_right(page, "poster with the shop's identity", "chat-identity-1366.png")
+    # « Sans logo ni contact » against the form's own ticks (logo and contact ticked in « Pas à pas » for the next
+    # poster): the recap says it, and the poster is made without them. The shop's name, ticked too, is not its matter.
+    page.goto(f"{smoke.ORIGIN}/#message")
+    switch.get_by_role("button", name="Pas à pas").click()
+    for name in ("Logo", "Nom de la boutique", "Contact"):
+        page.get_by_role("checkbox", name=name, exact=True).check()
+    switch.get_by_role("button", name="Message").click()
+    plain = new_poster("Enceinte Bose Mini, 120 000 Ar, sans logo ni contact", "Sans le logo ni le contact de la boutique", product)
+    off = {"logo": False, "shop_name": True, "contact": False}
+    assert drafts[-1]["offer"]["title"] == "Enceinte Bose Mini" and drafts[-1]["brand_selection"] == off, drafts[-1]
+    assert get(f"creations/{plain}")["document"]["include"] == off
+    # Asked in one message, the price corrected in the next: the draft carries the wish, and the new recap keeps its line.
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(thread).to_contain_text("Quel produit, à quel prix ?")
+    page.locator(".composer input[type=file]").set_input_files(product)
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    say(page, f"Enceinte Bose Micro, 150 000 Ar, {with_identity}")
+    expect(recap.locator(".recap small").last).to_have_text("Avec le logo et le contact de la boutique")
+    say(page, "140 000 Ar")
+    expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^140\s000 Ar$"))
+    expect(recap.locator(".recap small").last).to_have_text("Avec le logo et le contact de la boutique")
+    assert bodies[-1]["draft"]["identity"] is True, bodies[-1]
+    context.close()
+
+
 def walk_choice_phone(browser, errors):
     context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
     page = context.new_page()
@@ -1573,13 +1805,14 @@ def run():
                         walk_uploads(browser, errors, session, small, broken, animated)
                         walk_guards(browser, errors, session)
                         walk_changes(browser, errors, session, data)  # last of this server: it signs in again
+                        walk_rest(browser, errors, product, inspiration)  # its own session; it fills the shop's profile
                         walk_choice_phone(browser, errors)
                         smoke.stop(*server)
                         server = smoke.serve(failing, stub_fail="provider_error")
                         walk_failed(browser, errors, product)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, a style change on a fresh plan, the shop's identity asked in the first message, read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

@@ -21,6 +21,11 @@ function end() {
   hiding = setTimeout(() => { hiding = undefined; clearTimeout(showing); showing = undefined; progress.value = false }, 16)
 }
 
+// Sent with every request (X-Affiche-Bundle); the server refuses a state-changing request from a lower one with
+// `bundle_outdated` (backend api.py BUNDLE). Raise both together when a change makes an older open tab unsafe: one that
+// would pay beside a card it does not know, or carry out a card without what it promises (ADR-103).
+export const BUNDLE = 2
+
 // timeout (ms) is opt-in: the request is given up after it, headers and body together. Without it nothing changes.
 export async function api<T>(path: string, { quiet = false, timeout, ...options }: RequestInit & { quiet?: boolean; timeout?: number } = {}): Promise<T> {
   if (!quiet) begin()
@@ -28,7 +33,7 @@ export async function api<T>(path: string, { quiet = false, timeout, ...options 
   const late = () => new ApiError('timeout', 'Le serveur met trop de temps à répondre. Réessayez.', 0)
   try {
     let response: Response
-    try { response = await fetch(path, { ...options, credentials: 'same-origin', ...(limit ? { signal: limit.signal } : {}) }) }
+    try { response = await fetch(path, { ...options, headers: { ...options.headers as Record<string, string> | undefined, 'X-Affiche-Bundle': String(BUNDLE) }, credentials: 'same-origin', ...(limit ? { signal: limit.signal } : {}) }) }
     catch { throw limit?.signal.aborted ? late() : new ApiError('network', 'Connexion interrompue. Vos modifications restent dans cet onglet.', 0) }
     const date = Date.parse(response.headers.get('Date') ?? '')
     if (!Number.isNaN(date)) clockSkew = date - Date.now()

@@ -1611,7 +1611,7 @@ def run():
                         remote["document"]["offer"]["title"] = "Titre modifié dans un autre onglet"
                         from uuid import uuid4
                         response = page.request.put(f"{ORIGIN}/api/creations/{creation_id}", data=remote["document"],
-                            headers={"Origin": ORIGIN, "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
+                            headers={"Origin": ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{remote["revision"]}"', "Idempotency-Key": str(uuid4())})
                         assert response.status == 200
                         page.get_by_label("Titre", exact=True).fill("Mon titre conservé")
                         # With a mouse there is no on-screen keyboard: the poster does not collapse for a focused field.
@@ -1921,7 +1921,7 @@ def run():
                         moved_logo = next(l for l in altered['formats']['feed']['layers'] if l['role'] == 'logo')
                         moved_logo.pop('shape', None)
                         moved_logo.update(x=54, y=67.5)
-                        response = page.request.put(seal_endpoint, data=altered, headers={"Origin": ORIGIN, "If-Match": f'"{historical["revision"]}"', "Idempotency-Key": str(uuid4())})
+                        response = page.request.put(seal_endpoint, data=altered, headers={"Origin": ORIGIN, "X-Affiche-Bundle": "2", "If-Match": f'"{historical["revision"]}"', "Idempotency-Key": str(uuid4())})
                         assert response.ok, response.text()
                         page.reload()
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()

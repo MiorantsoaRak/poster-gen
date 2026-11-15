@@ -1,6 +1,43 @@
 # HANDOFF
 
-**Two tracks share this checkout.** Claude's track (the deployed editor) is the next block. Codex's track (text-first generation: research and an isolated mockup, nothing built) follows it, newest first; its files are the only uncommitted ones.
+**Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
+
+## Codex publishing and SaaS research — 2026-11-15
+
+**Done:** T-SAAS-RESEARCH, T-SAAS-VERIFY and T-PAPI-RESEARCH; research plus user-authorized local verification, no application implementation. Deliverable: [Social publishing and SaaS research](reviews/social-publishing-saas-research-2026-11-15.md). The user confirmed **Madagascar** as the selling business country and **ordinary posts first, paid ads later**. No implementation or scope expansion approved. Claude's chat work remains independent.
+
+**Findings/proposals:** app-owned Meta credentials with customer authorization; connect existing Pages/professional accounts (actual Facebook Page creation is restricted); compose captions and ordered exact approved exports; local history and per-destination outcomes, including unknown/partial results. Current Meta docs recommend Unified Login with a business portfolio, support 20-item Instagram carousels and require JPEG publishing derivatives; their day-quota examples conflict, so validate the chosen route/version rather than hardcode those numbers. Public customer access depends on Meta review/verification. SaaS needs account/workspace/brand/channel separation, an atomic customer-credit ledger separate from provider costs, one lifetime trial grant, bounded abuse exposure and separate customer/operator dashboards. Papi hosted checkout is now the first local prepaid candidate (added on the user’s suggestion), with direct MVola as a cost/settlement comparison and Paddle as an optional international candidate; Stripe does not list Madagascar merchant support. No merchant approval obtained.
+
+**Verified update:** user authorized necessary verification and confirms **no provider accounts have been set up**. Targeted existing suites: **125 passed in 81.16 s** (39 admission, 25 poster jobs, 22 exports, 34 API, 5 backup), exit 0. Isolated temporary data, fake/stub providers, `env_file=None`; `backend/.env` was never read. Synthetic Pillow 13.0.0 PNG-to-JPEG probe passed RGB/sRGB, dimensions, byte limits and alpha flattening; feed/square meet the documented feed ratio, story does not. Artifacts: `outputs/saas-verification-2026-11-15/` (git-ignored). See the report's [verification addendum](reviews/social-publishing-saas-research-2026-11-15.md#verification-addendum-of-2026-11-15). These checks do not prove the unbuilt wallet, multi-tenancy or social integration. No real publishing/listing, payment sandbox, merchant approval, paid call, production access, commit, push or deploy. Frontend build/smokes not rerun; running services on 8000/5173 left alone. Postman CLI remains unavailable.
+
+**Provider follow-ups:** Meta Unified Login setup adds app/business-portfolio, HTTPS callback, real professional-account and permission conditions; compare its actual consent burden with Instagram Login before selecting it. Paddle's supplier-policy search result suggests candidacy, but direct fetch returns 404: Madagascar seller/payout eligibility is unverified. Create/configure provider test accounts first, then run authenticated Meta ordering/listing/recovery and merchant sandbox fulfillment checks. Public API documentation and local tests cannot substitute for them.
+
+**Papi research update:** [addendum](reviews/social-publishing-saas-research-2026-11-15.md#papi-assessment-added-on-2026-11-15). Hosted checkout covers mobile money and cards; direct/transit modes documented. Published fees: Direct 1.20% plus operator/bank fees; Transit MVola 3.80%, Orange/Airtel 3.60%, cards 4.20% (including tax; confirm settlement terms). Local reproduction of the public HMAC vector matched; changed body changed signature. Public demo catalogue/add request returned 200, but cart navigation/payment was not completed. No production payment, account creation, callback endpoint or app code. API link deduplication is only for active links, and callbacks are automatically sent once: permanent local fulfillment and read-back reconciliation are necessary in the eventual design. Recurring debits, merchant acceptance, settlement details and refund operations remain unverified. Evidence in git-ignored `outputs/papi-research-2026-11-15/signature-vector.json`; temporary demo browser state removed.
+
+**Exact next step for this track:** provider account setup is needed for live integration verification; separately, user chooses/approves the proposed scope expansion and priorities before per-feature requirements with acceptance criteria. Proposed boundaries: accounts-workspaces, credits-billing, trial-abuse, social-publishing, customer-dashboard, platform-operations. Requirements approval precedes formal designs and implementation tasks. No task in this track remains in progress.
+
+**Landmines:** never assume Facebook sign-in grants publishing; never expose tokens/private libraries; never blindly retry an ambiguous post; copying/deleting/new workspaces must not replenish trial credits; restoring a backup must not repeat payments, credits or publications. Existing invented-product-features gap is a prelaunch concern. Prepaid publishing/retention limits and final prices still need decisions.
+
+**Files changed by this research:** this HANDOFF, TODO, DECISIONS and the new research report. Other modified source/docs and the old mockup are from concurrent/earlier work. Snapshot of all uncommitted paths at handoff (another agent may change this list afterwards):
+
+```text
+ M backend/src/affiche/api.py
+ M backend/src/affiche/posters/reads.py
+ M backend/tests/test_reads.py
+ M docs/project/DECISIONS.md
+ M docs/project/HANDOFF.md
+ M docs/project/TODO.md
+ M docs/project/designs/text-first-generation.md
+ M docs/project/requirements/text-first-generation.md
+ M frontend/src/App.vue
+ M frontend/src/ChatView.vue
+ M frontend/src/chat.ts
+ M frontend/tests/chat.test.ts
+ M frontend/tests/chat_browser.py
+?? docs/project/mockups/text-first/
+?? docs/project/reviews/social-publishing-saas-research-2026-11-15.md
+```
+
 
 ## Changes by message are a set of fields — handoff of 2026-11-15, later session (READ FIRST)
 
@@ -32,11 +69,13 @@ The paid check (the user's word, USD 0.0304) showed the plan's style kept for re
 
 **Landmine:** the user's note of 2026-11-15, "just noted": the image model invents the features it draws when asked for "4 lines of features" (AGENTS.md forbids invented specifications; the check's extra-text point is the only guard). Do not present this as verified product facts.
 
-**The rest of the audit (user request, later the same day): a draft only, nothing built.** Requirements block "Amendment of 2026-11-15, second" and design D-TEXT-FIRST-006 are in the documents, both marked NOT approved: the design review and the devil's advocate rejected the draft (reviews/text-first-d006-*-2026-11-15.md). Uncommitted: `docs/project/designs/text-first-generation.md`, `requirements/text-first-generation.md`, `TODO.md`, `HANDOFF.md`, the two review reports.
+**The rest of the audit (user request, later the same day, then "you can go full automation"): built, committed locally, NOT pushed.** A first design was rejected in review and by the devil's advocate; a paid baseline showed that a coloured word and the brand's lettering already work as scene adjustments; what was built is D-TEXT-FIRST-006 v2 (ADR-103): a style change on a poster (card kind `restyle`), the shop's logo and contact asked in the first message, one sentence to « Pas à pas » for identity on an existing poster and for another format, and a guard that refuses every change from an older open tab (`X-Affiche-Bundle`, 409 `bundle_outdated`). Tasks T-CHAT-REST-001 and 002 in TODO.md; reviews in reviews/t-chat-rest-001-code-r*.md; paid results in reviews/chat-change-eval-2026-11-15.md.
 
-**T-CHAT-SET-BASELINE done** (USD 0.1722): a coloured word and the brand's lettering already work as scene adjustments; a change of style does not. Report: reviews/chat-change-eval-2026-11-15.md, last section. Spend of the day for this work: USD 0.6413.
+**Landmine for the next deploy:** the bundle now on the pilot is refused on every change by this backend until the page is reloaded (« Cette page est une ancienne version… »), in « Pas à pas » too. Backend and frontend go out together; an open tab must be reloaded after it. Raise `BUNDLE` in `frontend/src/api.ts` and `backend/src/affiche/api.py` together when a later change makes an older tab unsafe.
 
-**Exact next step:** the user's choice of what to build from it (a style change as a new plan; the shop's logo and contact asked in the first message; one sentence for another format), each needing a small design first; and his deploy of what is pushed, backend and frontend together. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
+Spend of the day for this work: USD 0.8574, all on the ledger. `backend/data-probe` has fifteen versions of the JBL product, one copy of its poster and one more poster made by the last test.
+
+**Exact next step:** the user's word to push (two local commits since `ecd73d0`), then his deploy, backend and frontend together. Open in TODO.md: T-CHAT-PRICE-NO-COMMA, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take. Spend of the day for this work: USD 0.4691, all on the ledger; `backend/data-probe` has ten versions of the JBL poster. Open follow-ups in TODO.md: T-CHAT-D005-TESTS, T-CHAT-CANVAS-LOAD, keeping the text of messages the chat could not take.
 
 **Landmines:**
 - Backend and frontend of this change go out together. An old frontend against this backend answers « Rechargez la page pour continuer. » (`reload_required`) to every change message; nothing is paid.

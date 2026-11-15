@@ -131,7 +131,14 @@ MESSAGES = {
         "card_word_unknown": "Je ne peux pas écrire « {} » : ce mot n’est ni dans votre message ni sur l’affiche.",
         "card_words_first": "Demandez ensuite le changement de scène : il partira de la nouvelle version.",
         "card_accent_removed": "Le mot en couleur est retiré.",
+        "card_format": "Un autre format est une nouvelle affiche : dans Pas à pas, « Style », « Refaire en … ».",
+        "card_identity": "Le logo et le contact de la boutique se règlent dans Pas à pas, « Boutique ».",
+        "card_steps_style": "Cette affiche n’a pas de textes dessinés dans l’image : le style se change dans Pas à pas.",
+        "card_model_dropped": "L’affiche modèle n’est plus suivie.",
+        "card_adjustments_dropped": "Les ajustements de scène demandés avant ne sont pas repris.",
         "reload_required": "Rechargez la page pour continuer.",
+        # An older bundle in an open tab (BUNDLE): nothing it sends is saved, and a reload loses what it holds unsaved.
+        "bundle_outdated": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page.",
 }
 
 
@@ -148,6 +155,12 @@ def error_response(request: Request, error: store.Refused):
     if error.code == "rate_limited":
         response.headers["Retry-After"] = "900"
     return response
+
+
+# The frontend bundle a state-changing request must come from (its header X-Affiche-Bundle, frontend/src/api.ts BUNDLE).
+# Raise both together when a change makes an older open tab unsafe: here a tab from before the `restyle` card and the
+# recap's `identity` could pay beside an unresolved card, or for a poster without what was asked (ADR-103).
+BUNDLE = 2
 
 
 class AccessBoundary:
@@ -198,6 +211,12 @@ class AccessBoundary:
                                                          request.cookies.get(auth.COOKIE)) if api_path else None
             if api_path and scope["path"] != "/api/session" and request.state.shop is None:
                 raise store.Refused("unauthenticated", 401)
+            # An older open tab changes nothing and pays nothing: refused here, before any handler. It can still read,
+            # and sign in or out, so a reload always works.
+            bundle = request.headers.get("x-affiche-bundle", "")
+            if (api_path and scope["path"] != "/api/session" and request.method not in ("GET", "HEAD", "OPTIONS")
+                    and not (bundle.isascii() and bundle.isdigit() and len(bundle) < 10 and int(bundle) >= BUNDLE)):
+                raise store.Refused("bundle_outdated", 409)
             length = request.headers.get("content-length", "0")
             if not length.isascii() or not length.isdigit():
                 raise store.Refused("validation_error", 400)

@@ -27,6 +27,8 @@ from test_config import env  # noqa: F401
 from test_poster_drafts import photo
 
 ORIGIN = "https://shop.example"
+# What the frontend sends with every request (api.ts): the test clients are a current bundle.
+HEADERS = {"Origin": ORIGIN, "X-Affiche-Bundle": str(affiche_api.BUNDLE)}
 PASSWORD = os.urandom(12).hex()  # a throwaway credential per test process; nothing is written literally
 
 
@@ -45,7 +47,7 @@ def settings(env, tmp_path, password_hash):
 
 @pytest.fixture
 def client(settings):
-    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as client:
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
         yield client
 
 
@@ -260,7 +262,7 @@ def test_the_built_frontend_is_public_and_everything_under_api_stays_closed(sett
 
     declared = list(paths(app.routes))
     assert len(declared) > 40 and [path for path in declared if not path.startswith("/api/")] == [""]
-    with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as client:
+    with TestClient(app, base_url=ORIGIN, headers=HEADERS) as client:
         page = client.get("/")
         assert page.status_code == 200 and "Atelier" in page.text and page.headers["cache-control"] == "no-cache"
         script = client.get("/assets/app-abc123.js")
@@ -295,17 +297,17 @@ def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
 
 
 def test_session_lasts_90_days_and_a_new_password_ends_every_session(settings):
-    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as first:
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as first:
         login(first)
         token = first.cookies.get(auth.COOKIE)
         with first.app.state.engine.connect() as conn:
             expires = datetime.fromisoformat(conn.exec_driver_sql("SELECT expires_at FROM sessions").scalar_one())
         assert timedelta(days=90)-timedelta(minutes=1) < expires-datetime.now(UTC) <= timedelta(days=90)
     cookie = {"Cookie": f"{auth.COOKIE}={token}"}
-    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as same:
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as same:
         assert same.get("/api/session", headers=cookie).json()["authenticated"]
     settings.shop_password_hash = SecretStr(auth.PASSWORDS.hash(os.urandom(12).hex()))
-    with TestClient(create_app(settings), base_url=ORIGIN, headers={"Origin": ORIGIN}) as changed:
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as changed:
         assert not changed.get("/api/session", headers=cookie).json()["authenticated"]
         with changed.app.state.engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT count(*) FROM sessions").scalar_one() == 0

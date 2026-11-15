@@ -15,10 +15,13 @@ export interface Picture { asset: string; role: Role; warnings?: string[] }
  *  A `change` card (an existing poster, D-TEXT-FIRST-005) is the server's: `effect` says what it costs, `visual_id` the
  *  version it was read for, `words` the fields to set (`scene`: the four words of the new image, whole; `free`: the
  *  document's fields), `instruction_fr` a refinement. Without `effect` it is a card from before (see `normal`).
+ *  A `restyle` card (D-TEXT-FIRST-006) is a whole new image in another `style`, on a fresh plan, with its `words`.
+ *  `identity` (a recap): the shop's logo and contact were asked for the first poster (true), or asked to be left
+ *  off (false).
  *  `said` is the owner's message, for « Annuler »; `whole`: a whole new scene because the drawn words changed. */
 export type Effect = 'refine' | 'scene' | 'free'
 export interface Words { title?: string; price_ar?: number; brand?: string | null; subtitle?: string | null }
-export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
+export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; identity?: boolean; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
   effect?: Effect; words?: Words; instruction_fr?: string; said?: string; whole?: boolean
   /** `ask_photo` only: photos this shop already used for the same product (D-TEXT-FIRST-004). */
   suggestions?: { asset: string; name: string }[] }
@@ -28,7 +31,7 @@ export interface Card { kind: string; name?: string; price_ar?: number; style?: 
 export interface Item { id: string; role: 'owner' | 'app'; text: string; at: number; card?: Card; done?: boolean; pictures?: Picture[]
   spent?: boolean; creation?: string; request?: SceneRequest; job?: string }
 export interface SceneRequest { path: string; body: unknown; revision: number }
-export interface Draft { name: string | null; price_ar: number | null; style: Style | null; pictures: Picture[] }
+export interface Draft { name: string | null; price_ar: number | null; style: Style | null; identity: boolean | null; pictures: Picture[] }
 /** A paid read on its way: its key and exact body, never changed, so that a retry is the same request for the server. */
 export interface Pending { key: string; body: string; text: string }
 export interface JobRow { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
@@ -41,16 +44,21 @@ export interface ChatAdapter {
     stale: Stale
     busy: boolean; look: string; paletteLoading: boolean; cost: string; height: number; error: string; notice: string
     intake: { name: string; price: string; confirmed: boolean }; photos: { asset: string; warnings: string[] }[]; styleReference: string | null
+    /** What the shop's profile holds; `ticked`: the form of « Pas à pas » has the logo or the contact ticked. */
+    shop: Shop
   }
   attach(file: File, role: Role): Promise<{ asset: string; warnings: string[] }>
-  /** `sending` runs right before the editor's paid request leaves, nothing awaited in between; a throw there stops it. */
-  start(card: string, style: Style, smallPhotoAccepted: boolean, sending: (request: SceneRequest) => void): Promise<void>
+  /** `sending` runs right before the editor's paid request leaves, nothing awaited in between; a throw there stops it.
+   *  `identity`: a new poster is made with the logo and the contact that the shop's profile holds (true), or without
+   *  them (false); not given, the form's own ticks decide, as before. */
+  start(card: string, style: Style, smallPhotoAccepted: boolean, sending: (request: SceneRequest) => void, identity?: boolean): Promise<void>
   /** `visual` becomes the poster's version, then the editor's « Ajuster la scène » on it.
    *  `owned` (here and below) runs right before the editor changes anything; a throw there stops it. */
   change(card: string, visual: string, instruction: string, owned: () => void, sending: (request: SceneRequest) => void): Promise<void>
   /** `visual` becomes the poster's version, the card's words are set in the editor, then its « Nouvelle version »:
-   *  look, coloured word and contact stay the editor's. */
-  revise(card: string, visual: string, words: Words, smallPhotoAccepted: boolean, owned: () => void, sending: (request: SceneRequest) => void): Promise<void>
+   *  look, coloured word and contact stay the editor's. With `style`, a fresh plan in that style: the version's model
+   *  image and kept adjustments are not carried. */
+  revise(card: string, visual: string, words: Words, smallPhotoAccepted: boolean, owned: () => void, sending: (request: SceneRequest) => void, style?: Style): Promise<void>
   /** `visual` becomes the poster's version and the document's words are set, saved. Nothing paid. */
   words(visual: string, values: Words, owned: () => void): Promise<void>
   /** The editor's choice of a version for the poster, saved. */
@@ -97,12 +105,15 @@ export function readThread(raw: string | null): { items: Item[]; draft: Draft; m
   let saved: any
   try { saved = JSON.parse(raw ?? 'null') } catch { saved = null }
   // The new poster's thread went to its poster's key: the other tabs follow this pointer instead of rebuilding anything.
-  if (typeof saved?.moved === 'string' && /^[a-f0-9-]{36}$/.test(saved.moved)) return { items: [], draft: { name: null, price_ar: null, style: null, pictures: [] }, moved: saved.moved }
+  if (typeof saved?.moved === 'string' && /^[a-f0-9-]{36}$/.test(saved.moved)) return { items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [] }, moved: saved.moved }
   const items: Item[] = Array.isArray(saved?.items) ? saved.items.filter((item: any) => item && typeof item.id === 'string' && (item.role === 'owner' || item.role === 'app')
     && typeof item.text === 'string' && (item.card === undefined || typeof item.card?.kind === 'string')).map((item: Item) => item.card ? { ...item, card: normal(item.card) } : item) : []
   const draft = saved?.draft ?? {}
   return { items: trim(items), draft: { name: typeof draft.name === 'string' && draft.name ? draft.name : null, price_ar: Number.isSafeInteger(draft.price_ar) && draft.price_ar >= 0 ? draft.price_ar : null,
-    style: isStyle(draft.style) ? draft.style : null, pictures: Array.isArray(draft.pictures) ? draft.pictures.filter(picture) : [] } }
+    // A draft saved by a bundle from before `identity` has no such key: the choice the owner made is still on the last
+    // recap of the thread (an old tab that was refused rebuilds its recap without it).
+    style: isStyle(draft.style) ? draft.style : null, identity: typeof draft.identity === 'boolean' ? draft.identity
+      : 'identity' in draft ? null : [...items].reverse().find(item => typeof item.card?.identity === 'boolean')?.card!.identity ?? null, pictures: Array.isArray(draft.pictures) ? draft.pictures.filter(picture) : [] } }
 }
 export const movedTo = (creation: string) => JSON.stringify({ moved: creation })
 export function readPending(raw: string | null): Pending | null {
@@ -138,9 +149,18 @@ export const fate = (job: { status: string }): Fate => job.status === 'queued' |
 
 /** The last six lines, for the reader (POST /api/reads `history`). */
 export const lines = (items: Item[]) => items.filter(item => item.text.trim()).slice(-6).map(item => ({ role: item.role, text: item.text.trim().slice(0, 500) }))
-/** The draft as the reader takes it: only uploaded pictures count. */
+/** The draft as the reader takes it: only uploaded pictures count. `identity` only when the owner said it, on or off:
+ *  the body is otherwise the one from before the field. */
 export const wireDraft = (draft: Draft) => ({ name: draft.name, price_ar: draft.price_ar, style: draft.style,
-  product_photos: Math.min(PRODUCT_PHOTOS, draft.pictures.filter(item => item.role === 'product').length), inspiration: draft.pictures.some(item => item.role === 'inspiration') })
+  product_photos: Math.min(PRODUCT_PHOTOS, draft.pictures.filter(item => item.role === 'product').length), inspiration: draft.pictures.some(item => item.role === 'inspiration'),
+  ...(draft.identity === null ? {} : { identity: draft.identity }) })
+export interface Shop { logo: boolean; contact: boolean; ticked: boolean }
+/** The recap's line for the shop's logo and contact. Asked for: what the profile holds is what the poster gets. Asked
+ *  off: said only when the form's ticks would have put one on; otherwise there is nothing to say. */
+export const identityLine = (shop: Shop, asked: boolean) => !asked ? shop.ticked ? 'Sans le logo ni le contact de la boutique' : ''
+  : shop.logo && shop.contact ? 'Avec le logo et le contact de la boutique'
+  : shop.logo ? 'Avec le logo de la boutique' : shop.contact ? 'Avec le contact de la boutique'
+  : 'La boutique n’a pas encore de logo ni de contact : ajoutez-les dans Pas à pas.'
 export const complete = (draft: Draft) => !!draft.name && draft.price_ar !== null && draft.pictures.some(item => item.role === 'product')
 
 /** One paid tap, never two: true only for the first tap on a card. The caller saves the thread before the request leaves. */
@@ -149,8 +169,10 @@ export function spend(items: Item[], id: string) {
   if (!item || item.spent) return false
   return item.spent = true
 }
-/** The cards that pay for a version. */
-export const paid = (card?: Card) => card?.kind === 'recap' || card?.kind === 'change'
+/** The cards of an existing poster's change. */
+export const changes = (card?: Card) => card?.kind === 'change' || card?.kind === 'restyle'
+/** The cards that pay for a version. A kind this bundle does not know is text: it pays for nothing. */
+export const paid = (card?: Card) => card?.kind === 'recap' || changes(card)
 /** A card as the chat uses it, at the two places one enters (the stored thread, a read's answer). A card from before
  *  D-TEXT-FIRST-005 had a kind: `change: 'scene'` is a refinement; `change: 'price'` sets the price alone and has no
  *  `effect` (see `effectOf`). `previous` is no longer kept: `state.stale` says what the image still shows. */
@@ -163,7 +185,7 @@ export function normal({ change, previous, ...card }: Card & { change?: unknown;
 /** What a change card costs: the server's `effect`. A card from before has none and follows the rule it was made
  *  under, on the selected version: a price drawn in the image (an integer `headline.price_ar`), or `whole`, is a new
  *  scene; a price that is a layer changes without a new image, nothing to pay. */
-export const effectOf = (card: Card, selected?: Pick<Visual, 'headline'>): Effect => card.effect ?? (card.whole || Number.isInteger(selected?.headline?.price_ar) ? 'scene' : 'free')
+export const effectOf = (card: Card, selected?: Pick<Visual, 'headline'>): Effect => card.kind === 'restyle' ? 'scene' : card.effect ?? (card.whole || Number.isInteger(selected?.headline?.price_ar) ? 'scene' : 'free')
 export const CHANGE_BUTTONS: Record<Effect, string> = { refine: 'Créer', scene: 'Refaire l’affiche', free: 'Changer' }
 /** A new message or card replaces the open questions and recaps before it: only the latest may be tapped. */
 export function supersede(items: Item[]) {

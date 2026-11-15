@@ -21,7 +21,7 @@ from .models import MAX_PRICE, Id, Model, Name, Offer, canonical, format_price
 from .planner import ClaudePlanner, PlannerError
 from .plans import Headline, brand_in_title, name_words, screen_headline, wire_schema
 from .store import Refused, _owned, _sha, check_key, get_creation
-from .visuals import RefinementRequest, baked_headline, listed_visuals
+from .visuals import RefinementRequest, kept_adjustments, listed_visuals
 
 log = logging.getLogger(__name__)
 TIMEOUT_S = 20  # the whole provider call; the client gives up at 30 s
@@ -41,7 +41,8 @@ SYSTEM = (
     "model as the owner wrote them, without the price. When the owner corrects part of the draft's product (a "
     "colour, a variant, a model number), return the full corrected product_name built from the draft's name. price_ar: the price in ariary, only when written in digits "
     "in this message; null when two different prices are written. instruction_fr: scene_change only, the change "
-    "in French, with no word about the title or the price."
+    "in French, with no word about the title or the price. identity: true when the owner asks for the shop's logo "
+    "or contact on the poster, false when the owner asks to leave them off."
 )
 # An existing poster (D-TEXT-FIRST-005): the rule of each field is its description in the schema, made from FIELDS.
 POSTER_SYSTEM = (
@@ -52,6 +53,7 @@ POSTER_SYSTEM = (
 )
 
 Style = Literal["clair", "couleur", "sombre"]
+STYLES = {"clair": "Studio clair", "couleur": "Couleurs du produit", "sombre": "Luxe sombre"}  # as chat.ts STYLES
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
@@ -61,6 +63,9 @@ class Draft(Model):
     style: Style | None = None
     product_photos: int = Field(ge=0, le=3)
     inspiration: bool
+    # The shop's logo and contact for the first poster: asked for, or asked to be left off. Omitted when the owner
+    # said neither, so earlier requests keep their hash.
+    identity: bool | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class Line(Model):
@@ -90,6 +95,7 @@ class Fields(Model):
     price_ar: int | None
     style: Style | None
     instruction_fr: str | None
+    identity: bool | None
 
 
 # An allowlist (review r3): an amount is made only of whole tokens that are ASCII digits, before a unit token.
@@ -214,7 +220,7 @@ class Row(NamedTuple):
     layer: str | None = None  # the document's offer field that holds it when the version does not draw it
 
 
-SCENE = "instruction_fr"
+SCENE, STYLE = "instruction_fr", "style"
 # The editor's fields that the chat can change on a poster (D-TEXT-FIRST-005). The model's schema, the checks, the
 # card's lines and the "what I can change" sentence are made from this table. Adding a field is one row here.
 FIELDS = (
@@ -228,11 +234,16 @@ FIELDS = (
     Row("price_ar", int, "The new price in ariary, only when written in digits in this message; null when two "
         "different prices are written.", "le prix", "Prix", _price, layer="price_ar"),
     # Only whether it is null is used: the adjustment sent is the owner's own message, as typed in « Réglages » (ADR-102).
-    Row(SCENE, str, "Not null when the owner asks anything of the picture that is not a new title, brand, subtitle or "
-        "price: the background, the light, the setting, how the product or the brand's mark is drawn, the size or "
-        "place of anything, icons, a list of features, a new try. A few words in French saying what.",
+    Row(SCENE, str, "Not null when the owner asks anything of the picture that is not a new title, brand, subtitle, "
+        "price or style: the background, the light, the setting, how the product or the brand's mark is drawn, the "
+        "size or place of anything, icons, a list of features, a new try. A few words in French saying what.",
         "l’image (fond, lumière, logo, caractéristiques, mise en scène)", "Scène", _scene),
+    # Not a word of the poster: a whole new image on a fresh plan, its own card kind (D-TEXT-FIRST-006).
+    Row(STYLE, Style, "Not null only when the owner asks for another of the three provided styles, by its name or its "
+        "plain description: clair = Studio clair, a light studio; couleur = Couleurs du produit, the product's own "
+        "colours; sombre = Luxe sombre, dark and premium.", "le style", "Style", lambda *_: None),
 )
+APART = (SCENE, STYLE)  # the rows that are not words of the poster
 REMOVED = "retiré"
 
 
@@ -245,6 +256,13 @@ def poster_fields() -> type[Model]:
                                                                 "the poster; empty otherwise.")),
                         # The second screen of a scene adjustment (ADR-102): a list of phrasings cannot be complete,
                         # the reader judges the meaning. Used only to refuse, never to allow.
+                        # Answered by one sentence to « Pas à pas » (D-TEXT-FIRST-006): the chat changes neither.
+                        format=(bool | None, Field(description="True when the owner asks for another format or size "
+                                                   "of the poster (story, square, portrait); null otherwise.")),
+                        identity=(bool | None, Field(description=(
+                            "Not null when the owner asks about the shop's own logo or contact on the poster: true to "
+                            "add or change them, false to take them off. Null for a manufacturer's or product brand's "
+                            "logo, which is the picture's matter."))),
                         commercial=(bool, Field(description=(
                             "True when the message asks the picture to show or change a price, an amount of money, a "
                             "discount, a promotion, a warranty or a free offer, in any wording or language, or asks to "
@@ -259,20 +277,26 @@ def _found(pattern: str, message: str) -> str | None:
 def stub_read(request: ReadRequest):
     """PLANNER_PROVIDER=stub: a deterministic parser, for the tests, the smoke and the free demo."""
     low, amounts = request.text.lower(), candidate_amounts(request.text)
-    fields = {"product_name": None, "price_ar": amounts[0] if amounts else None, "style": None, "instruction_fr": None}
+    fields = {"product_name": None, "price_ar": amounts[0] if amounts else None, "style": None, "instruction_fr": None,
+              "identity": None}
     if request.creation_id:
         found = {"title": _found(r"(?<!sous-)\btitre\s+(.+)", request.text),
                  "brand": _found(r"(?<!sans )\bmarque\s+(.+)", request.text),
                  "subtitle": _found(r"(?<!sans )\bsous-titre\s+(.+)", request.text),
-                 "price_ar": fields["price_ar"], SCENE: request.text if re.search(r"fond|lumière|logo|icône|caractéristique", low) else None}
+                 "price_ar": fields["price_ar"], SCENE: request.text if re.search(r"fond|lumière|logo|icône|caractéristique", low) else None,
+                 STYLE: _found(r"\b(?:style|luxe|studio)\s+(clair|couleur|sombre)\b", low)}
         return poster_fields()(**{row.name: found.get(row.name) for row in FIELDS}, commercial=False, remove=[
-            name for name, word in (("brand", "marque"), ("subtitle", "sous-titre")) if f"sans {word}" in low])
+            name for name, word in (("brand", "marque"), ("subtitle", "sous-titre")) if f"sans {word}" in low],
+            format="format" in low or None, identity=bool(re.search(r"(?:logo|contact) de la boutique", low)) or None)
     style = _STYLES.search(low)
     tokens = _tokens(request.text)
     cut = {index for first, unit, _values in _amounts(tokens) for index in range(first, unit + 1)}
     whole = all(re.fullmatch(_PURE, token, re.ASCII) for token in tokens)
     rest = "" if whole else _STYLES.sub("", " ".join(token for index, token in enumerate(tokens) if index not in cut))
-    fields |= {"style": style[1] if style else None, "product_name": rest.strip(" \t\n,;:.!?-–—") or None}
+    identity = re.search(r"\b(avec|sans) (?:le )?(?:logo|contact)\b.*", rest, re.I | re.S)
+    rest = rest[:identity.start()] if identity else rest
+    fields |= {"style": style[1] if style else None, "product_name": rest.strip(" \t\n,;:.!?-–—") or None,
+               "identity": identity[1].lower() == "avec" if identity else None}
     known = any(value is not None for value in fields.values())
     return Fields(intent="describe" if known else "other", **fields)
 
@@ -311,12 +335,18 @@ def _change(fields, request: ReadRequest, poster: dict, messages: dict) -> dict:
     unclear = say("unclear", "card_unclear_poster", ", ".join(row.label for row in FIELDS))
     if fields is None:
         return unclear
+    # Neither is changed from the chat (D-TEXT-FIRST-006): one sentence to « Pas à pas », alone.
+    if fields.format:
+        return say("steps", "card_format")
+    if fields.identity is not None:
+        return say("steps", "card_identity")
     image, document = poster["image"], poster["document"]
     # The document's title and price are the owner's latest words, drawn or not yet (as « Nouvelle version » uses them).
     current = image | document
-    asked = {name: value for name in rows if name != SCENE and (value := _given(getattr(fields, name))) is not None}
+    asked = {name: value for name in rows if name not in APART and (value := _given(getattr(fields, name))) is not None}
     asked |= dict.fromkeys(fields.remove)
     signal = _given(getattr(fields, SCENE)) is not None  # the message asks something of the picture
+    style = getattr(fields, STYLE)  # another style: a whole new image, with the words as a scene card builds them
 
     def line(name, value):
         shown = (REMOVED if value is None else format_price(value) if rows[name].type is int
@@ -333,9 +363,12 @@ def _change(fields, request: ReadRequest, poster: dict, messages: dict) -> dict:
                 "instruction_fr": note}
 
     # 1. Words first: a new scene cannot take an adjustment; it is asked after, from the new version.
-    dropped = bool(asked and signal)
-    if not asked:
+    dropped = bool((asked or style) and signal)
+    if not asked and not style:
         return adjust(unclear) if signal else unclear
+    # The adapter redraws a version through its drawn texts: without them the style is the editor's matter.
+    if style and not image:
+        return say("steps", "card_steps_style")
     # A brand and a subtitle exist only as drawn words (ADR-099 exception): not on a version without them.
     if any(name not in image and not rows[name].layer for name in asked):
         return say("steps")
@@ -362,8 +395,8 @@ def _change(fields, request: ReadRequest, poster: dict, messages: dict) -> dict:
                     return say("refused", "card_word_unknown", word)
     # 5. The result and its effect, one rule for every field.
     result = current | asked
-    if any(result[name] != image[name] for name in image):
-        effect, words = "scene", {name: result.get(name) for name in rows if name != SCENE}
+    if style or any(result[name] != image[name] for name in image):
+        effect, words = "scene", {name: result.get(name) for name in rows if name not in APART}
         # Each line is a difference with what the image shows (a layer price: with the document).
         changed = {name: value for name, value in result.items() if value != (document | image)[name]}
         # A title kept from the document (edited in steps, never drawn) is drawn too: its rule applies now, not at
@@ -380,8 +413,15 @@ def _change(fields, request: ReadRequest, poster: dict, messages: dict) -> dict:
     accent = poster["accent_word"]
     if effect == "scene" and accent and accent in image["title"] and accent not in result["title"]:
         lines.append(messages["card_accent_removed"])  # the editor drops a coloured word that left the title
+    if style:
+        # A fresh plan in the new style: the model image and the adjustments kept on the chain would win over it.
+        lines = [line(STYLE, STYLES[style]), *lines, *(messages[key] for key, lost in (
+            ("card_model_dropped", poster["model_image"]), ("card_adjustments_dropped", poster["adjusted"])) if lost)]
     if dropped:
         lines.append(messages["card_words_first"])
+    if style:  # its own kind: a tab on an older bundle shows it as text and cannot pay for it
+        return {"kind": "restyle", "text_fr": "\n".join(lines), "visual_id": poster["visual_id"], "style": style,
+                "words": words}
     return {"kind": "change", "text_fr": "\n".join(lines), "visual_id": poster["visual_id"], "effect": effect,
             "words": words}
 
@@ -410,6 +450,8 @@ def build(fields, request: ReadRequest, messages: dict, poster: dict | None = No
         draft["price_ar"] = price
     if fields.style:
         draft["style"] = fields.style
+    if fields.identity is not None:
+        draft["identity"] = fields.identity
     if refusal:
         return card("ask_product", refusal)
     if not draft["name"]:
@@ -419,7 +461,8 @@ def build(fields, request: ReadRequest, messages: dict, poster: dict | None = No
         return card("ask_price")
     if not draft["product_photos"]:
         return card("ask_photo")
-    return card("recap", name=draft["name"], price_ar=draft["price_ar"], style=draft["style"])
+    return card("recap", name=draft["name"], price_ar=draft["price_ar"], style=draft["style"],
+                **({"identity": draft["identity"]} if draft.get("identity") is not None else {}))
 
 
 def suggestions(engine, shop, name: str) -> list[dict]:
@@ -476,12 +519,17 @@ def poster_words(conn, shop, document: dict, visual_id: str) -> dict:
     when it draws no words), and the document's. The version must be one that the poster's listing shows."""
     if visual_id not in listed_visuals(conn, shop, document):
         raise Refused("not_found", 404)
-    baked = baked_headline(conn, shop, _owned(conn, "poster_visuals", shop, visual_id)) or {}
-    words = [row for row in FIELDS if row.name != SCENE]
+    job = _owned(conn, "poster_jobs", shop, _owned(conn, "poster_visuals", shop, visual_id)["job_id"])
+    payload = json.loads(job["input_json"])
+    baked = payload.get("headline") or {}  # as visuals.baked_headline
+    words = [row for row in FIELDS if row.name not in APART]
     if baked.get("brand_in_title"):  # the scene route did not draw a brand that was inside the title
         baked = baked | {"brand": None}
     # A version with drawn words draws its title, brand and subtitle (null: none); its price only when it was asked to.
     return {"visual_id": visual_id, "accent_word": baked.get("accent_word"),
+            # What a change of style does not carry, said on its card.
+            "model_image": bool(payload.get("style_reference_asset")),
+            "adjusted": bool(kept_adjustments(conn, shop, visual_id)),
             "image": {row.name: baked.get(row.name) for row in words if baked and (row.name in baked or not row.layer)},
             "document": {row.name: document["offer"][row.layer] for row in words if row.layer}}
 

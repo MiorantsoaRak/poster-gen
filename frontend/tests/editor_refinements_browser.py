@@ -186,7 +186,7 @@ def run():
                     saved = page.request.get(endpoint).json()
                     original_logo = next(l for l in saved['document']['formats']['feed']['layers'] if l['role'] == 'logo')
                     original_logo.update(x=54, y=1152.9, width=129.6, height=129.6)
-                    response = page.request.put(endpoint, data=saved['document'], headers={'Origin': smoke.ORIGIN, 'If-Match': f'"{saved["revision"]}"', 'Idempotency-Key': str(uuid4())})
+                    response = page.request.put(endpoint, data=saved['document'], headers={'Origin': smoke.ORIGIN, 'X-Affiche-Bundle': '2', 'If-Match': f'"{saved["revision"]}"', 'Idempotency-Key': str(uuid4())})
                     assert response.ok, response.text()
                     page.reload()
                     page.get_by_role('button', name='Nouvelle version', exact=False).click()

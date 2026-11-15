@@ -128,10 +128,13 @@ function useStyleAccent() { headline.value.accent_colour = styleAccent.value; ac
 // scene after a price change is the same poster and not a different one.
 // owned: the chat's check (ADR-100), run after the one wait and before anything is changed. With it, a version made
 // without a saved style also leaves the editor's saved style, whose lettering would otherwise go into the request.
-async function restoreHeadline(owned?: () => void) {
+// look false: only the drawn settings; the caller picks another style next (a style change from the chat), so the
+// version's own is not looked up, and a removed one that cannot be read does not stop it.
+async function restoreHeadline(owned?: () => void, look = true) {
   const drawn = currentVisual.value?.headline as Record<string, any> | null | undefined
   if (!drawn) return
-  if (drawn.look_id && savedLooks.value.some(item => item.id === drawn.look_id)) pickLook(drawn.look_id)
+  if (!look) { /* the caller's pickLook follows */ }
+  else if (drawn.look_id && savedLooks.value.some(item => item.id === drawn.look_id)) pickLook(drawn.look_id)
   else if (drawn.look_id) {
     // Removed since: the server still has it. If it cannot be read, the poster opens without it and says nothing false.
     let kept: SavedLook | null = null
@@ -1381,12 +1384,20 @@ function setWords(words: Words) {
 }
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
+    shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
     busy: computed(() => busy.value || checking.value), cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
-  start: (key, style, smallPhotoAccepted, sending) => told(async () => {
+  start: (key, style, smallPhotoAccepted, sending, identity) => told(async () => {
     pickLook(style)
     const reference = styleReference.value  // adopt() empties it for the new poster
-    if (!creation.value) await createPoster()
+    if (!creation.value) {
+      // The shop's logo and contact, as the message said (D-TEXT-FIRST-006), through the form's own selection: asked
+      // for, what the profile holds; asked off, neither; not said, the form's ticks as they are. After a failure the
+      // form has its own ticks again; a success empties it, as always.
+      const ticked = { ...include }, { logo, contact } = chat.state.shop
+      if (identity !== undefined) Object.assign(include, identity ? { logo, contact } : { logo: false, contact: false })
+      try { await createPoster() } catch (reason) { Object.assign(include, ticked); throw reason }
+    }
     styleReference.value = reference
     if (smallPhotoAccepted) lowResAccepted.value = true
     // « Couleurs du produit » reads the photo once the poster exists; colours that cannot be read give « Studio clair ».
@@ -1399,7 +1410,7 @@ const chat: ChatAdapter = {
     refinement.value = instruction  // the editor's own field: the request is the one of « Ajuster la scène »
     await refineScene(key, sending)
   }),
-  revise: (key, visual, words, smallPhotoAccepted, owned, sending) => told(async () => {
+  revise: (key, visual, words, smallPhotoAccepted, owned, sending, style) => told(async () => {
     await pickVersion(visual, owned)
     // Without drawn texts the request would not carry the words the card lists. Asked before the version's settings
     // are restored below: the owner switched them off on purpose, and a card does not switch them back on.
@@ -1409,10 +1420,19 @@ const chat: ChatAdapter = {
     // The new image keeps the version's style (ADR-100): its drawn settings, its model image and its plan, which
     // holds the direction, the colours and the light. The editor's current style is not used.
     const base = currentVisual.value!
-    await restoreHeadline(owned)
+    await restoreHeadline(owned, !style)
     styleReference.value = base.style_reference_asset ?? null
     setWords(words)
     if (smallPhotoAccepted) lowResAccepted.value = true
+    if (style) {
+      // Another style (D-TEXT-FIRST-006): a fresh plan. The version's model image and its kept adjustments would win
+      // over the new style (ADR-101), so neither is carried; its drawn settings are, restored above.
+      pickLook(style)
+      if (paletteLoading.value) { await new Promise<void>(done => { const stop = watch(paletteLoading, on => { if (!on) { stop(); done() } }) }); owned() }
+      if (paletteBlocked.value) throw new Error(paletteBlocked.value)
+      styleReference.value = null
+      return await createScene(key, sending, owned)
+    }
     const kept = base.plan_id ? await api<any>(`/api/plans/${base.plan_id}`, { quiet: true }) : null
     owned()
     keptAlign = base.headline?.signature_align ?? null; keptFrom = base.id

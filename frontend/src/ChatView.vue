@@ -7,7 +7,7 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read } from './api'
-import { cardButton, CHANGE_BUTTONS, CHAT_PREFIX, complete, effectOf, fate, final, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, staleLine, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
+import { cardButton, CHANGE_BUTTONS, changes, CHAT_PREFIX, complete, effectOf, fate, final, identityLine, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, staleLine, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
 import { staleWords } from './words'
@@ -17,7 +17,7 @@ const emit = defineEmits<{ steps: [] }>()
 const state = props.adapter.state
 
 interface Unsaved { id: string; role: Role; file: File; url: string; status: 'sending' | 'done' | 'failed'; asset?: string; warnings: string[]; error: string }
-const items = ref<Item[]>([]), draft = reactive<Draft>({ name: null, price_ar: null, style: 'clair', pictures: [] })
+const items = ref<Item[]>([]), draft = reactive<Draft>({ name: null, price_ar: null, style: 'clair', identity: null, pictures: [] })
 const tray = ref<Unsaved[]>([]), text = ref(''), reading = ref(false), starting = ref(false), typing = ref(false), smallAccepted = ref(false), needsAgreement = ref(false)
 const root = ref<HTMLElement>(), thread = ref<HTMLElement>(), field = ref<HTMLTextAreaElement>(), picker = ref<HTMLInputElement>(), height = ref(0)
 // The read on its way, apart from the text being typed; the ref is the copy that holds when storage fails.
@@ -48,10 +48,10 @@ const looked = ref<string | null>(null), listed = ref(false), left = ref<number 
 const shown = computed(() => versions.value.find(visual => visual.id === (looked.value ?? state.selected)) ?? versions.value[0])
 const mods = computed(() => modifications(versions.value))
 // What a change card costs: the server's word; a card from before follows the selected version (chat.ts effectOf).
-const effect = (item: Item) => item.card?.kind === 'change' ? effectOf(item.card, versions.value.find(visual => visual.id === state.selected)) : null
+const effect = (item: Item) => changes(item.card) ? effectOf(item.card!, versions.value.find(visual => visual.id === state.selected)) : null
 const free = (item: Item) => effect(item) === 'free'
 // The version a change card acts on: the one it was read for; a card from before has none, and takes the selected one.
-const target = (card: Card) => (card.effect && card.visual_id) || state.selected || ''
+const target = (card: Card) => ((card.effect || card.kind === 'restyle') && card.visual_id) || state.selected || ''
 const numberOf = (visual: Visual) => versions.value.length - versions.value.indexOf(visual)
 const versionOf = (item: Item) => versions.value.find(visual => visual.id === item.card?.visual_id)
 const stateNames = { pending_review: 'à vérifier', approved: 'approuvée', rejected: 'refusée' }
@@ -79,7 +79,7 @@ const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' 
 const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
 // An untapped change card can be taken back: « Annuler ».
-const untapped = (item: Item) => item.card?.kind === 'change' && !item.spent && !item.done
+const untapped = (item: Item) => changes(item.card) && !item.spent && !item.done
 // The document holds words that the selected image does not show (a paid card that made no image, an edit in « Pas à
 // pas »): said from the editor's own comparison, never from what a card remembers, on the newest untapped change card
 // or under the poster. Not while a paid card waits for its answer: its image may still come.
@@ -133,7 +133,7 @@ const add = (item: Partial<Item> & { role: Item['role'] }) => { items.value.push
 const app = (line: string, card?: Card) => add({ role: 'app', text: line, card })
 // A new question or recap replaces the open ones: only the latest may be tapped.
 // On an existing poster it shows what the next scene draws: the document's own words.
-const recap = (line = '') => { supersede(items.value); app(line, { kind: 'recap', name: state.offer?.title ?? draft.name ?? undefined, price_ar: state.offer?.price_ar ?? draft.price_ar ?? undefined, style: draft.style }) }
+const recap = (line = '') => { supersede(items.value); app(line, { kind: 'recap', name: state.offer?.title ?? draft.name ?? undefined, price_ar: state.offer?.price_ar ?? draft.price_ar ?? undefined, style: draft.style, ...(draft.identity !== null && !state.creation ? { identity: draft.identity } : {}) }) }
 // The editor's form fields are the same refs: the draft fills them, so the switch to « Pas à pas » loses nothing.
 function sync() {
   if (state.creation) return
@@ -240,13 +240,13 @@ async function ask() {
   reading.value = true
   try {
     // Sent in the same turn as the check above: nothing is awaited in between.
-    const answer = await read<{ card: Card & { text_fr: string }; draft: { name: string | null; price_ar: number | null; style: Style | null } }>(record)
+    const answer = await read<{ card: Card & { text_fr: string }; draft: { name: string | null; price_ar: number | null; style: Style | null; identity?: boolean } }>(record)
     if (!mine(at) || key !== from) return  // closed, taken, or another thread: the record stays, its answer is asked again, unpaid
     clearPending(record.key)
-    Object.assign(draft, { name: answer.draft.name, price_ar: answer.draft.price_ar, style: answer.draft.style ?? draft.style })
+    Object.assign(draft, { name: answer.draft.name, price_ar: answer.draft.price_ar, style: answer.draft.style ?? draft.style, identity: answer.draft.identity ?? null })
     const { text_fr, ...card } = answer.card
     if (card.kind !== 'unclear') supersede(items.value)
-    app(text_fr, card.kind === 'change' ? { ...normal(card), said: record.text } : card)
+    app(text_fr, changes(card) ? { ...normal(card), said: record.text } : card)
   } catch (reason) {
     if (!mine(at) || key !== from) return
     const code = reason instanceof ApiError ? reason.code : ''
@@ -292,9 +292,9 @@ async function create(item: Item) {
   const owned = () => { if (!mine(at)) throw new Stopped() }
   const sending = (request: SceneRequest) => { owned(); item.request = request; save() }
   try {
-    await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending)
+    await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending, card.identity)
       : kind === 'refine' ? props.adapter.change(item.id, visual, card.instruction_fr!, owned, sending)
-      : props.adapter.revise(item.id, visual, card.words ?? {}, smallAccepted.value, owned, sending))
+      : props.adapter.revise(item.id, visual, card.words ?? {}, smallAccepted.value, owned, sending, card.kind === 'restyle' ? card.style! : undefined))
   } catch (reason) { failure = reason }
   if (!mine(at)) return  // closed, or the chat was taken (even if taken back since): the tab holding it goes on from what was kept
   starting.value = false
@@ -397,7 +397,7 @@ async function reconcile() {
   else if (outcome === 'made') {
     // A change's version becomes the poster's, as a tap on it in the editor (the export renders the selected one). The
     // choice is saved before the card is closed: after a reload in between, it is made again.
-    if (open.card!.kind === 'change' && job.result_ref) {
+    if (changes(open.card) && job.result_ref) {
       checking = true
       try { await props.adapter.select(job.result_ref, () => { if (!mine(at)) throw new Stopped() }) }
       catch (reason) {
@@ -500,10 +500,10 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
       <div class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
-        <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: item.card?.kind === 'change' }">{{ lineOf(item) }}</p>
+        <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
         <template v-if="item.card?.kind === 'recap'">
           <div v-if="draft.pictures.length" class="pics"><span v-for="picture in draft.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
-          <p class="recap"><b translate="no">{{ item.card.name }}</b><span class="recap-price">{{ price(item.card.price_ar) }}</span><small>Style : {{ styleName(item) }}</small></p>
+          <p class="recap"><b translate="no">{{ item.card.name }}</b><span class="recap-price">{{ price(item.card.price_ar) }}</span><small>Style : {{ styleName(item) }}</small><small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small></p>
         </template>
         <template v-for="version in item.card?.kind === 'result' ? [versionOf(item)] : []" :key="item.id">
           <template v-if="version">
