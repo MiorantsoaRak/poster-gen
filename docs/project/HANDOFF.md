@@ -96,7 +96,11 @@
 
 **Since then (user: "You have the autonomy, start with what you consider more important", ADR-106):** `requirements/multi-shop.md` approved and amended; [design multi-shop v4](designs/multi-shop.md) approved under the grant (ADR-107) after three review rounds and a devil's advocate (reviews/multi-shop-design-*.md). Six tasks T-MULTI-SHOP-001 to 006 are in TODO.md. **001 to 004 are done and committed locally** (the migration, the password in the database, the rehearsal; sign-in by identifier, bundle 3; the two-shop route test in the suite, spend per shop, the status view for the operator only; the daily provider-spend ceiling per shop, the fair queue, reads under the same guard, the password-change route); 005 is in progress with an Opus subagent; 006 is not started.
 
-**Exact next step:** the result of T-MULTI-SHOP-005 (suspension stops calls where they are sent, for jobs and for reads, also at recovery; the operator command; `deploy/release.sh` with the rehearsal gate; the runbooks and the two stale documents), then its Codex code review, which also checks the extracted release script. Then 006, the riskiest.
+**T-MULTI-SHOP-005 is done and committed locally (2026-11-16):** suspension stops calls where they are sent, the operator command `python -m affiche.shops`, `deploy/release.sh` (rehearsal gate, backup under a deadline, the old container started again on a failure), `deploy/restore.sh` (never starts the service), the `operator` service of `deploy/compose.yml` (no log, no network), the runbooks. Three Codex rounds, all REJECT; the last round's three findings were fixed after it on the user's word and not reviewed again (TODO.md has the detail).
+
+**Exact next step:** T-MULTI-SHOP-006 (everything in the browser; the riskiest), with an Opus subagent, then its Codex code review.
+
+**Landmine:** the deploy scripts and the operator service have run with a fake docker only. T-DEPLOY-DOCKER-RUN (proposed, not confirmed by the user) asks for one real run on a throwaway host before the Release 1 deploy.
 
 **Landmine:** the backend suite failed once on 2026-11-16 with one test whose name was not captured, and passed on every run since (T-SUITE-FLAKE). Run it with `-rf`.
 

@@ -36,7 +36,8 @@ observed session. It does not touch the box.
   Choose a long random shop password (for example `python -c "import secrets; print(secrets.token_urlsafe(18))"`)
   and give it to the owner in person: it is the only thing between the internet and the provider budget.
   The deploy writes these once into the box's `secrets/app.env`, with today's UTC date as the day the cap counts
-  from, then ignores them. Clear them afterwards (`unset AFFICHE_SHOP_PASSWORD_HASH AFFICHE_OPENAI_API_KEY
+  from, then ignores them. At its first start the application copies the hash into shop 1 (`originalphone`) as
+  its password ("The first start after migration 0013"). Clear them afterwards (`unset AFFICHE_SHOP_PASSWORD_HASH AFFICHE_OPENAI_API_KEY
   AFFICHE_ANTHROPIC_API_KEY AFFICHE_SPEND_CAP_USD`).
 - **Never add `--diff` or `--debug`** to the pyinfra command: they print uploaded file contents, which include
   the first deploy's secrets.
@@ -113,7 +114,7 @@ observed session. It does not touch the box.
    French line and the `service_down` envelope, both 503; the neighbours answer 200. Start it again.
 7. **Forged header:** from another network, `curl -s -X POST https://affiches.miorantsoa.app/api/session -H
    "Origin: https://affiches.miorantsoa.app" -H "Content-Type: application/json" -H "X-Forwarded-For:
-   203.0.113.9" -d '{"password":"wrong"}'`, then `sudo docker exec affiche-ia-affiche-ia-1 python -c "import
+   203.0.113.9" -H "X-Affiche-Bundle: 3" -d '{"identifier":"originalphone","password":"wrong"}'`, then `sudo docker exec affiche-ia-affiche-ia-1 python -c "import
    sqlite3; print(sqlite3.connect('/data/affiche.db').execute('SELECT ip FROM login_failures').fetchall())"`:
    the caller's real public address, not `203.0.113.9` and not a `172.` address.
 8. **Restore proof** ("Restore" below), on a development machine.
@@ -127,17 +128,119 @@ cd deploy; pyinfra 89.167.56.26 deploy.py --user deploy -y
 ```
 
 What it does: refuses uncommitted deploy inputs or a `HEAD` that is not on `origin/main` → creates secrets once →
-installs `daily.sh`, `verify.sh` and the cron entry → if the running container already carries the revision,
-skips to verification → otherwise checks the network and 5 GB of free disk, uploads a `git archive`, builds,
-checks the configuration in the new image → **stops the old container** (it first finishes a paid generation
-that is running, up to 5 minutes) → backs the data up with the new image → starts the new container, which
-applies its migrations at start → prunes old images → takes a backup → runs `verify.sh`.
+installs `daily.sh`, `verify.sh`, `restore.sh` and the cron entry → if the running container already carries the revision,
+skips to verification → otherwise checks the network and 5 GB of free disk, uploads a `git archive` and
+`deploy/release.sh` (both from `HEAD`), and runs `release.sh` under the lock that `daily.sh` also takes: it
+builds, checks the configuration in the new image, **rehearses the pending migrations** in the new image →
+**stops the old container** (it first finishes a paid generation that is running, up to 5 minutes) → backs the
+data up with the new image → starts the new container, which applies its migrations at start → prunes old
+images → takes a backup → runs `verify.sh`.
 
-The service is down from the stop to the start: under a minute when no generation is running. A failed build or
-configuration check changes nothing. A failed backup starts the old container again and stops the release.
+The service is down from the stop to the start: under a minute when no generation is running. The worst case is
+bounded: the stop waits 5 minutes at most for a running generation, the check and backup 15 minutes
+(`BACKUP_DEADLINE`, 900 s), then the new container has 3 minutes to become healthy, or, after a failed backup, the
+old container 2 minutes to start again (`START_DEADLINE`): about 23 minutes in all. These deadlines end the
+docker command; if the backup container itself then cannot be removed, the release says so and the service stays
+down until you remove it. A failed build, configuration
+check or rehearsal changes nothing. A failed backup starts the old container again and stops the release ("When
+the backup before the release fails").
 
 **Migrations** are forward-only and run when the container starts. A release that adds one cannot be rolled
 back by deploying older code; see "Rollback".
+
+### The rehearsal: the gate before the stop
+
+Before it stops the old container, `release.sh` makes a fresh copy of the live database and runs the pending
+migrations on the copy, in the new image and with its SQLite (`python -m affiche.rehearse /data/affiche.db`). The
+live database is only read. The rehearsal compares, before and after, the row count and a content hash of each
+table, and the sums of the three spend ledgers. It runs at every release. A release without a migration has
+nothing to rehearse and passes.
+
+The report is kept on the box in `/opt/affiche-ia/last-rehearsal.txt`. pyinfra shows the report only when the
+release stops. To read it after a release that passed:
+`ssh deploy@89.167.56.26 sudo cat /opt/affiche-ia/last-rehearsal.txt`. Its first line gives the SQLite version,
+the Python version and the revision of the image that ran it.
+
+**When the rehearsal stops the release**, pyinfra prints the report, then `Rehearsal FAILED: nothing was changed,
+the service still runs.`, and fails. The old container still serves. There is nothing to undo.
+1. Read the `REHEARSAL FAILED:` line. It names each table, ledger or check that differs.
+2. Do not release again. Copy the last backup (`/opt/affiche-ia/backups/db/`) to the development machine.
+3. From `backend/`, run `uv run python -m affiche.rehearse <copy>` and fix the migration forward in a new commit.
+4. Release again.
+
+### When the backup before the release fails
+
+After the stop, one container checks for the database and backs it up. Any failure there stops the release before
+the new container starts, so nothing is migrated without a backup. A failure of docker itself also stops it: it
+never passes for a first deploy. pyinfra prints the error (for example `backup FAILED: OSError: [Errno 28] No
+space left on device`, or a line of docker), then:
+
+```
+Backup before the release FAILED (exit 1). Nothing was changed: the new version was not started.
+The previous container is started again.
+```
+
+The old version serves again after its start (a few seconds). Then:
+1. Check that it runs: `sudo docker compose -p affiche-ia ps`.
+2. Read the error above. Check the free disk (`df -h /opt/affiche-ia/backups`) and that `/opt/affiche-ia/backups`
+   belongs to the user 10001.
+3. Correct the cause, then release again with the same command.
+
+If the backup gave no answer within 900 s, the release first prints `Backup before the release FAILED: no answer
+within 900 s (timeout).` After any failed backup the release removes the backup container (`affiche-ia-backup`)
+before it starts the old one. If it cannot, it prints `THE SERVICE IS DOWN: the backup container affiche-ia-backup
+could not be removed.` and starts nothing: run `sudo docker rm -f affiche-ia-backup`, then
+`sudo docker start affiche-ia-affiche-ia-1`.
+
+If the release prints `THE SERVICE IS DOWN: the previous container did not start again`, start it at once with
+`sudo docker start affiche-ia-affiche-ia-1`, then do steps 1 to 3.
+
+### Release 1 (migration 0013: several shops)
+
+The first release with migration 0013 (design: `docs/project/designs/multi-shop.md`, "Release gate"). In this order:
+1. On mx1, run `sudo sh /opt/affiche-ia/daily.sh`. Check that `/opt/affiche-ia/backups/last-backup.json` has
+   today's time.
+2. Optional, the day before: copy that backup's `db/affiche-<stamp>.db` to the development machine. From
+   `backend/`, run `uv run python -m affiche.rehearse <copy>`. It shows the counts early, with the development SQLite.
+3. Run the release command as usual. Its rehearsal runs 0013 on a fresh copy of the live database, in the
+   release image, before anything is stopped.
+4. Read the report. Its first line must show SQLite 3.40.1 (the image's Debian) and the release's revision.
+5. Check the report: each table has the same rows and hash before and after; the version goes from `0012` to
+   `0013`; each `0013 ADDED` line says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
+6. Check that the three ledger sums are the same before and after. Save the whole report as
+   `docs/project/reviews/release-1-rehearsal-<date>.md`.
+7. If the report says `FAILED`, the release stopped before the stop and the old version still serves.
+8. After the release, sign in on the pilot's phone with the identifier `originalphone` and the current password.
+   « Mes affiches » shows the same number of posters as before.
+9. Remove the `SHOP_PASSWORD_HASH` line from `/opt/affiche-ia/secrets/app.env`, then run the recreate command
+   ("Operate").
+
+### The first start after migration 0013
+
+Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH` is read at one start only:
+- At the first start after 0013, the application copies it into shop 1 (`originalphone`). If it is the hash that
+  the old version saw last, the sessions stay and the pilot's phone stays signed in. If it changed, every session
+  ends.
+- At each later start, the application ignores it and logs "SHOP_PASSWORD_HASH is no longer read". Remove it
+  (step 9 above). Change a password with `set-password` ("Shops").
+
+**If the new container does not start after the migration** (the release prints "THE SERVICE IS DOWN" and the
+container's last lines): a failure inside the migration leaves the database at 0012, because the migration is
+one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migration, as
+below, leaves it at 0013: fix forward.
+- The log says "Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set". Give shop 1 a password with
+  the new image, through the operator service (no container log: "Shops"), then start it:
+
+  ```bash
+  REV="$(sudo docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' affiche-ia-affiche-ia-1)"
+  sudo env REVISION="$REV" docker compose -f /opt/affiche-ia/app/deploy/compose.yml run --rm operator python -m affiche.shops set-password originalphone
+  sudo env REVISION="$REV" docker compose -f /opt/affiche-ia/app/deploy/compose.yml up -d --force-recreate --no-build affiche-ia
+  ```
+
+  Give the printed password to the owner in person. Another way: put the pilot's hash back in `app.env` as
+  `SHOP_PASSWORD_HASH`, then run the last command only.
+- Any other error: fix it in a new commit and release again, or restore the backup that the release took just
+  before the start ("Restore").
 
 ## Operate (on the box)
 
@@ -151,22 +254,79 @@ sudo env REVISION=$(sudo docker inspect -f '{{index .Config.Labels "org.opencont
   docker compose -f /opt/affiche-ia/app/deploy/compose.yml up -d --force-recreate --no-build affiche-ia
 ```
 
-`https://affiches.miorantsoa.app/api/status`, after signing in, tells which commit runs, when the last backup
-finished and whether it is late, the spend against the cap, and the failed jobs of the last 24 hours.
+`/api/status` answers the operator only: a caller on the loopback address that also names a loopback host,
+that is, a process inside the container. Through the public address it answers 404 to everyone, signed in or
+not. It tells which commit runs, when the last backup finished and whether it is late, the service's spend
+against the cap, and the failed jobs of the last 24 hours:
+
+```bash
+sudo docker exec affiche-ia-affiche-ia-1 python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/api/status').read().decode())"
+```
+
 For a warning that reaches you without looking: point a free uptime check at
 `https://affiches.miorantsoa.app/api/session` (it answers 200 without a session).
 
 Logs: check once that the box's journal keeps at least 14 days (`journalctl --disk-usage`,
 `/etc/systemd/journald.conf`); it is shared with the other projects, so change it only knowingly.
 
+## Shops (on the box)
+
+Each shop signs in with its identifier and its own password. The operator manages the shops with
+`python -m affiche.shops`. While the service runs, run it inside the running container:
+
+```bash
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops list
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops create <identifier> --name "Nom affiché"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops set-password <identifier>
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops suspend <identifier> --yes
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops enable <identifier>
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-sessions <identifier>   # or --all
+```
+
+- **create** makes an active shop and prints its password once. Give the identifier and the password to the
+  owner in person. An identifier has 3 to 32 letters or digits; case, accents, spaces and punctuation do not
+  count. A phone number is possible in one written form: `034 12 345 67` gives `0341234567`, and
+  `+261 34 12 345 67` gives another identifier. Tell the owner the form you chose.
+- **set-password** prints a new password once and ends every session of that shop, and of no other shop. Use
+  it when the owner forgot his password or lost a phone. If the output of `create` is lost, use it too.
+- **suspend** without `--yes` shows the shop and changes nothing. With `--yes`, the shop cannot sign in and its
+  sessions stop working at once. Its queued jobs are cancelled at no cost, and no further provider call is sent
+  for it. A call already sent finishes, and its result stays in the shop. The sessions are kept, so **enable**
+  reverses a suspension. If the reason is a leaked password, also run `set-password`.
+- **enable** makes the shop and its sessions work again. Its data was never touched. Cancelled jobs stay
+  cancelled.
+- **end-sessions** signs one shop, or every shop (`--all`), out on every device.
+- **list** shows each shop's id, identifier, state, `password` or `no password` (never the password itself),
+  creation day and name.
+
+Exit codes: 0 done; 1 refused (one line on stderr, nothing written); 2 wrong command line. The command never
+migrates: it refuses when the database is not at the version of the image.
+
+**Where a printed password goes.** `docker exec` gives the command's output to your terminal only. Docker's log
+driver (journald here) records the output of the container's main process, not the output of a command run with
+`docker exec`: that is Docker's documented behaviour, not tried on the box. While the service is stopped (a
+restore, a start that failed), use the **operator** service of `deploy/compose.yml` instead. It runs the same
+image on the same data with the same settings, with no container log and no network, and `up` never starts it:
+
+```bash
+REV="$(sudo docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' affiche-ia-affiche-ia-1)"
+sudo env REVISION="$REV" docker compose -f /opt/affiche-ia/app/deploy/compose.yml run --rm operator python -m affiche.shops <command>
+```
+
+Never run `create` or `set-password` with `docker compose run … affiche-ia`: the output of that service goes to
+the journal. If a password reached a log or a screen it must not reach, run `set-password` for that shop: the old
+password stops working, and the shop's sessions end.
+
 ## Secrets (on the box, never in git)
 
-`/opt/affiche-ia/secrets/app.env` (root, 600): `SHOP_PASSWORD_HASH`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`SPEND_CAP_USD`, `SPEND_CAP_SINCE`. Every value in single quotes.
+`/opt/affiche-ia/secrets/app.env` (root, 600): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SPEND_CAP_USD`,
+`SPEND_CAP_SINCE`; `SHOP_PASSWORD_HASH` until step 9 of Release 1 removes it. Optional: `SUPPORT_CONTACT_FR`
+(the contact shown under the sign-in form for a forgotten password) and `SHOP_DAILY_SPEND_USD` (each shop's
+provider spend per UTC day, default 2.00). Every value in single quotes.
 
 - Edit with `sudo nano /opt/affiche-ia/secrets/app.env`, then run the recreate command above.
-- **New shop password** (also when a phone is lost): make a new hash as in "Prerequisites", replace the line,
-  recreate. Every session on every phone ends at that restart.
+- **New shop password** (also when a phone is lost): `python -m affiche.shops set-password <identifier>`
+  ("Shops"). Since migration 0013 a new `SHOP_PASSWORD_HASH` has no effect.
 - **Raising the cap:** change `SPEND_CAP_USD`, recreate. `SPEND_CAP_SINCE` must not be after today (UTC), or
   the application refuses to start.
 - Do not delete `app.env`: the next deploy would ask for the first-deploy variables again.
@@ -185,27 +345,38 @@ machine regularly. This is still to be decided.
 
 ### Restore
 
-```bash
-sudo -i
-exec 9>/opt/affiche-ia/.lock; flock 9                     # keep the nightly backup out of the way
-docker stop affiche-ia-affiche-ia-1                       # stop writes
-ls -lt /opt/affiche-ia/backups/db                         # choose one copy
-docker run --rm -u 10001:10001 -v affiche-ia_data:/data -v /opt/affiche-ia/backups:/backups:ro \
-  --entrypoint sh affiche-ia:$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' affiche-ia-affiche-ia-1) -c '
-  set -e
-  mv /data/affiche.db /data/affiche.db.replaced
-  rm -f /data/affiche.db-wal /data/affiche.db-shm
-  cp /backups/db/<file>.db /data/affiche.db
-  cp -rn /backups/assets/. /data/assets/'
-docker start affiche-ia-affiche-ia-1
-exec 9>&-
-exit
-```
+**A restore rolls back every shop.** Passwords, suspensions and sessions go back to the time of the backup: a
+password reset made after that time is undone, the session of a lost phone works again, a suspended shop can send
+provider calls again, and a shop created after that time is gone. So the service stays stopped until the repairs are
+done. `/opt/affiche-ia/restore.sh` does the part that can be checked, and never starts the service.
+
+1. Choose a copy: `sudo ls -lt /opt/affiche-ia/backups/db`.
+2. Run `sudo sh /opt/affiche-ia/restore.sh <file>`, with the file name only (for example
+   `affiche-20261116T004000Z.db`). Under the lock that the releases and the nightly backup take, it stops the
+   service, puts the copy in place, runs the application's start once in a one-off container (migrations and
+   checks, no server; this brings a backup from before migration 0013 to this version), ends every session and
+   lists the shops. Each run keeps the database it replaces as `/data/affiche.db.before-restore-<time>` (with its
+   `-wal` file) in the volume `affiche-ia_data`, and never overwrites one. A missing asset file is copied beside its
+   place and then renamed, so a copy cut short is done again by the next run.
+3. If a step fails, the script stops with `RESTORE FAILED: <step>. <state>.`: the state says whether the service
+   is stopped and which database is in place. Correct the cause and run the script again, or, if the database was
+   not replaced, start the service again with `sudo docker start affiche-ia-affiche-ia-1`.
+4. On success it ends with `RESTORED: <file> is in place, at this version, with every session ended. THE SERVICE IS
+   STOPPED.`, the list of the repairs and the exact command to run them with the operator service ("Shops"). Redo
+   each `create`, `set-password` and `suspend --yes` made after the time of the backup.
+5. If it says `originalphone has no password (a backup from before migration 0013)`, run `set-password
+   originalphone`, or put the pilot's hash back in `/opt/affiche-ia/secrets/app.env` as `SHOP_PASSWORD_HASH`. With
+   neither, the service refuses to start.
+6. Check with the operator service's `list` that each shop has the state it must have now.
+7. Start the service: `sudo docker start affiche-ia-affiche-ia-1`. Check `journalctl -t affiche-ia --since "10 min
+   ago"`, then sign in.
+8. Give each owner whose password changed after the time of the backup the new password that `set-password` printed.
 
 Never mount `/data` read-only for any of this: a database in write-ahead mode cannot be opened on a read-only
 volume. After a restore, **the ledger has lost the spend made since that backup**, and a generation that was
 reserved at backup time runs again: compare `/api/status` with the provider's dashboard and lower
-`SPEND_CAP_USD` by the difference. Remove `/data/affiche.db.replaced` only when you are satisfied.
+`SPEND_CAP_USD` by the difference. Remove `/data/affiche.db.before-restore-<time>` and its `-wal` file only when you
+are satisfied.
 
 **Proof before the first pilot day (development machine):** copy one `db/affiche-*.db` and `assets/` from the
 box, put them in a new folder as `affiche.db` and `assets/`, start the API on it with `DATA_DIR` set to that
@@ -217,7 +388,8 @@ equal the one shown when it was confirmed.
 
 Code-only releases: `git checkout <previous commit>`, deploy, then `git checkout -` (the previous commit is on
 `origin/main`, so the deploy accepts it). After a release that added a migration: fix forward, or restore the
-backup that the release took just before starting.
+backup that the release took just before starting. A deploy of code older than the database's last migration
+stops at the rehearsal (`No such revision`) and changes nothing.
 
 ## Landmines
 
@@ -243,6 +415,12 @@ backup that the release took just before starting.
 - **The owner's phone** (step 9), and the home-screen icon on a real phone.
 - **A rollback** has never run. (The second release ran on 2026-11-13 at 15:53 UTC: old container stopped, backup with the new image, new container healthy 9 seconds later, second backup; the poster, the profile, the ledger and both sessions were kept.)
 - Disk: 7.9 GB free after the first build (13 GB before). The deploy needs 5 GB; watch it before each release.
+- **The rehearsal step and `release.sh` on the box.** `backend/tests/test_release_script.py` runs `release.sh`
+  with a fake `docker` only (no Docker on the development machine). The real image, its SQLite 3.40.1 and the
+  copy of the live database are proven by the report of the first release that runs it (Release 1, step 4).
+- **`restore.sh`, the operator service and the deadlines**, also with the fake `docker` only
+  (`backend/tests/test_restore_script.py`): that `docker compose run --rm operator` writes nothing to the journal,
+  that `up` and `build` leave the operator service alone (its profile), the real `timeout` around a hung backup, and the removal of a backup container that outlived it.
 
 Proven on 2026-11-13: the image builds on the box; the hardened container starts and stays healthy; Chromium
 starts in it; the Caddy block (valid, and the French 503 answers while no container existed); HTTP redirects to

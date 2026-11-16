@@ -11,11 +11,12 @@ Needs Maizina deployed with the affiche_ia_edge network and the affiches.miorant
   2. Secrets, created once on the box. The first deploy needs AFFICHE_SHOP_PASSWORD_HASH and
      AFFICHE_OPENAI_API_KEY in the local shell (AFFICHE_ANTHROPIC_API_KEY and AFFICHE_SPEND_CAP_USD are
      optional); later deploys ignore them.
-  3. daily.sh, verify.sh (from HEAD) and the cron entry.
+  3. daily.sh, verify.sh, restore.sh (from HEAD) and the cron entry.
   4. affiche-ia already running REV: no upload, no build, no restart.
-  5. Otherwise: prechecks -> upload git archive -> build -> configuration check in the new image ->
-     stop the old container -> back up with the new image -> start (migrations run at start) -> prune.
-     A failed build or check changes nothing. A failed backup starts the old container again.
+  5. Otherwise: prechecks -> upload git archive and deploy/release.sh (from HEAD) -> release.sh: build ->
+     configuration check and rehearsal of the pending migrations on a fresh copy of the live database, in the
+     new image -> stop the old container -> back up with the new image -> start (migrations run at start) -> prune.
+     A failed build, check or rehearsal changes nothing. A failed backup starts the old container again.
   6. daily.sh once (a backup of the running revision), then verify.sh.
 """
 
@@ -57,15 +58,8 @@ REPO = Path(__file__).resolve().parent.parent
 RUN = uuid.uuid4().hex[:12]  # names this invocation's uploads, so concurrent deploys never share one
 STAGING = "/home/deploy/.affiche-staging"  # first-deploy settings land here, never in /tmp
 STAGED_ENV = f"{STAGING}/app.env.{RUN}"
-COMPOSE_NEW = "docker compose -f app.new/deploy/compose.yml"
-# Run in the new image before anything is stopped. The defaults are traps on a server: "stub" would be recorded
-# as this data's provider mode for good, and the default data folder is on the read-only filesystem.
-CHECK = (
-    "from affiche.config import load_settings; from affiche.posters import auth; s = load_settings(); "
-    'auth.validate_config(s); assert s.image_provider == "openai" and str(s.data_dir) == "/data" '
-    'and str(s.backup_dir) == "/backups" and s.serve_frontend and s.api_host == "0.0.0.0", '
-    '"deploy/compose.yml environment is not the hosted one"; print("configuration ok")'
-)
+# This run's own copy of the committed release script: a concurrent deploy never runs another commit's steps.
+RELEASE = f"{REMOTE_DIR}/release.sh.{RUN}"
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
@@ -172,6 +166,7 @@ rm -f {STAGED_ENV}"""
 STAGED = {
     f"{REMOTE_DIR}/daily.sh": (committed("deploy/daily.sh"), "700"),
     f"{REMOTE_DIR}/verify.sh": (committed("deploy/verify.sh"), "700"),
+    f"{REMOTE_DIR}/restore.sh": (committed("deploy/restore.sh"), "700"),  # run by hand (README, Restore)
     "/etc/cron.d/affiche-ia": (StringIO(CRON_LINE), "644"),
 }
 for dest, (src, mode) in STAGED.items():
@@ -185,7 +180,7 @@ for dest, (src, mode) in STAGED.items():
         _sudo=True,
     )
 server.shell(
-    name="Promote daily.sh, verify.sh and the cron entry",
+    name="Promote daily.sh, verify.sh, restore.sh and the cron entry",
     commands=[f"set -e\n{LOCK}\n" + "\n".join(f"mv -f {dest}.{RUN} {dest}" for dest in STAGED)],
     _sudo=True,
 )
@@ -234,50 +229,18 @@ fi"""
         dest=f"{REMOTE_DIR}/{archive_name}",
         _sudo=True,
     )
+    files.put(
+        name="Upload deploy/release.sh (from HEAD, for this run only)",
+        src=committed("deploy/release.sh"),
+        dest=RELEASE,
+        user="root",
+        group="root",
+        mode="700",
+        _sudo=True,
+    )
     server.shell(
-        name=f"Build, check, back up and start revision {REV[:12]}",
-        commands=[
-            f"""set -e
-{LOCK}
-cd {REMOTE_DIR}
-export REVISION={REV}
-# Recheck under the lock: a concurrent deploy may have released this revision meanwhile.
-if [ "$({INSPECT})" = "running {REV}" ]; then
-  rm -f {archive_name}
-  echo "{REV[:12]} already running"
-  exit 0
-fi
-rm -rf app.new
-mkdir app.new
-tar -xzf {archive_name} -C app.new
-{COMPOSE_NEW} build
-{COMPOSE_NEW} run --rm --no-deps affiche-ia python -c '{CHECK}'
-# From here the service is down until the new container is up. SQLite has one writer: the old container is
-# stopped (it finishes a running paid generation first, 5 minutes at most), then the data is backed up
-# with the new code, then the new container starts and applies its migrations.
-old=$(docker ps -q -f name=^{CONTAINER}$)
-if [ -n "$old" ]; then docker stop -t 300 {CONTAINER}; fi
-if {COMPOSE_NEW} run --rm --no-deps affiche-ia test -f /data/affiche.db; then
-  if ! {COMPOSE_NEW} run --rm --no-deps affiche-ia python -m affiche.backup /backups; then
-    echo "Backup before the release FAILED. Nothing was changed; the previous container is started again."
-    if [ -n "$old" ]; then docker start {CONTAINER}; fi
-    exit 1
-  fi
-else
-  echo "No database yet (first deploy): nothing to back up."
-fi
-rm -rf app
-mv app.new app
-if ! docker compose -f app/deploy/compose.yml up -d --wait --wait-timeout 180 affiche-ia; then
-  echo "The new container did not become healthy. THE SERVICE IS DOWN. Its last lines:"
-  docker logs --tail=80 {CONTAINER} 2>&1 || true
-  echo "Code-only release: git checkout <previous commit>; cd deploy; pyinfra 89.167.56.26 deploy.py --user deploy -y; git checkout -"
-  echo "Release with a migration: fix forward, or restore the backup taken just before (deploy/README.md, Restore)."
-  exit 1
-fi
-rm -f {archive_name}
-docker image prune -af --filter label=app=affiche-ia --filter until=1h"""
-        ],
+        name=f"Build, check, rehearse, back up and start revision {REV[:12]} (deploy/release.sh)",
+        commands=[f'sh {RELEASE} {REV} {archive_name} {REMOTE_DIR}; rc=$?; rm -f {RELEASE}; exit "$rc"'],
         _sudo=True,
     )
     server.shell(
@@ -296,7 +259,7 @@ if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
   echo "Rollback (code-only releases): git checkout <previous commit>; cd deploy;"
   echo "  pyinfra 89.167.56.26 deploy.py --user deploy -y; then git checkout -"
 fi
-exit $rc"""
+exit "$rc\""""
     ],
     _sudo=True,
 )

@@ -48,7 +48,7 @@ Backend (`backend/`, Python 3.12 with uv; verified 2026-11-09 on Windows 10):
 | --- | --- |
 | Install / sync dependencies | `uv sync` |
 | Run all tests | `uv run pytest -q` |
-| Run local draft API | `uv run python -m affiche.api` (requires APP_ORIGIN and SHOP_PASSWORD_HASH; see backend/api/README.md) |
+| Run local draft API | `uv run python -m affiche.api` (requires APP_ORIGIN; shop passwords: `uv run python -m affiche.shops`; see backend/api/README.md) |
 | API/domain regression tests | `uv run pytest tests/test_api.py tests/test_poster_drafts.py -q` |
 | New migration file (hand-written SQL) | `uv run alembic revision -m "<message>"` |
 | One-time cutout model download (224 MB, to `%USERPROFILE%\.rembg\models\`) | `uv run python -c "from rembg import new_session; new_session('birefnet-general-lite')"` |

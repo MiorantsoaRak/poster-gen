@@ -3,13 +3,15 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
 
 from affiche.config import load_settings
 from affiche.db import utc_now, write_tx
-from affiche.posters import jobs, store
+from affiche import shops
+from affiche.posters import auth, jobs, store, worker
 from affiche.posters.worker import Outcome, run_job
 from affiche.posters.models import Document, NewCreation, Offer, ProductInput
 from affiche.visuals import admission
@@ -279,6 +281,111 @@ def test_a_rate_limit_retry_refused_by_the_guard_fails_at_no_cost(engine, settin
     assert spent(engine, settings) == 0
     with engine.connect() as conn:
         assert conn.execute(text("SELECT call_no FROM poster_calls WHERE job_id=:id"), {"id": id}).scalars().all() == [1]
+
+
+def calls(engine, id):
+    with engine.connect() as conn:
+        return [tuple(row) for row in conn.execute(text(
+            "SELECT call_no, status, cost_micros, cost_is_estimate FROM poster_calls WHERE job_id=:id ORDER BY call_no"),
+            {"id": id})]
+
+
+def suspended(engine, shop=1):
+    with write_tx(engine) as conn:
+        return shops.suspend(conn, shop)
+
+
+def test_suspension_cancels_queued_jobs_at_no_cost_keeps_sessions_and_enable_reverses_it(
+        engine, settings, creation, tmp_path, input_id):
+    """D-MULTI-SHOP-006: the queued jobs and their reserved calls end at cost 0; a running job is left to the cutoff at
+    dispatch; another shop is untouched; the sessions are kept and stop working, then work again after enable."""
+    shop_b, _ = second_shop(engine)
+    running = enqueue(engine, settings, creation)
+    assert jobs.claim(engine, ("scene",))["id"] == running
+    queued = enqueue(engine, settings, draft(engine, tmp_path, input_id))
+    theirs = enqueue(engine, settings, poster_of(engine, tmp_path, shop_b), shop=shop_b)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO sessions VALUES (?,1,'2099-01-01T00:00:00.000000+00:00')", (auth.token_hash("t"),))
+    with pytest.raises(RuntimeError), write_tx(engine) as conn:  # inside the caller's transaction: a rollback undoes it
+        shops.suspend(conn, 1)
+        raise RuntimeError
+    assert view(engine, queued)["status"] == "queued" and auth.session_shop(engine, "t") == 1
+    assert suspended(engine) == 1
+    assert (view(engine, queued)["status"], view(engine, queued)["error_code"]) == ("cancelled", "shop_suspended")
+    assert calls(engine, queued) == [(1, "cancelled", 0, 0)]
+    assert view(engine, running)["status"] == "running" and calls(engine, running) == [(1, "reserved", 400000, 1)]
+    with engine.connect() as conn:
+        assert jobs.get_job(conn, shop_b, theirs)["status"] == "queued"
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM sessions").scalar_one() == 1  # kept
+    assert auth.session_shop(engine, "t") is None  # but refused while suspended
+    assert suspended(engine) is None  # already suspended: nothing changes
+    with write_tx(engine) as conn:
+        assert shops.enable(conn, 1) is True and shops.enable(conn, 1) is False
+        with pytest.raises(LookupError):
+            shops.suspend(conn, 99)
+    assert auth.session_shop(engine, "t") == 1 and view(engine, queued)["status"] == "cancelled"  # stays cancelled
+
+
+def test_a_call_reserved_before_the_suspension_is_never_sent(engine, settings, creation, monkeypatch):
+    """dispatch is the cutoff: call 2 of a 429 retry, reserved before the suspension and waiting its 2 s, is released at
+    cost 0 in the transaction that refuses it, and the job ends cancelled. Call 1, already sent, keeps its outcome."""
+    id = enqueue(engine, settings, creation)
+    job = jobs.claim(engine, ("scene",))
+    sent = []
+
+    async def send(_):
+        sent.append(1)
+        raise ProviderError("rate_limited", "secret provider body")
+
+    async def wait(_seconds):
+        assert calls(engine, id) == [(1, "failed", 0, 0), (2, "reserved", 400000, 1)]
+        assert suspended(engine) == 0  # the job is running, not queued
+    monkeypatch.setattr(worker, "asyncio", SimpleNamespace(to_thread=asyncio.to_thread, sleep=wait))
+    asyncio.run(run_job(engine, settings, job, prepare=lambda *_: {}, send=send, finalise=lambda *_: pytest.fail("finalised")))
+    assert len(sent) == 1
+    assert (view(engine, id)["status"], view(engine, id)["error_code"]) == ("cancelled", "shop_suspended")
+    assert calls(engine, id) == [(1, "failed", 0, 0), (2, "cancelled", 0, 0)] and spent(engine, settings) == 0
+    with pytest.raises(store.Refused, match="invalid_job_state"):  # released once: nothing left to dispatch
+        jobs.dispatch(engine, id)
+
+
+def test_a_call_sent_before_the_suspension_finishes_and_its_result_is_kept(engine, settings, creation, tmp_path):
+    id = enqueue(engine, settings, creation)
+    job = jobs.claim(engine, ("scene",))
+
+    async def send(_):
+        suspended(engine)  # committed after dispatch: this call was already sent
+        return Outcome({"visual": "kept"}, cost_micros=170000)
+
+    asyncio.run(run_job(engine, settings, job, prepare=lambda *_: {}, send=send, finalise=lambda *_: "kept"))
+    assert (view(engine, id)["status"], view(engine, id)["result_ref"]) == ("succeeded", "kept")
+    assert spent(engine, settings) == 170000
+
+
+def test_recovery_never_requeues_a_suspended_shops_unsent_call(engine, settings, creation, tmp_path):
+    """At start-up: a running job of a suspended shop whose call was never sent is cancelled at cost 0, not requeued; an
+    active shop's is requeued as before; a call already sent is interrupted as before (its outcome is unknown)."""
+    shop_b, _ = second_shop(engine)
+    mine = enqueue(engine, settings, creation)
+    theirs = enqueue(engine, settings, poster_of(engine, tmp_path, shop_b), shop=shop_b)
+    assert {jobs.claim(engine, ("scene",))["id"], jobs.claim(engine, ("scene",))["id"]} == {mine, theirs}
+    suspended(engine)
+    assert jobs.recover(engine, tmp_path) == []
+    assert (view(engine, mine)["status"], view(engine, mine)["error_code"]) == ("cancelled", "shop_suspended")
+    assert calls(engine, mine) == [(1, "cancelled", 0, 0)]
+    with engine.connect() as conn:
+        assert jobs.get_job(conn, shop_b, theirs)["status"] == "queued"
+    assert spent(engine, settings) == 400000  # B's reservation only
+    assert jobs.claim(engine, ("scene",))["id"] == theirs and jobs.claim(engine, ("scene",)) is None
+    with write_tx(engine) as conn:
+        shops.enable(conn, 1)
+    sent = enqueue(engine, settings, creation)
+    assert jobs.claim(engine, ("scene",))["id"] == sent
+    jobs.dispatch(engine, sent)
+    suspended(engine)
+    jobs.recover(engine, tmp_path)
+    assert (view(engine, sent)["status"], view(engine, sent)["error_code"]) == ("interrupted", "outcome_unknown")
+    assert calls(engine, sent) == [(1, "interrupted", 400000, 1)]
 
 
 def test_dispatch_crash_never_replays_and_unsent_crash_requeues(engine, settings, creation, tmp_path):

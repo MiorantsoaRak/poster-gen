@@ -55,6 +55,8 @@ async def run_job(engine, settings, job, *, prepare, send, finalise) -> bool:
     while True:
         if call:
             call = await asyncio.to_thread(jobs.dispatch, engine, id)
+            if call is None:  # the shop is suspended: dispatch cancelled the job at cost 0, so nothing is sent
+                return False
         try:
             outcome = await send(prepared)
         except (ProviderError, PlannerError) as error:

@@ -538,6 +538,45 @@ def test_reads_are_refused_in_the_designs_order(engine, claude, monkeypatch):
     assert MESSAGES["reads_busy"].startswith("Deux messages de la boutique sont déjà en cours de lecture.")
 
 
+@pytest.mark.parametrize(("between", "refusal"), [
+    ("UPDATE shop_profile SET state='suspended' WHERE id=1", ("shop_suspended", 403, "failed", 0, 0)),
+    ("UPDATE chat_reads SET status='interrupted', finished_at=created_at", ("read_failed", 503, "interrupted", ESTIMATE, 1)),
+])
+def test_a_read_is_not_sent_when_its_shop_was_suspended_after_its_admission(engine, claude, monkeypatch, between, refusal):
+    """reads._send, between the admission and the provider call (D-MULTI-SHOP-006): a suspension committed in between
+    closes the read 'failed' at cost 0 and sends nothing; a read the 60 s sweep closed meanwhile is not sent either."""
+    admit, key = reads._admit, str(uuid4())
+
+    def then(*args):
+        admitted = admit(*args)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql(between)
+        return admitted
+
+    monkeypatch.setattr(reads, "_admit", then)
+    result, requests = ask(engine, claude, lambda: pytest.fail("sent"), key=key)
+    row, = rows(engine)
+    assert (result.code, result.status, row["status"], row["cost_micros"], row["cost_is_estimate"]) == refusal
+    assert requests == [] and row["finished_at"] and row["response_json"] is None
+    with engine.connect() as conn:
+        assert spent_micros(conn, claude) == refusal[3]
+    monkeypatch.setattr(reads, "_admit", admit)
+    replay, requests = ask(engine, claude, reply(), key=key)  # the same key later finds it closed: never paid
+    assert (replay.code, requests, len(rows(engine))) == ("read_failed", [], 1)
+
+
+def test_a_read_sent_before_the_suspension_finishes_and_records_its_cost(engine, claude):
+    def answer():
+        with write_tx(engine) as conn:  # committed after _send: this call was already sent
+            conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+        return reply({"product_name": "JBL Flip 7", "price_ar": 700000})
+
+    result, requests = ask(engine, claude, answer)
+    row, = rows(engine)
+    assert result["card"]["kind"] == "recap" and len(requests) == 1
+    assert (row["status"], row["cost_micros"], row["cost_is_estimate"]) == ("succeeded", REAL, 0)
+
+
 def test_one_shops_day_does_not_stop_anothers_reads_and_the_services_cap_stops_both(engine, claude):
     """R-MULTI-SHOP-003 for reads: each shop's own day of provider spend; at the service's cap every shop is told the
     service is paused, and nothing is reserved."""

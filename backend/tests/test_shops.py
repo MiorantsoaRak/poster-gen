@@ -1,18 +1,21 @@
 import os
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from affiche import shops
-from affiche.db import write_tx
+from affiche import runtime, shops
+from affiche.api import create_app
+from affiche.config import load_settings
+from affiche.db import make_engine, write_tx
 from affiche.posters import auth
 from affiche.posters.auth import PASSWORDS, identifier_key
-from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, client, credentials, failures, login,  # noqa: F401
+from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_0012, client, credentials, failures, login,  # noqa: F401
                       password_hash, second_shop, settings, stored_password)
 from test_config import env  # noqa: F401
-from test_db import engine  # noqa: F401
+from test_db import engine, migrate_to  # noqa: F401
 
 HASH = PASSWORDS.hash(os.urandom(12).hex())
 NEW = os.urandom(12).hex()  # 24 characters
@@ -147,3 +150,122 @@ def test_the_change_follows_the_rules_of_any_change_and_a_suspended_shop_makes_n
         conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
     assert refusal(change(client, PASSWORD, NEW)) == (401, "unauthenticated")  # its sessions stop at once
     assert stored_password(client.app) == password_hash
+
+
+@pytest.fixture
+def command(env, engine, tmp_path, capsys):
+    """python -m affiche.shops on the test's data folder at head, never the developer's .env; (exit code, out, err)."""
+    env.setenv("DATA_DIR", str(tmp_path))
+
+    def run(*argv):
+        code = shops.main(list(argv), env_file=None)
+        out, err = capsys.readouterr()
+        return code, out, err
+    return run
+
+
+def printed_password(out):
+    line, = [line for line in out.splitlines() if line.startswith("password (shown once")]
+    return line.rsplit(": ", 1)[1]
+
+
+def test_the_operator_creates_a_shop_and_resets_its_password_each_printed_once(command, engine, caplog):
+    code, out, err = command("create", "Boutique Deux", "--name", "Boutique Deux")
+    password = printed_password(out)
+    assert (code, err) == (0, "") and len(password) == 12 and set(password) <= set(shops.ALPHABET)
+    assert out.count(password) == 1 and password not in caplog.text  # printed once, never logged
+    with engine.connect() as conn:
+        shop = shops.find_shop(conn, "BOUTIQUE-DEUX")
+        assert (shop.identifier, shop.name, shop.state) == ("boutiquedeux", "Boutique Deux", "active")
+        assert conn.exec_driver_sql("SELECT password_hash FROM shop_profile WHERE id=?", (shop.id,)).scalar_one() not in out
+    mine, _ = auth.login(engine, "boutique deux", password, "203.0.113.1")
+    code, out, err = command("create", "boutique-deux")
+    assert (code, out, err) == (1, "", "refused: the identifier boutiquedeux is already taken\n")
+    assert command("create", "a-b") == (1, "", "refused: an identifier needs 3 to 32 letters or digits\n")
+    assert command("create", "troisieme", "--name", "x" * 161) == (
+        1, "", "refused: name: String should have at most 160 characters\n")
+    code, out, err = command("set-password", "Boutique Deux")
+    reset = printed_password(out)
+    assert code == 0 and reset != password and out.count(reset) == 1 and reset not in caplog.text
+    assert auth.session_shop(engine, mine) is None  # that shop's sessions ended
+    with pytest.raises(auth.Refused, match="wrong_credentials"):
+        auth.login(engine, "boutiquedeux", password, "203.0.113.1")
+    auth.login(engine, "boutiquedeux", reset, "203.0.113.1")
+    with engine.connect() as conn:
+        assert [tuple(row)[:4] for row in shops.list_shops(conn)] == [
+            (1, "originalphone", None, "active"), (shop.id, "boutiquedeux", "Boutique Deux", "active")]
+    code, out, _ = command("list")
+    assert code == 0 and out.splitlines()[1].startswith(f"{shop.id}\tboutiquedeux\tactive\tpassword\t")
+
+
+def test_the_operator_ends_sessions_suspends_and_enables(command, engine, password_hash):
+    shop_b, password_b = second_shop(engine)
+    with write_tx(engine) as conn:
+        shops.set_password(conn, 1, password_hash)
+    a, _ = auth.login(engine, IDENTIFIER, PASSWORD, "203.0.113.1")
+    b, _ = auth.login(engine, "boutique-deux", password_b, "203.0.113.1")
+    code, out, err = command("suspend", "Boutique Deux")  # without --yes: shown, nothing done
+    assert (code, out, err) == (1, f"boutiquedeux (shop {shop_b}, « Boutique Deux »): active\n",
+                                "refused: nothing done: to suspend boutiquedeux, run again with --yes\n")
+    assert auth.session_shop(engine, b) == shop_b
+    code, out, _ = command("suspend", "Boutique Deux", "--yes")
+    assert code == 0 and "suspended" in out and "0 queued jobs cancelled" in out
+    assert auth.session_shop(engine, b) is None and auth.session_shop(engine, a) == 1
+    with pytest.raises(auth.Refused, match="shop_suspended"):
+        auth.login(engine, "boutiquedeux", password_b, "203.0.113.1")
+    assert command("suspend", "boutiquedeux", "--yes")[:2] == (0, f"boutiquedeux (shop {shop_b}, « Boutique Deux ») was "
+                                                                  "already suspended: nothing changed\n")
+    assert command("enable", "boutiquedeux")[:2] == (0, f"boutiquedeux (shop {shop_b}, « Boutique Deux ») enabled: its "
+                                                         "sessions work again\n")
+    assert auth.session_shop(engine, b) == shop_b  # the same session, kept through the suspension
+    assert "already active" in command("enable", "boutiquedeux")[1]
+    assert command("end-sessions", "originalphone")[:2] == (0, "1 sessions ended (originalphone (shop 1, « sans nom »))\n")
+    assert auth.session_shop(engine, a) is None and auth.session_shop(engine, b) == shop_b
+    assert command("end-sessions", "--all")[:2] == (0, "1 sessions ended (every shop)\n")
+    assert auth.session_shop(engine, b) is None
+    assert command("enable", "nobody") == (1, "", "refused: no shop has the identifier nobody\n")
+
+
+@pytest.mark.parametrize("argv", [[], ["suspend"], ["end-sessions"], ["end-sessions", "x", "--all"], ["delete", "x"]])
+def test_a_wrong_command_line_is_a_usage_error(command, argv):
+    with pytest.raises(SystemExit) as exited:
+        command(*argv)
+    assert exited.value.code == 2
+
+
+def test_the_command_never_migrates_and_needs_a_database_at_head(env, tmp_path, monkeypatch, capsys):
+    env.setenv("DATA_DIR", str(tmp_path / "none"))
+    assert shops.main(["list"], env_file=None) == 1
+    assert capsys.readouterr().err.startswith("refused: no database at ") and not (tmp_path / "none").exists()
+    env.setenv("DATA_DIR", str(tmp_path))
+    old = make_engine(tmp_path)
+    migrate_to(old, "0012", monkeypatch)
+    old.dispose()
+    assert shops.main(["create", "boutique"], env_file=None) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("refused: the database is at 0012, this code expects 0") and err.endswith(
+        ": start the application of this version once; this command never migrates\n")
+    with sqlite3.connect(tmp_path / "affiche.db") as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("0012",)]
+
+
+def test_a_backup_from_before_0013_is_migrated_and_repaired_before_the_service_starts(settings, monkeypatch, capsys):
+    """deploy/README.md, Restore: the command refuses a 0012 database; the application's own start, run once in a
+    one-off container, migrates it; the repairs follow while the service is stopped; then the service starts without
+    SHOP_PASSWORD_HASH, and the restored session of a lost phone no longer works."""
+    cookie = at_0012(settings, monkeypatch, product=True)
+    assert shops.main(["list"], env_file=None) == 1
+    assert "the database is at 0012" in capsys.readouterr().err
+    started = runtime.start(load_settings(env_file=None), "api")  # the runbook's one-off: start, no server
+    started.lock_file.close()
+    started.engine.dispose()
+    assert shops.main(["list"], env_file=None) == 0
+    assert capsys.readouterr().out.startswith("1\toriginalphone\tactive\tno password\t")  # restore.sh names it
+    assert shops.main(["end-sessions", "--all"], env_file=None) == 0
+    assert capsys.readouterr().out == "1 sessions ended (every shop)\n"
+    assert shops.main(["set-password", "originalphone"], env_file=None) == 0
+    password = printed_password(capsys.readouterr().out)
+    settings.shop_password_hash = None  # removed from app.env after Release 1
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        assert client.get("/api/session", headers=cookie).json()["authenticated"] is False
+        assert client.post("/api/session", json=credentials(password)).status_code == 200

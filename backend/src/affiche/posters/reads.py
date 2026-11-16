@@ -595,6 +595,22 @@ def _admit(engine, settings, shop, key, request: ReadRequest):
     return json.loads(old["response_json"])
 
 
+def _send(engine, id):
+    """Between admission and the provider call, as jobs.dispatch for a job (D-MULTI-SHOP-006): its commit is the moment
+    the call counts as sent. A shop suspended since its admission gets its read closed 'failed' at cost 0 (never sent);
+    a read the sweep closed meanwhile is not sent either. Raises after the commit, so the closing is kept."""
+    with write_tx(engine) as conn:
+        row = conn.execute(text("SELECT r.status, p.state FROM chat_reads r JOIN shop_profile p ON p.id=r.shop_id"
+                                " WHERE r.id=:id"), {"id": id}).one()
+        if row.status == "running" and row.state != "active":
+            conn.execute(text("UPDATE chat_reads SET status='failed',cost_micros=0,cost_is_estimate=0,finished_at=:now"
+                              " WHERE id=:id AND status='running'"), {"id": id, "now": utc_now()})
+    if row.status != "running":
+        raise Refused("read_failed", 503)
+    if row.state != "active":
+        raise Refused("shop_suspended", 403)
+
+
 def _finish(engine, id, status, cost, usage, request_id, body) -> bool:
     """Transaction 2. cost None keeps the reservation as an estimate. False: the sweep closed the row first."""
     with write_tx(engine) as conn:
@@ -627,12 +643,13 @@ async def _ask(settings, spec, request: ReadRequest, transport, poster=None):
 
 
 async def read(engine, settings, shop, key, request: ReadRequest, messages: dict, *, transport=None) -> dict:
-    """One read: admission, the provider call outside any transaction (no retry), then the ledger."""
+    """One read: admission, the cutoff (_send), the provider call outside any transaction (no retry), then the ledger."""
     check_key(key)
     admitted = await asyncio.to_thread(_admit, engine, settings, shop, key, request)
     if isinstance(admitted, dict):
         return admitted
     id, spec, poster = admitted
+    await asyncio.to_thread(_send, engine, id)
     # Unless told otherwise below, the outcome is unknown: 'interrupted', the reservation kept as an estimate.
     status, cost, usage, request_id, body = "interrupted", None, None, None, None
     try:

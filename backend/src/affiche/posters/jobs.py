@@ -121,15 +121,21 @@ def get_job(conn, shop, id):
         "kind": kind, "usage": {"recorded_micros": cost[0], "estimated": bool(cost[1])}}
 
 
+def cancel_queued(conn, id, now, code=None):
+    """A job whose call was never sent ends cancelled; its reserved call is released at cost 0, once (only a 'reserved'
+    row is). The owner's cancellation, and a suspension (D-MULTI-SHOP-006) with code 'shop_suspended'."""
+    conn.execute(text("UPDATE poster_jobs SET status='cancelled',error_code=:code,finished_at=:now WHERE id=:id"),
+                 {"id": id, "code": code, "now": now})
+    conn.execute(text("UPDATE poster_calls SET status='cancelled',cost_micros=0,cost_is_estimate=0,finished_at=:now"
+                      " WHERE job_id=:id AND status='reserved'"), {"id": id, "now": now})
+
+
 def cancel(engine, shop, key, id):
     def apply(conn):
         job = _owned(conn, "poster_jobs", shop, id)
         if job["status"] != "queued":
             raise Refused("already_started", 409)
-        now = utc_now()
-        conn.execute(text("UPDATE poster_jobs SET status='cancelled',finished_at=:now WHERE id=:id"), {"id": id, "now": now})
-        conn.execute(text("UPDATE poster_calls SET status='cancelled',cost_micros=0,cost_is_estimate=0,finished_at=:now"
-                          " WHERE job_id=:id AND status='reserved'"), {"id": id, "now": now})
+        cancel_queued(conn, id, utc_now())
         return 200, get_job(conn, shop, id)
     return mutate(engine, shop, key, "POST", f"/api/jobs/{id}/cancel", {}, apply)
 
@@ -161,11 +167,18 @@ def current_call(conn, id):
 
 
 def dispatch(engine, id):
+    """The moment a provider call counts as sent. None: the job's shop is suspended, so the job is cancelled and its
+    call released at cost 0 in this same transaction, and nothing may be sent (D-MULTI-SHOP-006). This also stops call 2
+    of a 429 retry reserved before the suspension."""
     with write_tx(engine) as conn:
-        job = conn.execute(text("SELECT status FROM poster_jobs WHERE id=:id"), {"id": id}).scalar()
+        job = conn.execute(text("SELECT j.status, p.state FROM poster_jobs j JOIN shop_profile p ON p.id=j.shop_id"
+                                " WHERE j.id=:id"), {"id": id}).first()
         call = current_call(conn, id)
-        if job != "running" or call is None or call["status"] != "reserved":
+        if job is None or job.status != "running" or call is None or call["status"] != "reserved":
             raise Refused("invalid_job_state", 409)
+        if job.state != "active":
+            cancel_queued(conn, id, utc_now(), "shop_suspended")
+            return None
         conn.execute(text("UPDATE poster_calls SET status='running',started_at=:now WHERE id=:id"),
                      {"id": call["id"], "now": utc_now()})
         return dict(call) | {"status": "running"}
@@ -269,7 +282,8 @@ def recover(engine, data_dir):
     """Only under the API owner lock. Return spooled running IDs for local finalisation before workers start."""
     ready = []
     with write_tx(engine) as conn:
-        for job in conn.execute(text("SELECT * FROM poster_jobs WHERE status='running'")).mappings().all():
+        for job in conn.execute(text("SELECT j.*, p.state FROM poster_jobs j JOIN shop_profile p ON p.id=j.shop_id"
+                                     " WHERE j.status='running'")).mappings().all():
             call = current_call(conn, job["id"])
             if spool_path(data_dir, job["id"]).exists():
                 ready.append(job["id"])
@@ -277,6 +291,8 @@ def recover(engine, data_dir):
             if call is None and job["recovery_count"] == 1:
                 conn.execute(text("UPDATE poster_jobs SET status='failed',error_code='local_job_interrupted',finished_at=:now WHERE id=:id"),
                              {"id": job["id"], "now": utc_now()})
+            elif (call is None or call["status"] == "reserved") and job["state"] != "active":
+                cancel_queued(conn, job["id"], utc_now(), "shop_suspended")  # never sent: not requeued (D-MULTI-SHOP-006)
             elif call is None or call["status"] == "reserved":
                 conn.execute(text("UPDATE poster_jobs SET status='queued',started_at=NULL WHERE id=:id"), {"id": job["id"]})
                 if call is None:
