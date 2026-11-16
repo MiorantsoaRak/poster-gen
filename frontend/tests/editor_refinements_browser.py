@@ -114,7 +114,7 @@ def run():
                     page.unroute('**/api/product-inputs/*')
                     page.get_by_role('button', name='Reprendre les couleurs de la photo').click()
                     expect(palette).to_contain_text('#202020')
-                    assert page.evaluate("localStorage.getItem('affiche.palette.' + location.hash.slice(1))") is None
+                    assert page.evaluate("localStorage.getItem('affiche.shop1.palette.' + location.hash.slice(1))") is None
                     page.get_by_role('button', name='Générer l’affiche', exact=True).click()
                     page.get_by_role('button', name='Lancer la génération', exact=True).click()
                     expect(page.get_by_role('heading', name='Vérifier la fidélité du produit')).to_be_visible(timeout=30000)

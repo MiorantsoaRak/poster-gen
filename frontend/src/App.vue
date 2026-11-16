@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import { api, ApiError, clockSkew, displayUrl, mutation, preparedUrl, progress, thumbnailUrl, upload } from './api'
+import { announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, seen, shopKey, shopStorage, state, support, thumbnailUrl, upload, verify, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
-import { readWords, staleWords, WORDS_PREFIX } from './words'
+import { readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
-import { GONE, staleOf, type ChatAdapter, type SceneRequest, type Words } from './chat'
+import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Words } from './chat'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
@@ -19,7 +19,13 @@ const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'A
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
-const authenticated = ref(false), checking = ref(true), down = ref(false), identifier = ref(''), password = ref(''), support = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
+const identifier = ref(''), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
+// The identity gate (D-MULTI-SHOP-007): its state and its one function are api.ts's. `loaded`: the bound shop was loaded
+// once in this page's life. Its content is only ever hidden, never reset by hand: showing another shop is a fresh page.
+const loaded = ref(false), shown = computed(() => state.value === 'shown' && loaded.value)
+// The signed-out screen's own: its sign-in, its message, and the choice left when unsaved edits could not be sent.
+const signing = ref(false), gateError = ref(''), keepEdits = ref(false)
+const elsewhere = computed(() => state.value === 'out' && (seen.value === 'other' || typeof seen.value === 'number'))
 const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -48,7 +54,7 @@ const LOOKS = [
 interface SavedLook { id: string; name: string; reference_asset: string; reference_width?: number | null; reference_height?: number | null; brief: { direction_fr: string; surface_fr: string; lighting: string; camera: string; palette: string[]; accent_colour: string; alignment: string } }
 const savedLooks = ref<SavedLook[]>([]), lookName = ref(''), lookReference = ref<string | null>(null)
 const look = ref<string>('clair')
-const PALETTE_PREFIX = 'affiche.palette.'
+const palettePrefix = () => shopKey('palette.')
 const productPalette = ref<Palette | null>(null), paletteFailure = ref(''), paletteLoading = ref(false)
 let paletteEpoch = 0, paletteRequest: AbortController | undefined
 const sceneAccent = computed(() => look.value === 'couleur' && productPalette.value ? productPalette.value[2] : headline.value.accent_colour)
@@ -58,19 +64,19 @@ function setProductColour(value: string) {
   paletteEpoch++; paletteRequest?.abort(); paletteLoading.value = false
   productPalette.value = palette; paletteFailure.value = ''
   try {
-    localStorage.setItem(PALETTE_PREFIX + creation.value!.id, JSON.stringify({ colour: value, at: Date.now() }))
+    shopStorage.setItem(palettePrefix() + creation.value!.id, JSON.stringify({ colour: value, at: Date.now() }))
     // Capped like the kept words: the oldest entries go first.
-    const kept = Object.keys(localStorage).filter(key => key.startsWith(PALETTE_PREFIX))
-    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) localStorage.removeItem(key)
+    const kept = Object.keys(localStorage).filter(key => key.startsWith(palettePrefix()))
+    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) shopStorage.removeItem(key)
   } catch { notice.value = 'La couleur est utilisée ici, mais ce navigateur ne peut pas la mémoriser après fermeture.' }
 }
 // The colour is kept only until the poster's first version (its plan then holds the palette) or its removal from the list.
-function forgetPalette(id: string) { try { localStorage.removeItem(PALETTE_PREFIX + id) } catch { /* convenience only */ } }
+function forgetPalette(id: string) { try { shopStorage.removeItem(palettePrefix() + id) } catch { /* convenience only */ } }
 async function loadProductPalette(reset = false) {
   const poster = creation.value
   if (!poster) return
   if (reset) {
-    try { localStorage.removeItem(PALETTE_PREFIX + poster.id) }
+    try { shopStorage.removeItem(palettePrefix() + poster.id) }
     catch { notice.value = 'La suggestion sera utilisée ici, mais la couleur mémorisée ne peut pas être effacée.' }
   }
   const epoch = ++paletteEpoch
@@ -89,7 +95,7 @@ watch(() => creation.value?.id, id => {
   paletteEpoch++; paletteRequest?.abort(); productPalette.value = null; paletteFailure.value = ''; paletteLoading.value = false
   if (!id) return
   try {
-    const saved: unknown = JSON.parse(localStorage.getItem(PALETTE_PREFIX + id) ?? 'null')?.colour
+    const saved: unknown = JSON.parse(localStorage.getItem(palettePrefix() + id) ?? 'null')?.colour
     if (validColour(saved)) { productPalette.value = colourPalette(saved); return }
   } catch { notice.value = 'Les couleurs mémorisées sont indisponibles : une nouvelle suggestion sera proposée.' }
   void loadProductPalette()
@@ -227,28 +233,28 @@ async function createLook() {
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/looks`, { name: lookName.value.trim() || `Style ${savedLooks.value.length + 1}`, reference_asset: lookReference.value }, saver!.revision)
   follow({ id: result.job_id, kind: 'look', status: 'queued', result_ref: null, error_code: null })
 }
-// The owner's last look and colour come back on the next poster ("same style as last time"); never its words.
-const STYLE_KEY = 'affiche.style'
-try {
-  const saved = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null')
-  if (saved && LOOKS.some(item => item.id === saved.look) && /^#[0-9A-Fa-f]{6}$/.test(saved.accent_colour)) {
-    headline.value.accent_colour = saved.accent_colour; pickLook(saved.look)
-    headline.value.accent_colour = saved.accent_colour
-  }
-} catch { /* private mode or damaged entry: start from the defaults */ }
+// The owner's last look and colour come back on the next poster ("same style as last time"); never its words. The shop's
+// own: read once its gate has opened (readStyle).
+const styleKey = () => shopKey('style')
 function rememberStyle() {
-  try { localStorage.setItem(STYLE_KEY, JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })) } catch { /* convenience only */ }
+  try { shopStorage.setItem(styleKey(), JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })) } catch { /* convenience only */ }
 }
 // By default the image model draws the contact as one compact line, so it composes it with the price
 // (ADR-055). Unticked, or when it cannot be drawn, it is the same line written by the renderer as a layer.
 // The position is remembered on the device; for a layer it is the layer's own alignment.
 type Align = 'left' | 'center' | 'right'
 const rememberedAlign = ref<Align | null>(null)
-try {
-  const saved = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null')
-  if (['left', 'center', 'right'].includes(saved?.contact_align)) rememberedAlign.value = saved.contact_align
-  headline.value.brand_text = saved?.brand_text === true
-} catch { /* convenience only */ }
+function readStyle() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(styleKey()) ?? 'null')
+    if (saved && LOOKS.some(item => item.id === saved.look) && /^#[0-9A-Fa-f]{6}$/.test(saved.accent_colour)) {
+      headline.value.accent_colour = saved.accent_colour; pickLook(saved.look)
+      headline.value.accent_colour = saved.accent_colour
+    }
+    if (['left', 'center', 'right'].includes(saved?.contact_align)) rememberedAlign.value = saved.contact_align
+    headline.value.brand_text = saved?.brand_text === true
+  } catch { /* private mode or damaged entry: start from the defaults */ }
+}
 const defaultAlign = (document: PosterDocument): Align => rememberedAlign.value ?? (document.include.logo ? 'right' : 'center')
 function compactContact(document: PosterDocument, align: Align) {
   const layer = document.formats[format.value]!.layers.find(item => item.role === 'contact')
@@ -421,7 +427,7 @@ const ICONS: Record<string, string> = {
   eye: 'M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
   spark: 'M8 2l1.4 4.1L13.5 7.5 9.4 8.9 8 13 6.6 8.9 2.5 7.5l4.1-1.4z', clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3.5l2 1.5',
   undo: 'M6 4L3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H7', redo: 'M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H9',
-  pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2', chat: 'M2.5 3h11v8H7.5l-3 2.5V11h-2z',
+  pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2', chat: 'M2.5 3h11v8H7.5l-3 2.5V11h-2z', out: 'M6.5 2.5h-4v11h4M10.5 5l3 3-3 3M13.5 8H6',
   box: 'M3 3h10v10H3zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z', sun: 'M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1',
   moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z', back: 'M10 3.5L5.5 8l4.5 4.5',
   store: 'M2.5 6.5l1-3.5h9l1 3.5zM3.5 6.5V13h9V6.5M6.5 13V9.5h3V13',
@@ -574,7 +580,7 @@ const chatOn = computed(() => !!caps.value?.chat_available)
 const canvasRetry = shallowRef<(() => void) | null>(null)
 const PosterCanvas = defineAsyncComponent({ loader: () => import('./PosterCanvas.vue'), onError: (_reason, retry) => { canvasRetry.value = retry } })
 const ChatView = defineAsyncComponent({ loader: () => import('./ChatView.vue'), onError: (_reason, retry) => { chatRetry.value = retry } })
-const pickStart = computed(() => authenticated.value && chatOn.value && !startView.value && !doc.value && view.value === 'create' && !chatting.value)
+const pickStart = computed(() => loaded.value && chatOn.value && !startView.value && !doc.value && view.value === 'create' && !chatting.value)
 const editing = computed(() => !!doc.value && !chatting.value)
 const shownStart = computed<Start>(() => doc.value || view.value === 'create' ? (chatting.value ? 'chat' : 'steps') : startView.value ?? 'steps')
 function switchTo(to: Start) {
@@ -599,13 +605,18 @@ async function route() {
     view.value = VIEWS[hash] ?? 'create'
     nextTick(() => document.querySelector('main')?.focus())
   } catch (reason) { chatting.value = was; window.history.replaceState(null, '', `#${here()}`); throw reason }
+  // « Mes affiches » is read again each time it opens: an image may have come since (after a sign-in, the only way back
+  // to it, ADR-108). The list shown stays until the new one is in; a refusal is said and keeps it. Outside the catch
+  // above: a refusal here is not a failed route, and the address stays as the gate left it.
+  if (view.value === 'posters') await loadLibrary()
 }
 // « Mes affiches » opens a poster where the owner creates: in the chat when it is the start view.
 async function openFromList(id: string) {
   chatting.value = chatOn.value && startView.value === 'chat'
   try { await openCreation(id) } catch (reason) { chatting.value = false; throw reason }
 }
-function onHash() { if (window.location.hash.slice(1) !== here()) { if (busy.value) routeDue = true; else perform(route) } }
+// No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
+function onHash() { if (loaded.value && window.location.hash.slice(1) !== here()) { if (busy.value) routeDue = true; else perform(route) } }
 function leave(hash: string) { window.location.hash = hash }
 // A panel in front of the page takes the focus and gives it back; the page behind is inert meanwhile.
 const vModal = {
@@ -848,12 +859,8 @@ async function loadShop() {
   Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; library.value = list.items; libraryNext.value = list.next_cursor; activeTotal.value = list.total; showRemoved.value = false
   savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
   // The remembered style may be one of the shop's own looks, known only now.
-  try { const remembered = JSON.parse(localStorage.getItem(STYLE_KEY) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
+  try { const remembered = JSON.parse(localStorage.getItem(styleKey()) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
   Object.assign(include, { logo: false, shop_name: false, contact: false })
-}
-async function signIn() {
-  await api('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: identifier.value, password: password.value }) })
-  identifier.value = ''; password.value = ''; authenticated.value = true; await loadShop(); await route()
 }
 async function saveProfile() {
   if (JSON.stringify(profile) === profileSaved) return
@@ -894,13 +901,13 @@ async function createPoster() {
 }
 // Until a version carries them, the typed words live only here: they are kept in the browser, per poster, so that a reload
 // or a later visit on the same device does not lose them (ADR-083). Without storage (private mode) nothing is kept, as before.
-function forgetWords(id: string) { try { localStorage.removeItem(WORDS_PREFIX + id) } catch { /* convenience only */ } }
+function forgetWords(id: string) { try { shopStorage.removeItem(wordsPrefix() + id) } catch { /* convenience only */ } }
 function keepWords(id: string) {
   const { on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour } = headline.value
   try {
-    localStorage.setItem(WORDS_PREFIX + id, JSON.stringify({ on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour, at: Date.now() }))
-    const kept = Object.keys(localStorage).filter(key => key.startsWith(WORDS_PREFIX))
-    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) localStorage.removeItem(key)
+    shopStorage.setItem(wordsPrefix() + id, JSON.stringify({ on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour, at: Date.now() }))
+    const kept = Object.keys(localStorage).filter(key => key.startsWith(wordsPrefix()))
+    for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) shopStorage.removeItem(key)
   } catch { /* convenience only: the words hold for this visit */ }
 }
 // Once the poster's version records its words, `restoreHeadline()` is the source and the entry goes.
@@ -927,7 +934,7 @@ async function adopt(result: Creation) {
   // This poster's own entry only, and before anything waits: the watcher above would first write the blank words over it.
   if (opening && !currentVisual.value?.headline) {
     let stored: string | null = null
-    try { stored = localStorage.getItem(WORDS_PREFIX + result.id) } catch { /* private mode: nothing was kept */ }
+    try { stored = localStorage.getItem(wordsPrefix() + result.id) } catch { /* private mode: nothing was kept */ }
     Object.assign(headline.value, readWords(stored, result.document.offer.title))
   }
   history = new History(); plan.value = null; styleReference.value = null
@@ -1153,10 +1160,13 @@ watch(() => !!waitJob.value && visible.value, on => {
   clearInterval(ticker); now.value = Date.now()
   if (on) ticker = setInterval(() => { now.value = Date.now() }, 1000)
 })
-// Back on the tab, the state is asked at once instead of after the hidden tab's 10 s wait.
+// Back on the tab, the state is asked at once instead of after the hidden tab's 10 s wait. Leaving it closes the gate,
+// and coming back asks the session before anything of the shop is visible again (D-MULTI-SHOP-007 rule 5).
 function onVisibility() {
   visible.value = !document.hidden
-  if (visible.value && job.value && !polling) { clearTimeout(pollTimer); poll() }
+  if (!visible.value) return close()
+  void ask()
+  if (job.value && !polling) { clearTimeout(pollTimer); poll() }
 }
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
 function follow(value: Job, found = false) {
@@ -1174,7 +1184,7 @@ async function decodes(url: string) {
   const image = new Image(); image.src = url
   let timer: ReturnType<typeof setTimeout> | undefined
   try { await Promise.race([image.decode(), new Promise((_, reject) => { timer = setTimeout(reject, 20000) })]); return true }
-  catch { return false }
+  catch { verify(); return false }  // a session gone may be why: the gate is asked (api.ts verify)
   finally { clearTimeout(timer) }
 }
 async function poll() {
@@ -1246,8 +1256,7 @@ async function poll() {
     if (stale()) return
     // A refusal does not change by asking again (the session ended, the job is unknown): the following stops and says why.
     if (reason instanceof ApiError && reason.status >= 400 && reason.status < 500 && reason.status !== 429) {
-      job.value = null; error.value = reason.message
-      if (reason.status === 401) { authenticated.value = false; window.scrollTo({ top: 0 }) }
+      job.value = null; error.value = reason.message  // a 401 or a 409 shop_changed is the gate's (api.ts onLost)
       return
     }
     // A failed poll keeps the job and never starts another attempt: the editor keeps asking, less and less often.
@@ -1388,7 +1397,7 @@ function setWords(words: Words) {
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
     shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
-    busy: computed(() => busy.value || checking.value), cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
+    busy, cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
   start: (key, style, smallPhotoAccepted, sending, identity) => told(async () => {
     pickLook(style)
@@ -1456,7 +1465,6 @@ const chat: ChatAdapter = {
   follow: found => follow(found as Job, true),
   review: visual => { review.value = visual; resetChecks() },
   download: () => { void perform(renderFinal) },
-  signedOut: () => { authenticated.value = false },
 }
 function zoomScene(event: Event) {
   if (!currentVisual.value) return
@@ -1508,44 +1516,145 @@ function toggleTheme() {
   applyTheme(theme.value === 'clair' ? 'sombre' : 'clair'); themePicked = true; paintBar()
   try { localStorage.setItem(THEME_KEY, theme.value) } catch { /* convenience only: the pick holds for this visit */ }
 }
-function warnUnload(event: BeforeUnloadEvent) { if (saver?.unsaved) { event.preventDefault(); event.returnValue = '' } }
+// leaving: the page is replaced on purpose (a change of identity), and what it holds unsaved is the shop's no more.
+let leaving = false
+function warnUnload(event: BeforeUnloadEvent) { if (saver?.unsaved && !leaving) { event.preventDefault(); event.returnValue = '' } }
+
+// ── the identity gate (D-MULTI-SHOP-007) ─────────────────────────────────────────────────────────────────
+// Before anything reads: what the pilot's phone kept before the shops becomes shop 1's.
+try { moveLegacy(localStorage) } catch { /* storage refused: nothing was kept */ }
 // The page's files can load while the application's own process is down or restarting (the front server answers
-// 502 to 504, or nothing): say so with a retry, instead of a sign-in form that cannot work.
-async function start() {
-  checking.value = true; down.value = false
-  try {
-    const session = await api<{ authenticated: boolean; support_fr?: string }>('/api/session')
-    authenticated.value = session.authenticated; support.value = session.support_fr ?? ''
-    if (authenticated.value) { await loadShop(); await route() }
+// 502 to 504, or nothing): the gate says so with a retry (api.ts ask, settle), instead of a sign-in form that cannot work.
+watch(state, now => {
+  if (now === 'out') {
+    // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
+    error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
+    if (typeof bound.value === 'number' && location.hash) window.history.replaceState(null, '', location.pathname + location.search)
   }
-  catch (reason) { const failure = reason as ApiError; if (failure.code === 'network' || [502, 503, 504].includes(failure.status)) down.value = true; else error.value = failure.message }
-  finally { checking.value = false }
+  if (now === 'shown' && !loaded.value) void openShop()
+})
+// The first time the gate opens in this page's life: the shop's keys, its style, then its data.
+async function openShop() {
+  open()
+  readStyle()
+  // A failed load is a failed answer: hidden, with « Réessayer », which asks and opens again (a 401 or 409 is out anyway).
+  try { await loadShop() } catch (reason) { failed.value = failureOf(reason); return }
+  loaded.value = true
+  await perform(route)
 }
+function reload() { leaving = true; location.reload() }
+// An explicit sign-in on this page binds it to that shop and loads it fresh (rule 4). The same shop again: its unsaved
+// edits are sent first, with the new session; another shop's are never sent.
+async function signIn() {
+  if (signing.value) return
+  signing.value = true; gateError.value = ''; keepEdits.value = false
+  try {
+    const answer = await identityChange(() => api<{ shop_id: number }>('/api/session', { method: 'POST', timeout: IDENTITY_TIMEOUT_MS,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: identifier.value, password: password.value }) }))
+    identifier.value = ''; password.value = ''
+    announce()
+    if (answer.shop_id === bound.value && saver?.unsaved) {
+      try { await saver.flush() } catch (reason) { gateError.value = reason instanceof Error ? reason.message : 'Enregistrement impossible.'; keepEdits.value = true; return }
+    }
+    bind(answer.shop_id)
+    reload()
+  } catch (reason) { gateError.value = reason instanceof Error ? reason.message : 'La demande a échoué.' }
+  finally { signing.value = false }
+}
+// « Se déconnecter » keeps nothing of the shop on the device (ADR-108): the session ends on the server first, then every
+// key of the shop goes. A paid request the server received goes on there and is found in « Mes affiches »; one it did
+// not receive was not paid. Unsaved edits are saved first; what waits is said before.
+const UNSAVED_LINE = 'Des modifications de l’affiche n’ont pas pu être enregistrées : elles seront perdues.'
+const WAITING_LINE = 'Une image demandée attend encore sa réponse. Si le serveur a reçu la demande, l’image se fait quand même et vous la trouverez dans « Mes affiches », sur cet appareil ou un autre ; sinon, rien n’est payé. Rien de cette conversation ne reste sur cet appareil.'
+const device = () => { try { return localStorage } catch { return null } }
+async function askSignOut() {
+  let lost = false
+  try { await flush() } catch { lost = true }  // a failed or conflicting save never traps anyone in a shop
+  // This tab's chat when it holds it; otherwise the stored threads, read only (review r5 P2-3).
+  const lines = [...(lost ? [UNSAVED_LINE] : []), ...((chat.waiting?.() ?? waitingIn(device())) ? [WAITING_LINE] : [])]
+  if (!lines.length) return signOut()
+  paid.value = { title: 'Se déconnecter ?', text: lines.join(' '), cost: '', label: 'Se déconnecter quand même', run: signOut }
+}
+async function signOut() {
+  const shop = bound.value as number
+  await identityChange(endSession)
+  bind(null)
+  // The shop's part leaves the page: no late work of it (a read, a poll, a timer) shows or writes anything (review r2 P2-4).
+  loaded.value = false
+  announce()
+  leaving = true
+  window.history.replaceState(null, '', location.pathname + location.search)  // no poster's address for the next shop
+  forget(shop)
+}
+// The shop's keys go, by its prefix (api.ts forgetShop), then the page is loaded fresh. Unfinished (a key refused, or the
+// storage not listed), it is said with another try (review r1 P2-7, r2 P2-5): the session has ended, and such a key is
+// read only by a page bound to that shop. A reload forgets which shop it was: that shop's next sign-out on this device
+// deletes what is left, by the same prefix.
+const leftover = ref<number | null>(null)
+function forget(shop: number) {
+  if (forgetShop(device(), shop)) { leftover.value = null; location.replace(location.pathname) }
+  else leftover.value = shop
+}
+async function forgetAgain() {
+  const shop = leftover.value
+  if (shop === null) return
+  gateError.value = ''
+  // That shop may have signed in again in another tab of this device meanwhile: its keys are then in use, and stay. The
+  // check and the deletion run under the identity lock, as a sign-in does, so that no sign-in falls between them (review
+  // r3 #2). Without Web Locks, a sign-in or sign-out announced meanwhile (affiche.identity) has the session asked again.
+  const identity = () => { try { return localStorage.getItem(IDENTITY_KEY) } catch { return null } }
+  const run = async (): Promise<void> => {
+    const before = identity()
+    let answer: SessionAnswer
+    try { answer = await api<SessionAnswer>('/api/session', { quiet: true, timeout: IDENTITY_TIMEOUT_MS }) }
+    catch (reason) { gateError.value = reason instanceof Error ? reason.message : 'La demande a échoué.'; return }
+    if (answer.authenticated && answer.shop_id === shop) { leftover.value = null; return }
+    if (identity() !== before) return run()
+    forget(shop)
+  }
+  await (navigator.locks ? navigator.locks.request('affiche-identity', { mode: 'exclusive' }, run) : run())
+}
+function onStorage(event: StorageEvent) { if (event.key === IDENTITY_KEY || event.key === null) void changedElsewhere() }
+// A page restored from the back-forward cache is reloaded at once; if the unload warning keeps it, it asks again.
+function onPageShow(event: PageTransitionEvent) { if (event.persisted) { location.reload(); void ask() } }
+function skip() { document.querySelector<HTMLElement>('main:not([hidden])')?.focus() }
+// The images the browser fetches itself (<img>) cannot carry X-Affiche-Shop: the server's cookie check and the shop's
+// ownership protect them, and one of /api/ that fails asks the session again without hiding the shop (api.ts verify),
+// so that a session gone reaches the gate (review r2 P1-3).
+function onImageError(event: Event) { if (event.target instanceof HTMLImageElement && new URL(event.target.src, location.href).pathname.startsWith('/api/')) verify() }
 onMounted(() => {
   window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.visualViewport?.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, starter, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
   document.addEventListener('visibilitychange', onVisibility)
-  return start()
+  window.addEventListener('pagehide', close); window.addEventListener('pageshow', onPageShow); window.addEventListener('storage', onStorage); window.addEventListener('error', onImageError, true)
+  return ask()
 })
-onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
+onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', close); window.removeEventListener('error', onImageError, true); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('storage', onStorage); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
 </script>
 
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
-  <button class="skip" type="button" @click="($refs.main as HTMLElement).focus()">Aller au contenu</button>
-  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><span v-if="authenticated" class="shop-label">{{ profile.name || 'Votre boutique' }}</span>
-    <nav v-if="authenticated" class="nav" aria-label="Navigation"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
-    <div v-if="authenticated && chatOn && startView" class="seg" role="group" aria-label="Façon de créer"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div>
+  <button class="skip" type="button" @click="skip">Aller au contenu</button>
+  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
+    <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
+    <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
+    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
+    <div v-if="chatOn && startView" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
-  <main ref="main" tabindex="-1" :class="{ editing, chatting: authenticated && chatting }">
-    <p v-if="checking" role="status">Ouverture de l’atelier…</p>
+  <!-- Everything but the shop: the session awaited or failed, and the signed-out screen. -->
+  <main v-if="!shown" class="gate" tabindex="-1">
+    <div v-if="gateError" class="message error" role="alert">{{ gateError }}<button class="text-button" type="button" @click="gateError = ''">Fermer</button></div>
+    <section v-if="state === 'hidden' && failed === 'down'" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
+    <section v-else-if="state === 'hidden' && failed" class="sign-in" role="alert"><p>Connexion au serveur impossible.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
+    <p v-else-if="state !== 'out'" role="status">Ouverture de l’atelier…</p>
+    <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p></form>
+  </main>
+  <main v-if="loaded" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }">
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <section v-if="!checking && down" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="start">Réessayer</button></section>
-    <form v-if="!checking && !authenticated && !down" class="sign-in" @submit.prevent="perform(signIn)"><h1>Votre atelier d’affiches</h1><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="busy">Ouvrir l’atelier</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p></form>
     <section v-if="pickStart" class="start" aria-labelledby="titre-depart">
       <h1 id="titre-depart">Comment voulez-vous créer vos affiches ?</h1>
       <div class="start-choices">
@@ -1554,11 +1663,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div>
       <p class="help">Ce choix devient votre écran de départ. Vous pouvez changer en haut de l’écran.</p>
     </section>
-    <template v-if="authenticated && chatting">
+    <template v-if="chatting">
       <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
     </template>
-    <div v-if="authenticated && !doc && view === 'create' && !chatting && !pickStart" class="intake-layout">
+    <div v-if="!doc && view === 'create' && !chatting && !pickStart" class="intake-layout">
       <form class="intake" @submit.prevent="perform(createPoster)">
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
@@ -1572,7 +1681,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         <button class="primary wide" :disabled="busy">{{ busy ? 'Préparation…' : 'Préparer mon affiche' }}</button><p v-if="whyNoDraft" class="why" role="status">{{ whyNoDraft }}</p>
       </form>
     </div>
-    <section v-if="authenticated && !doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
+    <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
       <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
@@ -1581,7 +1690,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div></div>
       <p v-if="libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
-    <section v-if="authenticated && !doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
+    <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
@@ -1594,6 +1703,8 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
         <div class="undo"><button class="ghost icon" :disabled="busy || !history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
+        <!-- On a phone the application's header leaves the editor: « Se déconnecter » is here (R-MULTI-SHOP-001). -->
+        <button class="ghost icon bar-sign-out" type="button" aria-label="Se déconnecter" title="Se déconnecter" @click="perform(askSignOut)"><Icon n="out" /></button>
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">

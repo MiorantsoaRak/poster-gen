@@ -18,9 +18,9 @@ import browser_smoke as smoke
 
 OUT = smoke.ROOT / "outputs" / "chat-smoke"
 REVIEW, FINAL = "Vérifier la fidélité du produit", "Dernière vérification avant le téléchargement"
-THREAD = "id => JSON.parse(localStorage.getItem('affiche.chat.' + id))"
+THREAD = "id => JSON.parse(localStorage.getItem('affiche.shop1.chat.' + id))"
 START = "localStorage.getItem('affiche.start')"
-PENDING = "() => JSON.parse(localStorage.getItem('affiche.chat.pending'))?.key ?? null"
+PENDING = "() => JSON.parse(localStorage.getItem('affiche.shop1.chat.pending'))?.key ?? null"
 SCENE_JOBS = "id => fetch('/api/creations/' + id + '/jobs').then(r => r.json()).then(body => body.items.filter(job => job.kind === 'scene').length)"
 POSTER_FONTS = re.compile(r"/fonts/(NotoSerif|Montserrat|NotoSans-Bold)")
 PLAN_STALE = "L’affiche a changé depuis la préparation de cette génération."
@@ -160,7 +160,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(thread.locator(".bubble.me")).to_contain_text("Sony WH-1000XM6 noir, 700 000 Ar")
     expect(field).to_be_focused()
     expect(field).to_have_value("")
-    assert page.evaluate("localStorage.getItem('affiche.chat.unsent') ?? localStorage.getItem('affiche.chat.pending')") is None
+    assert page.evaluate("localStorage.getItem('affiche.shop1.chat.unsent') ?? localStorage.getItem('affiche.shop1.chat.pending')") is None
     assert len(reads) == 1, reads
     both_themes(page, "recap, desktop", "chat-recap-1366")
 
@@ -179,7 +179,7 @@ def walk_desktop(browser, errors, product, inspiration):
     assert len(spent) == 1 and scenes == [spent[0]["id"]], (spent, scenes)
     # The card holds its poster and its job; the new thread's key says where the thread went.
     assert spent[0]["creation"] == poster and re.fullmatch(r"[a-f0-9-]{36}", spent[0]["job"]), spent
-    assert json.loads(page.evaluate("localStorage.getItem('affiche.chat.new')")) == {"moved": poster}
+    assert json.loads(page.evaluate("localStorage.getItem('affiche.shop1.chat.new')")) == {"moved": poster}
     both_themes(page, "creation, desktop", "chat-wait-1366")
     # A reload in the middle: the job is followed again, the spent card has no button, nothing is asked twice.
     page.reload()
@@ -259,7 +259,7 @@ def walk_desktop(browser, errors, product, inspiration):
     # No price: asked. No photo: asked, with its button.
     expect(thread).to_contain_text("Quel est le prix ?")
     assert len(reads) == 3 and reads[1] == reads[2] != reads[0], reads
-    assert page.evaluate("localStorage.getItem('affiche.chat.pending')") is None
+    assert page.evaluate("localStorage.getItem('affiche.shop1.chat.pending')") is None
     send.click()
     ask = thread.locator(".bubble.bot").last
     expect(ask).to_contain_text("Il me faut une photo du produit.")
@@ -730,7 +730,7 @@ def walk_changes(browser, errors, session, data):
     page.evaluate("""([key, id]) => { const thread = JSON.parse(localStorage.getItem(key))
       const item = thread.items.find(item => item.id === id); delete item.job; delete item.done
       item.card = { kind: 'change', change: 'price', price_ar: 590000, previous: 600000, said: 'prix 590 000 Ar' }
-      localStorage.setItem(key, JSON.stringify(thread)) }""", [f"affiche.chat.{poster}", old["id"]])
+      localStorage.setItem(key, JSON.stringify(thread)) }""", [f"affiche.shop1.chat.{poster}", old["id"]])
     page.reload()
     page.get_by_role("button", name="Fermer").click()
     expect(resume).to_be_visible()
@@ -1005,14 +1005,17 @@ def walk_changes(browser, errors, session, data):
     expect(cancel).to_be_visible()
     looks_right(page, "version limit reached", "chat-limit-1366.png")
 
-    # The session ends (401): the sign-in form comes instead of a dead end; after it the thread is there and
+    # The session ends (401): the sign-in form comes instead of a dead end. The sign-in loads the shop fresh, at its
+    # start view and without the poster's address (D-MULTI-SHOP-007 rules 3 and 4); the poster's thread is there and
     # « Réessayer » sends the message.
     context.clear_cookies()
     say(page, "fond rouge")
+    expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
     page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
-    page.wait_for_url(f"**/#message-{other}")
+    page.wait_for_url("**/#message")
+    page.goto(f"{smoke.ORIGIN}/#message-{other}")
     expect(thread.locator(".bubble.bot").last).to_contain_text("Connectez-vous pour continuer.")
     thread.get_by_role("button", name="Réessayer", exact=True).click()
     expect(thread.locator(".bubble.bot").last).to_contain_text("Scène : « fond rouge »")
@@ -1522,6 +1525,204 @@ def walk_failed(browser, errors, product):
     context.close()
 
 
+WAITING_LINE = ("Une image demandée attend encore sa réponse. Si le serveur a reçu la demande, l’image se fait quand même et vous la "
+                "trouverez dans « Mes affiches », sur cet appareil ou un autre ; sinon, rien n’est payé. Rien de cette conversation ne reste sur cet appareil.")
+UNSTORED = "Ce navigateur ne peut pas garder la demande : rien n’a été envoyé. Utilisez Pas à pas."
+SHOP_KEYS = "() => Object.keys(localStorage).filter(key => key.startsWith('affiche.shop1.')).sort()"
+# setItem refused, as a full browser storage refuses it (until the page is reloaded): for the keys the pattern names, and
+# with `needle`, only for a value that holds it.
+REFUSE = """([pattern, needle]) => { const refused = new RegExp(pattern), set = Storage.prototype.setItem
+  Storage.prototype.setItem = function (key, value) { if (refused.test(key) && String(value).includes(needle ?? '')) throw new DOMException('full', 'QuotaExceededError'); return set.call(this, key, value) } }"""
+THREADS = r"^affiche\.shop1\.chat\.(?!unsent$|pending$)"
+
+
+def walk_sign_out(browser, errors, product):
+    """« Se déconnecter » keeps nothing of the shop on this device; the server is the authority for a paid request
+    (ADR-108). (a) The answer to a paid card is lost and the owner signs out: no key of the shop is left; signed in
+    again, the poster shows that one job's version, and the server has one job for the card. (b) A /scenes request held
+    on its way while another tab signs out, released after: 401, no job, and the late answer writes nothing back. (c)
+    That sign-out is from a tab that does not hold the chat. Strict send: a browser that cannot store the card, or its
+    request, sends nothing."""
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    sent = []
+    page.on("request", lambda request: sent.append(f"{request.method} {request.url.split('/api/')[1]}") if "/api/" in request.url and request.method == "POST" else None)
+    sign_in(page)
+    page.get_by_role("button", name=re.compile("^Pas à pas")).tap()
+    thread = page.get_by_role("log")
+    dialog = page.get_by_role("dialog")
+    create = thread.get_by_role("button", name="Créer l’affiche")
+
+    def recap(name):
+        """A recap from the form, its « Créer l’affiche » not tapped yet."""
+        page.get_by_role("link", name=re.compile("Créer")).tap()
+        page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Pas à pas").tap()
+        page.get_by_label("Photos du produit").set_input_files(product)
+        page.get_by_label("Nom du produit", exact=True).fill(name)
+        page.get_by_label("Prix en ariary", exact=True).fill("700000")
+        expect(page.locator(".photo-strip img")).to_have_count(1)
+        page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Message").tap()
+        expect(create).to_be_visible()
+
+    # Strict send, at the tap: the card cannot be stored, so nothing leaves, not even the poster.
+    recap("Casque Garde Refus")
+    page.evaluate(REFUSE, [THREADS, None])
+    sent.clear()
+    create.tap()
+    expect(thread).to_contain_text(UNSTORED)
+    expect(create).to_be_visible()  # a new card, the same offer
+    assert sent == [], sent
+    # At sending: the card is stored, its request is not: the poster and its free plan are made, the paid request is not.
+    page.reload()
+    recap("Casque Garde Refus Deux")
+    page.evaluate(REFUSE, [THREADS, '"request":'])
+    sent.clear()
+    create.tap()
+    expect(thread).to_contain_text(UNSTORED)
+    expect(create).to_be_visible()
+    assert not [entry for entry in sent if entry.endswith("/scenes")], sent
+    page.reload()
+
+    # (a) The paid card's answer is lost: the server made the job, the page never heard. Signed out, then in again.
+    # Thirty stored threads dated a day ahead, as after the device's clock was set back (review r5 P2-2): the cap never
+    # takes the thread just written, so the request is stored when it leaves.
+    recap("Casque Garde Un")
+    page.evaluate("""() => { for (let index = 0; index < 30; index++) localStorage.setItem('affiche.shop1.chat.ahead' + index,
+      JSON.stringify({ at: Date.now() + 86400000, items: [], draft: {} })) }""")
+    context.route("**/scenes", lambda route: (route.fetch(), route.abort("failed")))
+    create.tap()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    poster = page.url.split("#message-")[1]
+    expect(thread.get_by_role("button", name="Réessayer")).to_be_visible()
+    stored = page.evaluate(THREAD, poster)
+    assert stored and [item["request"]["path"] for item in stored["items"] if item.get("request")] == [f"/api/creations/{poster}/scenes"], stored
+    context.unroute("**/scenes")
+    # From the editor the chat is not mounted: the stored thread says that the image waits (review r5 P2-3).
+    page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Pas à pas").tap()
+    page.wait_for_url(f"**/#{poster}")
+    page.locator(".bar").get_by_role("button", name="Se déconnecter").tap()
+    expect(dialog).to_contain_text(WAITING_LINE)
+    dialog.get_by_role("button", name="Annuler").tap()
+    page.goto(f"{smoke.ORIGIN}/#message-{poster}")  # the phone's editor has no header, nor its switch
+    expect(thread.get_by_role("button", name="Reprendre")).to_be_visible()  # the chat read again: its kept request
+    page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Message").tap()  # the start view again
+    assert page.evaluate(START) == "chat"
+    page.get_by_role("button", name="Se déconnecter").tap()
+    expect(dialog).to_contain_text(WAITING_LINE)
+    for scheme, theme in (("dark", "sombre"), ("light", "clair")):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+        smoke.check_contrast(page, f"sign-out with a waiting paid card, 360 px, {theme}")
+        page.screenshot(path=str(OUT / f"sign-out-waiting-360-{theme}.png"))
+    page.emulate_media(color_scheme="dark")
+    with smoke.replaced(page):  # to the fresh page: the old one may show the sign-in a moment before
+        dialog.get_by_role("button", name="Se déconnecter quand même").tap()
+    expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    assert page.evaluate(SHOP_KEYS) == [], page.evaluate(SHOP_KEYS)
+    # The shop loads its list before the version has come (the page's answers are served as they were then, until the
+    # owner opens « Mes affiches »); opening it reads the list again, without a reload.
+    before, listing = {"on": True, "served": 0}, lambda url: "/api/creations?limit=50" in url
+
+    def before_the_version(route):
+        if not (before["on"] and route.request.headers.get("x-affiche-shop")):
+            return route.continue_()  # this walk's own reads, and the list once opened
+        body = route.fetch().json()
+        for entry in body["items"]:
+            if entry["id"] == poster:
+                entry.update(state="draft", thumbnail_url=None)
+        before["served"] += 1
+        route.fulfill(json=body)
+    page.route(listing, before_the_version)
+    sign_in(page)
+    page.wait_for_url("**/#message")
+    page.screenshot(path=str(OUT / "signed-in-again-360.png"))
+    end = time.monotonic() + 30
+    while not page.evaluate("""id => fetch('/api/creations?limit=50').then(r => r.json())
+      .then(body => body.items.some(item => item.id === id && item.state === 'to_review'))""", poster):
+        assert time.monotonic() < end, "the version never came"
+        page.wait_for_timeout(500)
+    assert before["served"] >= 1, before  # the shop's list, read at its load
+    before["on"] = False
+    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    item = page.locator(".library-item", has_text="Casque Garde Un")
+    expect(item).to_contain_text("À vérifier")
+    # Opened again while the list cannot be read: it says so, and the list shown stays.
+    page.get_by_role("link", name=re.compile("^Créer")).click()
+    page.route(listing, lambda route: route.abort("failed"))
+    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    expect(page.locator(".message.error")).to_contain_text("Connexion interrompue. Vos modifications restent dans cet onglet.")
+    expect(item).to_contain_text("À vérifier")
+    page.unroute(listing)
+    page.screenshot(path=str(OUT / "signed-in-again-library-done-360.png"))
+    item.click()
+    page.wait_for_url(f"**/#message-{poster}")
+    # The card does not come back: the poster's thread starts afresh, its version to review at the top.
+    expect(page.get_by_text("Version 1 · à vérifier")).to_be_visible()
+    expect(page.get_by_role("button", name="Agrandir l’affiche")).to_be_visible()
+    expect(thread.get_by_role("button", name=re.compile("^(Réessayer|Reprendre|Créer l’affiche)$"))).to_have_count(0)
+    page.screenshot(path=str(OUT / "signed-in-again-poster-360.png"))
+    assert page.evaluate(SCENE_JOBS, poster) == 1  # the one request the server received: one job
+
+    # (b, c) A paid card's /scenes request on its way while another tab, which does not hold the chat, signs out: that tab
+    # reads the stored threads and asks first (review r5 P2-3). This tab is told, and writes nothing of the shop from that
+    # moment (review r5 P2-1): the answer reaches it before its own session check has answered, or after that check
+    # failed. Admitted before the sign-out, the request lives on the server (one job); arriving after it with the
+    # session's cookie, it is refused (401) and makes no job.
+    def across(name, admitted, check_fails):
+        recap(name)
+        token = next(cookie["value"] for cookie in context.cookies() if cookie["name"] == "affiche_session")
+        held, checks = [], []
+        context.route("**/scenes", lambda route: held.append((route, route.fetch() if admitted else None)))
+        create.tap()
+        page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+        made = page.url.split("#message-")[1]
+        end = time.monotonic() + 15
+        while not held:
+            assert time.monotonic() < end, "the request never left"
+            page.wait_for_timeout(50)
+        page.route("**/api/session", lambda route: checks.append(route) if route.request.method == "GET" else route.continue_())
+        other = context.new_page()
+        other.set_default_timeout(10000)
+        other.goto(smoke.ORIGIN)
+        expect(other.locator("main:not(.gate)")).to_be_visible()
+        other.get_by_role("button", name="Se déconnecter").click()
+        expect(other.get_by_role("dialog")).to_contain_text(WAITING_LINE)
+        with smoke.replaced(other):
+            other.get_by_role("dialog").get_by_role("button", name="Se déconnecter quand même").click()
+        end = time.monotonic() + 15
+        while not checks:  # told by the other tab: its own check is on its way
+            assert time.monotonic() < end, "this tab never asked"
+            page.wait_for_timeout(50)
+        expect(page.get_by_label("Mot de passe", exact=True)).to_have_count(0)  # not the sign-in yet
+        if check_fails:
+            checks.pop(0).abort("failed")
+            expect(page.get_by_text("Connexion au serveur impossible.")).to_be_visible()
+        route, answer = held[0]
+        if not admitted:
+            answer = route.fetch(headers={**route.request.headers, "cookie": f"affiche_session={token}"})
+            assert answer.status == 401, answer.status
+        route.fulfill(response=answer)
+        context.unroute("**/scenes")
+        page.wait_for_timeout(500)  # the card's own work after its answer, had it written anything
+        assert page.evaluate(SHOP_KEYS) == [], page.evaluate(SHOP_KEYS)
+        for check in checks:
+            check.continue_()  # nobody, now
+        page.unroute("**/api/session")
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        assert page.evaluate(SHOP_KEYS) == [], page.evaluate(SHOP_KEYS)
+        other.close()
+        sign_in(page)
+        page.wait_for_url("**/#message")
+        assert page.evaluate(SCENE_JOBS, made) == (1 if admitted else 0)
+
+    across("Casque Garde Deux", admitted=True, check_fails=False)
+    across("Casque Garde Trois", admitted=True, check_fails=True)
+    across("Casque Garde Quatre", admitted=False, check_fails=False)
+    context.close()
+
+
 def walk_rest(browser, errors, product, inspiration):
     """D-TEXT-FIRST-006: the shop's logo and contact asked in the first message (an empty profile, then a filled one;
     asked off against the form's ticks), a change of style, a tab of an older bundle refused by the server, the two
@@ -1809,12 +2010,13 @@ def run():
                         walk_changes(browser, errors, session, data)  # last of this server: it signs in again
                         walk_rest(browser, errors, product, inspiration)  # its own session; it fills the shop's profile
                         walk_choice_phone(browser, errors)
+                        walk_sign_out(browser, errors, product)
                         smoke.stop(*server)
                         server = smoke.serve(failing, stub_fail="provider_error")
                         walk_failed(browser, errors, product)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, a failed image job, a style change on a fresh plan, the shop's identity asked in the first message, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, sign-out with a waiting paid card (asked first, from the chat, the editor or another tab; nothing of the shop left; signed in again, the poster's one job and its version to review), a request admitted before another tab's sign-out answering late or after a failed check (nothing written back), one arriving after it (401, no job), a paid request sent only once stored (refused at the tap or at sending, kept despite threads dated ahead), a failed image job, a style change on a fresh plan, the shop's identity asked in the first message, read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

@@ -1,6 +1,9 @@
+import { shopKey } from './api'
+
 // The words typed before a poster's first version (brand, subtitle, accent word, its colour, the boxes for the next
-// version) are kept in the browser, one entry per poster (ADR-083, T-KEEP-WORDS). Nothing else is stored there.
-export const WORDS_PREFIX = 'affiche.words.', WORDS_KEPT = 30
+// version) are kept in the browser, one entry per poster of the shop (ADR-083, T-KEEP-WORDS, D-MULTI-SHOP-007). Nothing
+// else is stored there.
+export const wordsPrefix = () => shopKey('words.'), WORDS_KEPT = 30
 export type KeptWords = { on: boolean; price: boolean; contact: boolean; brand_text: boolean; brand: string; subtitle: string; accent_word: string; accent_colour: string }
 
 /** What a stored entry may give back for a poster with this title. The storage is never trusted: a field of the wrong

@@ -1,3 +1,4 @@
+import { api, verify } from './api'
 export type Palette = [string, string, string]
 export const validColour = (value: unknown): value is string => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
 const hex = (rgb: number[]) => '#' + rgb.map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('').toUpperCase()
@@ -39,10 +40,13 @@ export function photoPalette(pixels: Uint8ClampedArray, width: number, height: n
   return colourPalette(hex(rgb))
 }
 
+// The photo is the shop's: asked like any request of the shop (api.ts, review r2 P1-3).
 export async function samplePhoto(url: string, signal: AbortSignal): Promise<Palette> {
-  const response = await fetch(url, { signal, credentials: 'same-origin' })
-  if (!response.ok) throw new Error('La photo ne peut pas être chargée. Réessayez ou choisissez une couleur.')
-  const bitmap = await createImageBitmap(await response.blob())
+  let blob: Blob
+  try { blob = await api<Blob>(url, { quiet: true, as: 'blob', signal }) } catch { throw new Error('La photo ne peut pas être chargée. Réessayez ou choisissez une couleur.') }
+  let bitmap: ImageBitmap
+  // An answer that is no image may be a session gone: the gate is asked (api.ts verify, review r3 #3).
+  try { bitmap = await createImageBitmap(blob) } catch (error) { verify(); throw error }
   try {
     const canvas = document.createElement('canvas')
     canvas.width = 64; canvas.height = Math.max(1, Math.round(64 * bitmap.height / bitmap.width))

@@ -105,6 +105,10 @@ button.text-button { min-height: 32px; padding: 0 4px; border: 0; border-radius:
 /* A chosen style or version already wears this ring: the focus ring goes outside it. */
 :is(.look, .thumb):focus-visible { outline-offset: 6px }
 main:focus, [role=dialog]:focus, .panel:focus { outline: none }
+/* The identity gate hides the shop's part of the page with the attribute (D-MULTI-SHOP-007): no rule of this sheet may
+   show it again (the navigation is a flex or grid box). */
+[hidden] { display: none !important }
+.bar-sign-out { display: none }
 .skip { position: absolute; left: -9999px; z-index: 60; background: var(--surface) }
 .skip:focus-visible { left: 12px; top: 8px }
 
@@ -563,6 +567,10 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)); -webkit-backdrop-filter: none; backdrop-filter: none }
   .app-header::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
   .shop-label { display: none }
+  /* « Se déconnecter » is its icon here; the words stay its name. In the editor the header leaves: the bar has it. */
+  .sign-out { width: 44px; padding: 0 }
+  .bar-sign-out { display: inline-flex }
+  .sign-out span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
   main { --gutter-l: max(12px, env(safe-area-inset-left)); --gutter-r: max(12px, env(safe-area-inset-right)); padding: 4px var(--gutter-r) max(56px, env(safe-area-inset-bottom)) var(--gutter-l) }
   .intake, .sign-in { padding: 20px }
   /* While a poster is open the editor has one bar at the top (D-POSTER-EDITOR-005): back to « Mes affiches », the

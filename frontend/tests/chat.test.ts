@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft, type Item, type Role } from '../src/chat'
+import { bind, open } from '../src/api'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
+import { memory } from './fixture'
 
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
 const item = (extra: Partial<Item> = {}): Item => ({ id: 'i', role: 'app', text: 'x', at: 1, ...extra })
@@ -25,11 +27,15 @@ it('refuses a swap that a sent image or the three-photo limit forbids', () => {
   expect(swapRole(full, 'p0', [{ role: 'product' }, { role: 'product' }, { role: 'product' }])).toBe(full)
   expect(swapRole(one, 'unknown')).toBe(one)
 })
-it('names the thread of a poster, of a new one, and the unsent text', () => {
-  expect(threadKey('abc')).toBe('affiche.chat.abc')
-  expect(threadKey(null)).toBe('affiche.chat.new')
-  expect(UNSENT_KEY).toBe('affiche.chat.unsent')
-  expect(PENDING_KEY).toBe('affiche.chat.pending')
+it('names the thread of a poster, of a new one, the unsent text and the pending read, under the open shop only', () => {
+  bind(2)
+  expect(() => threadKey('abc')).toThrow()  // the gate has not opened on shop 2 yet: no key is guessed
+  open()
+  expect(threadKey('abc')).toBe('affiche.shop2.chat.abc')
+  expect(threadKey(null)).toBe('affiche.shop2.chat.new')
+  expect(unsentKey()).toBe('affiche.shop2.chat.unsent')
+  expect(pendingKey()).toBe('affiche.shop2.chat.pending')
+  expect([threadKey('abc'), unsentKey(), pendingKey(), 'affiche.shop1.chat.abc', 'affiche.chat.abc'].map(isThread)).toEqual([true, false, false, false, false])
 })
 it('keeps the last 100 items of a thread', () => {
   const many = Array.from({ length: 130 }, (_, index) => item({ id: String(index) }))
@@ -290,4 +296,60 @@ it('takes the identity choice back from the last recap when the draft was saved 
   // A draft saved by this bundle says it, null included: the thread is not asked.
   expect(stored({ name: 'Sony', identity: null }, recap(true))).toBeNull()
   expect(stored({ name: 'Sony', identity: false }, recap(true))).toBe(false)
+})
+
+// D-MULTI-SHOP-007: what stays on the device per shop. Shop 1 is open for these.
+const open1 = () => { bind(1); open() }
+const recapItem = (extra: Partial<Item> = {}) => item({ id: 'r', card: { kind: 'recap', name: 'Sony' }, ...extra })
+it('calls unresolved a paid card that waits for its answer, followed or with its request kept, and nothing else', () => {
+  expect(unresolved(recapItem({ spent: true, request, job: 'j' }))).toBe(true)  // followed
+  expect(unresolved(recapItem({ spent: true, request }))).toBe(true)  // « Reprendre »
+  expect(unresolved(item({ card: { kind: 'change', effect: 'scene' }, spent: true }))).toBe(true)
+  expect(unresolved(recapItem({ spent: true, request, done: true }))).toBe(false)  // retired by a final refusal
+  expect(unresolved(recapItem())).toBe(false)  // never tapped
+  expect(unresolved(item({ card: { kind: 'steps' }, spent: true }))).toBe(false)  // a card that pays for nothing
+})
+// ADR-108: strict send. The adapter calls `sending` right before the paid request leaves (App.vue generateScene,
+// refineScene); the chat's `sending` is keepRequest with its save.
+it('lets a paid request leave only once the thread holding it and its key is written; a refused write keeps it from leaving', () => {
+  open1()
+  const leave = (item: Item, storage: Storage) => {
+    const save = () => { try { storage.setItem(threadKey('c'), JSON.stringify({ at: 1, items: [item] })); return true } catch { return false } }
+    keepRequest(item, request, save)
+    return storage.getItem(threadKey('c'))  // what this device holds as the request leaves
+  }
+  const card = recapItem({ spent: true }), stored = leave(card, memory())
+  expect(JSON.parse(stored!).items).toEqual([{ ...card, request }])  // the request and its key (the card's id), written first
+  const refused = recapItem({ spent: true }), sent: unknown[] = []
+  expect(() => sent.push(leave(refused, memory({}, () => true)))).toThrow(UNSTORED)
+  expect([sent, refused.request]).toEqual([[], undefined])  // nothing left, and the card no longer holds a request
+  expect(UNSTORED).toBe('Ce navigateur ne peut pas garder la demande : rien n’a été envoyé. Utilisez Pas à pas.')
+})
+// Review r5 P2-2: the cap never takes the thread just written, nor one whose paid card waits, whatever their dates (a
+// device clock set back); and a thread counts as stored only when it is there as written.
+it('writes a thread and caps the others: never the one just written nor one whose paid card waits; true only when stored', () => {
+  open1()
+  const ahead = Date.now() + 86_400_000, entries: Record<string, string> = {}
+  for (let index = 0; index < 30; index++) entries[threadKey(`ahead${index}`)] = JSON.stringify({ at: ahead + index, items: [] })
+  entries[threadKey('old-paid')] = JSON.stringify({ at: 1, items: [recapItem({ spent: true, request })] })
+  entries[threadKey('old')] = JSON.stringify({ at: 2, items: [] })
+  const storage = memory(entries), value = JSON.stringify({ at: Date.now(), items: [item()] })
+  expect(storeThread(storage, storage, threadKey('c'), value)).toBe(true)
+  expect(storage.getItem(threadKey('c'))).toBe(value)  // dated before the thirty: kept all the same
+  expect(storage.getItem(threadKey('old-paid'))).not.toBeNull()  // its paid card waits
+  expect(storage.getItem(threadKey('old'))).toBeNull()  // the oldest with nothing waiting goes
+  const silent = memory()
+  silent.setItem = () => {}  // takes the write without keeping it
+  expect(storeThread(silent, silent, threadKey('c'), value)).toBe(false)
+})
+// Review r5 P2-3: « Se déconnecter » from a tab that does not hold the chat, or from the editor, reads the stored threads.
+it('says that a paid image waits from the stored threads, read only; storage that cannot be read says yes', () => {
+  open1()
+  const waiting = JSON.stringify({ at: 1, items: [recapItem({ spent: true, request })] })
+  expect(waitingIn(memory({ [threadKey('c')]: waiting }, () => true))).toBe(true)  // read only: every write would be refused
+  expect(waitingIn(memory({ [threadKey('c')]: JSON.stringify({ at: 1, items: [recapItem({ spent: true, request, done: true })] }), [unsentKey()]: 'Sony' }))).toBe(false)
+  const unlisted = memory({ [threadKey('c')]: waiting })
+  Object.defineProperty(unlisted, 'length', { get: () => { throw new DOMException('denied', 'SecurityError') } })
+  expect(waitingIn(unlisted)).toBe(true)
+  expect(waitingIn(null)).toBe(true)
 })

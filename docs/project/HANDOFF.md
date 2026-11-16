@@ -98,11 +98,13 @@
 
 **T-MULTI-SHOP-005 is done and committed locally (2026-11-16):** suspension stops calls where they are sent, the operator command `python -m affiche.shops`, `deploy/release.sh` (rehearsal gate, backup under a deadline, the old container started again on a failure), `deploy/restore.sh` (never starts the service), the `operator` service of `deploy/compose.yml` (no log, no network), the runbooks. Three Codex rounds, all REJECT; the last round's three findings were fixed after it on the user's word and not reviewed again (TODO.md has the detail).
 
-**Exact next step:** T-MULTI-SHOP-006 (everything in the browser; the riskiest), with an Opus subagent, then its Codex code review.
+**T-MULTI-SHOP-006 is done and committed locally (2026-11-16): the multi-shop feature is built.** The browser has one identity gate, a cross-tab lock on sign-in and sign-out, storage keys per shop, and a sign-out that keeps nothing on the device: the kept paid card was removed after four rejected reviews (user decision, ADR-108; the server is the authority for a paid request; R-MULTI-SHOP-004 amended). Round 5 approved with fixes; those fixes were not reviewed again. TODO.md has the detail, the accepted limits and one French sentence the user has not yet approved.
 
-**Session end, 2026-11-16 (Claude).** T-MULTI-SHOP-006 is NOT started: no code, no brief; only its design was opened. Where to start: `designs/multi-shop.md`, section D-MULTI-SHOP-007 (the identity gate, cookie-changing operations, the sign-in form, « Se déconnecter », storage per shop), the Tests section (browser smoke, cookies), task 6 under Tasks and the line "T-MULTI-SHOP-006" under what the code reviews check (the one gate and no other path to showing a shop; the sign-out snapshot from the live thread; the cookie tests). Files it touches: `frontend/src/App.vue`, `ChatView.vue`, `chat.ts`, `words.ts`, `api.ts`, and the two browser smokes.
+**Exact next step:** the design of the prepaid balance (`requirements/prepaid-balance.md` is a draft: approve it under the grant or amend it first), with its fresh review rounds and a devil's advocate; then its tasks. Build order after it: administration dashboard, conditions of use, shop dashboard, « Partager ». UI library: none before the dashboards; a Reka UI trial is to be written into the admin dashboard's design (user said ok on 2026-11-16).
 
-**Not pushed:** `main` is 7 commits ahead of `origin/main` (the roadmap and requirements, the multi-shop design, T-MULTI-SHOP-001 to 005). Push on the user's word only; no deploy (ADR-105).
+**Landmine:** one run had both browser smokes fail and three later runs on the same code passed (T-SUITE-FLAKE). Run them again before believing a failure, and do not run two sessions' smokes at the same time.
+
+**Not pushed:** `main` is ahead of `origin/main` by every commit since the roadmap (the roadmap and requirements, the multi-shop design, T-MULTI-SHOP-001 to 006, handoffs). Push on the user's word only; no deploy (ADR-105).
 
 **Uncommitted files, all Codex's, not to be staged by Claude:** `docs/project/DECISIONS.md` and `docs/project/PROJECT.md` (brand edits), `docs/project/brand/`, `docs/project/mockups/brand-directions/`, `docs/project/mockups/doka-studio-identity/`, `docs/project/mockups/text-first/`, `docs/project/reviews/social-publishing-saas-research-2026-11-15.md`.
 

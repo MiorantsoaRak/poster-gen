@@ -210,6 +210,38 @@ def test_cookie_is_opaque_hash_only_and_logout_revokes(client):
     assert client.get("/api/shop-profile", headers={"Cookie": f"{auth.COOKIE}={token}"}).status_code == 401
 
 
+def test_a_paid_request_that_arrives_after_the_sign_out_gets_401_and_creates_nothing(client):
+    """ADR-108: the server is the authority for a paid request. A scene request that still carries the session's cookie
+    after DELETE /api/session (held on its way, or sent by a late tab) is refused before its handler: no job, no
+    idempotency key, no reservation in the ledger. The same request with the session alive makes all three."""
+    login(client)
+    first, second = create_draft(client), create_draft(client)
+
+    def plan(creation):
+        planned = client.post(f'/api/creations/{creation["id"]}/plans', headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())},
+                              json={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
+        assert planned.status_code == 201, planned.text
+        return planned.json()["id"]
+
+    def scene(creation, plan_id, cookie=None):
+        return client.post(f'/api/creations/{creation["id"]}/scenes', json={"plan_id": plan_id, "acknowledged_warnings": ["low_resolution"]},
+                           headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4()), **({"Cookie": cookie} if cookie else {})})
+
+    def rows():
+        with client.app.state.engine.connect() as conn:
+            return [conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one() for table in ("poster_jobs", "mutation_keys", "poster_calls")]
+
+    token, plans = client.cookies.get(auth.COOKIE), (plan(first), plan(second))
+    before = rows()
+    assert scene(first, plans[0]).status_code == 202
+    alive = rows()
+    assert [now - was for now, was in zip(alive, before)] == [1, 1, 1]  # a job, its key, its reservation
+    assert client.delete("/api/session").status_code == 200
+    late = scene(second, plans[1], f"{auth.COOKIE}={token}")
+    assert (late.status_code, late.json()["error"]["code"]) == (401, "unauthenticated")
+    assert rows() == alive
+
+
 def test_origin_required_even_for_login_and_logout(client):
     for origin in ("", "https://evil.example", "null", ORIGIN+"/"):
         assert client.post("/api/session", json=credentials(PASSWORD), headers={"Origin": origin}).status_code == 403
@@ -562,13 +594,15 @@ def test_a_change_committed_during_the_verification_gives_no_session(client, mon
     assert stored_password(client.app) == (newer if change == "password" else password_hash)
 
 
-def test_the_signed_out_answer_says_whom_to_contact_only_when_it_is_set(settings, env):
+def test_every_session_answer_says_whom_to_contact_only_when_it_is_set(settings, env):
     for contact in (None, "l’administrateur au 034 00 000 00"):
         settings.support_contact_fr = contact
+        support = {"support_fr": contact} if contact else {}
         with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
-            assert client.get("/api/session").json() == {"authenticated": False} | ({"support_fr": contact} if contact else {})
+            assert client.get("/api/session").json() == {"authenticated": False} | support
             login(client)
-            assert client.get("/api/session").json() == {"authenticated": True, "shop_id": 1}
+            # Signed in too: another tab of the device shows the form while this shop is signed in.
+            assert client.get("/api/session").json() == {"authenticated": True, "shop_id": 1} | support
     env.setenv("SUPPORT_CONTACT_FR", "x" * 201)
     with pytest.raises(ConfigError, match="support_contact_fr"):
         load_settings(env_file=None)

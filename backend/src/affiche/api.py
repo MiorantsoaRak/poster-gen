@@ -660,9 +660,12 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
 
     @app.get("/api/session", openapi_extra={"security": []})
     def session(request: Request):
+        # Whom to call for a forgotten password is public text, given with every answer: a sign-in form shown because
+        # another shop is signed in on the device needs it too (T-MULTI-SHOP-006 review r1).
+        support = {"support_fr": settings.support_contact_fr} if settings.support_contact_fr else {}
         if request.state.shop is not None:
-            return {"authenticated": True, "shop_id": request.state.shop}
-        return {"authenticated": False} | ({"support_fr": settings.support_contact_fr} if settings.support_contact_fr else {})
+            return {"authenticated": True, "shop_id": request.state.shop} | support
+        return {"authenticated": False} | support
 
     @app.post("/api/session", openapi_extra={"security": []})
     def login(body: Login, request: Request):

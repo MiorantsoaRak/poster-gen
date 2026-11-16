@@ -6,11 +6,10 @@
 // the key) and, until the server has answered it, sends that same request again. One tab per device holds the chat
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ApiError, displayUrl, mutation, preparedUrl, read } from './api'
-import { cardButton, CHANGE_BUTTONS, changes, CHAT_PREFIX, complete, effectOf, fate, final, identityLine, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, PENDING_KEY, pendingFor, readPending, readThread, settled, spend, staleLine, STYLES, supersede, swapRole, threadKey, trim, UNSENT_KEY, versionsLeft, wireDraft,
+import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from './api'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
-import { staleWords } from './words'
 
 const props = defineProps<{ adapter: ChatAdapter }>()
 const emit = defineEmits<{ steps: [] }>()
@@ -33,8 +32,6 @@ const mine = (at = token) => !closed && !!owner.value && at === token
 // The /scenes request this card did not send: the tab lost the chat right before it left.
 class Stopped extends Error {}
 
-// A session that ended is not a dead end: the sign-in form comes, and the thread is read again after it.
-const out = (reason: unknown) => { if (reason instanceof ApiError && reason.status === 401) props.adapter.signedOut() }
 const roleNames: Record<Role, string> = { product: 'Produit', inspiration: 'Inspiration' }
 const src = (asset: string) => preparedUrl(`/api/assets/${asset}`)
 const price = (value?: number | null) => `${(value ?? 0).toLocaleString('fr-FR')} Ar`
@@ -56,7 +53,7 @@ const numberOf = (visual: Visual) => versions.value.length - versions.value.inde
 const versionOf = (item: Item) => versions.value.find(visual => visual.id === item.card?.visual_id)
 const stateNames = { pending_review: 'à vérifier', approved: 'approuvée', rejected: 'refusée' }
 const imageJob = computed(() => !!state.job && ['scene', 'refine'].includes(state.job.kind))
-const openCard = () => items.value.find(item => paid(item.card) && item.spent && !item.done)
+const openCard = () => items.value.find(unresolved)
 // The read on its way belongs to one thread: the one of the poster its body names.
 const awaited = computed(() => !!pending.value && pendingFor(pending.value) === (state.creation?.id ?? null))
 // One paid tap, never two, and one read at a time: while anything runs, paid buttons are off and « Envoyer » waits
@@ -92,29 +89,28 @@ const limitOf = (item: Item) => paid(item.card) && !item.spent && !item.done && 
 const lineOf = (item: Item) => !item.spent && !item.done && !item.card?.effect && free(item) ? `Je change le prix sur l’affiche : ${price(item.card!.words?.price_ar)}.` : item.text
 
 // ── kept in this browser ─────────────────────────────────────────────────────────────────────────────────
-// Only the tab that holds the chat writes it.
+// Only the tab that holds the chat writes it, and only while its shop is open on the page (api.ts shopStorage).
+// true once the thread is stored as written (chat.ts storeThread): a paid request leaves only then (ADR-108).
 function save() {
-  if (!mine()) return
-  try {
-    localStorage.setItem(key, JSON.stringify({ at: Date.now(), items: trim(items.value), draft }))
-    // Capped like the kept words: the oldest threads go first.
-    const threads = Object.keys(localStorage).filter(name => name.startsWith(CHAT_PREFIX) && name !== UNSENT_KEY && name !== PENDING_KEY)
-    for (const name of staleWords(threads.map(name => [name, localStorage.getItem(name)]))) localStorage.removeItem(name)
-  } catch {
+  if (!mine()) return false
+  let stored = false
+  try { stored = storeThread(localStorage, shopStorage, key, JSON.stringify({ at: Date.now(), items: trim(items.value), draft })) } catch { /* refused */ }
+  if (!stored) {
     if (kept) state.notice = 'Ce navigateur ne peut pas garder la conversation : elle sera perdue à la fermeture.'
     kept = false
   }
+  return stored
 }
 function setPending(value: Pending) {
   if (!mine()) return
   pending.value = value
-  try { localStorage.setItem(PENDING_KEY, JSON.stringify(value)) } catch { /* the ref holds it for this visit */ }
+  try { shopStorage.setItem(pendingKey(), JSON.stringify(value)) } catch { /* the ref holds it for this visit */ }
 }
 // Only the answer to the stored record's own key clears it: a later read may have replaced it.
 function clearPending(done: string) {
   if (!mine()) return
   if (pending.value?.key === done) pending.value = null
-  try { if (readPending(localStorage.getItem(PENDING_KEY))?.key === done) localStorage.removeItem(PENDING_KEY) } catch { /* nothing was kept */ }
+  try { if (readPending(localStorage.getItem(pendingKey()))?.key === done) shopStorage.removeItem(pendingKey()) } catch { /* nothing was kept */ }
 }
 // Restoration only: what is stored, as it is. Nothing is built here (a recap least of all).
 function load(id?: string | null) {
@@ -177,7 +173,7 @@ function attach(event: Event) {
 async function sendFile(entry: Unsaved) {
   Object.assign(entry, { status: 'sending', error: '', asset: undefined })
   try { Object.assign(entry, await props.adapter.attach(entry.file, entry.role), { status: 'done' }) }
-  catch (reason) { Object.assign(entry, { status: 'failed', error: reason instanceof Error ? reason.message : 'Envoi impossible. Réessayez.' }); out(reason) }
+  catch (reason) { Object.assign(entry, { status: 'failed', error: reason instanceof Error ? reason.message : 'Envoi impossible. Réessayez.' }) }
 }
 // A photo this shop already used for the same product: attached without an upload, and no read is paid for it.
 function reuse(asset: string) {
@@ -209,7 +205,7 @@ async function savedFirst() {
   try { await props.adapter.saved() } catch (reason) { failure = reason }
   if (!mine(at)) return false
   reading.value = false
-  if (failure) { state.error = failure instanceof Error && failure.message ? failure.message : 'L’affiche n’a pas pu être enregistrée. Vérifiez-la dans Pas à pas.'; out(failure) }
+  if (failure) state.error = failure instanceof Error && failure.message ? failure.message : 'L’affiche n’a pas pu être enregistrée. Vérifiez-la dans Pas à pas.'
   return !failure && key === from
 }
 const sendable = () => !(held.value || pending.value || tray.value.some(item => item.status !== 'done') || (!text.value.trim() && !tray.value.length))
@@ -261,7 +257,6 @@ async function ask() {
       if (at >= 0) items.value.splice(at, 1)
       text.value = record.text; app(sentence)
     } else app(sentence, { kind: 'failed', code, ...(pending.value || code === 'read_failed' || code === 'unauthenticated' ? { retry: record.text } : {}) })
-    out(reason)
   } finally { if (mine(at)) { reading.value = false; save() } }
 }
 // A failed read is settled: its retry is a new paid read. Any other retry is the record that is still pending.
@@ -273,7 +268,7 @@ async function resend(item: Item) {
   }
   void ask()
 }
-watch(text, value => { if (!mine()) return; try { if (value) localStorage.setItem(UNSENT_KEY, value); else localStorage.removeItem(UNSENT_KEY) } catch { /* the text holds for this visit */ } })
+watch(text, value => { if (!mine()) return; try { if (value) shopStorage.setItem(unsentKey(), value); else shopStorage.removeItem(unsentKey()) } catch { /* the text holds for this visit */ } })
 
 // ── the paid tap ─────────────────────────────────────────────────────────────────────────────────────────
 async function create(item: Item) {
@@ -284,15 +279,16 @@ async function create(item: Item) {
   const style = inspiration.value ? 'clair' : draft.style ?? 'clair'
   if (card.kind === 'recap') card.style = style
   item.creation = state.creation?.id; looked.value = null
-  // Spent and saved before anything leaves; the poster's id and the job's id are added by the two watchers below.
-  save()
+  // Spent and saved before anything leaves (strict send, chat.ts keepRequest): a browser that cannot store the card sends
+  // nothing at all, not even the poster or its plan. The poster's id and the job's id are added by the two watchers below.
+  if (!save()) return conclude(item, new Error(UNSTORED))
   // The tap on the recap (photos, name and price in view) is the agreement the form asks with its checkbox.
   if (!state.creation) { sync(); state.intake.confirmed = true }
   starting.value = true
   let failure: unknown
   // Right before the paid request leaves, with nothing awaited until it does: still this tab's chat, and the request kept as sent.
   const owned = () => { if (!mine(at)) throw new Stopped() }
-  const sending = (request: SceneRequest) => { owned(); item.request = request; save() }
+  const sending = (request: SceneRequest) => { owned(); keepRequest(item, request, save) }
   try {
     await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending, card.identity)
       : kind === 'refine' ? props.adapter.change(item.id, visual, card.instruction_fr!, owned, sending)
@@ -320,7 +316,7 @@ async function setWords(visual: string, values: Words, said: string, item?: Item
   if (!mine(at)) return
   const sentence = failure ? failure instanceof Error && failure.message ? failure.message : 'Le changement n’a pas pu être fait. Réessayez.' : undefined
   if (item) { item.card!.error = sentence; if (!failure && close) item.done = true } else if (sentence) state.error = sentence
-  if (failure) out(failure); else app(said)
+  if (!failure) app(said)
   save()
 }
 // The card's kept request, sent again exactly as it first left (same key, body and revision): the server answers what it
@@ -342,7 +338,6 @@ async function replay(item: Item) {
 // the server's sentence and « Réessayer », the same request. Never kept: never sent, and a new card is offered.
 function conclude(item: Item, failure: unknown) {
   const sentence = failure instanceof Error ? failure.message : '', code = failure instanceof ApiError ? failure.code : ''
-  out(failure)
   if (item.request && !final(code)) { item.card!.error = sentence || 'La demande n’a pas abouti.'; return save() }
   item.done = true
   // The server asks the agreement to a small photo: a new card asks it.
@@ -373,7 +368,7 @@ watch(() => state.creation?.id, (id, old) => {
   // The new poster's thread takes its poster's key; the other tabs are told where it went.
   const from = key
   open.creation = id; key = threadKey(id); save()
-  try { localStorage.setItem(from, movedTo(id!)) } catch { /* a tab left behind shows its own copy */ }
+  try { shopStorage.setItem(from, movedTo(id!)) } catch { /* a tab left behind shows its own copy */ }
 }, { flush: 'sync' })
 watch(() => state.job, job => {
   const open = starting.value && ['scene', 'refine'].includes(job?.kind ?? '') ? openCard() : undefined
@@ -438,7 +433,7 @@ const resized = () => nextTick(measure)
 // The tab that holds the chat reads it from storage, as it is; one that takes it over follows the new poster's thread.
 function begin(takenOver = false) {
   reading.value = starting.value = false; checking = false  // what an earlier hold had begun is not this one's
-  try { pending.value = readPending(localStorage.getItem(PENDING_KEY)); text.value = localStorage.getItem(UNSENT_KEY) ?? '' } catch { /* nothing was kept */ }
+  try { pending.value = readPending(localStorage.getItem(pendingKey())); text.value = localStorage.getItem(unsentKey()) ?? '' } catch { /* nothing was kept */ }
   const moved = takenOver && !state.creation ? (() => { try { return readThread(localStorage.getItem(key)).moved } catch { return undefined } })() : undefined
   if (moved) { window.location.hash = `message-${moved}`; return }
   load(state.creation?.id)
@@ -455,6 +450,7 @@ const hold = (options: LockOptions, takenOver = false) => navigator.locks.reques
 }).catch(() => { owner.value = false })  // taken over by another tab
 function takeOver() { void hold({ steal: true }, true) }
 if (!lockless) void hold({ ifAvailable: true })
+props.adapter.waiting = () => mine() ? !!openCard() : undefined
 // The agreement to a small photo is for one product and its photos.
 watch(() => [draft.name, products().map(item => item.asset).join()], () => { smallAccepted.value = false })
 watch(() => [draft.name, draft.price_ar, draft.pictures.length, tray.value.map(item => `${item.asset}${item.role}`).join()], sync)

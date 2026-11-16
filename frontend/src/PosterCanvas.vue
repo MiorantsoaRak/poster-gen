@@ -4,6 +4,7 @@ import Konva from 'konva'
 import { Stage as VStage, Layer as VLayer, Group as VGroup, Rect as VRect, Image as VImage, Text as VText, Path as VPath, Circle as VCircle, Transformer as VTransformer } from 'vue-konva'
 import { drawOrder, FORMATS, type Format, type Layer, type PosterDocument } from './document'
 import { loadFonts } from './fonts'
+import { api, verify } from './api'
 import { badgeConfig, iconLine, inspectLayout, textRuns, type LayoutIssue } from './canvas'
 
 const props = withDefaults(defineProps<{ document: PosterDocument; format: Format; sources: Record<string, string>;
@@ -30,13 +31,25 @@ const scene = computed(() => {
   return layout.value.scene.visual_id && shownScene?.format === props.format ? shownScene : undefined
 })
 
+// The shop's images are asked like any request of the shop (api.ts: its header, the gate's guard, identity loss handed to
+// the gate, review r2 P1-3). The server's renderer gives data: addresses, read as they are.
+async function blobOf(url: string) {
+  if (url.startsWith('/api/')) return api<Blob>(url, { quiet: true, as: 'blob' })
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return response.blob()
+}
 async function imageFor(url: string) {
   if (!cache.has(url)) cache.set(url, (async () => {
-    const response = await fetch(url, { credentials: 'same-origin' })
-    if (!response.ok) throw new Error('Image introuvable. Restaurez le fichier source.')
-    const objectUrl = URL.createObjectURL(await response.blob())
+    let blob: Blob
+    try { blob = await blobOf(url) } catch { throw new Error('Image introuvable. Restaurez le fichier source.') }
+    const objectUrl = URL.createObjectURL(blob)
     try {
       const image = new Image(); image.src = objectUrl; await image.decode(); return image
+    } catch (error) {
+      // An answer that is no image may be a session gone: the gate is asked (api.ts verify, review r3 #3).
+      if (url.startsWith('/api/')) verify()
+      throw error
     } finally { URL.revokeObjectURL(objectUrl) }
   })().catch(error => { cache.delete(url); throw error }))
   return cache.get(url)!

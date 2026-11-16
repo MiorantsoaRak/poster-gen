@@ -15,8 +15,12 @@ import uvicorn
 from playwright.sync_api import sync_playwright, expect
 from PIL import Image, ImageChops, ImageDraw
 
+from uuid import uuid4
+
+from affiche import shops
 from affiche.api import BUNDLE, create_app
 from affiche.config import Settings
+from affiche.db import make_engine, write_tx
 from affiche.posters.auth import PASSWORDS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -557,8 +561,9 @@ def walk_wait(browser, session, errors):
     expect(screen.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
     assert len(scenes) == 3, scenes
     expect(screen.locator(".coach[role=status]")).to_have_count(1)
-    # A refusal of the poll does not change by asking again: on a session that ended the editor stops following, says
-    # why and shows the sign-in; it never polls again nor starts another generation.
+    # A refusal of the poll does not change by asking again: on a session that ended the editor stops following and the
+    # sign-in takes the screen, the shop's content hidden (D-MULTI-SHOP-007 rule 3); it never polls again nor starts
+    # another generation.
     screen.locator(".review-panel").get_by_role("button", name="Fermer").click()
     check_still(screen, still, "after a new version at 1366 px")
     held["status"] = "running"
@@ -567,7 +572,7 @@ def walk_wait(browser, session, errors):
     expect(screen.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
     held["signed_out"] = True
     expect(screen.get_by_label("Mot de passe", exact=True)).to_be_visible()
-    expect(screen.locator(".message.error")).to_contain_text("Connectez-vous pour continuer.")
+    expect(screen.locator("main:not(.gate)")).to_have_attribute("hidden", "")
     expect(screen.locator(".wait")).to_have_count(0)
     asked = len(polls)
     screen.wait_for_timeout(3000)
@@ -725,7 +730,7 @@ def walk_words(browser, session, errors):
         page.get_by_role("button", name="Tout est conforme, approuver").click()
         expect(page.get_by_role("tab")).to_have_count(4)
 
-    kept = "id => JSON.parse(localStorage.getItem('affiche.words.' + id))"
+    kept = "id => JSON.parse(localStorage.getItem('affiche.shop1.words.' + id))"
 
     page.goto(ORIGIN)
     make("Casque Alpha", "120 000")
@@ -735,7 +740,7 @@ def walk_words(browser, session, errors):
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
     poster_a = page.url.split("#")[1]
     # Not generated yet: the words are in the browser, under this poster's id, with nothing else of the poster.
-    page.wait_for_function("id => localStorage.getItem('affiche.words.' + id)?.includes('Casque')", arg=poster_a)
+    page.wait_for_function("id => localStorage.getItem('affiche.shop1.words.' + id)?.includes('Casque')", arg=poster_a)
     entry = page.evaluate(kept, poster_a)
     assert (entry["brand"], entry["subtitle"], entry["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), entry
     assert sorted(entry) == ["accent_colour", "accent_word", "at", "brand", "brand_text", "contact", "on", "price", "subtitle"], entry
@@ -779,7 +784,7 @@ def walk_words(browser, session, errors):
     expect(brand).to_have_value("MarqueAlpha")
     expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
-    assert not page.evaluate("() => Object.keys(localStorage).some(key => key.startsWith('affiche.words.') && /Alpha|ALPHA|Casque/.test(localStorage.getItem(key)))")
+    assert not page.evaluate("() => Object.keys(localStorage).some(key => key.startsWith('affiche.shop1.words.') && /Alpha|ALPHA|Casque/.test(localStorage.getItem(key)))")
     assert page.evaluate(kept, poster_a) is None
     context.close()
 
@@ -1182,6 +1187,770 @@ def walk_formats(browser, errors):
     assert not errors, errors
 
 
+OTHER_SHOP = "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer."
+# While the gate is not open nothing of a shop is displayed or in the accessibility tree: the shop's part of the page is
+# absent or under `hidden`, and no word of either shop is in the page's text.
+GATE_CLOSED = """markers => [...document.querySelectorAll('.shop-label, .sign-out, .nav, .seg, main:not(.gate)')].every(e => e.closest('[hidden]'))
+  && !markers.some(marker => document.body.innerText.includes(marker))"""
+# Shown or hidden: what the document holds of these words.
+HOLDS = "markers => markers.filter(marker => document.documentElement.outerHTML.includes(marker))"
+SHOP_KEYS = "prefix => Object.keys(localStorage).filter(key => key.startsWith(prefix))"
+BOUND = "sessionStorage.getItem('affiche.bound')"
+# The tab hidden, then shown (a headless page stays visible otherwise).
+VISIBILITY = """hidden => { for (const [name, value] of [['hidden', hidden], ['visibilityState', hidden ? 'hidden' : 'visible']])
+  Object.defineProperty(document, name, { value, configurable: true }); document.dispatchEvent(new Event('visibilitychange')) }"""
+NO_LOCKS = "Object.defineProperty(Navigator.prototype, 'locks', { get: () => undefined, configurable: true })"
+
+
+class replaced:
+    """Around an action, waits for the fresh page that replaces this one. Playwright's expect_navigation also ends at a
+    same-document change of address, which the gate makes (the poster's address cleared) before a sign-out loads the
+    page fresh."""
+    def __init__(self, page):
+        self.page = page
+
+    def __enter__(self):
+        self.page.evaluate("window.replacedFrom = true")
+
+    def __exit__(self, kind, *_):
+        if kind is None:
+            self.page.wait_for_function("!window.replacedFrom")
+# removeItem refused for some keys, as a browser may refuse it; restoreRemoval() gives it back.
+REFUSE_REMOVAL = """pattern => { const refused = new RegExp(pattern), remove = Storage.prototype.removeItem
+  window.restoreRemoval = () => { Storage.prototype.removeItem = remove }
+  Storage.prototype.removeItem = function (key) { if (refused.test(key)) throw new DOMException('denied', 'SecurityError'); return remove.call(this, key) } }"""
+LEFT_BEHIND = "Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées."
+
+
+def walk_two_shops(browser, errors, data):
+    """Two shops in one browser (D-MULTI-SHOP-007): the identity gate's cases at 360 px. In each case the document holds
+    nothing of a shop the page is not bound to, and nothing of any shop while the gate is not open.
+    Cookies: Playwright's route.fetch() applies a response's Set-Cookie to the context at once, before route.fulfill and
+    even when the fulfilled answer drops it (checked on Chromium 156 for T-MULTI-SHOP-006), so a held fetch cannot hold a
+    cookie. A late answer is held by not continuing its route, and its cookie change is delivered by hand at the moment it
+    arrives (context.add_cookies, clear_cookies). That proves the application's reaction to any change of the cookie at
+    any moment, and that the lock serialises sign-in and sign-out across two tabs of desktop Chromium; not whether a real
+    browser applies or drops the Set-Cookie of an aborted or late request, nor the lock in mobile browsers."""
+    engine = make_engine(Path(data))
+    password_b = os.urandom(12).hex()
+    hashed = PASSWORDS.hash(password_b)  # Argon2 outside the transaction, as the operator's command does
+    with write_tx(engine) as conn:
+        shops.create_shop(conn, "Boutique Deux", "Boutique Deux", hashed)
+    a_title, b_title = "Alpha Porte 7", "Bravo Porte 9"
+    a_words, b_words = [a_title, "Original Phone Mada", "Casque à garder"], [b_title, "Boutique Deux"]
+    both = a_words + b_words
+    headers = {"Origin": ORIGIN, "X-Affiche-Bundle": str(BUNDLE)}
+    aside = browser.new_context()  # the API, as another device
+
+    def cookie_of(identifier, password):
+        aside.clear_cookies()
+        answer = aside.request.post(f"{ORIGIN}/api/session", headers=headers, data={"identifier": identifier, "password": password})
+        assert answer.ok, answer.text()
+        return aside.cookies()
+
+    def deliver(context, identifier, password):
+        """A sign-in's late Set-Cookie, delivered now: the device's session cookie becomes that shop's."""
+        cookies = cookie_of(identifier, password)
+        context.clear_cookies()
+        context.add_cookies(cookies)
+        assert [cookie["name"] for cookie in context.cookies()] == ["affiche_session"], context.cookies()
+
+    def poster(identifier, password, title):
+        cookie_of(identifier, password)
+        photo = aside.request.post(f"{ORIGIN}/api/assets", headers=headers, multipart={"role": "original", "file": {
+            "name": "phone.jpg", "mimeType": "image/jpeg", "buffer": (ROOT / "backend/fixtures/examples/phone-noir.jpg").read_bytes()}})
+        assert photo.ok, photo.text()
+
+        def post(path, body):
+            answer = aside.request.post(f"{ORIGIN}{path}", headers={**headers, "Idempotency-Key": str(uuid4())}, data=body)
+            assert answer.ok, answer.text()
+            return answer.json()
+        made = post("/api/product-inputs", {"name": title, "variant": "Noir", "photo_assets": [photo.json()["asset"]]})
+        return post("/api/creations", {"input_id": made["id"], "offer": {"title": title, "price_ar": 120000},
+                                       "brand_selection": {"logo": False, "shop_name": False, "contact": False}, "primary_format": "feed"})["id"]
+
+    def revision(creation):
+        with engine.connect() as conn:
+            return conn.exec_driver_sql("SELECT current_revision FROM creations WHERE id=?", (creation,)).scalar_one()
+
+    a_poster = poster(IDENTIFIER, PASSWORD, a_title)
+    b_poster = poster("Boutique Deux", password_b, b_title)
+    phone = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
+
+    def tab(context=phone):
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(ORIGIN)
+        return page
+
+    def until(page, check, seconds=15):
+        end = time.monotonic() + seconds
+        while not check():
+            assert time.monotonic() < end, "timed out"
+            page.wait_for_timeout(50)  # route handlers run while Playwright waits
+
+    def sign_in(page, identifier, password):
+        page.get_by_label("Identifiant de la boutique", exact=True).fill(identifier)
+        page.get_by_label("Mot de passe", exact=True).fill(password)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+
+    def showing(page, other, timeout=10000):
+        expect(page.locator("main:not(.gate)")).to_be_visible(timeout=timeout)
+        expect(page.locator("main.gate")).to_have_count(0)
+        assert not page.evaluate(HOLDS, other), page.evaluate(HOLDS, other)
+
+    def signed_out(page, other, elsewhere=True):
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main.gate").get_by_text(OTHER_SHOP)).to_have_count(1 if elsewhere else 0)
+        # Whom to call for a forgotten password, on every sign-in form (review r1 P2-6).
+        expect(page.locator("main.gate").get_by_text(f"Mot de passe oublié ? Contactez {SUPPORT}.")).to_be_visible()
+        assert page.evaluate(GATE_CLOSED, both), "shop content shown while the gate is closed"
+        assert not page.evaluate(HOLDS, other), page.evaluate(HOLDS, other)
+        assert page.evaluate("location.hash") == "", page.url  # no poster's address kept for whoever signs in next
+
+    def themes(page, where, name):
+        for scheme, theme in (("dark", "sombre"), ("light", "clair")):
+            page.emulate_media(color_scheme=scheme)
+            page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+            page.wait_for_function(NO_SIDEWAYS)
+            check_contrast(page, f"{where}, {theme}")
+            shot(page, f"two-shops-{name}-{theme}.png", full_page=False)
+        page.emulate_media(color_scheme="dark")
+
+    def nav(page, name):
+        page.get_by_role("link", name=re.compile(name)).click()
+
+    def sign_out(page):
+        """« Se déconnecter », to the fresh page bound to nobody: the old page may show the signed-out screen a moment
+        before it is replaced (a request of its own refused once the session is gone)."""
+        with replaced(page):
+            page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+
+    def ask_server(page):
+        """The page's next request: « Mes affiches » shows the list it holds, its removed posters are asked for. Its
+        thumbnails are requests too: refused, they alone can sign the page out (review r2 P1-3) while the click is on its
+        way, so the click is dispatched, not waited on; a page already signed out sends nothing (api.ts, gate_closed)."""
+        nav(page, "Mes affiches")
+        page.get_by_label("Afficher les affiches retirées").dispatch_event("click")
+
+    def come_back(page):
+        """The tab hidden and shown again: the session is asked again."""
+        page.evaluate(VISIBILITY, True)
+        page.evaluate(VISIBILITY, False)
+
+    def hold_first(method, store):
+        """A route handler that holds the first request of this method in `store` and lets every other one through."""
+        caught = []
+
+        def handle(route):
+            if route.request.method == method and not caught:
+                caught.append(route)
+                store.append(route)
+            else:
+                route.continue_()
+        return handle
+
+    # 0. Nothing of a shop is asked before the page knows its shop (review r1 P1-1): a new tab's session answer is late,
+    # its address is changed to B's poster meanwhile, the device's session being B's; then the device's session becomes
+    # A's and the answer names A. The tab shows A, and nothing of B is in it.
+    deliver(phone, "Boutique Deux", password_b)
+    early, asked = phone.new_page(), []
+    early.set_default_timeout(10000)
+    early.on("pageerror", lambda error: errors.append(str(error)))
+    early.route("**/api/session", lambda route: asked.append(route) if route.request.method == "GET" and not asked else route.continue_())
+    early.goto(ORIGIN)
+    until(early, lambda: asked)
+    early.evaluate("id => { location.hash = id }", b_poster)
+    early.wait_for_timeout(1500)  # time enough for B's poster to be asked and answered, were it asked
+    deliver(phone, IDENTIFIER, PASSWORD)
+    asked.pop().continue_()
+    showing(early, b_words)
+    assert early.evaluate(BOUND) == "1"
+    early.close()
+    # And no route before the shop is loaded: an address given meanwhile is routed once the shop is there, so the chat's
+    # address opens the chat (routed earlier, it became the empty address: the chat's availability was not known yet).
+    early, asked = phone.new_page(), []
+    early.set_default_timeout(10000)
+    early.on("pageerror", lambda error: errors.append(str(error)))
+    early.route("**/api/session", lambda route: asked.append(route) if route.request.method == "GET" and not asked else route.continue_())
+    early.goto(ORIGIN)
+    until(early, lambda: asked)
+    early.evaluate("location.hash = 'message'")
+    early.wait_for_timeout(500)
+    asked.pop().continue_()
+    expect(early.get_by_label("Votre message")).to_be_visible()
+    assert early.url.endswith("#message"), early.url
+    early.close()
+    phone.clear_cookies()
+
+    # Basics: A signs in as it says its identifier, keeps a poster's words and an unsent message, signs out: the form
+    # shows nothing of A, A's keys are gone and the tab is bound to nobody.
+    one = tab()
+    expect(one.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    assert one.evaluate(BOUND) == "none"
+    sign_in(one, "Original Phone", PASSWORD)
+    showing(one, b_words)
+    assert one.evaluate(BOUND) == "1"
+    one.goto(f"{ORIGIN}/#{a_poster}")
+    expect(one.get_by_label("Titre", exact=True)).to_have_value(a_title)
+    one.wait_for_function("id => localStorage.getItem('affiche.shop1.words.' + id) !== null", arg=a_poster)
+    one.goto(f"{ORIGIN}/#message")
+    one.get_by_label("Votre message").fill("Casque à garder pour moi")
+    one.wait_for_function("localStorage.getItem('affiche.shop1.chat.unsent') === 'Casque à garder pour moi'")
+    themes(one, "a shop's header with « Se déconnecter », 360 px", "header-360")
+    # From the poster's editor, whose phone layout has no application header: « Se déconnecter » is in its bar (review r1 P2-5).
+    one.goto(f"{ORIGIN}/#{a_poster}")
+    expect(one.locator(".app-header")).to_be_hidden()
+    expect(one.locator(".bar").get_by_role("button", name="Se déconnecter")).to_be_visible()
+    check_targets(one, "the editor's bar with « Se déconnecter », 360 px")
+    sign_out(one)
+    assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == [], one.evaluate(SHOP_KEYS, "affiche.shop1.")
+    assert one.evaluate(BOUND) == "none"
+    signed_out(one, both, elsewhere=False)
+    # A key the browser refuses to remove (review r1 P2-7): the session ends all the same, the page says that the browser
+    # kept data of the shop and offers another try, which removes it and loads the page fresh.
+    sign_in(one, IDENTIFIER, PASSWORD)
+    showing(one, b_words)
+    one.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+    one.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
+    one.get_by_role("button", name="Se déconnecter").click()
+    expect(one.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+    assert one.evaluate("fetch('/api/session').then(answer => answer.json())")["authenticated"] is False
+    assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == ["affiche.shop1.style"] and one.evaluate(BOUND) == "none"
+    assert one.evaluate(GATE_CLOSED, both)
+    one.evaluate("restoreRemoval()")
+    with replaced(one):
+        one.get_by_role("button", name="Réessayer l’effacement").click()
+    signed_out(one, both, elsewhere=False)
+    assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == []
+
+    # 4. Two tabs. Tab 2 opened signed out is bound to nobody: A's sign-in in tab 1 shows it no shop.
+    two = tab()
+    sign_in(one, IDENTIFIER, PASSWORD)
+    showing(one, b_words)
+    signed_out(two, a_words)
+    themes(two, "signed out, another shop connected, 360 px", "another-shop-360")
+    held = []
+    one.route(f"**/api/creations/{a_poster}", hold_first("PUT", held))
+    one.goto(f"{ORIGIN}/#{a_poster}")
+    before = revision(a_poster)
+    one.get_by_label("Titre", exact=True).fill(f"{a_title} bis")
+    until(one, lambda: held)
+    sign_in(two, "Boutique Deux", password_b)
+    showing(two, a_words)
+    signed_out(one, b_words)  # its storage event: bound to A, the answer names B
+    # The save held across the switch is refused and changes nothing.
+    with one.expect_response(lambda response: response.request.method == "PUT" and a_poster in response.url) as refused:
+        held.pop().continue_()
+    assert refused.value.status == 409 and refused.value.json()["error"]["code"] == "shop_changed", refused.value.status
+    assert revision(a_poster) == before
+    # A's explicit sign-in loads A fresh; its unsaved edit is sent first, with A's session (rule 4). Tab 2 is out in turn.
+    sign_in(one, IDENTIFIER, PASSWORD)
+    showing(one, b_words)
+    assert revision(a_poster) == before + 1
+    signed_out(two, a_words)
+    one.unroute(f"**/api/creations/{a_poster}")
+
+    # Cookies, with the lock: tab 1's sign-out, its answer held, keeps tab 2's sign-in from being sent until it is over.
+    deletes, posts = [], []
+    one.route("**/api/session", lambda route: deletes.append(route) if route.request.method == "DELETE" else route.continue_())
+    two.on("request", lambda request: posts.append(request.url) if request.method == "POST" and request.url.endswith("/api/session") else None)
+    one.get_by_role("button", name="Se déconnecter").click()
+    until(one, lambda: deletes)
+    sign_in(two, "Boutique Deux", password_b)
+    two.wait_for_timeout(1500)
+    assert not posts, "tab 2's sign-in left while tab 1 held the identity lock"
+    with replaced(one):
+        deletes.pop().continue_()
+    showing(two, a_words)
+    assert len(posts) == 1, posts
+    expect(one.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    one.unroute("**/api/session")
+
+    # 1. A's sign-in held past its 30 s; B signs in in tab 2 meanwhile (after the lock), then A's answer arrives.
+    sign_out(two)
+    held = []
+    one.route("**/api/session", lambda route: held.append(route) if route.request.method == "POST" else route.continue_())
+    sign_in(one, IDENTIFIER, PASSWORD)
+    until(one, lambda: held)
+    started = time.monotonic()
+    sign_in(two, "Boutique Deux", password_b)
+    showing(two, a_words, timeout=45000)
+    assert time.monotonic() - started > 25, "tab 2 signed in before tab 1's lock was given up"
+    expect(one.locator("main.gate .message.error")).to_contain_text("Le serveur met trop de temps à répondre.")
+    deliver(phone, IDENTIFIER, PASSWORD)  # A's late answer arrives now
+    ask_server(two)
+    signed_out(two, a_words)
+    one.unroute("**/api/session")
+    # The same with tab 1 closed while its sign-in is held: its lock goes with it.
+    three = tab()
+    showing(three, b_words)  # a new tab takes the device's session, A's
+    sign_out(three)
+    held = []
+    three.route("**/api/session", lambda route: held.append(route) if route.request.method == "POST" else route.continue_())
+    sign_in(three, IDENTIFIER, PASSWORD)
+    until(three, lambda: held)
+    three.close()
+    sign_in(two, "Boutique Deux", password_b)
+    showing(two, a_words)
+    deliver(phone, IDENTIFIER, PASSWORD)
+    come_back(two)
+    signed_out(two, a_words)
+
+    # 2. A, away to another page; B signs in elsewhere; Back. While the session answer is held nothing of A or B is
+    # shown; then the signed-out screen (bound to A, the answer names B). Then the same with the answer failing.
+    four = tab()
+    showing(four, b_words)
+    # Playwright's Chromium restores nothing from the back-forward cache (checked on 156, with and without its flag): the
+    # two events are also dispatched by hand. pagehide hides the shop at once; pageshow with persisted reloads.
+    four.evaluate("dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))")
+    assert four.evaluate(GATE_CLOSED, both), "pagehide left the shop shown"
+    with four.expect_navigation():
+        four.evaluate("dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))")
+    showing(four, b_words)
+    four.goto("about:blank")
+    sign_in(two, "Boutique Deux", password_b)
+    showing(two, a_words)
+    asked = []
+    four.route("**/api/session", lambda route: asked.append(route) if route.request.method == "GET" else route.continue_())
+    four.go_back()  # a load of the same tab: its binding is kept
+    until(four, lambda: asked)
+    four.wait_for_timeout(500)
+    assert four.evaluate(GATE_CLOSED, both) and not four.evaluate(HOLDS, b_words), four.evaluate(HOLDS, both)
+    for route in asked:
+        try:
+            route.continue_()
+        except Exception:  # the request of the page left by the reload
+            pass
+    signed_out(four, b_words)
+    four.unroute("**/api/session")
+    # A signs in again in another tab: this tab saw another identity and stays signed out until its own sign-in (rule 4).
+    sign_out(two)
+    sign_in(two, IDENTIFIER, PASSWORD)
+    showing(two, b_words)
+    come_back(four)
+    four.wait_for_timeout(500)
+    signed_out(four, b_words)
+    sign_out(two)
+    sign_in(four, IDENTIFIER, PASSWORD)
+    showing(four, b_words)
+    four.goto("about:blank")
+    sign_in(two, "Boutique Deux", password_b)
+    showing(two, a_words)
+    four.route("**/api/session", lambda route: route.abort("failed") if route.request.method == "GET" else route.continue_())
+    four.go_back()
+    expect(four.get_by_text("Connexion au serveur impossible.")).to_be_visible()
+    assert four.evaluate(GATE_CLOSED, both) and not four.evaluate(HOLDS, b_words)
+    themes(four, "session answer failed, 360 px", "session-failed-360")
+    four.unroute("**/api/session")
+    four.get_by_role("button", name="Réessayer").click()
+    signed_out(four, b_words)
+
+    # 3. Offline: A's editor holds an edit whose save is on its way; the tab is hidden and shown with the network cut.
+    sign_in(four, IDENTIFIER, PASSWORD)
+    showing(four, b_words)
+    four.goto(f"{ORIGIN}/#{a_poster}")
+    title = four.get_by_label("Titre", exact=True)
+    saves = []
+    four.route(f"**/api/creations/{a_poster}", hold_first("PUT", saves))
+    title.fill(f"{a_title} hors ligne")
+    until(four, lambda: saves)
+    phone.set_offline(True)
+    come_back(four)
+    expect(four.get_by_text("Connexion au serveur impossible.")).to_be_visible()
+    assert four.evaluate(GATE_CLOSED, both)
+    phone.set_offline(False)
+    four.get_by_role("button", name="Réessayer").click()
+    expect(title).to_have_value(f"{a_title} hors ligne")  # the hidden editor kept its edit
+    saves.pop().continue_()
+    expect(four.get_by_text("Enregistré", exact=True)).to_be_visible()
+    four.unroute(f"**/api/creations/{a_poster}")
+
+    # 5. Expiry, then another shop: A's sessions end while its editor follows a job; the next poll is the signed-out
+    # screen; B signs in there, fresh, and nothing is sent to A's poster.
+    polls, puts = [], []
+    four.route("**/api/jobs/*", lambda route: polls.append(route))
+    for _ in range(2):
+        four.get_by_role("button", name="Continuer", exact=True).click()
+    four.get_by_role("button", name="Générer l’affiche").click()
+    four.get_by_role("button", name="Lancer la génération").click()
+    until(four, lambda: polls)
+    four.on("request", lambda request: puts.append(request.url) if request.method == "PUT" and a_poster in request.url else None)
+    before = revision(a_poster)
+    with write_tx(engine) as conn:
+        shops.end_sessions(conn, 1)
+    polls.pop().continue_()
+    signed_out(four, b_words, elsewhere=False)
+    four.unroute("**/api/jobs/*")
+    sign_in(four, "Boutique Deux", password_b)
+    showing(four, a_words)
+    nav(four, "Mes affiches")
+    expect(four.get_by_text(b_title)).to_be_visible()
+    assert not four.evaluate(HOLDS, a_words) and not puts and revision(a_poster) == before, puts
+
+    # 6. Suspension: the next action is the signed-out screen; signing in says why; enabled, a reload is A again.
+    sign_in(one, IDENTIFIER, PASSWORD)
+    showing(one, b_words)
+    with write_tx(engine) as conn:
+        shops.suspend(conn, 1)
+    ask_server(one)
+    signed_out(one, b_words, elsewhere=False)
+    sign_in(one, IDENTIFIER, PASSWORD)
+    expect(one.locator("main.gate .message.error")).to_contain_text("Cette boutique est suspendue. Contactez l’administrateur.")
+    with write_tx(engine) as conn:
+        shops.enable(conn, 1)
+    one.reload()
+    showing(one, b_words)
+    assert one.evaluate(BOUND) == "1"
+
+    # 8. Sign-out with a conflicting save offers to discard it; with the chat held by another tab it is refused.
+    one.set_viewport_size({"width": 1366, "height": 768})  # the phone's editor has no header: its bar goes back
+    conflict = poster(IDENTIFIER, PASSWORD, f"{a_title} conflit")  # a poster no job of the cases above follows
+    one.goto(f"{ORIGIN}/#{conflict}")
+    title = one.get_by_label("Titre", exact=True)
+    expect(title).to_have_value(f"{a_title} conflit")
+    current = aside.request.get(f"{ORIGIN}/api/creations/{conflict}").json()
+    current["document"]["offer"]["title"] = f"{a_title} ailleurs"
+    assert aside.request.put(f"{ORIGIN}/api/creations/{conflict}", headers={**headers, "Idempotency-Key": str(uuid4()), "If-Match": f'"{current["revision"]}"'},
+                             data=current["document"]).ok
+    title.fill(f"{a_title} ici")
+    expect(one.get_by_text("Une autre version existe")).to_be_visible()
+    one.get_by_role("button", name="Se déconnecter").click()
+    dialog = one.get_by_role("dialog")
+    expect(dialog).to_contain_text("Des modifications de l’affiche n’ont pas pu être enregistrées : elles seront perdues.")
+    expect(dialog).not_to_contain_text("Une image demandée")
+    themes(one, "sign-out confirmation, 1366 px", "sign-out-unsaved-1366")
+    with replaced(one):
+        dialog.get_by_role("button", name="Se déconnecter quand même").click()
+    expect(one.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    assert one.evaluate(BOUND) == "none" and one.evaluate(SHOP_KEYS, "affiche.shop1.") == []
+    one.set_viewport_size({"width": 360, "height": 740})
+    sign_in(one, IDENTIFIER, PASSWORD)
+    showing(one, b_words)
+    chatting = tab()
+    showing(chatting, b_words)
+    chatting.goto(f"{ORIGIN}/#message")
+    expect(chatting.get_by_label("Votre message")).to_be_visible()  # this tab holds the chat
+    # Signing out from a tab that does not hold the chat (ADR-108): nothing of the shop stays, in either tab.
+    with replaced(one):
+        one.get_by_role("button", name="Se déconnecter").click()
+    expect(one.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    expect(chatting.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == [], one.evaluate(SHOP_KEYS, "affiche.shop1.")
+    chatting.close()
+    phone.close()
+
+    # Cookies without Web Locks: case 1, and a late sign-out answer after B's sign-in.
+    bare = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
+    bare.add_init_script(NO_LOCKS)
+    first, second = tab(bare), tab(bare)
+    held = []
+    first.route("**/api/session", lambda route: held.append(route) if route.request.method in ("POST", "DELETE") else route.continue_())
+    sign_in(first, IDENTIFIER, PASSWORD)
+    until(first, lambda: held)
+    sign_in(second, "Boutique Deux", password_b)
+    showing(second, a_words)  # no lock to wait for
+    deliver(bare, IDENTIFIER, PASSWORD)  # A's late answer: its cookie first, the page's next request finds it
+    ask_server(second)
+    signed_out(second, a_words)
+    held.pop().fulfill(status=200, json={"authenticated": True, "shop_id": 1})  # then its body
+    showing(first, b_words)  # A, by its own explicit sign-in on that tab
+    first.get_by_role("button", name="Se déconnecter").click()
+    until(first, lambda: held)  # the sign-out's answer held
+    sign_in(second, "Boutique Deux", password_b)
+    showing(second, a_words)
+    bare.clear_cookies()  # the late sign-out's Set-Cookie: it deletes the device's cookie, now B's
+    ask_server(second)
+    signed_out(second, a_words, elsewhere=False)
+    with replaced(first):
+        held.pop().fulfill(status=200, json={"authenticated": False})
+    expect(first.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    bare.close()
+    aside.close()
+    engine.dispose()
+
+
+def walk_review_r2(browser, errors, data, only=()):
+    """Review r2 of T-MULTI-SHOP-006, each case on its own tab of shop 1 at 360 px: a sign-out whose answer is lost after
+    the server ended the session; a canvas image refused (401); an <img> failing once the session ended; late chat work
+    after a sign-out; storage that cannot be listed at sign-out; a key from before the shops that cannot be removed."""
+    engine = make_engine(Path(data))
+    headers = {"Origin": ORIGIN, "X-Affiche-Bundle": str(BUNDLE)}
+    aside = browser.new_context()
+
+    def poster(title, logo=False):
+        """A poster of shop 1 made through the API; with `logo`, the shop's logo on it: an image layer the canvas asks for
+        from the start (until a version exists the other layers are text)."""
+        aside.request.post(f"{ORIGIN}/api/session", headers=headers, data={"identifier": IDENTIFIER, "password": PASSWORD})
+        if logo:
+            mark = aside.request.post(f"{ORIGIN}/api/assets", headers=headers, multipart={"role": "logo", "file": {
+                "name": "logo.png", "mimeType": "image/png", "buffer": (ROOT / "frontend/public/icons/apple-touch-icon.png").read_bytes()}}).json()
+            profile = aside.request.get(f"{ORIGIN}/api/shop-profile").json()
+            assert aside.request.put(f"{ORIGIN}/api/shop-profile", headers={**headers, "Idempotency-Key": str(uuid4()), "If-Match": f'"{profile["revision"]}"'},
+                                     data={"name": profile["name"], "contact": profile["contact"], "logo_asset": mark["asset"]}).ok
+        photo = aside.request.post(f"{ORIGIN}/api/assets", headers=headers, multipart={"role": "original", "file": {
+            "name": "phone.jpg", "mimeType": "image/jpeg", "buffer": (ROOT / "backend/fixtures/examples/phone-noir.jpg").read_bytes()}}).json()
+
+        def post(path, body):
+            answer = aside.request.post(f"{ORIGIN}{path}", headers={**headers, "Idempotency-Key": str(uuid4())}, data=body)
+            assert answer.ok, answer.text()
+            return answer.json()
+        made = post("/api/product-inputs", {"name": title, "variant": "Noir", "photo_assets": [photo["asset"]]})
+        return post("/api/creations", {"input_id": made["id"], "offer": {"title": title, "price_ar": 120000},
+                                       "brand_selection": {"logo": logo, "shop_name": False, "contact": False}, "primary_format": "feed"})["id"]
+
+    def signed_in(script=None):
+        context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
+        if script:
+            context.add_init_script(script)
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(ORIGIN)
+        page.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        expect(page.locator("main:not(.gate)")).to_be_visible()
+        return context, page
+
+    def until(page, check, seconds=15):
+        end = time.monotonic() + seconds
+        while not check():
+            assert time.monotonic() < end, "timed out"
+            page.wait_for_timeout(50)
+
+    def signed_out(page):
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # nothing of the shop is even mounted
+        assert page.evaluate(BOUND) == "none"
+
+    def lost_answer():
+        # P1-1: the server ends the session, its answer is lost; the session's own answer says so, and the sign-out goes on.
+        context, page = signed_in()
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+
+        def lose(route):
+            if route.request.method != "DELETE":
+                return route.continue_()
+            route.fetch()  # the server ends the session
+            route.abort("failed")  # the answer never reaches the page
+        page.route("**/api/session", lose)
+        with replaced(page):
+            page.get_by_role("button", name="Se déconnecter").click()
+        signed_out(page)
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == []
+        context.close()
+
+    def canvas_refused():
+        # P1-3: the canvas's image is refused for a session gone (401): the gate takes it, not an image error.
+        made = poster("Canvas Refus 401", logo=True)
+        context, page = signed_in()
+        # A colour remembered for this poster: the palette does not ask for the photo, only the canvas does.
+        page.evaluate("id => localStorage.setItem('affiche.shop1.palette.' + id, JSON.stringify({ colour: '#1E6FE0', at: 1 }))", made)
+        page.route("**/api/assets/**", lambda route: route.fulfill(status=401, json={"error": {"code": "unauthenticated", "message_fr": "Connectez-vous pour continuer.", "retryable": False}}))
+        page.goto(f"{ORIGIN}/#{made}")
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        context.close()
+
+    def palette_refused():
+        # P1-3: the photo the palette samples is refused (401): the gate takes it too.
+        made = poster("Palette Refus 401")
+        context, page = signed_in()
+        page.route("**/api/assets/**", lambda route: route.fulfill(status=401, json={"error": {"code": "unauthenticated", "message_fr": "Connectez-vous pour continuer.", "retryable": False}}))
+        page.goto(f"{ORIGIN}/#{made}")
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        context.close()
+
+    def image_after_expiry():
+        # P1-3: an image the browser fetches itself (<img>) fails once the session ended: the session is asked again.
+        context, page = signed_in()
+        with write_tx(engine) as conn:
+            shops.end_sessions(conn, 1)
+        page.evaluate("document.querySelector('main:not(.gate)').append(Object.assign(new Image(), { src: '/api/assets/' + 'f'.repeat(64) }))")
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        context.close()
+
+    def late_chat():
+        # P2-4: a read on its way when the shop signs out answers late: nothing of the shop is written again.
+        context, page = signed_in()
+        page.goto(f"{ORIGIN}/#message")
+        held = []
+        page.route("**/api/reads", lambda route: held.append(route))
+        page.get_by_label("Votre message").fill("Sony WH-1000XM6, 700 000 Ar")
+        page.get_by_role("button", name="Envoyer").click()
+        until(page, lambda: held)
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+        page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")  # the page stays, its cleanup to finish
+        page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # the shop's part is gone from the page, its chat with it
+        held.pop().continue_()
+        page.wait_for_timeout(1500)
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == ["affiche.shop1.style"], page.evaluate(SHOP_KEYS, "affiche.shop1.")
+        page.evaluate("restoreRemoval()")
+        with replaced(page):
+            page.get_by_role("button", name="Réessayer l’effacement").click()
+        signed_out(page)
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == []
+        context.close()
+
+    def unlisted():
+        # P2-5: the browser refuses to list its storage at sign-out: the cleanup is said to be unfinished, and its retry
+        # deletes by the shop's prefix, a thread whose paid card waits included (ADR-108: nothing is kept).
+        context, page = signed_in()
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+        page.evaluate("localStorage.setItem('affiche.shop1.chat.c', JSON.stringify({ at: 1, items: [{ id: 'paid', role: 'app', text: '', at: 1, card: { kind: 'recap', name: 'Sony' }, spent: true, request: { path: '/api/creations/x/scenes', body: {}, revision: 1 } }] }))")
+        page.evaluate("""() => { const keys = Object.keys, key = Storage.prototype.key
+          window.restoreListing = () => { Object.keys = keys; Storage.prototype.key = key }
+          Object.keys = value => { if (value instanceof Storage) throw new DOMException('denied', 'SecurityError'); return keys(value) }
+          Storage.prototype.key = () => { throw new DOMException('denied', 'SecurityError') } }""")
+        page.get_by_role("button", name="Se déconnecter").click()
+        # Storage that cannot be listed cannot say that nothing waits: the owner is asked (review r5 P2-3).
+        expect(page.get_by_role("dialog")).to_contain_text("Une image demandée attend encore sa réponse.")
+        page.get_by_role("dialog").get_by_role("button", name="Se déconnecter quand même").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+        page.evaluate("restoreListing()")
+        with replaced(page):
+            page.get_by_role("button", name="Réessayer l’effacement").click()
+        signed_out(page)
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == [], page.evaluate(SHOP_KEYS, "affiche.shop1.")
+        context.close()
+
+    def retry_in_use():
+        # P2-5: the retry asks first: once the shop is signed in again in another tab, its keys are in use and stay.
+        context, page = signed_in()
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+        page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
+        page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+        other = context.new_page()
+        other.set_default_timeout(10000)
+        other.goto(ORIGIN)
+        other.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
+        other.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+        other.get_by_role("button", name="Ouvrir l’atelier").click()
+        expect(other.locator("main:not(.gate)")).to_be_visible()
+        page.evaluate("restoreRemoval()")
+        page.get_by_role("button", name="Réessayer l’effacement").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_have_count(0)
+        assert "affiche.shop1.style" in page.evaluate(SHOP_KEYS, "affiche.shop1.")
+        context.close()
+
+    def legacy_left():
+        # P2-5: a key from before the shops that the move could not remove would come back as shop 1's after its sign-out.
+        context, page = signed_in("""if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); sessionStorage.setItem('refuse', '1')
+            localStorage.setItem('affiche.style', '{"look":"sombre","accent_colour":"#C8A45A"}') }
+          const remove = Storage.prototype.removeItem
+          Storage.prototype.removeItem = function (key) { if (key === 'affiche.style' && sessionStorage.getItem('refuse')) throw new DOMException('denied', 'SecurityError'); return remove.call(this, key) }""")
+        assert page.evaluate("localStorage.getItem('affiche.style')") is not None  # the move could not remove it
+        page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+        page.evaluate("sessionStorage.removeItem('refuse')")
+        with replaced(page):
+            page.get_by_role("button", name="Réessayer l’effacement").click()
+        signed_out(page)
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == [] and page.evaluate("localStorage.getItem('affiche.style')") is None
+        context.close()
+
+    def undecodable(logo):
+        """Review r3 #3: an image of the shop answered (200) but undecodable, once the session has ended: the session is
+        asked again and the gate takes it. With `logo`, the canvas's image (a colour remembered: the palette asks for
+        nothing); without, the photo the palette samples (the canvas then has text layers only)."""
+        made = poster("Image Illisible", logo=logo)
+        context, page = signed_in()
+        if logo:
+            page.evaluate("id => localStorage.setItem('affiche.shop1.palette.' + id, JSON.stringify({ colour: '#1E6FE0', at: 1 }))", made)
+        garbage = {"status": 200, "content_type": "image/png", "body": b"not an image"}
+        held = {"routes": [], "open": False}
+        page.route("**/api/assets/**", lambda route: route.fulfill(**garbage) if held["open"] else held["routes"].append(route))
+        page.goto(f"{ORIGIN}/#{made}")
+        until(page, lambda: held["routes"])
+        with write_tx(engine) as conn:
+            shops.end_sessions(conn, 1)
+        held["open"] = True
+        for route in held["routes"]:
+            route.fulfill(**garbage)
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        context.close()
+
+    def canvas_undecodable():
+        undecodable(logo=True)
+
+    def palette_undecodable():
+        undecodable(logo=False)
+
+    def race(script):
+        """Review r3 #2: « Réessayer l’effacement »'s session answer (nobody) is held; the same shop signs in in another
+        tab, whose new session writes a draft once shown; then the answer arrives. The draft stays."""
+        context, page = signed_in(script)
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+        page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
+        page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
+        page.evaluate("restoreRemoval()")
+        held = []
+        page.route("**/api/session", lambda route: held.append((route, route.fetch())) if route.request.method == "GET" and not held else route.continue_())
+        page.get_by_role("button", name="Réessayer l’effacement").click()
+        until(page, lambda: held)
+        route, answer = held[0]
+        assert answer.json()["authenticated"] is False, answer.json()
+        other = context.new_page()
+        other.set_default_timeout(10000)
+        other.goto(ORIGIN)
+        other.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
+        other.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
+        other.get_by_role("button", name="Ouvrir l’atelier").click()
+        shown, draft = other.locator("main:not(.gate)"), "localStorage.setItem('affiche.shop1.chat.unsent', 'Une affiche pour le casque')"
+        written = False
+        try:
+            expect(shown).to_be_visible(timeout=3000)  # signed in while the retry waits for its answer
+            other.evaluate(draft)
+            written = True
+        except AssertionError:
+            pass  # the sign-in waits for the retry
+        route.fulfill(response=answer)
+        expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_have_count(0)  # the retry is over, whatever it did
+        if not written:
+            expect(shown).to_be_visible()
+            other.evaluate(draft)
+        assert other.evaluate("localStorage.getItem('affiche.shop1.chat.unsent')") == "Une affiche pour le casque"
+        context.close()
+
+    def offline_sign_out():
+        # ADR-108: the session ends first, the keys go after. The sign-out cannot reach the server: still signed in, and
+        # nothing of the shop is deleted from the device.
+        context, page = signed_in()
+        page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
+        page.route("**/api/session", lambda route: route.abort("failed") if route.request.method == "DELETE" else route.continue_())
+        page.get_by_role("button", name="Se déconnecter").click()
+        expect(page.locator(".message.error")).to_contain_text("Déconnexion impossible : la connexion au serveur est interrompue. Réessayez.")
+        expect(page.locator("main:not(.gate)")).to_be_visible()
+        assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == ["affiche.shop1.style"] and page.evaluate(BOUND) == "1"
+        context.close()
+
+    def retry_race_locked():
+        # With Web Locks; the other tab's announce (affiche.identity) refused, so that only the lock is tested.
+        race("""(() => { const set = Storage.prototype.setItem; Storage.prototype.setItem = function (key, value) {
+          if (key === 'affiche.identity') throw new DOMException('full', 'QuotaExceededError'); return set.call(this, key, value) } })()""")
+
+    def retry_race_lockless():
+        # Without Web Locks: the retry sees the sign-in announced (affiche.identity) and asks the session again.
+        race(NO_LOCKS)
+
+    for case in (lost_answer, canvas_refused, palette_refused, image_after_expiry, late_chat, unlisted, retry_in_use, legacy_left,
+                 canvas_undecodable, palette_undecodable, retry_race_locked, retry_race_lockless, offline_sign_out):
+        if not only or case.__name__ in only:
+            case()
+    aside.close()
+    engine.dispose()
+
+
 def serve(data, **extra):
     """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data; the defaults unless told."""
     settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
@@ -1384,7 +2153,7 @@ def run():
                         assert page.get_by_label("Dessiner aussi le nom de la boutique et le contact dans l’image").count() == 0
                         page.get_by_label("Position du contact").select_option("right")
                         until(lambda: footer("contact")["align"] == "right")
-                        assert json.loads(page.evaluate("localStorage.getItem('affiche.style')"))["contact_align"] == "right"
+                        assert json.loads(page.evaluate("localStorage.getItem('affiche.shop1.style')"))["contact_align"] == "right"
                         # By default the contact is drawn in the composition, at the chosen position, without the
                         # shop name (ADR-055). The option is in view: no section has to be opened to find it.
                         expect(page.get_by_text("Pour la prochaine version", exact=True)).to_be_visible()
@@ -2251,6 +3020,10 @@ def run():
                         expect(other.get_by_label("Titre", exact=True)).to_be_visible()
                         assert other.url.endswith(f"#{copy_id}"), other.url
                         other.close()
+                        # Last on this server: it ends shop 1's sessions and suspends it for a while.
+                        walk_two_shops(browser, errors, data)
+                        walk_review_r2(browser, errors, data)
+                        assert not errors, errors
                         # The three formats (ADR-080) on an API of their own, fresh data: FORMATS_ENABLED=feed,square,story.
                         stop(*servers.pop())
                         with tempfile.TemporaryDirectory(prefix="affiche-formats-") as formats_data:
@@ -2260,7 +3033,7 @@ def run():
                             finally:
                                 stop(*formats_server)  # before its data directory is removed
                         assert not errors, errors
-                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, three formats, zero spend.")
+                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, two shops in one browser (the identity gate, sign-out, cookies with and without the lock), three formats, zero spend.")
                     except Exception:
                         page.screenshot(path=str(OUTPUT / "failure.png"), full_page=True)
                         print(page.locator("body").inner_text(), flush=True)

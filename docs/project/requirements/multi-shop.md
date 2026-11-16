@@ -42,7 +42,7 @@
 ## R-MULTI-SHOP-004 — Two shops on one phone
 - **Story:** As someone who signs out, I leave nothing of my shop for the next person on this phone.
 - [ ] What the application keeps on the device (chat threads, unsent text, remembered style) is separated by shop.
-- [ ] « Se déconnecter » deletes what the application kept on the device for this shop, and the next shop to sign in sees none of it. One exception: when an image the shop paid for still waits for its outcome, the owner is told and may sign out anyway; that card alone is kept, under the shop's own key, visible to no other shop, so that it can be resumed. Images the browser keeps in its own cache are not deleted; the conditions of use say so.
+- [ ] « Se déconnecter » deletes what the application kept on the device for this shop, and the next shop to sign in sees none of it. Nothing is kept, with no exception (amended 2026-11-16, user decision, ADR-108): when an image the shop asked for still waits for its outcome, the owner is told before he signs out; an image the server already received goes on there and is found in « Mes affiches », on any device; a request the server never received is not paid and not kept. A paid request leaves the browser only once the browser has stored it; a browser that cannot store it refuses the paid card and says nothing was sent. Images the browser keeps in its own cache are not deleted; the conditions of use say so.
 - [ ] A page shows one shop for its whole life. Whenever the server does not confirm that shop (a session ended, a suspension, another shop signed in, a page brought back with the Back button), nothing of the shop is shown and the sign-in screen comes.
 - **Out of scope:** protecting a device that stays signed in.
 

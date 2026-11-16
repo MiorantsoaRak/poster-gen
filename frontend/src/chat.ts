@@ -1,7 +1,9 @@
 // Creation by message (D-TEXT-FIRST-003): what the chat keeps in this browser, and its rules that need no screen.
 // The conversation is never sent whole to the server: the posters, their versions and states are already there.
+import { shopKey } from './api'
 import type { Creation, Visual } from './document'
 import type { Phase } from './generation'
+import { staleWords } from './words'
 
 export type Role = 'product' | 'inspiration'
 export type Style = 'clair' | 'couleur' | 'sombre'
@@ -71,8 +73,9 @@ export interface ChatAdapter {
   follow(job: JobRow): void
   review(visual: Visual): void
   download(): void
-  /** The session ended (401): the sign-in form takes the screen; the thread is read again after it. */
-  signedOut(): void
+  /** Set by the chat: whether a paid card of its thread waits for its answer (« Se déconnecter » says so before it signs
+   *  out, ADR-108); undefined when this tab does not hold the chat (then the stored threads say, `waitingIn`). */
+  waiting?: () => boolean | undefined
 }
 
 /** The role of the next attached image: the first is the product, the second the inspiration, later ones product photos
@@ -95,8 +98,11 @@ export function swapRole<T extends { id: string; role: Role }>(unsent: T[], id: 
   return [...sent, ...next].filter(picture => picture.role === 'product').length > PRODUCT_PHOTOS ? unsent : next
 }
 
-export const CHAT_PREFIX = 'affiche.chat.', UNSENT_KEY = `${CHAT_PREFIX}unsent`, PENDING_KEY = `${CHAT_PREFIX}pending`, THREAD_ITEMS = 100
-export const threadKey = (creation?: string | null) => `${CHAT_PREFIX}${creation ?? 'new'}`
+// The shop's keys (D-MULTI-SHOP-007): built only once the page's shop is open (api.ts shopKey).
+export const THREAD_ITEMS = 100
+export const chatPrefix = () => shopKey('chat.'), unsentKey = () => shopKey('chat.unsent'), pendingKey = () => shopKey('chat.pending')
+export const threadKey = (creation?: string | null) => `${chatPrefix()}${creation ?? 'new'}`
+export const isThread = (key: string) => key.startsWith(chatPrefix()) && key !== unsentKey() && key !== pendingKey()
 export const trim = (items: Item[]) => items.slice(-THREAD_ITEMS)
 
 const picture = (value: any): value is Picture => !!value && typeof value.asset === 'string' && (value.role === 'product' || value.role === 'inspiration')
@@ -169,10 +175,46 @@ export function spend(items: Item[], id: string) {
   if (!item || item.spent) return false
   return item.spent = true
 }
+/** Strict send (ADR-108): a paid request leaves only once the thread holding it and its key (the card's id) is written,
+ *  `save` saying so. Not written: the card loses it again and the caller sends nothing, so nothing is paid that this
+ *  device could not find again. */
+export const UNSTORED = 'Ce navigateur ne peut pas garder la demande : rien n’a été envoyé. Utilisez Pas à pas.'
+export function keepRequest(item: Item, request: SceneRequest, save: () => boolean) {
+  item.request = request
+  if (save()) return
+  delete item.request
+  throw new Error(UNSTORED)
+}
+/** Whether a stored thread of the shop holds a paid card that waits for its answer: « Se déconnecter » from a tab that
+ *  does not hold the chat, or from the editor (review r5 P2-3). Read only. Storage that cannot be listed or read says
+ *  yes: the owner is asked rather than not told. */
+export function waitingIn(storage: Storage | null) {
+  try {
+    return Array.from({ length: storage!.length }, (_, index) => storage!.key(index)!).filter(isThread)
+      .some(key => readThread(storage!.getItem(key)).items.some(unresolved))
+  } catch { return true }
+}
+/** Writes a thread, then caps the stored ones (the 30 newest stay): never the thread just written, nor one whose paid
+ *  card waits for its answer, whatever their dates say (a device clock set back makes a new thread look old, review r5
+ *  P2-2). true only when the thread is stored as written once the cap is done: strict send relies on it (keepRequest). A
+ *  refused write throws; a refused cap waits for the next save. */
+export function storeThread(device: Storage, write: Pick<Storage, 'setItem' | 'removeItem'>, key: string, value: string) {
+  write.setItem(key, value)
+  try {
+    const others = Array.from({ length: device.length }, (_, index) => device.key(index)!).filter(name => isThread(name) && name !== key)
+    const evictable = others.map(name => [name, device.getItem(name)] as [string, string | null]).filter(([, raw]) => !readThread(raw).items.some(unresolved))
+    for (const name of staleWords(evictable)) write.removeItem(name)
+  } catch { /* the next save tries the cap again */ }
+  return device.getItem(key) === value
+}
 /** The cards of an existing poster's change. */
 export const changes = (card?: Card) => card?.kind === 'change' || card?.kind === 'restyle'
 /** The cards that pay for a version. A kind this bundle does not know is text: it pays for nothing. */
 export const paid = (card?: Card) => card?.kind === 'recap' || changes(card)
+/** A paid card that still waits for its answer (ADR-097): followed, or its request kept for « Reprendre ». A card
+ *  retired by a final refusal is `done`, even with its request still attached. */
+export const unresolved = (item: Item) => paid(item.card) && !!item.spent && !item.done
+
 /** A card as the chat uses it, at the two places one enters (the stored thread, a read's answer). A card from before
  *  D-TEXT-FIRST-005 had a kind: `change: 'scene'` is a refinement; `change: 'price'` sets the price alone and has no
  *  `effect` (see `effectOf`). `previous` is no longer kept: `state.stale` says what the image still shows. */

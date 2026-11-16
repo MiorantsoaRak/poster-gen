@@ -1004,3 +1004,10 @@
 
 - User: “Let’s go with Doka studio, explore more style and more design identity using logo-design and image-gen.” Doka Studio is the selected name for this identity work; the other three names are no longer the recommendation.
 - Authorized: further visual exploration and AI-generated brand mockups. Three styles will share the selected name and build from the cut-corner D, with different typography, composition, graphic language and palettes. A final style and application rollout are not yet selected. No paid application-provider evaluation or app rename is implied.
+
+## ADR-108 — Sign-out keeps nothing on the device; the server is the authority for a paid request — Claude, 2026-11-16
+
+- **Decision (user: "explore a new solution instead of patching it", then "go" on the comparison):** the `kept` record that carried a waiting paid chat card across a sign-out is removed. Sign-out ends the session on the server first, then deletes every key of the shop on the device. A paid request leaves the browser only after its thread was stored. R-MULTI-SHOP-004 is amended; the design's amendment section "After round 4" has the detail.
+- **Why:** four code reviews of T-MULTI-SHOP-006 rejected the kept card, each on a new way to lose or overwrite the request where its three copies met or where browser storage failed. The server already writes the key, the job and the reservation in one transaction and refuses any request of an ended session, so a request it received is safe there and one it did not receive cost nothing.
+- **Compared and not chosen:** one browser record per card (same device only; more of the storage work that failed); refusing sign-out while a card waits (can hold the owner until the next day when the daily limit is why it waits).
+- **Cost accepted:** after signing in again the card does not come back; the image is found on the poster or in « Mes affiches ». A browser that cannot store data refuses paid chat cards.
