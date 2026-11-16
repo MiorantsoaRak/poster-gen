@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
-from test_db import engine  # noqa: F401
+from test_db import bare_engine, engine  # noqa: F401
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
 from test_poster_visuals import execute, fixed
 
@@ -623,6 +623,12 @@ def test_spend_is_summed_over_the_three_ledgers(engine, env, claude, tmp_path, i
     env.setenv("SPEND_CAP_USD", "0.03")
     result, requests = ask(engine, load_settings(env_file=None), reply())
     assert (result.code, result.status, requests, len(rows(engine))) == ("budget_exhausted", 429, [], 2)
+
+
+def test_a_shop_with_no_credit_still_reads_its_messages(bare_engine, claude):
+    """R-BALANCE-007: reading a message costs no credit; only the three image routes look at credits (D-BALANCE-004)."""
+    result, requests = ask(bare_engine, claude, reply())
+    assert not isinstance(result, Refused) and len(requests) == 1
 
 
 @pytest.mark.parametrize("key", ["not-a-uuid", "-" * 36, "A" * 8 + "-0000-0000-0000-" + "0" * 12, uuid4().hex])

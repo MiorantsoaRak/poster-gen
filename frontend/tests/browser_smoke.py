@@ -21,6 +21,7 @@ from affiche import shops
 from affiche.api import BUNDLE, create_app
 from affiche.config import Settings
 from affiche.db import make_engine, write_tx
+from affiche.posters import credits
 from affiche.posters.auth import PASSWORDS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1951,13 +1952,21 @@ def walk_review_r2(browser, errors, data, only=()):
     engine.dispose()
 
 
+def credited(engine):
+    """100 offered credits for the pilot shop, as the operator grants them: a shop starts at zero, and every image job
+    takes one (D-BALANCE-002)."""
+    with write_tx(engine) as conn:
+        credits.grant(conn, 1, 100, origin="offered", ref="tests", actor="tests")
+
+
 def serve(data, **extra):
-    """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data; the defaults unless told."""
+    """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data, the pilot shop funded;
+    the defaults unless told."""
     settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
                         anthropic_api_key=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
                         data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD),
                         support_contact_fr=SUPPORT, **{"stub_fail": None, **extra})
-    server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=8000, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(settings, prepare=credited), host="127.0.0.1", port=8000, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):

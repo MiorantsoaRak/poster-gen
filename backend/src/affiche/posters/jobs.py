@@ -11,6 +11,7 @@ from sqlalchemy import bindparam, text
 from affiche.db import utc_now, write_tx
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import RATES, usd_to_micros
+from . import credits
 from .models import canonical
 from .planner import MODEL, RATE_CARD
 from .store import Refused, _owned, _revision, get_creation, mutate
@@ -100,13 +101,19 @@ def enqueue(conn, settings, shop, creation_id, revision, kind, payload) -> dict:
         elif recorded != spec.provider:
             raise Refused("provider_mode_mismatch", 409)
     body, id = canonical(payload), str(uuid4())
+    takes = int(kind in IMAGE_KINDS)  # one credit per image, a text's material included (owner decision 2)
     conn.execute(text("INSERT INTO poster_jobs (id,shop_id,creation_id,origin_revision,input_id,kind,input_json,"
-                      "input_hash,status,created_at) VALUES (:id,:shop,:creation,:revision,:input,:kind,:body,:hash,'queued',:now)"),
+                      "input_hash,status,created_at,takes_credit) VALUES (:id,:shop,:creation,:revision,:input,:kind,:body,"
+                      ":hash,'queued',:now,:takes)"),
                  {"id": id, "shop": shop, "creation": creation_id, "revision": revision,
                   "input": creation["document"]["input_id"], "kind": kind, "body": body,
-                  "hash": hashlib.sha256(body.encode()).hexdigest(), "now": utc_now()})
+                  "hash": hashlib.sha256(body.encode()).hexdigest(), "now": utc_now(), "takes": takes})
     if spec:
         _reserve(conn, settings, shop, id, 1, spec)
+    # Last (D-BALANCE-002): when the service or the shop's day refuses, buying would not help. This job already counts,
+    # so the balance it leaves must not be below zero; a refusal rolls the job, its call and its key back together.
+    if takes:
+        credits.require(conn, shop)
     return {"job_id": id, "status_url": f"/api/jobs/{id}"}
 
 

@@ -29,8 +29,27 @@ GUARD_WHERE = {
 WORKER = Path(__file__).with_name("tx_worker.py")
 
 
+def credited(engine, shop=1):
+    """100 offered credits, as the operator grants them: a shop starts at zero, and every image job takes one
+    (D-BALANCE-002). Once per shop: a test's `client` and `engine` share one database."""
+    with write_tx(engine) as conn:
+        if conn.execute(text("SELECT 1 FROM credit_grants WHERE shop_id=:shop AND ref='tests'"), {"shop": shop}).first() is None:
+            credits.grant(conn, shop, 100, origin="offered", ref="tests", actor="tests")
+
+
 @pytest.fixture
 def engine(tmp_path):
+    """Migrated, shop 1 funded."""
+    engine = make_engine(tmp_path)
+    migrate(engine)
+    credited(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def bare_engine(tmp_path):
+    """Migrated, shop 1 at zero credits: the balance's own tests."""
     engine = make_engine(tmp_path)
     migrate(engine)
     yield engine

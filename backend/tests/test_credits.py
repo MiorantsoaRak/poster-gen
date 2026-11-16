@@ -10,7 +10,7 @@ from affiche import rehearse
 from affiche.db import write_tx
 from affiche.posters import credits
 from affiche.posters.store import Refused
-from test_db import engine  # noqa: F401
+from test_db import bare_engine, engine  # noqa: F401
 
 T = "2026-11-16T10:00:00.000000+00:00"
 FINAL = ("succeeded", "failed", "interrupted", "cancelled")
@@ -24,14 +24,14 @@ JOB_COLUMNS = "id,shop_id,creation_id,origin_revision,input_id,kind,input_json,i
 
 
 @pytest.fixture
-def db(engine):
+def db(bare_engine):
     """Shop 1 (originalphone), shop 2 and shop 3, no line, no job."""
-    with write_tx(engine) as conn:
+    with write_tx(bare_engine) as conn:
         for identifier in ("shopdeux", "shoptrois"):
             conn.exec_driver_sql("INSERT INTO shop_profile (revision,updated_at,identifier,state,created_at)"
                                  f" VALUES (1,'{T}',?,'active','{T}')", (identifier,))
         conn.exec_driver_sql(f"INSERT INTO product_inputs VALUES ('in1',1,'P1','JBL','Bleu','[]','{{}}',NULL,'{T}')")
-    return engine
+    return bare_engine
 
 
 def job(conn, id, status="queued", *, shop=1, takes=1):

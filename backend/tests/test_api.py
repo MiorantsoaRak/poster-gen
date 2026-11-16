@@ -19,14 +19,15 @@ from PIL import Image
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pydantic import SecretStr
+from sqlalchemy import exc
 
 from affiche import api as affiche_api, assets, backup, shops
 from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
 from affiche.db import make_engine, write_tx
-from affiche.posters import auth, jobs, rendering, store
+from affiche.posters import auth, credits, jobs, rendering, store
 from test_config import env  # noqa: F401
-from test_db import migrate_to
+from test_db import credited, migrate_to
 from test_poster_drafts import photo
 
 ORIGIN = "https://shop.example"
@@ -55,7 +56,7 @@ def settings(env, tmp_path, password_hash):
 
 @pytest.fixture
 def client(settings):
-    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+    with TestClient(create_app(settings, prepare=credited), base_url=ORIGIN, headers=HEADERS) as client:
         yield client
 
 
@@ -242,6 +243,45 @@ def test_a_paid_request_that_arrives_after_the_sign_out_gets_401_and_creates_not
     assert rows() == alive
 
 
+def test_no_credit_is_402_with_how_to_get_credits(client, monkeypatch, caplog):
+    """D-BALANCE-004: the refusal's sentence, then the purchase text read on a connection of its own (the admission has
+    rolled back); unreadable, the sentence goes alone and the failure is logged. Not retryable: nothing changes until a
+    grant. Nothing of the request is written."""
+    login(client)
+    creation, engine = create_draft(client), client.app.state.engine
+    plan = client.post(f'/api/creations/{creation["id"]}/plans', headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())},
+                       json={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
+    assert plan.status_code == 201, plan.text
+    with write_tx(engine) as conn:
+        credits.correct(conn, 1, -100, ref="zero", note="test", actor="tests")
+
+    def scene():
+        return client.post(f'/api/creations/{creation["id"]}/scenes', json={"plan_id": plan.json()["id"],
+                           "acknowledged_warnings": ["low_resolution"]}, headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())})
+
+    def written():
+        with engine.connect() as conn:
+            return [conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one() for table in ("poster_jobs", "poster_calls", "mutation_keys")]
+
+    sentence, before = affiche_api.MESSAGES["no_credit"], written()
+    answer = scene()
+    assert answer.status_code == 402 and answer.json()["error"] == {
+        "code": "no_credit", "retryable": False, "message_fr": f"{sentence} Pour obtenir des crédits, contactez l’administrateur."}
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO meta VALUES ('purchase_text_fr', 'Pack 10 : 10 000 Ar par MVola.')")
+    assert scene().json()["error"]["message_fr"] == f"{sentence} Pack 10 : 10 000 Ar par MVola."
+
+    def unreadable(*_):
+        raise exc.OperationalError("SELECT", {}, sqlite3.OperationalError("disk I/O error"))
+    monkeypatch.setattr(credits, "purchase_text", unreadable)
+    answer = scene()
+    assert (answer.status_code, answer.json()["error"]["message_fr"]) == (402, sentence)
+    assert "purchase text unreadable: OperationalError" in caplog.text
+    assert written() == before
+    responses = client.get("/api/openapi.json").json()["paths"]["/api/creations/{id}/scenes"]["post"]["responses"]
+    assert "402" in responses
+
+
 def test_origin_required_even_for_login_and_logout(client):
     for origin in ("", "https://evil.example", "null", ORIGIN+"/"):
         assert client.post("/api/session", json=credentials(PASSWORD), headers={"Origin": origin}).status_code == 403
@@ -374,11 +414,13 @@ def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
 
 
 def second_shop(engine, identifier="Boutique Deux", name="Boutique Deux"):
-    """Another shop, made as the operator makes one (D-MULTI-SHOP-003); returns its id and its password."""
+    """Another shop, made as the operator makes one (D-MULTI-SHOP-003), with credits; returns its id and its password."""
     password = os.urandom(12).hex()
     password_hash = auth.PASSWORDS.hash(password)  # Argon2 outside the transaction, as the operator's command does
     with write_tx(engine) as conn:
-        return shops.create_shop(conn, identifier, name, password_hash), password
+        shop = shops.create_shop(conn, identifier, name, password_hash)
+    credited(engine, shop)
+    return shop, password
 
 
 def failures(engine):

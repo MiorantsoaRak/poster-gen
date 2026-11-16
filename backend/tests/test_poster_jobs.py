@@ -11,7 +11,7 @@ from sqlalchemy import text
 from affiche.config import load_settings
 from affiche.db import utc_now, write_tx
 from affiche import shops
-from affiche.posters import auth, jobs, store, worker
+from affiche.posters import auth, credits, jobs, store, worker
 from affiche.posters.worker import Outcome, run_job
 from affiche.posters.models import Document, NewCreation, Offer, ProductInput
 from affiche.visuals import admission
@@ -113,6 +113,170 @@ def test_concurrent_admissions_share_cap_and_leave_no_orphan_reservations(engine
     assert spent(engine, settings) == 400000
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one() == 1
+
+
+# --- The prepaid balance at admission (D-BALANCE-002). The engine fixture's shop 1 starts with 100 credits. ----------
+
+def balance(engine, shop=1):
+    with engine.connect() as conn:
+        return credits.balance(conn, shop)
+
+
+def leave(engine, available, shop=1):
+    """The operator's correction that leaves the shop exactly `available` credits."""
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop, available - credits.balance(conn, shop)["available"], ref=key(), note="test",
+                        actor="tests")
+
+
+def written(engine):
+    """What an admission writes (jobs, calls, idempotency keys) and the shop's credits."""
+    with engine.connect() as conn:
+        return [conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+                for table in ("poster_jobs", "poster_calls", "mutation_keys")] + [credits.balance(conn, 1)]
+
+
+def test_an_image_takes_one_credit_and_no_other_job_takes_any(engine, settings, creation, tmp_path, input_id):
+    """Owner decision 2: a scene, a refinement and a text's material each take a credit; a plan, a style, a text
+    proposal, a render and a cutout take none, and are admitted at zero."""
+    settings.planner_provider = "stub"
+    images = [enqueue(engine, settings, draft(engine, tmp_path, input_id), kind=kind)
+              for kind in ("scene", "refine", "text_texture")]
+    assert balance(engine) == {"available": 97, "pending": 3}
+    leave(engine, 0)
+    others = [enqueue(engine, settings, creation, kind=kind, payload=payload) for kind, payload in (
+        ("plan", None), ("plan", {"look": "Style"}), ("text_patch", None), ("render", None), ("cutout", None))]
+    assert balance(engine) == {"available": 0, "pending": 3}
+    with engine.connect() as conn:
+        taken = dict(conn.execute(text("SELECT id, takes_credit FROM poster_jobs")).all())
+    assert taken == {id: 1 for id in images} | {id: 0 for id in others}
+
+
+def test_no_credit_is_said_last_and_no_refusal_takes_anything(engine, settings, creation, tmp_path, input_id):
+    """D-BALANCE-002's order, at zero credits: every other refusal comes first (buying would not help), and none leaves
+    a job, a call, a key or a credit taken."""
+    enqueue(engine, settings, creation)  # the poster's one image, and 0.40 USD of the cap and of the shop's day
+    leave(engine, 0)
+    other, before = draft(engine, tmp_path, input_id), written(engine)
+
+    def refused(item=None, **options):
+        with pytest.raises(store.Refused) as caught:
+            enqueue(engine, settings, item or other, **options)
+        assert written(engine) == before
+        return caught.value.code, caught.value.status
+
+    api_key, settings.openai_api_key = settings.openai_api_key, None
+    assert refused() == ("provider_unavailable", 503)
+    settings.openai_api_key, settings.image_provider = api_key, "stub"
+    assert refused() == ("provider_mode_mismatch", 409)
+    settings.image_provider = "openai"
+    assert refused(creation) == ("image_job_running", 409)
+    assert refused(revision=2) == ("revision_conflict", 409)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
+    assert refused() == ("shop_suspended", 403)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET state='active' WHERE id=1")
+    settings.spend_cap_usd = Decimal("0.5")  # 0.40 + 0.40 > 0.50
+    assert refused() == ("budget_exhausted", 429)
+    settings.spend_cap_usd, settings.shop_daily_spend_usd = Decimal("20"), Decimal("0.5")
+    assert refused() == ("shop_daily_limit", 429)
+    settings.shop_daily_spend_usd = Decimal("2")
+    assert refused() == ("no_credit", 402)
+
+
+def test_two_admissions_for_the_last_credit_admit_one(engine, settings, creation, tmp_path, input_id):
+    """R-BALANCE-002: two posters, one credit. BEGIN IMMEDIATE serialises the admissions, and the second one counts
+    the first one's job."""
+    other = draft(engine, tmp_path, input_id)
+    leave(engine, 1)
+    before = written(engine)[:3]
+
+    def submit(item):
+        try:
+            return enqueue(engine, settings, item)
+        except store.Refused as error:
+            return error.code
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(submit, [creation, other]))
+    assert results.count("no_credit") == 1
+    assert balance(engine) == {"available": 0, "pending": 1}
+    assert [now - was for now, was in zip(written(engine), before)] == [1, 1, 1]  # one job, its call, its key
+    assert spent(engine, settings) == 400000
+
+
+def test_a_replayed_admission_gets_its_job_back_at_zero_and_takes_nothing_more(engine, settings, creation):
+    """Round-3 fix 4: a request that took the last credit and lost its answer, sent again with its key, gets its stored
+    answer before any admission check: the same job, no second credit, no 402."""
+    leave(engine, 1)
+    operation = key()
+    id = enqueue(engine, settings, creation, operation=operation)
+    assert balance(engine) == {"available": 0, "pending": 1}
+    assert enqueue(engine, settings, creation, operation=operation) == id
+    assert balance(engine) == {"available": 0, "pending": 1} and jobs_count(engine) == 1
+
+
+def test_a_request_refused_for_want_of_credit_is_admitted_with_its_key_after_a_grant(engine, settings, creation):
+    """A refusal stores nothing under its key (store.mutate): sent again after a grant, it is a first admission."""
+    leave(engine, 0)
+    operation = key()
+    with pytest.raises(store.Refused, match="no_credit"):
+        enqueue(engine, settings, creation, operation=operation)
+    with write_tx(engine) as conn:
+        credits.grant(conn, 1, 1, origin="offered", ref="later", actor="tests")
+    id = enqueue(engine, settings, creation, operation=operation)
+    assert enqueue(engine, settings, creation, operation=operation) == id
+    assert balance(engine) == {"available": 0, "pending": 1} and jobs_count(engine) == 1
+
+
+def test_a_job_ending_without_an_image_gives_its_credit_back_and_a_version_spends_it(engine, settings, creation, tmp_path):
+    """The credit's states, one to one with the job's: it counts while the job waits or runs; a cancellation by the owner,
+    by a suspension, at dispatch or at recovery, and an unknown outcome at recovery, give it back with nothing written;
+    a requeue is the same job, counted once; its version spends it. Failures by the worker: the parametrised policy test."""
+    def admitted():
+        id = enqueue(engine, settings, creation)
+        assert balance(engine) == {"available": 99, "pending": 1}
+        return id
+
+    def given_back(id, status):
+        assert view(engine, id)["status"] == status and balance(engine) == {"available": 100, "pending": 0}
+        with write_tx(engine) as conn:
+            shops.enable(conn, 1)
+
+    id = admitted()
+    jobs.cancel(engine, 1, key(), id)
+    given_back(id, "cancelled")
+    id = admitted()
+    suspended(engine)  # its queued jobs are cancelled
+    given_back(id, "cancelled")
+    id = admitted()
+    jobs.claim(engine, ("scene",))
+    suspended(engine)
+    assert jobs.dispatch(engine, id) is None  # the cutoff
+    given_back(id, "cancelled")
+    id = admitted()
+    jobs.claim(engine, ("scene",))
+    suspended(engine)
+    jobs.recover(engine, tmp_path)  # a suspended shop's unsent call
+    given_back(id, "cancelled")
+    id = admitted()
+    jobs.claim(engine, ("scene",))
+    jobs.dispatch(engine, id)
+    jobs.recover(engine, tmp_path)  # sent, outcome unknown
+    given_back(id, "interrupted")
+
+    id = admitted()
+    jobs.claim(engine, ("scene",))
+    assert jobs.recover(engine, tmp_path) == [] and view(engine, id)["status"] == "queued"  # never sent: requeued
+    assert balance(engine) == {"available": 99, "pending": 1}
+    job = jobs.claim(engine, ("scene",))
+    jobs.dispatch(engine, id)
+    jobs.spool(tmp_path, job, {"visual": "v"}, cost_micros=170000)
+    jobs.finish_spool(engine, tmp_path, id, lambda *_: "v")
+    assert balance(engine) == {"available": 99, "pending": 0}  # spent
+    with engine.connect() as conn:  # the operator's grant of the fixture: a credit back is never a line
+        assert conn.execute(text("SELECT COUNT(*) FROM credit_grants")).scalar_one() == 1
 
 
 def test_cancel_and_claim_race_has_one_winner(engine, settings, creation):
@@ -507,6 +671,8 @@ def test_worker_dispatch_failure_policy(engine, settings, creation, errors, expe
     assert len(sent) == calls and view(engine, id)["status"] == expected
     expected_cost = 170000 if expected == "succeeded" else 0 if errors == ["rate_limited", "rate_limited"] else 400000
     assert spent(engine, settings) == expected_cost
+    # One credit for the job, a 429 retry included: spent by its version, given back by any other end.
+    assert balance(engine) == {"available": 99 if expected == "succeeded" else 100, "pending": 0}
 
 
 def test_worker_preflight_and_spool_recovery_do_not_dispatch(engine, settings, creation, tmp_path):

@@ -29,7 +29,7 @@ from starlette.staticfiles import StaticFiles
 
 from affiche import assets
 from affiche.config import Settings, load_settings
-from affiche.posters import auth, exports, jobs, looks, reads, rendering, store, typography, visuals
+from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, typography, visuals
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -153,10 +153,10 @@ MESSAGES = {
 }
 
 
-def error_response(request: Request, error: store.Refused):
+def error_response(request: Request, error: store.Refused, message: str | None = None):
     # A refusal without a sentence is a programming error, not something the owner typed: say so, with the code.
     fallback = f"Cette action a été refusée (code : {error.code}). Rechargez la page et réessayez ; si cela se répète, donnez ce code à l’administrateur."
-    body = {"code": error.code, "message_fr": MESSAGES.get(error.code, fallback),
+    body = {"code": error.code, "message_fr": message or MESSAGES.get(error.code, fallback),
             "retryable": error.status in (429, 503)}
     if error.field:
         body["field"] = error.field
@@ -467,7 +467,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
 
     app = FastAPI(title="Affiche IA — pilote", version="0.2.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url="/api/openapi.json",
-                  responses={code: {"model": ErrorView} for code in (400, 401, 403, 404, 409, 413, 415, 422, 428, 429, 500, 503)})
+                  responses={code: {"model": ErrorView} for code in (400, 401, 402, 403, 404, 409, 413, 415, 422, 428, 429, 500, 503)})
     app.add_middleware(AccessBoundary, settings=settings, owner=app)
     protected = APIRouter(dependencies=[Depends(APIKeyCookie(name=auth.COOKIE, auto_error=False))])
 
@@ -645,9 +645,19 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         return Response(data, media_type="image/png", headers={"ETag": f'"{row["png_sha256"]}"',
             "Content-Disposition": f'attachment; filename="affiche-{row["format"]}-{id[:8]}.png"'})
 
+    def with_purchase_text():
+        with app.state.engine.connect() as conn:
+            return f'{MESSAGES["no_credit"]} {credits.purchase_text(conn, settings)}'
+
     @app.exception_handler(store.Refused)
     async def refusal(request, error):
-        return error_response(request, error)
+        message = None
+        if error.code == "no_credit":  # how to get credits (D-BALANCE-004), read apart: the admission rolled back
+            try:
+                message = await run_in_threadpool(with_purchase_text)
+            except (OSError, SQLAlchemyError) as failure:  # the refusal still goes out, with its sentence alone
+                log.warning("request=%s purchase text unreadable: %s", request.state.request_id, type(failure).__name__)
+        return error_response(request, error, message)
 
     @app.exception_handler(RequestValidationError)
     async def validation(request, error):
