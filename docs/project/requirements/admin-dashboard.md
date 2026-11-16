@@ -34,6 +34,7 @@
 - **Story:** As the operator, when a shop pays me by mobile money I credit it and keep the trace.
 - [ ] Add credits to a shop with: how many, offered or bought, the amount received in ariary, the method, the payment's reference, a note.
 - [ ] Remove or correct credits only by a new line with a reason; a balance cannot be typed over.
+- [ ] Granting credits is usable at 360 px on a phone (added 2026-11-16 from the prepaid-balance design: a shop out of credits on a Sunday must not wait for the operator's laptop).
 - [ ] A list of payments received, by period, with their total.
 - **Out of scope:** payment providers, receipts sent to the shop, refunds in money.
 

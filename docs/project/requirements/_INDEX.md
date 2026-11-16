@@ -5,7 +5,7 @@
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
 | [multi-shop.md](multi-shop.md) | R-MULTI-SHOP-001 … 006 | Approved 2026-11-15 under the autonomy grant (ADR-106), Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105) | [multi-shop](../designs/multi-shop.md) v4, approved under the autonomy grant (ADR-107) |
-| [prepaid-balance.md](prepaid-balance.md) | R-BALANCE-001 … 007 | Draft v1 2026-11-15, Release 1 | none yet |
+| [prepaid-balance.md](prepaid-balance.md) | R-BALANCE-001 … 007 | Approved 2026-11-16 under the autonomy grant, amended by its design (ADR-109), Release 1 | [prepaid-balance](../designs/prepaid-balance.md) v4 |
 | [admin-dashboard.md](admin-dashboard.md) | R-ADMIN-001 … 006 | Draft v1 2026-11-15, Release 1 | none yet |
 | [service-terms.md](service-terms.md) | R-TERMS-001 … 003 | Draft v1 2026-11-15, Release 1; R-TERMS-002 holds an open decision of the user | none yet |
 | [shop-dashboard.md](shop-dashboard.md) | R-SHOP-DASH-001 … 004 | Draft v1 2026-11-15, Release 1 | none yet |
