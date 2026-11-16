@@ -16,6 +16,7 @@ from test_api import client, create_draft, login, password_hash, post, settings 
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
 from test_poster_drafts import draft, input_id, key  # noqa: F401
+from test_poster_visuals import finalised_by_service
 
 
 @pytest.fixture
@@ -203,6 +204,19 @@ def test_explicit_texture_generation_review_reuse_and_no_bypass(engine, settings
         with pytest.raises(store.Refused, match="not_found"):
             t.read_effect(conn, settings.data_dir, 999, id)
     assert saved["document"]["formats"]["feed"]["scene"] == creation["document"]["formats"]["feed"]["scene"]
+
+
+@pytest.mark.parametrize("kind", ["text_patch", "text_texture"])
+def test_spooled_text_result_is_finalised_by_the_running_service(engine, settings, creation, kind):
+    if kind == "text_patch":
+        request(engine, settings, creation)
+    else:
+        id = proposal(engine, settings, creation, texture=True)
+        t.decide_proposal(engine, settings, 1, key(), id, 1, "apply", t.ApplyRequest())
+        t.request_effect(engine, settings, 1, key(), creation["id"], 2, t.EffectRequest(layer_id=layer(creation)["id"], proposal_id=id))
+    result = finalised_by_service(engine, settings, jobs.claim(engine, (kind,)))
+    with engine.connect() as conn:
+        assert (t.get_proposal if kind == "text_patch" else t.get_effect)(conn, 1, result)["id"] == result
 
 
 def test_effect_stale_after_manual_change_can_be_rejected(engine, settings, creation):

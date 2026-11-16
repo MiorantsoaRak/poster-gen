@@ -17,7 +17,7 @@ from test_api import client, login, post, settings, password_hash  # noqa: F401
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
-from test_poster_visuals import fixed, scene, execute, wait_job
+from test_poster_visuals import fixed, scene, execute, finalised_by_service, wait_job
 
 
 @pytest.fixture
@@ -297,6 +297,13 @@ def test_edit_during_render_keeps_old_preview_without_replacing_current(engine, 
         preview = exports.get_render(conn, 1, jobs.get_job(conn, 1, job["id"])["result_ref"])
     with pytest.raises(store.Refused, match="preview_stale"):
         exports.confirm(engine, settings, 1, key(), current["id"], current["revision"], confirm_request(preview))
+
+
+def test_spooled_render_is_finalised_by_the_running_service(engine, settings, creation):
+    exports.request_render(engine, settings, 1, key(), creation["id"], creation["revision"], exports.RenderRequest())
+    result = finalised_by_service(engine, settings, jobs.claim(engine, ("render",)))
+    with engine.connect() as conn:
+        assert exports.get_render(conn, 1, result)["id"] == result
 
 
 def seal_poster(engine, settings, input_id, include=None):

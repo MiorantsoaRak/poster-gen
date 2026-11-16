@@ -450,7 +450,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             if prepare is not None:
                 prepare(runtime.engine)
             auth.adopt_password_setting(runtime.engine, settings)
-            app.state.pending_finalisations = jobs.recover(runtime.engine, settings.data_dir)
+            jobs.recover(runtime.engine, settings.data_dir)  # the service's sweep finalises the spooled jobs it leaves running
             reads.recover(runtime.engine)
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service

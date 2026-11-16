@@ -187,7 +187,7 @@ class PosterService:
     def _pending(self):
         with self.engine.connect() as conn:
             return [dict(row) for row in conn.execute(text("SELECT * FROM poster_jobs WHERE status='running'"
-                                                          " AND kind IN ('plan','scene','refine') ORDER BY created_at")).mappings()
+                                                          " ORDER BY created_at")).mappings()
                     if jobs.spool_path(self.settings.data_dir, row["id"]).exists()]
 
     async def _execute(self, job):

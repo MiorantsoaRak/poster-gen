@@ -50,6 +50,43 @@ def execute_claimed(engine, settings, job, service=None):
         return jobs.get_job(conn, 1, job["id"])["result_ref"]
 
 
+def finalised_by_service(engine, settings, job):
+    """The claimed job's result is spooled but its finalisation fails; a running service then finalises it, sending nothing."""
+    service = PosterService(engine, settings)
+    service.provider.delay = 0
+
+    def disk_full(*_):
+        raise OSError("disk full")
+
+    assert not asyncio.run(run_job(engine, settings, job, prepare=service.prepare, send=service.send, finalise=disk_full))
+    assert jobs.spool_path(settings.data_dir, job["id"]).exists()
+    sent = []
+
+    async def send(prepared):
+        sent.append(prepared)
+        raise AssertionError("the spooled result was sent again")
+
+    async def serve():
+        running = PosterService(engine, settings)
+        running.send = send
+        running.start()
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with engine.connect() as conn:
+                    if jobs.get_job(conn, 1, job["id"])["status"] != "running":
+                        break
+                await asyncio.sleep(.1)
+        finally:
+            await running.close()
+
+    asyncio.run(serve())
+    with engine.connect() as conn:
+        finished = jobs.get_job(conn, 1, job["id"])
+    assert (finished["status"], sent) == ("succeeded", [])
+    return finished["result_ref"]
+
+
 @pytest.mark.parametrize("flags", list(itertools.product((False, True), repeat=3)))
 def test_actual_draft_dimensions_fit_plan_and_auto_selected_scene(engine, settings, input_id, flags):
     logo = store.upload(engine, settings.data_dir, 1, photo(), "logo")["asset"]
