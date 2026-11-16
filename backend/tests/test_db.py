@@ -15,11 +15,13 @@ from sqlalchemy import create_engine, event, exc, text
 from affiche import db, rehearse
 from affiche.config import BACKEND_DIR
 from affiche.db import make_engine, migrate, write_tx
+from affiche.posters import credits
 
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
                  "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
                  "product_inputs", "creations", "creation_versions", "mutation_keys", "sessions", "login_failures",
-                 "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks", "chat_reads"}
+                 "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks", "chat_reads",
+                 "credit_grants"}
 GUARD_WHERE = {
     "req_one_revision": "WHERE parent_id IS NOT NULL AND status IN ('running','succeeded')",
     "req_one_initial": "WHERE parent_id IS NULL AND status IN ('running','succeeded')",
@@ -73,7 +75,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0013"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"
     finally:
         engine.dispose()
 
@@ -271,7 +273,7 @@ def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, mo
 
 def test_a_fresh_database_starts_with_shop_1_without_password(engine):
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0013"
+        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"
         assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at FROM shop_profile"
                                     ).all() == [("originalphone", None, "active", 1)]
         assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
@@ -283,7 +285,7 @@ def test_0013_keeps_the_pilot_whole_and_makes_room_for_other_shops(tmp_path, mon
     assert all(whole["tables"][table][0] > 0 for table in CHILDREN | {"looks", "provider_calls", "poster_calls"})
     engine = make_engine(tmp_path)
     try:
-        migrate(engine)
+        migrate_to(engine, "0013", monkeypatch)
         after, schema = read(path, preserved_0013())
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"] == {
             "provider_calls": 512881, "poster_calls": 40000, "chat_reads": 6500}
@@ -322,8 +324,9 @@ def test_0013_keeps_the_pilot_whole_and_makes_room_for_other_shops(tmp_path, mon
 
 
 @pytest.mark.parametrize("statement", ["CREATE TABLE chat_reads_new",  # between the two rebuilds
-                                       "CREATE INDEX chat_reads_created"])  # right after the read ledger's swap
-def test_a_failure_inside_0013_leaves_the_database_exactly_as_before(tmp_path, monkeypatch, statement):
+                                       "CREATE INDEX chat_reads_created",  # right after the read ledger's swap
+                                       "CREATE TRIGGER poster_jobs_final"])  # 0014's last: the release is one transaction
+def test_a_failure_inside_0013_or_0014_leaves_the_database_exactly_as_before(tmp_path, monkeypatch, statement):
     path = pilot_0012(tmp_path, monkeypatch)
     before = read(path)
     engine = make_engine(tmp_path)
@@ -352,8 +355,15 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
     assert out.endswith("REHEARSAL OK\n") and f"environment: SQLite {sqlite3.sqlite_version}, Python " in out
-    assert "pending migrations: 0013" in out and "schema version: 0012 -> 0013" in out
+    assert "pending migrations: 0013, 0014" in out and "schema version: 0012 -> 0014" in out
     assert "ledger provider_calls: 512881 -> 512881" in out and "(over id, ip, attempted_at)" in out
+    assert "(over id, shop_id, creation_id, origin_revision, input_id, kind," in out  # poster_jobs without takes_credit
+    lines = out.splitlines()
+    assert {line for line in lines if line.startswith("0014 ADDED")} == {
+        "0014 ADDED poster_jobs: no job from before 0014 takes a credit: as expected",
+        "0014 ADDED credit_grants: empty; no shop has a credit before the operator grants one: as expected"}
+    guards = [line for line in lines if line.startswith("guard ")]
+    assert len(guards) == 11 and all(line.endswith(": as expected") for line in guards)  # a table, 9 triggers, a column
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and read(path)[0]["version"] == "0012"
     assert rehearse.main(["rehearse", str(tmp_path / "missing.db")]) == 1
     assert "REHEARSAL FAILED" in capsys.readouterr().out and not (tmp_path / "missing.db").exists()
@@ -391,3 +401,88 @@ def test_the_rehearsal_refuses_a_pending_migration_without_its_contract(tmp_path
         engine.dispose()
     assert rehearse.main(["rehearse", str(tmp_path / "affiche.db")]) == 1
     assert capsys.readouterr().out.splitlines()[-1] == "REHEARSAL FAILED: pending migration 0012 states no PRESERVED and ADDED"
+
+
+def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(tmp_path, monkeypatch):
+    path = pilot_0012(tmp_path, monkeypatch)
+    preserved = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0014").module.PRESERVED
+    engine = make_engine(tmp_path)
+    try:
+        migrate_to(engine, "0013", monkeypatch)
+        before, _ = read(path, preserved)
+        migrate(engine)
+        after, _ = read(path, preserved)
+        assert after["tables"].pop("credit_grants")[0] == 0
+        assert after["tables"] == before["tables"] and after["sums"] == before["sums"]
+        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0014", 0, "ok")
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT kind, takes_credit FROM poster_jobs ORDER BY id").all() == [
+                ("plan", 0), ("scene", 0), ("text_patch", 0), ("text_texture", 0), ("render", 0), ("plan", 0)]
+            assert credits.balance(conn, 1) == {"available": 0, "pending": 0}
+            assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+    finally:
+        engine.dispose()
+
+
+# Read from 0014 itself, never from rehearse.GUARDS: a guard removed from GUARDS must fail an assertion here.
+STATEMENTS_0014 = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0014").module.STATEMENTS
+TAKES_CREDIT = STATEMENTS_0014[0].split(" ADD COLUMN ", 1)[1]
+JOB_TRIGGERS = [statement for statement in STATEMENTS_0014 if statement.startswith("CREATE TRIGGER poster_jobs_")]
+TRIGGERS = ("credit_grants_never_changed", "credit_grants_never_removed", "credit_grants_never_replaced",
+            "credit_grants_one_payment", "credit_grants_payment_total", "poster_jobs_final", "poster_jobs_never_removed",
+            "poster_jobs_never_replaced", "poster_jobs_same_job")
+WEAKER_FINAL = """CREATE TRIGGER poster_jobs_final BEFORE UPDATE OF status ON poster_jobs
+  WHEN OLD.status IN ('succeeded', 'failed', 'interrupted', 'cancelled') AND NEW.status IS NOT OLD.status
+  BEGIN SELECT RAISE(ABORT, 'a finished job never changes status'); END"""
+
+
+def rebuild_poster_jobs(conn, column):
+    """SQLite's procedure for changing a table, as a later migration adding a job kind would run it: the old table's
+    triggers are dropped with it, without a word."""
+    table = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name='poster_jobs'").scalar_one()
+    indexes = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='poster_jobs'"
+                                   " AND sql IS NOT NULL").scalars().all()
+    conn.exec_driver_sql(table.replace("CREATE TABLE poster_jobs", "CREATE TABLE poster_jobs_new", 1)
+                         .replace("'background')", "'background','video')", 1).replace(TAKES_CREDIT, column))
+    conn.exec_driver_sql("INSERT INTO poster_jobs_new SELECT * FROM poster_jobs")
+    conn.exec_driver_sql("DROP TABLE poster_jobs")
+    conn.exec_driver_sql("ALTER TABLE poster_jobs_new RENAME TO poster_jobs")
+    for index in indexes:
+        conn.exec_driver_sql(index)
+
+
+@pytest.mark.parametrize("rebuild, statements, last", [
+    (TAKES_CREDIT, [], "REHEARSAL FAILED: " + "; ".join(  # the table's four triggers go with it
+        f"guard trigger {name}: missing" for name in TRIGGERS if name.startswith("poster_jobs_"))),
+    (TAKES_CREDIT, JOB_TRIGGERS, "REHEARSAL OK"),  # the same rebuild, its triggers recreated as 0014 wrote them
+    (None, ["DROP TRIGGER poster_jobs_final", WEAKER_FINAL], "REHEARSAL FAILED: guard trigger poster_jobs_final: different"),
+    ("takes_credit INTEGER NOT NULL DEFAULT 0", JOB_TRIGGERS,
+     "REHEARSAL FAILED: guard column poster_jobs.takes_credit: different"),
+    (None, ["ALTER TABLE credit_grants ADD COLUMN receipt TEXT"], "REHEARSAL FAILED: guard table credit_grants: different"),
+    *((None, [f"DROP TRIGGER {name}"], f"REHEARSAL FAILED: guard trigger {name}: missing") for name in TRIGGERS),
+])
+def test_a_later_migration_that_loses_or_weakens_a_guard_fails_the_rehearsal(tmp_path, monkeypatch, capsys, rebuild,
+                                                                              statements, last):
+    path = pilot_0012(tmp_path, monkeypatch)
+    upgrade = command.upgrade
+
+    def later(config, revision):  # a later migration of the repository, run by migrate after the real ones
+        upgrade(config, revision)
+        conn = config.attributes["connection"]
+        if rebuild:
+            rebuild_poster_jobs(conn, rebuild)
+        for statement in statements:
+            conn.exec_driver_sql(statement)
+
+    monkeypatch.setattr(command, "upgrade", later)
+    assert rehearse.main(["rehearse", str(path)]) == (0 if last == "REHEARSAL OK" else 1)
+    assert capsys.readouterr().out.splitlines()[-1] == last  # nothing else differs
+
+
+def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pending(engine, capsys):
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("DROP TRIGGER poster_jobs_final")
+    assert rehearse.main(["rehearse", engine.url.database]) == 1
+    out = capsys.readouterr().out
+    assert "pending migrations: none (code head 0014)" in out
+    assert out.splitlines()[-1] == "REHEARSAL FAILED: guard trigger poster_jobs_final: missing"

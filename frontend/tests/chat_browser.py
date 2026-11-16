@@ -986,8 +986,10 @@ def walk_changes(browser, errors, session, data):
         with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
             source = store.execute("SELECT id FROM poster_jobs WHERE creation_id=? AND kind='scene' AND status='succeeded'", (other,)).fetchone()[0]
             for _ in range(count):
-                store.execute("INSERT INTO poster_jobs SELECT ?,shop_id,creation_id,origin_revision,input_id,kind,input_json,input_hash,status,result_ref,"
-                              "error_code,created_at,started_at,finished_at,recovery_count FROM poster_jobs WHERE id=?", (str(uuid4()), source))
+                columns = ("shop_id,creation_id,origin_revision,input_id,kind,input_json,input_hash,status,result_ref,error_code,"
+                           "created_at,started_at,finished_at,recovery_count")
+                store.execute(f"INSERT INTO poster_jobs (id,{columns}) SELECT ?,{columns} FROM poster_jobs WHERE id=?",
+                              (str(uuid4()), source))
     counted = len([job for job in before if job["kind"] in ("scene", "refine") and job["status"] in ("queued", "running", "succeeded")])
     say(page, "fond plus sombre")
     card = thread.locator(".bubble.bot").last

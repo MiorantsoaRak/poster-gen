@@ -60,12 +60,12 @@ def folder_state(settings):
 def test_a_folder_another_api_holds_is_left_exactly_as_it_was(settings, password_hash, monkeypatch, adopted):
     # Stub providers and a temporary folder, never data-probe: the pilot's phone signed in, the hash last seen.
     at_0012(settings, monkeypatch, hashlib.sha256(password_hash.encode()).hexdigest())
-    if adopted:  # as this version's application leaves it: 0013, shop 1's own password
+    if adopted:  # as this version's application leaves it: at head, shop 1's own password
         with TestClient(create_app(settings)):
             pass
     settings.shop_password_hash = None  # as main() passes it
     before = folder_state(settings)
-    assert before[0]["version"] == ("0013" if adopted else "0012") and len(before[1]) == 1
+    assert before[0]["version"] == ("0014" if adopted else "0012") and len(before[1]) == 1
     held = acquire_lock(settings.data_dir, "api")  # another API serves this folder
     try:
         with pytest.raises(AlreadyRunning), TestClient(phone_session.application(settings, ONE_OFF)):
@@ -82,4 +82,4 @@ def test_the_one_off_password_is_set_at_start_and_ends_the_other_sessions(settin
         assert not client.get("/api/session", headers=phone).json()["authenticated"]
         assert client.post("/api/session", json=credentials(ONE_OFF)).status_code == 200
         with client.app.state.engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0013"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"

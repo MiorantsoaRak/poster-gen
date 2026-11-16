@@ -25,6 +25,18 @@ operator ─▶ python -m affiche.shops grant | move-payment | correct | create 
            | after-restore [--apply]
 ```
 
+### Amended on 2026-11-17, after the code review of T-BALANCE-001
+
+Round 1 of that review ([report](../reviews/t-balance-001-code-r1.md)) showed two ways around the database rules of D-BALANCE-001: `INSERT OR REPLACE` rewrote a credit line (a REPLACE's delete fires no DELETE trigger with `recursive_triggers` off), and a job that took a credit could be replaced or deleted. Migration 0014 (never applied to a real database) gains four triggers; **where D-BALANCE-001 below says five triggers, seven guard lines or six guarded objects, read nine, eleven and ten.**
+
+- `credit_grants_never_replaced` (BEFORE INSERT): refuses a line that collides with an existing one on its id, its job or its shop, kind and reference. A duplicate is refused here first; the UNIQUE keys stay as the backstop.
+- `poster_jobs_never_removed` (BEFORE DELETE): no job is ever deleted. Nothing in the code deletes one.
+- `poster_jobs_never_replaced` (BEFORE INSERT): refuses a job that collides on its id, its rowid or the one-image-per-poster rule, so no conflict clause can remove another job's row.
+- `poster_jobs_same_job` (BEFORE UPDATE): a job's id, shop, poster and kind never change (found by the implementer: `UPDATE poster_jobs SET shop_id` moved a counted credit to another shop).
+- `credits.move` no longer checks "each other shop's total is 0": the two payment triggers hold it.
+- An amount fix where the payment was moved away is refused by that shop's single correction slot under the reference.
+- **Outside what a database rule can hold** (the writer controls the file or the connection): dropping a trigger or a careless rebuild (seen by `GUARDS` in the suite and at each rehearsal, not at service start); `PRAGMA ignore_check_constraints` or `writable_schema`; in-place BLOB writes to text columns the balance does not read; editing or replacing the file; anyone who can write the file can write a grant. Known and left: a hand-written id of −1 makes later automatic inserts fail closed; references that differ only by case or spacing are different payments until T-BALANCE-004 decides on normalising them; 0013's `shop_profile` has the same REPLACE gap (T-SHOP-REPLACE in TODO.md).
+
 ### What changed from v3, and why
 
 | Round-3 point or lead's decision | v4 |

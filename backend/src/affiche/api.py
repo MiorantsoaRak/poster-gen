@@ -112,6 +112,7 @@ MESSAGES = {
         "internal_error": "Une erreur est survenue. Conservez vos modifications.",
         "budget_exhausted": "La création d’images est en pause pour tout le service. Vous pouvez encore modifier et télécharger vos affiches. Réessayez plus tard.",
         "shop_daily_limit": "La boutique a atteint sa limite d’images pour aujourd’hui. Vous pouvez encore modifier et télécharger vos affiches. Réessayez demain.",
+        "no_credit": "Il ne vous reste plus de crédit : rien n’a été envoyé, et vos affiches restent disponibles.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
         "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",

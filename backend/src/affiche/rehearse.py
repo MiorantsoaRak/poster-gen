@@ -6,7 +6,8 @@ The file is only read: SQLite's online backup copies it into a temporary folder,
 deleted. On the copy, before and after: each data table's row count and SHA-256 of its rows, the three ledgers'
 sums, foreign_key_check and integrity_check. A table that a pending migration rebuilds or widens is hashed over the
 columns it had before (the migration's PRESERVED); what the migration changes on purpose is checked apart (its
-ADDED), and so is the schema version. Prints REHEARSAL OK, or REHEARSAL FAILED and every difference; exits 0, 1, or
+ADDED), and so is the schema version. On every rehearsal, pending migrations or not, the migrated copy must still hold
+the GUARDS. Prints REHEARSAL OK, or REHEARSAL FAILED and every difference; exits 0, 1, or
 2 for a wrong command line. Reads no settings and no .env.
 """
 import hashlib
@@ -28,6 +29,70 @@ from affiche.config import BACKEND_DIR
 from affiche.db import make_engine, migrate
 
 LEDGERS = ("provider_calls", "poster_calls", "chat_reads")
+# Schema objects every later migration must keep, checked after every rehearsal whatever is pending: rebuilding a
+# table by SQLite's procedure drops its triggers without a word. A migration that changes one updates it here.
+GUARDS = {  # (type, name): the CREATE statement as 0014 wrote it
+    ("table", "credit_grants"): """CREATE TABLE credit_grants (
+  id INTEGER PRIMARY KEY,
+  shop_id INTEGER NOT NULL REFERENCES shop_profile(id),
+  kind TEXT NOT NULL CHECK (kind IN ('grant', 'correction')),
+  origin TEXT CHECK (origin IN ('offered', 'bought')),
+  credits INTEGER NOT NULL CHECK (typeof(credits) = 'integer'),
+  amount_ar INTEGER CHECK (amount_ar IS NULL OR (typeof(amount_ar) = 'integer' AND amount_ar <> 0)),
+  method TEXT CHECK (method IS NULL OR length(method) BETWEEN 1 AND 40),
+  ref TEXT NOT NULL CHECK (length(ref) BETWEEN 1 AND 100),
+  job_id TEXT UNIQUE REFERENCES poster_jobs(id),
+  note TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 500),
+  actor TEXT NOT NULL CHECK (length(actor) BETWEEN 1 AND 64),
+  created_at TEXT NOT NULL,
+  CHECK (COALESCE(CASE kind
+    WHEN 'grant' THEN credits > 0 AND job_id IS NULL AND (
+         (origin = 'bought' AND amount_ar > 0 AND method IS NOT NULL)
+      OR (origin = 'offered' AND amount_ar IS NULL AND method IS NULL))
+    ELSE origin IS NULL AND method IS NULL AND note IS NOT NULL
+      AND (credits <> 0 OR amount_ar IS NOT NULL)
+      AND (job_id IS NULL OR (credits = 1 AND amount_ar IS NULL)) END, 0)),
+  UNIQUE (shop_id, kind, ref)
+)""",
+    ("trigger", "credit_grants_never_changed"): """CREATE TRIGGER credit_grants_never_changed BEFORE UPDATE ON credit_grants
+  BEGIN SELECT RAISE(ABORT, 'a credit line is never changed'); END""",
+    ("trigger", "credit_grants_never_removed"): """CREATE TRIGGER credit_grants_never_removed BEFORE DELETE ON credit_grants
+  BEGIN SELECT RAISE(ABORT, 'a credit line is never removed'); END""",
+    ("trigger", "credit_grants_never_replaced"): """CREATE TRIGGER credit_grants_never_replaced BEFORE INSERT ON credit_grants
+  WHEN EXISTS (SELECT 1 FROM credit_grants WHERE id = NEW.id OR job_id = NEW.job_id
+               OR (shop_id = NEW.shop_id AND kind = NEW.kind AND ref = NEW.ref))
+  BEGIN SELECT RAISE(ABORT, 'a credit line is never replaced'); END""",
+    ("trigger", "credit_grants_one_payment"): """CREATE TRIGGER credit_grants_one_payment BEFORE INSERT ON credit_grants
+  WHEN NEW.amount_ar > 0 AND EXISTS (SELECT 1 FROM credit_grants WHERE ref = NEW.ref AND shop_id <> NEW.shop_id
+       GROUP BY shop_id HAVING SUM(amount_ar) > 0)
+  BEGIN SELECT RAISE(ABORT, 'this payment is already counted in another shop'); END""",
+    ("trigger", "credit_grants_payment_total"): """CREATE TRIGGER credit_grants_payment_total BEFORE INSERT ON credit_grants
+  WHEN NEW.kind = 'correction' AND NEW.amount_ar IS NOT NULL AND (
+       (SELECT COALESCE(SUM(amount_ar), 0) FROM credit_grants WHERE shop_id = NEW.shop_id AND ref = NEW.ref) <= 0
+    OR (NEW.credits = 0 AND (SELECT COALESCE(SUM(amount_ar), 0) FROM credit_grants
+                             WHERE shop_id = NEW.shop_id AND ref = NEW.ref) + NEW.amount_ar <= 0)
+    OR (NEW.credits <> 0 AND (SELECT COALESCE(SUM(amount_ar), 0) FROM credit_grants
+                              WHERE shop_id = NEW.shop_id AND ref = NEW.ref) + NEW.amount_ar <> 0))
+  BEGIN SELECT RAISE(ABORT, 'a payment''s corrected total must stay positive, or a reversal must bring it to zero'); END""",
+    ("trigger", "poster_jobs_final"): """CREATE TRIGGER poster_jobs_final BEFORE UPDATE OF status, takes_credit ON poster_jobs
+  WHEN NEW.takes_credit IS NOT OLD.takes_credit
+    OR (OLD.status IN ('succeeded', 'failed', 'interrupted', 'cancelled') AND NEW.status IS NOT OLD.status)
+  BEGIN SELECT RAISE(ABORT, 'a finished job never changes status, and no job changes what it costs'); END""",
+    ("trigger", "poster_jobs_never_removed"): """CREATE TRIGGER poster_jobs_never_removed BEFORE DELETE ON poster_jobs
+  BEGIN SELECT RAISE(ABORT, 'a job is never removed'); END""",
+    ("trigger", "poster_jobs_never_replaced"): """CREATE TRIGGER poster_jobs_never_replaced BEFORE INSERT ON poster_jobs
+  WHEN EXISTS (SELECT 1 FROM poster_jobs WHERE id = NEW.id OR rowid = NEW.rowid)
+    OR (NEW.kind IN ('scene', 'refine', 'text_texture', 'background') AND NEW.status IN ('queued', 'running')
+        AND EXISTS (SELECT 1 FROM poster_jobs WHERE creation_id = NEW.creation_id
+                    AND kind IN ('scene', 'refine', 'text_texture', 'background') AND status IN ('queued', 'running')))
+  BEGIN SELECT RAISE(ABORT, 'a job is never replaced'); END""",
+    ("trigger", "poster_jobs_same_job"): """CREATE TRIGGER poster_jobs_same_job BEFORE UPDATE ON poster_jobs
+  WHEN NEW.rowid IS NOT OLD.rowid OR NEW.id IS NOT OLD.id OR NEW.shop_id IS NOT OLD.shop_id
+    OR NEW.creation_id IS NOT OLD.creation_id OR NEW.kind IS NOT OLD.kind
+  BEGIN SELECT RAISE(ABORT, 'a job stays the same job: its id, shop, poster and kind never change'); END""",
+}
+# A column's text inside its table's statement: ALTER TABLE ADD COLUMN writes it there, and a rebuild must keep it.
+GUARDED_COLUMNS = {"poster_jobs": "takes_credit INTEGER NOT NULL DEFAULT 0 CHECK (takes_credit IN (0, 1))"}
 
 
 def _quoted(name: str) -> str:
@@ -62,6 +127,30 @@ def snapshot(db: sqlite3.Connection, projections: dict[str, tuple[str, ...]]) ->
                      for ledger in LEDGERS if ledger in tables},
             "foreign_key_check": len(db.execute("PRAGMA foreign_key_check").fetchall()),
             "integrity_check": db.execute("PRAGMA integrity_check").fetchone()[0]}
+
+
+def guards(db: sqlite3.Connection) -> dict[str, str]:
+    """Each guard's state on this database: 'as expected', 'missing' or 'different'. Runs of whitespace are collapsed on
+    both sides; the SQL is otherwise compared exactly, so a harmless rewording fails too until GUARDS follows it."""
+    def collapsed(sql: str) -> str:
+        return " ".join(sql.split())
+
+    states = {}
+    for (kind, name), expected in GUARDS.items():
+        row = db.execute("SELECT sql FROM sqlite_master WHERE type=? AND name=?", (kind, name)).fetchone()
+        states[f"guard {kind} {name}"] = ("missing" if row is None else
+                                          "as expected" if collapsed(row[0]) == collapsed(expected) else "different")
+    for table, column in GUARDED_COLUMNS.items():
+        row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        named = db.execute("SELECT 1 FROM pragma_table_info(?) WHERE name=?", (table, column.split()[0])).fetchone()
+        states[f"guard column {table}.{column.split()[0]}"] = (
+            "missing" if row is None or named is None else
+            "as expected" if collapsed(column) in collapsed(row[0]) else "different")
+    return states
+
+
+def guard_differences(db: sqlite3.Connection) -> list[str]:
+    return [f"{guard}: {state}" for guard, state in guards(db).items() if state != "as expected"]
 
 
 def _open(path: Path, read):
@@ -106,6 +195,7 @@ def rehearse(source: Path) -> tuple[list[str], list[str]]:
         after = _open(copy, lambda db: snapshot(db, projections))
         added = {(module.revision, name): (expected, _open(copy, lambda db: [tuple(row) for row in db.execute(query)]))
                  for module in pending for name, (query, expected) in module.ADDED.items()}
+        guarded = _open(copy, guards)  # also when nothing is pending: a database changed by hand
 
     differences = []
     report.append(f"{'table':<22} {'rows before':>11} {'rows after':>10}  sha256 before | sha256 after")
@@ -136,6 +226,10 @@ def rehearse(source: Path) -> tuple[list[str], list[str]]:
         report.append(f"{revision} ADDED {name}: {'as expected' if got == expected else got}")
         if got != expected:
             differences.append(f"{revision} ADDED {name}: expected {expected}, got {got}")
+    for guard, state in guarded.items():
+        report.append(f"{guard}: {state}")
+        if state != "as expected":
+            differences.append(f"{guard}: {state}")
     return report, differences
 
 
