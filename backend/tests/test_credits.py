@@ -500,6 +500,74 @@ def test_a_correction_has_its_reason_and_never_takes_the_balance_below_zero(db):
         assert credits.balance(conn, 1) == {"available": 4, "pending": 1}
 
 
+def test_a_reference_that_differs_only_by_case_or_spaces_is_the_same_reference(db):
+    """Stored as first typed (ends trimmed), compared with inner spaces made one and case folded, inside the writing
+    transaction: another spelling is the same reference, and a payment keeps its first spelling, so 0014's exact-match
+    rules see one spelling per payment."""
+    with write_tx(db) as conn:
+        credits.grant(conn, 1, 10, origin="bought", ref=" Straße ", actor="operator", amount_ar=1000, method="mvola")
+        credits.grant(conn, 1, 2, origin="offered", ref="Geste  du Mois", actor="operator")
+        credits.correct(conn, 1, -1, ref="Erreur", note="en trop", actor="operator")
+    assert rows(db, "SELECT ref FROM credit_grants ORDER BY id") == [("Straße",), ("Geste  du Mois",), ("Erreur",)]
+    for shop, ref, match in ((2, "STRASSE", r"the payment 'Straße' is already recorded in shop originalphone \(line 1\)"),
+                             (3, "strasse\n", r"the payment 'Straße' is already recorded in shop originalphone"),
+                             (1, "STRASSE", r"already has a grant with the reference 'Straße' \(line 1\)")):  # typed again
+        with pytest.raises(ValueError, match=match), write_tx(db) as conn:
+            credits.grant(conn, shop, 10, origin="bought", ref=ref, actor="operator", amount_ar=1000, method="mvola")
+    for write, match in ((lambda conn: credits.grant(conn, 1, 1, origin="offered", ref="geste du\tmois", actor="o"),
+                          r"this shop already has a grant with the reference 'Geste  du Mois' \(line 2\)"),
+                         (lambda conn: credits.correct(conn, 1, -1, ref="ERREUR ", note="encore", actor="o"),
+                          r"this shop already has a correction with the reference 'Erreur' \(line 3\)")):
+        with pytest.raises(ValueError, match=match), write_tx(db) as conn:
+            write(conn)
+    for ref in ("", " \t ", None, "x" * 101, "ß" * 51):  # "ß" folds to "ss": 102 characters compared
+        with pytest.raises(ValueError, match="a reference has 1 to 100 characters"), write_tx(db) as conn:
+            credits.grant(conn, 1, 1, origin="offered", ref=ref, actor="operator")
+    with write_tx(db) as conn:  # typed in other spellings: moved, then its amount fixed, under its stored spelling
+        credits.move(conn, "STRASSE", 1, 2, "operator", "mauvaise boutique")
+        credits.correct(conn, 2, 0, ref="strasse", note="montant", actor="operator", amount_ar=-400)
+        credits.grant(conn, 3, 5, origin="bought", ref="OM-7", actor="operator", amount_ar=500, method="orange")
+        credits.correct(conn, 3, 1, ref="om-7", note="geste", actor="operator")  # takes the payment's correction
+    assert rows(db, "SELECT shop_id, kind, ref, amount_ar FROM credit_grants WHERE id > 3 ORDER BY id") == [
+        (1, "correction", "Straße", -1000), (2, "grant", "Straße", 1000), (2, "correction", "Straße", -400),
+        (3, "grant", "OM-7", 500), (3, "correction", "OM-7", None)]
+    with pytest.raises(ValueError, match="the payment 'OM-7' was already moved or corrected"), write_tx(db) as conn:
+        credits.move(conn, "OM-7", 3, 1, "operator", "mauvaise boutique")
+
+
+def test_a_reference_written_twice_outside_the_functions_is_refused_as_ambiguous(db):
+    with write_tx(db) as conn:  # two spellings of one reference: only a writer outside credits.py can leave them
+        paid(conn, ref="MV-5")
+        paid(conn, ref="mv-5", amount=500)
+    ambiguous = r"the reference 'Mv-5' matches lines written differently: line 1 'MV-5', line 2 'mv-5'"
+    for write in (lambda conn: credits.move(conn, "Mv-5", 1, 2, "operator", "mauvaise boutique"),
+                  lambda conn: credits.correct(conn, 1, 1, ref="Mv-5", note="geste", actor="operator")):
+        with pytest.raises(ValueError, match=ambiguous), write_tx(db) as conn:
+            write(conn)
+    assert rows(db, "SELECT count(*) FROM credit_grants") == [(2,)]
+
+
+@pytest.mark.parametrize("field, value", [("credits", 10**9 + 1), ("credits", 2**63), ("amount_ar", 2**63),
+                                          ("amount_ar", -(10**9) - 1)])
+def test_a_line_carries_at_most_a_billion_credits_or_ariary(db, field, value):
+    """The functions' own bound, before any binding: past SQLite's 64-bit range the driver raises OverflowError, and two
+    lines inside it can still overflow the balance's SUM for good, since a line is never removed."""
+    with write_tx(db) as conn:
+        credits.grant(conn, 1, 10, origin="bought", ref="MV-1", actor="operator", amount_ar=1000, method="mvola")
+    if field == "credits":
+        writes = (lambda conn: credits.grant(conn, 1, value, origin="offered", ref="x", actor="operator"),
+                  lambda conn: credits.correct(conn, 1, value, ref="x", note="n", actor="operator"))
+    else:
+        writes = (lambda conn: credits.grant(conn, 2, 1, origin="bought", ref="x", actor="operator", amount_ar=abs(value),
+                                             method="mvola"),
+                  lambda conn: credits.correct(conn, 1, 0, ref="MV-1", note="n", actor="operator", amount_ar=abs(value)))
+    for write in writes:
+        with pytest.raises(ValueError, match="a line carries at most 1,000,000,000 credits and 1,000,000,000 Ar"), \
+                write_tx(db) as conn:
+            write(conn)
+    assert rows(db, "SELECT count(*) FROM credit_grants") == [(1,)]
+
+
 def test_the_purchase_text_is_never_empty(db):
     with write_tx(db) as conn:
         assert credits.purchase_text(conn, SimpleNamespace(support_contact_fr=None)) == \

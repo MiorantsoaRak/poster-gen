@@ -14,7 +14,12 @@ application join. Nothing publishes a port. The pattern, and several sentences b
 `../ppn-market/deploy/README.md`. Design: `docs/project/designs/hosted-pilot.md` (phase B).
 
 `deploy/phone_session.py` is something else: a temporary public address to a development machine for one
-observed session. It does not touch the box.
+observed session. It does not touch the box. Since migration 0014 its shop in `backend/data-probe` has no credit.
+When the session has started (it migrates the folder at its start), and before you give the address, grant credits
+in a second terminal, from `backend/`:
+`DATA_DIR=data-probe uv run python -m affiche.shops grant originalphone 20 --offered --ref phone-session-<date> --note "Session observée"`.
+If it says that the database is at an older version, the session has not started yet: wait, then run it again. Its
+headroom line reads the cap of `backend/.env`, not the lower cap of the session (94.72).
 
 ## Prerequisites (control machine)
 
@@ -195,18 +200,21 @@ could not be removed.` and starts nothing: run `sudo docker rm -f affiche-ia-bac
 If the release prints `THE SERVICE IS DOWN: the previous container did not start again`, start it at once with
 `sudo docker start affiche-ia-affiche-ia-1`, then do steps 1 to 3.
 
-### Release 1 (migration 0013: several shops)
+### Release 1 (migrations 0013 and 0014: several shops, credits)
 
-The first release with migration 0013 (design: `docs/project/designs/multi-shop.md`, "Release gate"). In this order:
+The first release with migrations 0013 and 0014 (designs: `docs/project/designs/multi-shop.md` and
+`prepaid-balance.md`, "Release gate"). Do also the credit steps of the next section. In this order:
 1. On mx1, run `sudo sh /opt/affiche-ia/daily.sh`. Check that `/opt/affiche-ia/backups/last-backup.json` has
    today's time.
 2. Optional, the day before: copy that backup's `db/affiche-<stamp>.db` to the development machine. From
    `backend/`, run `uv run python -m affiche.rehearse <copy>`. It shows the counts early, with the development SQLite.
-3. Run the release command as usual. Its rehearsal runs 0013 on a fresh copy of the live database, in the
-   release image, before anything is stopped.
+3. Run the release command as usual. Its rehearsal runs 0013 and 0014 on a fresh copy of the live database, in
+   the release image, before anything is stopped.
 4. Read the report. Its first line must show SQLite 3.40.1 (the image's Debian) and the release's revision.
-5. Check the report: each table has the same rows and hash before and after; the version goes from `0012` to
-   `0013`; each `0013 ADDED` line says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
+5. Check the report: each table that existed before has the same rows and hash before and after (a table the
+   migrations add shows `None` before; a line that ends with `(over …)` compares only the columns it names); the
+   version goes from `0012` to `0014`; each `0013 ADDED` and `0014 ADDED` line says `as expected`; each of the
+   eleven `guard …` lines says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
 6. Check that the three ledger sums are the same before and after. Save the whole report as
    `docs/project/reviews/release-1-rehearsal-<date>.md`.
 7. If the report says `FAILED`, the release stopped before the stop and the old version still serves.
@@ -214,6 +222,30 @@ The first release with migration 0013 (design: `docs/project/designs/multi-shop.
    « Mes affiches » shows the same number of posters as before.
 9. Remove the `SHOP_PASSWORD_HASH` line from `/opt/affiche-ia/secrets/app.env`, then run the recreate command
    ("Operate").
+
+### Release 1: the pilot's credits (migration 0014)
+
+Release 1 also adds credits ("Credits" under "Shops"). Migration 0014 grants nothing: after it, every shop has 0
+credits. The new container serves as soon as it starts, so the pilot has no credit for a minute or two, until you
+grant his opening balance. In that time he can still edit, open « Mes affiches », preview and download; a new image
+is refused before anything is sent, and costs nothing. Around the steps above:
+1. **Before the release**, warn the pilot in French, for example: « Ce soir vers <heure>, Doka Studio est mis à
+   jour. Pendant une ou deux minutes après la mise à jour, l’application peut dire qu’il ne reste plus de crédit :
+   rien n’est envoyé ni perdu. Attendez mon message « C’est prêt » avant de créer une affiche. »
+2. Run the release (step 3 above).
+3. **As soon as it ends**, grant the pilot's opening balance (the owner's decision of 2026-11-16: 30 offered
+   credits):
+
+   ```bash
+   sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops grant originalphone 30 --offered --ref pilot-opening --note "Solde d’ouverture du pilote"
+   ```
+
+   It prints `granted 30 offered credits to originalphone (line 1): available 30, en attente 0`, then the cap's
+   headroom. Read the headroom line: if a `WARNING` line follows it, raise `SPEND_CAP_USD` ("Secrets"). If you type
+   the command twice, the second is refused by its reference: nothing doubles.
+4. Set the purchase text: `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-text "…"`.
+   It states the packs, the mobile money number, the reference to write, and when the credits arrive.
+5. Tell the pilot « C’est prêt ».
 
 ### The first start after migration 0013
 
@@ -225,9 +257,9 @@ Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH`
   (step 9 above). Change a password with `set-password` ("Shops").
 
 **If the new container does not start after the migration** (the release prints "THE SERVICE IS DOWN" and the
-container's last lines): a failure inside the migration leaves the database at 0012, because the migration is
-one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migration, as
-below, leaves it at 0013: fix forward.
+container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 and 0014 run in
+one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migrations, as
+below, leaves it at 0014: fix forward.
 - The log says "Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set". Give shop 1 a password with
   the new image, through the operator service (no container log: "Shops"), then start it:
 
@@ -276,15 +308,16 @@ Each shop signs in with its identifier and its own password. The operator manage
 
 ```bash
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops list
-sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops create <identifier> --name "Nom affiché"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops create <identifier> --name "Nom affiché" [--welcome 5]
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops set-password <identifier>
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops suspend <identifier> --yes
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops enable <identifier>
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-sessions <identifier>   # or --all
 ```
 
-- **create** makes an active shop and prints its password once. Give the identifier and the password to the
-  owner in person. An identifier has 3 to 32 letters or digits; case, accents, spaces and punctuation do not
+- **create** makes an active shop and prints its password once. In the same step it grants the shop 5 offered
+  welcome credits (reference `welcome`); `--welcome 10` grants 10, `--welcome 0` none. Give the identifier and the
+  password to the owner in person. An identifier has 3 to 32 letters or digits; case, accents, spaces and punctuation do not
   count. A phone number is possible in one written form: `034 12 345 67` gives `0341234567`, and
   `+261 34 12 345 67` gives another identifier. Tell the owner the form you chose.
 - **set-password** prints a new password once and ends every session of that shop, and of no other shop. Use
@@ -316,6 +349,68 @@ sudo env REVISION="$REV" docker compose -f /opt/affiche-ia/app/deploy/compose.ym
 Never run `create` or `set-password` with `docker compose run … affiche-ia`: the output of that service goes to
 the journal. If a password reached a log or a screen it must not reach, run `set-password` for that shop: the old
 password stops working, and the shop's sessions end.
+
+### Credits
+
+One credit is one image: a scene, an adjustment of the scene, or a text material. A shop's balance is its grants
+and corrections minus its images that wait, run or were made. An image that ends without a result gives its credit
+back by itself. You write each grant and correction with the same command, in the running container:
+
+```bash
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops grant <identifier> <credits> --offered --ref <reference> [--note "…"]
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops grant <identifier> <credits> --bought --amount-ar <ariary> --method <mvola|orange|airtel|cash|…> --ref <payment reference> [--note "…"]
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops move-payment <payment reference> <from identifier> <to identifier> --note "<why>"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops correct <identifier> <+n|-n> --ref <reference> --note "<reason>"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops correct <identifier> +1 --ref <short reason> --job <job id> --note "<what was wrong>"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops correct <identifier> 0 --ref <its payment reference> --amount-ar <±ariary> --note "<reason>"
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops pause --yes
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops resume
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-text "…"
+```
+
+- **A line is never changed or removed.** To undo a line, write a correction.
+- **grant** adds credits: `--offered` is a gift; `--bought` is a payment, with its amount in whole ariary, its method
+  and its reference. It prints the line, the shop's balance and the cap's headroom (below).
+- **References.** Each grant and each correction has a reference. In one shop, a reference is used once for a grant
+  and once for a correction. A grant or a correction typed twice is refused, with the line that has it: nothing
+  doubles. To compare references, the command ignores case and extra spaces: ` mv-123 ` and `MV-123` are the same
+  reference. It keeps the spelling typed first, and it writes a move or an amount fix under the payment's own
+  spelling. Other differences count: `MV123` and `MV-123` are two references, so type a payment's reference exactly
+  as the payment shows it. Only this command makes the comparison: a line written into the database another way is
+  not compared, and a later migration is necessary to hold the rule for every writer. If the command finds one
+  reference written in two spellings, it refuses and names the lines.
+- **A payment is in one shop at a time.** A bought grant whose reference any shop holds is refused, and no option
+  forces it.
+- **A payment credited to the wrong shop:** `move-payment <reference> <wrong shop> <right shop> --note "…"`. It moves
+  the whole payment, its credits and its ariary, in one step. It is refused when the wrong shop has spent some of
+  those credits: the payment then stays where it is. To serve the right shop anyway, give it an offered grant:
+  `grant <right shop> <n> --offered --ref <reference>-geste --note "paiement <reference> crédité par erreur à <wrong shop>"`.
+  It shows as offered and counts no money.
+- **correct** adds (`+n`) or takes back (`-n`) credits, with a reason. It is refused when the balance would go below
+  zero. **Do not give a plain correction a payment's reference.** A shop has one correction per reference: after a
+  plain correction under a payment's reference, a move or an amount fix of that payment is refused. Give the
+  correction its own reference, for example `geste-2026-11-20`.
+- **A defective image:** `correct <identifier> +1 --ref <short reason> --job <job id> --note "<what was wrong>"`. Only
+  for an image of that shop that was made and took a credit, and only once. The job's id comes from the
+  administration dashboard. Until it exists, take it from the database: `/api/status` lists only failed jobs, and a
+  failed job has its credit back already.
+- **Numbers.** A credit count or an amount in ariary is a whole number from -1,000,000,000 to 1,000,000,000. The
+  command refuses any other number as a wrong command line (exit 2).
+- **A mistyped amount:** `correct <identifier> 0 --ref <payment reference> --amount-ar <±ariary> --note "…"`, in the
+  shop that holds the payment, once. The payment's total must stay above zero. If the payment must also move, move
+  it first, then fix the amount in the right shop.
+- **The cap's headroom.** The cap counts from `SPEND_CAP_SINCE` and does not reset. Each grant prints a line such as
+  `service cap 15.00 USD: 6.20 spent since 2026-11-01, 8.80 left; credits outstanding in all shops 280 × 0.035 USD
+  (average of the last 50 images) = 9.80 USD`. The price of one image is the average real cost of the last 50
+  images, or `ESTIMATE_SCENE_USD` before the first one. When the credits of all shops would cost more than what is
+  left, a `WARNING` line follows: raise `SPEND_CAP_USD` ("Secrets") before the shops reach the cap.
+- **pause --yes** stops new requests to the AI for every shop: images, styles, text proposals and the reading of
+  messages. Requests already admitted finish. The shops can still edit and download. Without `--yes`, the command
+  only says whether the service is paused. **resume** lifts the pause. To stop one shop, use `suspend`.
+- **purchase-text "…"** sets the text that a shop reads when it has three credits or fewer. Write the packs and
+  their prices, the mobile money number, the reference to write with the payment, and when the credits arrive
+  (your hours): 1 to 500 characters. Without a text, the command prints the current one. Until you set it, the shops
+  read « Pour obtenir des crédits, contactez » followed by `SUPPORT_CONTACT_FR`, or « l’administrateur ».
 
 ## Secrets (on the box, never in git)
 

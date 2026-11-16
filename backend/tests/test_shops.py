@@ -4,17 +4,18 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from affiche import runtime, shops
 from affiche.api import create_app
 from affiche.config import load_settings
 from affiche.db import make_engine, write_tx
-from affiche.posters import auth
+from affiche.posters import auth, credits, jobs
 from affiche.posters.auth import PASSWORDS, identifier_key
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_0012, client, credentials, failures, login,  # noqa: F401
                       password_hash, second_shop, settings, stored_password)
-from test_config import env  # noqa: F401
+from test_config import TODAY, env  # noqa: F401
+from test_credits import T, job
 from test_db import engine, migrate_to  # noqa: F401
 
 HASH = PASSWORDS.hash(os.urandom(12).hex())
@@ -226,11 +227,28 @@ def test_the_operator_ends_sessions_suspends_and_enables(command, engine, passwo
     assert command("enable", "nobody") == (1, "", "refused: no shop has the identifier nobody\n")
 
 
-@pytest.mark.parametrize("argv", [[], ["suspend"], ["end-sessions"], ["end-sessions", "x", "--all"], ["delete", "x"]])
+@pytest.mark.parametrize("argv", [[], ["suspend"], ["end-sessions"], ["end-sessions", "x", "--all"], ["delete", "x"],
+                                  ["grant", "x", "1", "--ref", "r"], ["grant", "x", "1", "--offered", "--bought", "--ref", "r"],
+                                  ["grant", "x", "1.5", "--offered", "--ref", "r"], ["grant", "x", "1", "--offered"],
+                                  ["correct", "x", "1", "--ref", "r"], ["move-payment", "r", "a", "--note", "n"],
+                                  # Past a billion: SQLite's integers or the balance's SUM would overflow.
+                                  ["grant", "x", "9223372036854775808", "--offered", "--ref", "r"],
+                                  ["grant", "x", "1", "--bought", "--amount-ar", "1000000001", "--method", "m", "--ref", "r"],
+                                  ["create", "x", "--welcome", "9223372036854775808"],
+                                  ["correct", "x", "-1000000001", "--ref", "r", "--note", "n"],
+                                  ["correct", "x", "0", "--ref", "r", "--note", "n", "--amount-ar", "-9223372036854775808"]])
 def test_a_wrong_command_line_is_a_usage_error(command, argv):
     with pytest.raises(SystemExit) as exited:
         command(*argv)
     assert exited.value.code == 2
+
+
+def test_a_number_past_a_billion_is_a_usage_error_that_says_so(command, capsys):
+    with pytest.raises(SystemExit) as exited:
+        command("grant", "originalphone", "9223372036854775808", "--offered", "--ref", "x")
+    assert exited.value.code == 2 and capsys.readouterr().err.endswith(
+        "python -m affiche.shops grant: error: argument credits: a whole number from -1,000,000,000 to 1,000,000,000: "
+        "'9223372036854775808'\n")
 
 
 def test_the_command_never_migrates_and_needs_a_database_at_head(env, tmp_path, monkeypatch, capsys):
@@ -269,3 +287,227 @@ def test_a_backup_from_before_0013_is_migrated_and_repaired_before_the_service_s
     with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
         assert client.get("/api/session", headers=cookie).json()["authenticated"] is False
         assert client.post("/api/session", json=credentials(password)).status_code == 200
+
+
+# --- Credits (D-BALANCE-005): the `engine` fixture's shop 1 holds 100 offered credits, line 1, reference `tests` -------
+
+WARNING = ("WARNING: the outstanding credits would cost more than what is left of the cap: raise SPEND_CAP_USD "
+           "(deploy/README.md)\n")
+
+
+def lines(engine):
+    with engine.connect() as conn:
+        return conn.exec_driver_sql("SELECT shop_id, kind, origin, credits, amount_ar, method, ref, job_id, note, actor"
+                                    " FROM credit_grants WHERE ref <> 'tests' ORDER BY id").all()
+
+
+def available(engine, shop=1):
+    with engine.connect() as conn:
+        return credits.balance(conn, shop)["available"]
+
+
+def product(conn):
+    conn.exec_driver_sql("INSERT OR IGNORE INTO product_inputs VALUES ('in1',1,'P1','JBL','Bleu','[]','{}',NULL,?)", (T,))
+
+
+def image_calls(engine, *costs, kind="scene", provider="openai", status="succeeded", estimate=0,
+                at=f"{TODAY}T00:00:01.000000+00:00"):
+    """Calls as the worker records them, each on a finished job of its own that takes no credit."""
+    with write_tx(engine) as conn:
+        product(conn)
+        for cost in costs:
+            id = os.urandom(6).hex()
+            conn.exec_driver_sql("INSERT INTO creations VALUES (?,1,NULL,1,'active',?,?)", (id, T, T))
+            conn.exec_driver_sql("INSERT INTO creation_versions VALUES (?,1,'{}','h',?)", (id, T))
+            conn.exec_driver_sql("INSERT INTO poster_jobs (id,shop_id,creation_id,origin_revision,input_id,kind,input_json,"
+                                 "input_hash,status,created_at) VALUES (?,1,?,1,'in1',?,'{}','h','succeeded',?)",
+                                 (id, id, kind, T))
+            conn.exec_driver_sql("INSERT INTO poster_calls (id,job_id,call_no,provider,model,rate_card_json,status,"
+                                 "cost_micros,cost_is_estimate,created_at) VALUES (?,?,1,?,'m','{}',?,?,?,?)",
+                                 (id, id, provider, status, cost, estimate, at))
+
+
+def test_create_grants_the_welcome_credits_in_the_shops_own_transaction(command, engine, monkeypatch):
+    code, out, err = command("create", "Boutique Deux")
+    assert (code, err) == (0, "") and out.startswith(
+        "shop 2 created: identifier boutiquedeux, active, 5 offered welcome credits (line 2)\npassword (shown once")
+    code, out, _ = command("create", "Boutique Trois", "--welcome", "0")
+    assert code == 0 and out.startswith("shop 3 created: identifier boutiquetrois, active, no welcome credits\n")
+    assert command("create", "Boutique Quatre", "--welcome", "-1") == (1, "", "refused: a grant is 1 credit or more\n")
+    real = credits.grant
+
+    def failing(*args, **kwargs):  # the welcome line is written, then its transaction fails
+        real(*args, **kwargs)
+        raise ValueError("fault after the welcome line")
+    monkeypatch.setattr(credits, "grant", failing)
+    assert command("create", "Boutique Cinq") == (1, "", "refused: fault after the welcome line\n")
+    with engine.connect() as conn:  # neither refused shop exists
+        assert conn.exec_driver_sql("SELECT id, identifier FROM shop_profile ORDER BY id").all() == [
+            (1, "originalphone"), (2, "boutiquedeux"), (3, "boutiquetrois")]
+    assert lines(engine) == [(2, "grant", "offered", 5, None, None, "welcome", None, "Crédits de bienvenue", "operator")]
+    assert [available(engine, shop) for shop in (2, 3)] == [5, 0]
+
+
+def test_the_headroom_prices_the_outstanding_credits_at_the_last_50_real_image_costs(engine, env):
+    settings = load_settings(env_file=None)  # a cap of 20 USD since today; ESTIMATE_SCENE_USD 0.40
+    with engine.connect() as conn:  # no real image cost yet: the estimate
+        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 0, "outstanding": 100, "images": 0,
+                                                  "unit": 400_000, "cost": 40_000_000}
+    image_calls(engine, 1_000_000, at=f"{TODAY}T00:00:00.000000+00:00")  # older than the last 50
+    image_calls(engine, *[40_000] * 50)
+    image_calls(engine, 900_000, estimate=1)  # a reservation kept as an estimate
+    image_calls(engine, 0, provider="stub")
+    image_calls(engine, 900_000, status="failed")
+    image_calls(engine, 5_000, kind="plan", provider="claude")  # not an image
+    with write_tx(engine) as conn:  # a shop below zero takes nothing off the others
+        shops.create_shop(conn, "boutiquedeux", None, HASH)
+        job(conn, "late", shop=2)
+    with engine.connect() as conn:
+        assert credits.balance(conn, 2)["available"] == -1
+        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 4_805_000, "outstanding": 100,
+                                                  "images": 50, "unit": 40_000, "cost": 4_000_000}
+
+
+def test_the_headroom_rounds_up_only_at_the_end_so_a_short_cap_always_warns(command, engine, env):
+    """The review's case: 40,000.5 µUSD an image on average, 1,000 credits outstanding, 40,000,250 µUSD left. Rounding
+    the average first (40,000) priced them at 40,000,000 and gave no warning."""
+    image_calls(engine, *[40_000] * 49, 40_025, at="2000-01-01T00:00:00.000000+00:00")  # before SPEND_CAP_SINCE
+    env.setenv("SPEND_CAP_USD", "40.00025")
+    code, out, _ = command("grant", "originalphone", "900", "--offered", "--ref", "pack")
+    assert code == 0 and out.endswith(
+        f"service cap 40.00 USD: 0.00 spent since {TODAY}, 40.00 left; credits outstanding in all shops 1000 × 0.040 USD "
+        "(average of the last 50 images) = 40.01 USD\n" + WARNING)  # left rounded down, cost up, as the warning sees
+
+
+def test_grant_prints_its_line_the_balance_and_the_headroom_and_refuses_a_reference_twice(command, engine, env):
+    code, out, err = command("grant", "Original Phone", "5", "--offered", "--ref", "Geste-1", "--note", "geste")
+    assert (code, err) == (0, "") and out == (
+        "granted 5 offered credits to originalphone (line 2): available 105, en attente 0\n"
+        f"service cap 20.00 USD: 0.00 spent since {TODAY}, 20.00 left; credits outstanding in all shops 105 × 0.400 USD "
+        "(ESTIMATE_SCENE_USD: no image cost yet) = 42.00 USD\n" + WARNING)
+    image_calls(engine, *[40_000] * 50)
+    env.setenv("SPEND_CAP_USD", "6.60")  # 4.60 left after the 2.00 spent: what 115 credits would cost, no more
+    code, out, err = command("grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "MVola",
+                             "--ref", "MV-1")
+    assert (code, err) == (0, "") and out == (
+        "granted 10 bought credits to originalphone (line 3): available 115, en attente 0\n"
+        f"service cap 6.60 USD: 2.00 spent since {TODAY}, 4.60 left; credits outstanding in all shops 115 × 0.040 USD "
+        "(average of the last 50 images) = 4.60 USD\n")
+    code, out, _ = command("grant", "originalphone", "1", "--offered", "--ref", "geste-2")
+    assert code == 0 and out.endswith("116 × 0.040 USD (average of the last 50 images) = 4.64 USD\n" + WARNING)
+    second_shop(engine)
+    for argv, refused in (
+            (("originalphone", "5", "--offered", "--ref", " GESTE-1 "),  # typed again, in another spelling
+             "this shop already has a grant with the reference 'Geste-1' (line 2)"),
+            (("boutiquedeux", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "mv-1"),
+             "the payment 'MV-1' is already recorded in shop originalphone (line 3): a payment changes shop only by "
+             "move-payment"),
+            (("originalphone", "1", "--offered", "--amount-ar", "5", "--ref", "x"),
+             "a grant is offered (no amount, no method) or bought"),
+            (("originalphone", "1", "--bought", "--ref", "x"), "a bought grant needs its amount in ariary and its payment "
+                                                               "method"),
+            (("originalphone", "1", "--offered", "--ref", "  "), "a reference has 1 to 100 characters"),
+            (("nobody", "1", "--offered", "--ref", "x"), "no shop has the identifier nobody")):
+        assert command("grant", *argv) == (1, "", f"refused: {refused}\n")
+    assert lines(engine) == [(1, "grant", "offered", 5, None, None, "Geste-1", None, "geste", "operator"),
+                             (1, "grant", "bought", 10, 10000, "mvola", "MV-1", None, None, "operator"),
+                             (1, "grant", "offered", 1, None, None, "geste-2", None, None, "operator")]
+    assert available(engine) == 116
+
+
+def test_move_payment_moves_a_whole_unspent_payment_and_a_correction_under_its_reference_blocks_it(command, engine):
+    second_shop(engine)
+    second_shop(engine, "Boutique Trois", "Boutique Trois")  # lines 2 and 3: their 100 credits each
+    command("grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    assert command("move-payment", "mv-1", "Original Phone", "boutiquedeux", "--note", "mauvaise boutique") == (
+        0, "payment moved from originalphone (line 5: available 100, en attente 0) to boutiquedeux (line 6: available "
+           "110, en attente 0)\n", "")
+    with engine.connect() as conn:  # typed in another spelling, moved under the payment's own
+        assert conn.exec_driver_sql("SELECT DISTINCT ref FROM credit_grants WHERE id BETWEEN 4 AND 6").all() == [("MV-1",)]
+    assert command("move-payment", "MV-1", "boutiquedeux", "originalphone", "--note", "retour") == (
+        1, "", "refused: the destination shop already has a line with the reference 'MV-1' (line 4)\n")
+    command("correct", "boutiquedeux", "-101", "--ref", "retrait", "--note", "crédits dépensés")
+    assert command("move-payment", "MV-1", "boutiquedeux", "boutiquetrois", "--note", "encore") == (
+        1, "", "refused: the source shop has 9 credits left of the payment's 10: it stays where it is\n")
+    # The runbook's concession when the payment cannot move: offered, so it counts no money.
+    assert command("grant", "boutiquetrois", "10", "--offered", "--ref", "MV-1-geste", "--note",
+                   "paiement MV-1 crédité par erreur à boutiquedeux")[0] == 0
+    # A plain correction under a payment's reference, in any spelling, takes the shop's one correction under it.
+    command("grant", "originalphone", "10", "--bought", "--amount-ar", "5000", "--method", "cash", "--ref", "MV-2")
+    assert command("correct", "originalphone", "+1", "--ref", "mv-2", "--note", "geste")[0] == 0
+    assert command("move-payment", "MV-2", "originalphone", "boutiquetrois", "--note", "mauvaise boutique") == (
+        1, "", "refused: the payment 'MV-2' was already moved or corrected in the source shop\n")
+    assert command("correct", "originalphone", "0", "--ref", "MV-2", "--amount-ar", "500", "--note", "montant") == (
+        1, "", "refused: the payment 'MV-2' was already moved or corrected in this shop\n")
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT shop_id, SUM(amount_ar) FROM credit_grants WHERE amount_ar IS NOT NULL"
+                                    " GROUP BY shop_id").all() == [(1, 5000), (2, 10000)]  # each payment once
+
+
+def test_correct_repays_a_job_once_fixes_an_amount_and_never_goes_below_zero(command, engine):
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "made", "succeeded")
+        job(conn, "lost", "failed")
+    assert command("correct", "originalphone", "+1", "--ref", "defaut-1", "--job", "made", "--note", "produit déformé") == (
+        0, "corrected originalphone (line 2): +1 credits, job made repaid; available 100, en attente 0\n", "")
+    for argv, refused in ((("+1", "--ref", "defaut-2", "--job", "made"), "this job was already repaid (line 2)"),
+                          (("+1", "--ref", "defaut-3", "--job", "lost"),
+                           "only a succeeded job of this shop that took a credit can be repaid"),
+                          (("+2", "--ref", "defaut-4", "--job", "made"), "a job is repaid with exactly 1 credit and no amount")):
+        assert command("correct", "originalphone", *argv, "--note", "encore") == (1, "", f"refused: {refused}\n")
+    command("grant", "originalphone", "10", "--bought", "--amount-ar", "1000", "--method", "mvola", "--ref", "MV-1")
+    assert command("correct", "originalphone", "0", "--ref", "MV-1", "--amount-ar", "-1000", "--note", "montant") == (
+        1, "", "refused: the payment's total would be 0 Ar: it must stay above zero\n")
+    assert command("correct", "originalphone", "0", "--ref", "MV-1", "--amount-ar", "-400", "--note", "montant") == (
+        0, "corrected originalphone (line 4): -400 Ar; available 110, en attente 0\n", "")
+    assert command("correct", "originalphone", "-111", "--ref", "retrait", "--note", "trop") == (
+        1, "", "refused: the balance would go below zero (available 110)\n")
+    assert command("correct", "originalphone", "-10", "--ref", "retrait", "--note", "trop") == (
+        0, "corrected originalphone (line 5): -10 credits; available 100, en attente 0\n", "")
+    assert command("correct", "originalphone", "-10", "--ref", "Retrait", "--note", "trop") == (  # typed again
+        1, "", "refused: this shop already has a correction with the reference 'retrait' (line 5)\n")
+    assert lines(engine)[-3:] == [(1, "grant", "bought", 10, 1000, "mvola", "MV-1", None, None, "operator"),
+                                  (1, "correction", None, 0, -400, None, "MV-1", None, "montant", "operator"),
+                                  (1, "correction", None, -10, None, None, "retrait", None, "trop", "operator")]
+
+
+def test_pause_without_yes_only_says_whether_the_service_is_paused(command, engine):
+    def paused():
+        with engine.connect() as conn:
+            return jobs.paused(conn)
+    nothing = "refused: nothing done: to pause new requests to the AI for every shop, run again with --yes\n"
+    assert command("pause") == (1, "the service is not paused\n", nothing)
+    assert paused() is None
+    code, out, err = command("pause", "--yes")
+    assert (code, err) == (0, "") and (since := paused()) and out == (
+        f"the service is paused since {since}: no new request reaches the AI for any shop (images, styles, text "
+        "proposals, reads); what was admitted finishes; resume lifts it\n")
+    assert command("pause", "--yes") == (0, f"the service was already paused since {since}: nothing changed\n", "")
+    assert command("pause") == (1, f"the service is paused since {since}\n", nothing)
+    assert command("resume") == (0, "the service resumed: new requests reach the AI again\n", "")
+    assert paused() is None
+    assert command("resume") == (0, "the service was not paused: nothing changed\n", "")
+
+
+def test_the_purchase_text_is_set_and_read_back_never_blank(command, engine, env):
+    assert command("purchase-text") == (0, "purchase text: « Pour obtenir des crédits, contactez l’administrateur. » "
+                                           "(not set: the fallback every shop reads)\n", "")
+    sentence = ("Pack de 10 crédits : 10 000 Ar par MVola au 034 00 000 00, avec votre identifiant en référence. "
+                "Crédits ajoutés le jour même, de 8 h à 18 h.")
+    assert command("purchase-text", f"  {sentence}\n") == (0, f"purchase text set: « {sentence} »\n", "")
+    for blank in ("  ", "x" * 501):
+        assert command("purchase-text", blank) == (1, "", "refused: a purchase text has 1 to 500 characters\n")
+    assert command("purchase-text") == (0, f"purchase text: « {sentence} »\n", "")
+    with engine.connect() as conn:
+        assert credits.purchase_text(conn, load_settings(env_file=None)) == sentence
+
+
+def test_a_purchase_text_whose_read_back_fails_is_not_saved(command, engine, monkeypatch):
+    """A refusal means nothing written: the text is read back in the transaction that writes it."""
+    def unreadable(conn, settings):
+        raise OperationalError("SELECT value FROM meta", {}, sqlite3.OperationalError("disk I/O error"))
+    monkeypatch.setattr(credits, "purchase_text", unreadable)
+    assert command("purchase-text", "Pack de 10 crédits : 10 000 Ar.") == (1, "", "refused: disk I/O error\n")
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='purchase_text_fr'").first() is None

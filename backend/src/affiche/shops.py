@@ -1,13 +1,21 @@
-"""The operator's actions on shops (D-MULTI-SHOP-003). Each function takes a connection and never commits: the caller
-holds the transaction (write_tx), so that a later record of the action can join it. Passwords are hashed by the
-caller, outside the transaction.
+"""The operator's actions on shops and their credits (D-MULTI-SHOP-003, D-BALANCE-005). Each function takes a
+connection and never commits: the caller holds the transaction (write_tx), so that a later record of the action can
+join it. Passwords are hashed by the caller, outside the transaction.
 
     python -m affiche.shops list
-    python -m affiche.shops create <identifier> [--name "Nom affiché"]   prints the password once
+    python -m affiche.shops create <identifier> [--name "Nom affiché"] [--welcome 5]   prints the password once
     python -m affiche.shops set-password <identifier>                     prints the new password once; ends its sessions
     python -m affiche.shops end-sessions (<identifier> | --all)
     python -m affiche.shops suspend <identifier> --yes                    without --yes, only shows the shop
     python -m affiche.shops enable <identifier>
+    python -m affiche.shops grant <identifier> <credits> --offered --ref <reference> [--note "…"]
+    python -m affiche.shops grant <identifier> <credits> --bought --amount-ar <ariary> --method <mvola|…> --ref <payment>
+    python -m affiche.shops move-payment <payment reference> <from identifier> <to identifier> --note "<why>"
+    python -m affiche.shops correct <identifier> <+n|-n> --ref <reference> --note "<reason>" [--job <job id>]
+    python -m affiche.shops correct <identifier> 0 --ref <payment reference> --amount-ar <±ariary> --note "<reason>"
+    python -m affiche.shops pause --yes                                   without --yes, only says whether it is paused
+    python -m affiche.shops resume
+    python -m affiche.shops purchase-text ["…"]                          without a text, prints the current one
 
 The command reads the data folder from the settings, as the other commands do, and never migrates: it refuses unless
 the database is at this code's head. It takes no lock, so it runs beside the API. Exit 0 done, 1 refused (one line on
@@ -17,20 +25,23 @@ import argparse
 import secrets
 import sys
 from collections.abc import Sequence
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from pydantic import ValidationError
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, bindparam, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from affiche.config import BACKEND_DIR, ENV_FILE, ConfigError, load_settings
 from affiche.db import make_engine, utc_now, write_tx
-from affiche.posters import jobs
+from affiche.posters import credits, jobs
 from affiche.posters.auth import PASSWORDS, identifier_key
 from affiche.posters.models import Profile
+from affiche.visuals.admission import spent_micros
+from affiche.visuals.gateway import usd_to_micros
 
 # No 0/o, 1/l/i: read aloud and typed on a phone. Twelve of them: about 59 bits.
 ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -122,6 +133,37 @@ def resume(conn: Connection) -> bool:
     return conn.execute(text("DELETE FROM meta WHERE key='generation_paused'")).rowcount == 1
 
 
+def set_purchase_text(conn: Connection, sentence: str) -> None:
+    """What a shop reads to buy credits (credits.purchase_text, D-BALANCE-004): packs, mobile money number, the reference
+    to write, and when credits arrive."""
+    sentence = sentence.strip()  # blank would read as set, and a shop would be told nothing
+    if not 1 <= len(sentence) <= 500:
+        raise ValueError("a purchase text has 1 to 500 characters")
+    conn.execute(text("INSERT INTO meta VALUES ('purchase_text_fr', :sentence)"
+                      " ON CONFLICT(key) DO UPDATE SET value=excluded.value"), {"sentence": sentence})
+
+
+IMAGE_COSTS = text(
+    "SELECT COUNT(*), COALESCE(SUM(cost_micros), 0) FROM (SELECT c.cost_micros FROM poster_calls c"
+    " JOIN poster_jobs j ON j.id=c.job_id WHERE c.status='succeeded' AND c.cost_is_estimate=0 AND c.provider<>'stub'"
+    " AND j.kind IN :kinds ORDER BY c.created_at DESC LIMIT 50)").bindparams(bindparam("kinds", expanding=True))
+
+
+def headroom(conn: Connection, settings) -> dict:
+    """The cap is cumulative (D-BALANCE-003): what is left of it, against what every shop's unspent credits would cost at
+    the average real cost of the last 50 images, or ESTIMATE_SCENE_USD before any. Micro-USD; the cost is rounded up
+    once, at the end, so that a cap short by less than a credit still warns; the unit is for display."""
+    outstanding = sum(max(credits.balance(conn, shop)["available"], 0)
+                      for shop in conn.execute(text("SELECT id FROM shop_profile")).scalars().all())
+    images, total = conn.execute(IMAGE_COSTS, {"kinds": sorted(jobs.IMAGE_KINDS)}).one()
+    if not images:  # no real image cost yet: the estimate, as the cost of one image
+        total = usd_to_micros(settings.estimate_scene_usd)
+    count = images or 1
+    return {"cap": usd_to_micros(settings.spend_cap_usd), "spent": spent_micros(conn, settings),
+            "outstanding": outstanding, "images": images, "unit": total / count,
+            "cost": -(-outstanding * total // count)}
+
+
 class Refusal(Exception):
     """One line for the operator; nothing was written."""
 
@@ -148,12 +190,16 @@ def _list(engine, _args):
 def _create(engine, args):
     password = new_password()
     password_hash = PASSWORDS.hash(password)  # Argon2 is slow on purpose: never inside the write transaction
-    try:
-        with write_tx(engine) as conn:
+    with write_tx(engine) as conn:
+        try:
             id = create_shop(conn, args.identifier, args.name, password_hash)
-    except IntegrityError:
-        raise Refusal(f"the identifier {identifier_key(args.identifier)} is already taken") from None
-    print(f"shop {id} created: identifier {identifier_key(args.identifier)}, active\n"
+        except IntegrityError:
+            raise Refusal(f"the identifier {identifier_key(args.identifier)} is already taken") from None
+        # In the shop's own transaction: a refused welcome leaves no shop behind (R-BALANCE-006).
+        line = credits.grant(conn, id, args.welcome, origin="offered", ref="welcome", actor="operator",
+                             note="Crédits de bienvenue") if args.welcome else None
+    welcome = f"{args.welcome} offered welcome credits (line {line})" if line else "no welcome credits"
+    print(f"shop {id} created: identifier {identifier_key(args.identifier)}, active, {welcome}\n"
           f"password (shown once, give it to the owner in person): {password}")
 
 
@@ -195,17 +241,110 @@ def _enable(engine, args):
     print(f"{_named(shop)} {'enabled: its sessions work again' if changed else 'was already active: nothing changed'}")
 
 
+def _usd(micros: int, rounding=ROUND_HALF_EVEN) -> str:
+    return str((Decimal(micros) / 1_000_000).quantize(Decimal("0.01"), rounding))
+
+
+def _number(typed: str) -> int:
+    """A whole number one line can carry (credits.MOST): past it SQLite's integers, or the balance's SUM, overflow."""
+    try:
+        value = int(typed)
+    except ValueError:
+        value = None
+    if value is None or abs(value) > credits.MOST:
+        raise argparse.ArgumentTypeError(f"a whole number from {-credits.MOST:,} to {credits.MOST:,}: {typed!r}")
+    return value
+
+
+def _balance(conn, shop) -> str:
+    now = credits.balance(conn, shop)
+    return f"available {now['available']}, en attente {now['pending']}"
+
+
+def _grant(engine, args):
+    shop = _shop(engine, args.identifier)
+    origin = "bought" if args.bought else "offered"
+    with write_tx(engine) as conn:
+        line = credits.grant(conn, shop.id, args.credits, origin=origin, ref=args.ref, actor="operator", note=args.note,
+                             amount_ar=args.amount_ar, method=args.method)
+        after, room = _balance(conn, shop.id), headroom(conn, args.settings)
+    left, cost = room["cap"] - room["spent"], room["cost"]
+    unit = f"average of the last {room['images']} images" if room["images"] else "ESTIMATE_SCENE_USD: no image cost yet"
+    # What is left rounded down and the cost up, as the warning compares them.
+    print(f"granted {args.credits} {origin} credits to {shop.identifier} (line {line}): {after}\n"
+          f"service cap {_usd(room['cap'])} USD: {_usd(room['spent'])} spent since {args.settings.spend_cap_since}, "
+          f"{_usd(left, ROUND_FLOOR)} left; credits outstanding in all shops {room['outstanding']} × "
+          f"{room['unit'] / 1_000_000:.3f} USD ({unit}) = {_usd(cost, ROUND_CEILING)} USD")
+    if cost > left:
+        print("WARNING: the outstanding credits would cost more than what is left of the cap: raise SPEND_CAP_USD "
+              "(deploy/README.md)")
+
+
+def _move_payment(engine, args):
+    source, destination = _shop(engine, args.source), _shop(engine, args.destination)
+    with write_tx(engine) as conn:
+        reversal, line = credits.move(conn, args.ref, source.id, destination.id, "operator", args.note)
+        moved = (f"payment moved from {source.identifier} (line {reversal}: {_balance(conn, source.id)}) "
+                 f"to {destination.identifier} (line {line}: {_balance(conn, destination.id)})")
+    print(moved)
+
+
+def _correct(engine, args):
+    shop = _shop(engine, args.identifier)
+    with write_tx(engine) as conn:
+        line = credits.correct(conn, shop.id, args.credits, ref=args.ref, note=args.note, actor="operator",
+                               amount_ar=args.amount_ar, job_id=args.job)
+        after = _balance(conn, shop.id)
+    what = [f"{args.credits:+d} credits"] if args.credits else []  # an amount fix changes no credit
+    what += [f"{args.amount_ar:+d} Ar"] if args.amount_ar is not None else []
+    what += [f"job {args.job} repaid"] if args.job else []
+    print(f"corrected {shop.identifier} (line {line}): {', '.join(what)}; {after}")
+
+
+def _pause(engine, args):
+    if not args.yes:
+        with engine.connect() as conn:
+            since = jobs.paused(conn)
+        print(f"the service is paused since {since}" if since else "the service is not paused")
+        raise Refusal("nothing done: to pause new requests to the AI for every shop, run again with --yes")
+    with write_tx(engine) as conn:
+        changed, since = pause(conn), jobs.paused(conn)
+    print(f"the service is paused since {since}: no new request reaches the AI for any shop (images, styles, text "
+          "proposals, reads); what was admitted finishes; resume lifts it" if changed else
+          f"the service was already paused since {since}: nothing changed")
+
+
+def _resume(engine, _args):
+    with write_tx(engine) as conn:
+        changed = resume(conn)
+    print("the service resumed: new requests reach the AI again" if changed else
+          "the service was not paused: nothing changed")
+
+
+def _purchase_text(engine, args):
+    # Read back in the transaction that writes it: a failure rolls the text back, and no other writer comes between.
+    with write_tx(engine) if args.text is not None else engine.connect() as conn:
+        if args.text is not None:
+            set_purchase_text(conn, args.text)
+        stored = conn.execute(text("SELECT 1 FROM meta WHERE key='purchase_text_fr'")).first() is not None
+        shown = credits.purchase_text(conn, args.settings)
+    print(f"{'purchase text set' if args.text is not None else 'purchase text'}: « {shown} »"
+          f"{'' if stored else ' (not set: the fallback every shop reads)'}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m affiche.shops",
-        description="The operator's shop commands (D-MULTI-SHOP-003). Never migrates: the database must be at this "
-                    "code's head. Exit codes: 0 done; 1 refused, nothing written; 2 usage.")
+        description="The operator's shop and credit commands (D-MULTI-SHOP-003, D-BALANCE-005). Never migrates: the "
+                    "database must be at this code's head. Exit codes: 0 done; 1 refused, nothing written; 2 usage.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="every shop: id, identifier, state, password or not, created, name").set_defaults(
         handler=_list)
     create = commands.add_parser("create", help="a new active shop; prints its password once")
     create.add_argument("identifier", help="3 to 32 letters or digits once case, accents, spaces and punctuation go")
     create.add_argument("--name", help="the shop's displayed name (the owner can change it)")
+    create.add_argument("--welcome", type=_number, default=5,
+                        help="offered credits granted with the shop, reference welcome (default 5); 0: none")
     create.set_defaults(handler=_create)
     reset = commands.add_parser("set-password", help="a new password, printed once; ends that shop's sessions")
     reset.add_argument("identifier")
@@ -222,6 +361,45 @@ def build_parser() -> argparse.ArgumentParser:
     start = commands.add_parser("enable", help="a suspended shop works again, with its sessions")
     start.add_argument("identifier")
     start.set_defaults(handler=_enable)
+    # A reference is stored as first typed and compared without case or extra spaces (credits.LINES' comment).
+    grant = commands.add_parser("grant", help="credits to a shop, offered or bought; prints its balance and the cap's "
+                                              "headroom")
+    grant.add_argument("identifier")
+    grant.add_argument("credits", type=_number)
+    origin = grant.add_mutually_exclusive_group(required=True)
+    origin.add_argument("--offered", action="store_true")
+    origin.add_argument("--bought", action="store_true", help="with --amount-ar and --method")
+    grant.add_argument("--amount-ar", type=_number, help="bought: the amount paid, in whole ariary")
+    grant.add_argument("--method", help="bought: mvola, orange, airtel, cash, …")
+    grant.add_argument("--ref", required=True, help="the payment's reference when bought, else one of your own; a shop "
+                                                   "uses each once; case and extra spaces do not count")
+    grant.add_argument("--note")
+    grant.set_defaults(handler=_grant)
+    move = commands.add_parser("move-payment", help="a whole payment, credits and ariary, to another shop; refused once "
+                                                    "the source has spent some of its credits")
+    move.add_argument("ref", help="the payment's reference")
+    move.add_argument("source", help="the identifier of the shop that holds it")
+    move.add_argument("destination", help="the identifier of the shop it belongs to")
+    move.add_argument("--note", required=True, help="why")
+    move.set_defaults(handler=_move_payment)
+    correct = commands.add_parser("correct", help="credits added or taken back, a job repaid, or a mistyped amount fixed")
+    correct.add_argument("identifier")
+    correct.add_argument("credits", type=_number, help="+n or -n; +1 with --job; 0 with --amount-ar")
+    correct.add_argument("--ref", required=True, help="one correction per reference and shop: under a payment's "
+                                                     "reference, it uses the slot a move or an amount fix needs")
+    correct.add_argument("--note", required=True, help="the reason")
+    correct.add_argument("--job", help="a defective image repaid: its job id")
+    correct.add_argument("--amount-ar", type=_number, help="the signed ariary that fix this shop's own payment")
+    correct.set_defaults(handler=_correct)
+    halt = commands.add_parser("pause", help="no new request to the AI for any shop; admitted ones finish. Without "
+                                             "--yes, only says whether it is paused")
+    halt.add_argument("--yes", action="store_true")
+    halt.set_defaults(handler=_pause)
+    commands.add_parser("resume", help="lifts the pause").set_defaults(handler=_resume)
+    sentence = commands.add_parser("purchase-text", help="what a shop reads to buy credits; without a text, prints it")
+    sentence.add_argument("text", nargs="?", help="the packs, the mobile money number, the reference to write, and when "
+                                                  "credits arrive (1 to 500 characters)")
+    sentence.set_defaults(handler=_purchase_text)
     return parser
 
 
@@ -229,7 +407,8 @@ def main(argv: Sequence[str] | None = None, env_file: Path | None = ENV_FILE) ->
     args = build_parser().parse_args(argv)  # a usage error exits 2 here
     engine = None
     try:
-        database = load_settings(env_file).data_dir / "affiche.db"
+        args.settings = load_settings(env_file)  # grant's headroom and the purchase text's fallback read it
+        database = args.settings.data_dir / "affiche.db"
         if not database.is_file():  # make_engine would create an empty one
             raise Refusal(f"no database at {database}: start the application once")
         engine = make_engine(database.parent)
