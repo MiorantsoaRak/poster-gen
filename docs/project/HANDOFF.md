@@ -100,6 +100,14 @@
 
 **Exact next step:** T-MULTI-SHOP-006 (everything in the browser; the riskiest), with an Opus subagent, then its Codex code review.
 
+**Session end, 2026-11-16 (Claude).** T-MULTI-SHOP-006 is NOT started: no code, no brief; only its design was opened. Where to start: `designs/multi-shop.md`, section D-MULTI-SHOP-007 (the identity gate, cookie-changing operations, the sign-in form, « Se déconnecter », storage per shop), the Tests section (browser smoke, cookies), task 6 under Tasks and the line "T-MULTI-SHOP-006" under what the code reviews check (the one gate and no other path to showing a shop; the sign-out snapshot from the live thread; the cookie tests). Files it touches: `frontend/src/App.vue`, `ChatView.vue`, `chat.ts`, `words.ts`, `api.ts`, and the two browser smokes.
+
+**Not pushed:** `main` is 7 commits ahead of `origin/main` (the roadmap and requirements, the multi-shop design, T-MULTI-SHOP-001 to 005). Push on the user's word only; no deploy (ADR-105).
+
+**Uncommitted files, all Codex's, not to be staged by Claude:** `docs/project/DECISIONS.md` and `docs/project/PROJECT.md` (brand edits), `docs/project/brand/`, `docs/project/mockups/brand-directions/`, `docs/project/mockups/doka-studio-identity/`, `docs/project/mockups/text-first/`, `docs/project/reviews/social-publishing-saas-research-2026-11-15.md`.
+
+**Waiting on the user:** whether to keep T-DEPLOY-DOCKER-RUN; what the image may write (R-TERMS-002); the pilot's identifier `originalphone` (changeable in migration 0013 until it first runs on a real database); welcome credits (default 5); a first price to test.
+
 **Landmine:** the deploy scripts and the operator service have run with a fake docker only. T-DEPLOY-DOCKER-RUN (proposed, not confirmed by the user) asks for one real run on a throwaway host before the Release 1 deploy.
 
 **Landmine:** the backend suite failed once on 2026-11-16 with one test whose name was not captured, and passed on every run since (T-SUITE-FLAKE). Run it with `-rf`.
