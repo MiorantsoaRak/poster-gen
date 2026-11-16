@@ -624,7 +624,8 @@ def _chat_read(conn, shop, cost, created_at):
 
 
 def test_a_shops_spend_is_its_jobs_calls_and_its_reads_and_never_the_evaluation_clis(engine, settings):
-    """D-MULTI-SHOP-005: GET /api/usage answers with it, and the shop's daily ceiling will count it (T-MULTI-SHOP-004)."""
+    """D-MULTI-SHOP-005: the shop's daily ceiling counts it (T-MULTI-SHOP-004); no route gives it to a shop since
+    D-BALANCE-004."""
     yesterday = f"{TODAY - timedelta(days=1)}T23:59:59.999999+00:00"
     with write_tx(engine) as conn:
         _seed(conn)

@@ -10,6 +10,7 @@ import pytest
 from alembic import command
 from sqlalchemy import text
 
+from affiche import shops
 from affiche.api import MESSAGES
 from affiche.config import load_settings
 from affiche.db import make_engine, migrate, utc_now, write_tx
@@ -24,7 +25,7 @@ from fastapi.testclient import TestClient
 from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
-from test_db import bare_engine, engine  # noqa: F401
+from test_db import bare_engine, credited, engine  # noqa: F401
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
 from test_poster_visuals import execute, fixed
 
@@ -629,6 +630,36 @@ def test_a_shop_with_no_credit_still_reads_its_messages(bare_engine, claude):
     """R-BALANCE-007: reading a message costs no credit; only the three image routes look at credits (D-BALANCE-004)."""
     result, requests = ask(bare_engine, claude, reply())
     assert not isinstance(result, Refused) and len(requests) == 1
+
+
+@pytest.mark.parametrize("funded", [False, True])
+def test_a_shop_reads_a_hundred_messages_a_day_whatever_its_credits(bare_engine, claude, funded):
+    """R-BALANCE-007: one flat limit of 100 reads a day per shop, at zero credits or with some (D-BALANCE-004)."""
+    if funded:
+        credited(bare_engine)
+    with write_tx(bare_engine) as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO chat_reads (id,shop_id,key,payload_sha,status,provider,model,rate_card_json,cost_micros,"
+            "cost_is_estimate,created_at) VALUES (?,1,?,'sha','succeeded','claude','m','{}',0,1,?)",
+            [(str(uuid4()), str(uuid4()), utc_now()) for _ in range(99)])
+    result, requests = ask(bare_engine, claude, reply())  # the 100th
+    assert result["card"]["kind"] == "ask_product" and len(requests) == 1
+    result, requests = ask(bare_engine, claude, reply())  # the 101st
+    assert (result.code, result.status, requests, len(rows(bare_engine))) == ("read_limit", 429, [], 100)
+
+
+def test_the_services_pause_stops_a_read_and_resume_lifts_it(engine, claude):
+    """D-BALANCE-003: reading a message is a new request to the AI, so the operator's pause refuses it with the cap's
+    code and sentence, before anything is reserved or sent."""
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    result, requests = ask(engine, claude, reply())
+    assert (result.code, result.status, requests, rows(engine)) == ("budget_exhausted", 429, [], [])
+    assert "lecture des messages" in MESSAGES["budget_exhausted"]
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    result, requests = ask(engine, claude, reply())
+    assert result["card"]["kind"] == "ask_product" and len(requests) == 1
 
 
 @pytest.mark.parametrize("key", ["not-a-uuid", "-" * 36, "A" * 8 + "-0000-0000-0000-" + "0" * 12, uuid4().hex])

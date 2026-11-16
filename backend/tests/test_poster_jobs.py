@@ -185,6 +185,37 @@ def test_no_credit_is_said_last_and_no_refusal_takes_anything(engine, settings, 
     assert refused() == ("no_credit", 402)
 
 
+def test_a_refusal_for_want_of_credit_leaves_meta_and_the_credit_lines_as_they_were(engine, settings, creation):
+    """Review r1 of T-BALANCE-002: the first image of a data folder writes meta.provider_mode before the credit check;
+    the refusal rolls it back with the job, its call and its key, and writes no credit line."""
+    leave(engine, 0)
+
+    def state():
+        with engine.connect() as conn:
+            return [conn.execute(text(f"SELECT * FROM {table} ORDER BY 1")).all()
+                    for table in ("meta", "credit_grants", "poster_jobs", "poster_calls", "mutation_keys")]
+
+    before = state()
+    assert "provider_mode" not in dict(before[0])
+    with pytest.raises(store.Refused, match="no_credit"):
+        enqueue(engine, settings, creation)
+    assert state() == before
+
+
+def test_a_shop_at_zero_is_refused_while_a_funded_shop_is_admitted_each_on_its_own_balance(engine, settings, creation, tmp_path):
+    """Review r1 of T-BALANCE-002: A (shop 1) funded, B at zero. B's scene gets 402, so B's admission did not read A's
+    credits, and A's balance does not move; A's scene is admitted beside B's zero. (An admission reading another shop at
+    zero would pass anyway: the new job counts in its own shop, and only a balance below zero refuses.)"""
+    shop_b, _ = second_shop(engine)
+    leave(engine, 0, shop=shop_b)
+    with pytest.raises(store.Refused) as caught:
+        enqueue(engine, settings, poster_of(engine, tmp_path, shop_b), shop=shop_b)
+    assert (caught.value.code, caught.value.status) == ("no_credit", 402)
+    assert balance(engine) == {"available": 100, "pending": 0}
+    enqueue(engine, settings, creation)
+    assert (balance(engine), balance(engine, shop_b)) == ({"available": 99, "pending": 1}, {"available": 0, "pending": 0})
+
+
 def test_two_admissions_for_the_last_credit_admit_one(engine, settings, creation, tmp_path, input_id):
     """R-BALANCE-002: two posters, one credit. BEGIN IMMEDIATE serialises the admissions, and the second one counts
     the first one's job."""
@@ -423,7 +454,7 @@ def test_a_reservation_counts_on_the_day_it_was_admitted(engine, settings, creat
     enqueue(engine, settings, draft(engine, tmp_path, input_id))  # today's 0.40 fits today's 0.40
 
 
-@pytest.mark.parametrize("refusal", ["shop_daily_limit", "shop_suspended"])
+@pytest.mark.parametrize("refusal", ["shop_daily_limit", "budget_exhausted", "shop_suspended"])
 def test_a_rate_limit_retry_refused_by_the_guard_fails_at_no_cost(engine, settings, creation, refusal):
     """worker.py: a 429 retry's reservation refused by any of the guard's checks fails the job with the provider's code
     at cost 0, call 2 never reserved, instead of escaping to reconciliation_required."""
@@ -435,6 +466,8 @@ def test_a_rate_limit_retry_refused_by_the_guard_fails_at_no_cost(engine, settin
         sent.append(1)
         if refusal == "shop_daily_limit":
             settings.shop_daily_spend_usd = Decimal("0.3")
+        elif refusal == "budget_exhausted":  # the cap; the pause does not stop a retry (the test below)
+            settings.spend_cap_usd = Decimal("0.3")
         else:
             with write_tx(engine) as conn:
                 conn.exec_driver_sql("UPDATE shop_profile SET state='suspended' WHERE id=1")
@@ -445,6 +478,91 @@ def test_a_rate_limit_retry_refused_by_the_guard_fails_at_no_cost(engine, settin
     assert spent(engine, settings) == 0
     with engine.connect() as conn:
         assert conn.execute(text("SELECT call_no FROM poster_calls WHERE job_id=:id"), {"id": id}).scalars().all() == [1]
+
+
+def test_the_pause_refuses_every_new_request_to_the_ai_before_the_credits_and_resume_lifts_it(engine, settings, creation):
+    """D-BALANCE-003, owner decision 7: paused, an image of each kind, a plan, a style and a text proposal are refused as
+    the service's pause, before the credits (buying would not help), and nothing is written; a render calls no AI.
+    Resume lifts it, and the credits decide again."""
+    settings.planner_provider = "stub"  # estimate 0: only the pause can refuse these
+    leave(engine, 0)
+    with write_tx(engine) as conn:
+        assert shops.pause(conn) and not shops.pause(conn)  # the second changes nothing
+        assert jobs.paused(conn)
+    before = written(engine)
+    for kind, payload in (("scene", None), ("refine", None), ("text_texture", None), ("plan", None),
+                          ("plan", {"look": "Style"}), ("text_patch", None)):
+        with pytest.raises(store.Refused) as caught:
+            enqueue(engine, settings, creation, kind=kind, payload=payload)
+        assert (caught.value.code, caught.value.status) == ("budget_exhausted", 429), kind
+    assert written(engine) == before
+    enqueue(engine, settings, creation, kind="render")
+    with write_tx(engine) as conn:
+        assert shops.resume(conn) and not shops.resume(conn)
+        assert jobs.paused(conn) is None
+    with pytest.raises(store.Refused, match="no_credit"):
+        enqueue(engine, settings, creation)
+    leave(engine, 1)
+    enqueue(engine, settings, creation)
+    enqueue(engine, settings, creation, kind="plan")
+
+
+def test_a_rate_limit_retry_is_reserved_and_sent_while_the_service_is_paused(engine, settings, creation):
+    """D-BALANCE-003: the pause stops new requests only. A job admitted before it gets its 429 retry reserved as call 2
+    and sent, and ends with its version; its one credit is spent once."""
+    id = enqueue(engine, settings, creation)
+    job = jobs.claim(engine, ("scene",))
+    sent = []
+
+    async def send(_):
+        sent.append(1)
+        if len(sent) == 1:
+            with write_tx(engine) as conn:
+                shops.pause(conn)
+            raise ProviderError("rate_limited", "secret provider body")
+        return Outcome({"visual": "saved"}, cost_micros=170000)
+
+    asyncio.run(run_job(engine, settings, job, prepare=lambda *_: {}, send=send, finalise=lambda *_: "saved"))
+    assert len(sent) == 2 and view(engine, id)["status"] == "succeeded"
+    assert [call[:2] for call in calls(engine, id)] == [(1, "failed"), (2, "succeeded")]
+    assert spent(engine, settings) == 170000 and balance(engine) == {"available": 99, "pending": 0}
+    with pytest.raises(store.Refused, match="budget_exhausted"):  # and a new request is still refused
+        enqueue(engine, settings, creation)
+
+
+def test_blocked_asks_the_admissions_guard_with_each_charged_operations_own_estimate(engine, settings, creation, tmp_path, input_id):
+    """D-BALANCE-003: read-only, whatever the credits. With 0.35 USD left of the shop's day, a scene (0.40) is blocked
+    by the day and a text's material (0.30) is not, and is admitted; the same near the service's cap; the pause, a cap
+    reached and no image provider block both."""
+    def codes():
+        before = written(engine)
+        with engine.connect() as conn:
+            answer = {kind: getattr(jobs.blocked(conn, settings, 1, kind), "code", None) for kind in jobs.CHARGED}
+        assert written(engine) == before
+        return answer
+
+    assert jobs.CHARGED == ("scene", "text_texture") and codes() == {"scene": None, "text_texture": None}
+    leave(engine, 0)
+    assert codes() == {"scene": None, "text_texture": None}  # the credits are not blocked's to tell
+    leave(engine, 2)
+    settings.shop_daily_spend_usd = Decimal("0.75")
+    enqueue(engine, settings, creation)  # 0.40 of the day
+    assert codes() == {"scene": "shop_daily_limit", "text_texture": None}
+    texture = enqueue(engine, settings, draft(engine, tmp_path, input_id), kind="text_texture")
+    assert codes() == {"scene": "shop_daily_limit", "text_texture": "shop_daily_limit"}  # 0.05 left
+    settings.shop_daily_spend_usd, settings.spend_cap_usd = Decimal("20"), Decimal("1.05")  # 0.70 spent
+    assert codes() == {"scene": "budget_exhausted", "text_texture": None}
+    settings.spend_cap_usd = Decimal("0.9")
+    assert codes() == {"scene": "budget_exhausted", "text_texture": "budget_exhausted"}
+    settings.spend_cap_usd = Decimal("20")
+    jobs.cancel(engine, 1, key(), texture)
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    assert codes() == {"scene": "budget_exhausted", "text_texture": "budget_exhausted"}
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    settings.openai_api_key = None
+    assert codes() == {"scene": "provider_unavailable", "text_texture": "provider_unavailable"}
 
 
 def calls(engine, id):

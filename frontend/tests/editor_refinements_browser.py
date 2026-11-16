@@ -241,7 +241,7 @@ def run():
                         expect(page.get_by_role('textbox', name='Contact', exact=True)).to_have_value('034 00 000 00')
                     assert not errors, errors
                     assert len(requests) == 2
-                    assert page.request.get(smoke.ORIGIN + '/api/usage').json()['recorded_micros'] == 0
+                    assert page.request.get(smoke.ORIGIN + '/api/status').json()['spend']['recorded_micros'] == 0
                     (out / 'results.json').write_text(json.dumps({'errors': errors, 'scene_calls': len(requests), 'visual': visual, 'viewports': [390, 360, 320, 640]}, indent=2))
                     browser.close()
             finally:

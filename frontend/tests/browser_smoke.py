@@ -2360,7 +2360,7 @@ def run():
                         expect(page.get_by_role("heading", name="Versions 1 sur 12")).to_be_visible()
                         expect(page.get_by_text("Choisie pour l’export", exact=True)).to_be_visible()
                         expect(page.get_by_role("button", name="Nouvelle version")).to_be_enabled()
-                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.locator(".poster-canvas").focus()
                         page.keyboard.press("ArrowRight")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
@@ -2498,7 +2498,7 @@ def run():
                         expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"] == expected_styled
-                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
                         expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
                         preview_url = page.locator(".final-preview img").get_attribute("src")
@@ -2590,7 +2590,7 @@ def run():
                         expect(rows).to_have_count(0)
                         page.get_by_label("Afficher les affiches retirées").uncheck()
                         expect(rows).to_have_count(before + 1)
-                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
                         page.locator(".nav a", has_text="Créer").click()
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
@@ -2759,7 +2759,7 @@ def run():
                         expect(cards).to_have_count(3)
                         expect(page.locator(".nav a", has_text="Styles")).to_contain_text("3")
                         assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
-                        assert page.request.get(f"{ORIGIN}/api/usage").json()["recorded_micros"] == 0
+                        assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.screenshot(path=str(OUTPUT / "styles.png"))
                         assert not errors, errors
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")

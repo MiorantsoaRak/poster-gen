@@ -110,6 +110,18 @@ def enable(conn: Connection, shop_id: int) -> bool:
     return True
 
 
+def pause(conn: Connection) -> bool:
+    """D-BALANCE-003: no new request to the AI for any shop (images, styles, text proposals, reads); what was admitted
+    finishes, a 429 retry included (jobs.provider_guard). False: it was already paused."""
+    return conn.execute(text("INSERT INTO meta VALUES ('generation_paused', :now) ON CONFLICT DO NOTHING"),
+                        {"now": utc_now()}).rowcount == 1
+
+
+def resume(conn: Connection) -> bool:
+    """False: it was not paused."""
+    return conn.execute(text("DELETE FROM meta WHERE key='generation_paused'")).rowcount == 1
+
+
 class Refusal(Exception):
     """One line for the operator; nothing was written."""
 

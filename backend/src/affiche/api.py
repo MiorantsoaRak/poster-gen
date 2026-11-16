@@ -110,7 +110,8 @@ MESSAGES = {
         "asset_missing": "Une image est introuvable. Restaurez le fichier original.",
         "asset_corrupt": "Une image est endommagée. Restaurez le fichier original.",
         "internal_error": "Une erreur est survenue. Conservez vos modifications.",
-        "budget_exhausted": "La création d’images est en pause pour tout le service. Vous pouvez encore modifier et télécharger vos affiches. Réessayez plus tard.",
+        # The operator's pause and the service's cap (D-BALANCE-003): both stop images, styles, text proposals and reads.
+        "budget_exhausted": "Le service est en pause : l’IA ne prépare rien de nouveau pour le moment (images, styles, textes, lecture des messages). Vous pouvez encore modifier et télécharger vos affiches. Réessayez plus tard.",
         "shop_daily_limit": "La boutique a atteint sa limite d’images pour aujourd’hui. Vous pouvez encore modifier et télécharger vos affiches. Réessayez demain.",
         "no_credit": "Il ne vous reste plus de crédit : rien n’a été envoyé, et vos affiches restent disponibles.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
@@ -151,6 +152,10 @@ MESSAGES = {
         # An older bundle in an open tab (BUNDLE): nothing it sends is saved, and a reload loses what it holds unsaved.
         "bundle_outdated": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page.",
 }
+
+
+# GET /api/balance: what blocks a charged operation whatever the shop's credits (D-BALANCE-003). Buying would not help.
+BLOCKED = {"budget_exhausted": "service", "provider_unavailable": "service", "shop_daily_limit": "day"}
 
 
 def error_response(request: Request, error: store.Refused, message: str | None = None):
@@ -480,12 +485,20 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     def cancel_job(id: Id, request: Request, key: Key, body: Model | None = None):
         return result_response(jobs.cancel(app.state.engine, request.state.shop, key, id))
 
-    @protected.get("/api/usage")
-    def usage(request: Request):
-        # The shop's own spend; the cap and its date are the service's configuration, not another shop's totals.
+    @protected.get("/api/balance")
+    def balance(request: Request):
+        """The session's shop's credits (D-BALANCE-004), and per charged operation what would refuse it now whatever its
+        credits, so that the owner is told before the tap. No dollar figure, and no id: always the session's shop."""
+        shop = request.state.shop
         with app.state.engine.connect() as conn:
-            return {"recorded_micros": spent_micros(conn, settings, shop=request.state.shop),
-                    "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()}
+            blocked = {}
+            for kind in jobs.CHARGED:
+                refused = jobs.blocked(conn, settings, shop, kind)
+                if refused is not None and refused.code not in BLOCKED:
+                    raise refused  # shop_suspended: suspended since its session was read; told as any request is
+                blocked[kind] = None if refused is None else {"reason": BLOCKED[refused.code],
+                                                              "message_fr": MESSAGES[refused.code]}
+            return credits.balance(conn, shop) | {"purchase_fr": credits.purchase_text(conn, settings), "blocked": blocked}
 
     @protected.get("/api/status")
     def status():

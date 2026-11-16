@@ -2,6 +2,7 @@ import hashlib
 import io
 import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 import os
 import socket
 import sqlite3
@@ -24,8 +25,9 @@ from sqlalchemy import exc
 from affiche import api as affiche_api, assets, backup, shops
 from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
-from affiche.db import make_engine, write_tx
+from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import auth, credits, jobs, rendering, store
+from affiche.visuals.admission import spent_micros
 from test_config import env  # noqa: F401
 from test_db import credited, migrate_to
 from test_poster_drafts import photo
@@ -83,7 +85,7 @@ def create_draft(client):
 
 
 def test_owned_job_status_usage_and_cancel(client, settings):
-    assert client.get("/api/usage").status_code == 401
+    assert client.get("/api/balance").status_code == 401
     assert client.get("/api/capabilities").status_code == 401
     login(client)
     creation = create_draft(client)
@@ -98,8 +100,10 @@ def test_owned_job_status_usage_and_cancel(client, settings):
         "planner_available": False, "scene_estimate_micros": 0, "plan_estimate_micros": 100000, "texture_estimate_micros": 0,
         "formats_enabled": ["feed"], "chat_available": False}
     assert client.get("/api/jobs/" + str(uuid4())).status_code == 404
-    usage = client.get("/api/usage").json()
-    assert usage["recorded_micros"] == 0 and usage["cap_micros"] == 20000000
+    assert client.get("/api/usage").status_code == 404  # removed: a shop reads credits, never dollars (D-BALANCE-004)
+    with client.app.state.engine.connect() as conn:
+        assert spent_micros(conn, settings, shop=1) == 0
+    assert operator_client(client).get("/api/status").json()["spend"]["cap_micros"] == 20000000
     assert post(client, result["status_url"] + "/cancel", {}).json()["status"] == "cancelled"
     assert post(client, result["status_url"] + "/cancel", {}).status_code == 409
 
@@ -280,6 +284,52 @@ def test_no_credit_is_402_with_how_to_get_credits(client, monkeypatch, caplog):
     assert written() == before
     responses = client.get("/api/openapi.json").json()["paths"]["/api/creations/{id}/scenes"]["post"]["responses"]
     assert "402" in responses
+
+
+def test_balance_says_what_is_left_and_what_would_refuse_each_image_whatever_the_credits(client, settings):
+    """D-BALANCE-004: the session's shop's credits and how to get more; per charged operation, what the admission's own
+    guard would refuse now with that operation's own estimate (the pause, the cap, no image provider: service; the
+    shop's day: day), with that refusal's sentence. The credits themselves never block: the 402 tells them."""
+    login(client)
+    engine, clear = client.app.state.engine, {"scene": None, "text_texture": None}
+    service, day, unavailable = ({"reason": reason, "message_fr": affiche_api.MESSAGES[code]} for reason, code in (
+        ("service", "budget_exhausted"), ("day", "shop_daily_limit"), ("service", "provider_unavailable")))
+
+    def balance(available, blocked, purchase="Pour obtenir des crédits, contactez l’administrateur."):
+        answer = client.get("/api/balance")
+        assert answer.status_code == 200, answer.text
+        assert answer.json() == {"available": available, "pending": 0, "purchase_fr": purchase, "blocked": blocked}
+
+    def spend(micros):  # a read of the shop's, today: its day and the service's cap both count it
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO chat_reads (id,shop_id,key,payload_sha,status,provider,model,rate_card_json,"
+                                 "cost_micros,cost_is_estimate,created_at) VALUES (?,1,?,'x','succeeded','stub','m','{}',?,0,?)",
+                                 (str(uuid4()), str(uuid4()), micros, utc_now()))
+
+    balance(100, clear)
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    balance(100, {"scene": service, "text_texture": service})
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+        credits.correct(conn, 1, -100, ref="zero", note="test", actor="tests")
+    balance(0, clear)
+    # A paid provider's estimates (scene 0.40, material 0.30 USD); no job is admitted here, so nothing is sent.
+    settings.image_provider, settings.openai_api_key = "openai", SecretStr("test-not-a-key")
+    spend(650_000)
+    settings.spend_cap_usd = Decimal("1")
+    balance(0, {"scene": service, "text_texture": None})  # 0.35 USD left of the cap
+    settings.spend_cap_usd, settings.shop_daily_spend_usd = Decimal("20"), Decimal("1")
+    balance(0, {"scene": day, "text_texture": None})  # 0.35 USD left of the shop's day
+    spend(350_000)
+    balance(0, {"scene": day, "text_texture": day})
+    settings.spend_cap_usd = Decimal("1")  # the service's cap is told before the shop's day
+    balance(0, {"scene": service, "text_texture": service})
+    settings.openai_api_key = None
+    balance(0, {"scene": unavailable, "text_texture": unavailable})
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO meta VALUES ('purchase_text_fr', 'Pack 10 : 10 000 Ar par MVola.')")
+    balance(0, {"scene": unavailable, "text_texture": unavailable}, "Pack 10 : 10 000 Ar par MVola.")
 
 
 def test_origin_required_even_for_login_and_logout(client):

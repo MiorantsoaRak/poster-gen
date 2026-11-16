@@ -15,8 +15,8 @@ from sqlalchemy import text
 from starlette.routing import Mount
 
 from affiche.api import create_app
-from affiche.db import utc_now, write_tx
-from affiche.posters import rendering, visuals
+from affiche.db import write_tx
+from affiche.posters import credits, rendering, visuals
 from test_api import HEADERS, ORIGIN, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_poster_drafts import key, photo
@@ -30,7 +30,7 @@ EXEMPT = {
     ("GET", "/api/status"),  # the operator's: 404 to both shops below, its spoofing matrix in test_api
 }
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
-OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/usage"),
+OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/balance"),
        ("POST", "/api/assets")}
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
@@ -295,18 +295,28 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert [item["id"] for item in a.get("/api/creations").json()["items"]] == [cid]
     assert [item["id"] for item in a.get("/api/looks").json()["items"]] == [look_a] and b.get("/api/looks").json()["items"] == []
 
-    # Usage: each shop's own spend since SPEND_CAP_SINCE; the cap and its date are the service's configuration.
-    assert a.get("/api/usage").json()["recorded_micros"] == b.get("/api/usage").json()["recorded_micros"] == 0  # stub: free
+    # Credits (D-BALANCE-004): each shop reads its own. Both started with 100; A's scene and text material took two,
+    # B's scene one. A's grant moves A's balance only; B at zero gets 402 while A has credits, and A's does not move.
+    def balances(of_a, of_b):
+        for shop, available in ((a, of_a), (b, of_b)):
+            answer = shop.get("/api/balance")
+            assert answer.status_code == 200 and answer.json() == {
+                "available": available, "pending": 0, "purchase_fr": "Pour obtenir des crédits, contactez l’administrateur.",
+                "blocked": {"scene": None, "text_texture": None}}, answer.text
+
+    balances(98, 99)
     with write_tx(engine) as conn:
-        for shop, cost in ((1, 1_234_567), (shop_b, 4_321)):
-            conn.execute(text("INSERT INTO chat_reads (id,shop_id,key,payload_sha,status,provider,model,rate_card_json,cost_micros,"
-                              "cost_is_estimate,created_at) VALUES (:id,:shop,:k,'x','succeeded','stub','m','{}',:cost,0,:now)"),
-                         {"id": str(uuid4()), "shop": shop, "k": key(), "cost": cost, "now": utc_now()})
-        for job, cost in ((scene_job_a, 70_000), (scene_b.json()["job_id"], 300)):
-            assert conn.execute(text("UPDATE poster_calls SET cost_micros=:cost WHERE job_id=:job"), {"job": job, "cost": cost}).rowcount == 1
-    usage_a, usage_b = a.get("/api/usage").json(), b.get("/api/usage").json()
-    assert (usage_a["recorded_micros"], usage_b["recorded_micros"]) == (1_234_567 + 70_000, 4_321 + 300)
-    assert usage_b == {"recorded_micros": 4_621, "cap_micros": 20_000_000, "since": settings.spend_cap_since.isoformat()}
+        credits.grant(conn, 1, 5, origin="offered", ref="a-only", actor="tests")
+    balances(103, 99)
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop_b, -99, ref="b-zero", note="test", actor="tests")
+    plan_b2 = send(b, "POST", f"/api/creations/{bid}/plans", PLAN, placed["revision"])
+    assert plan_b2.status_code == 201, plan_b2.text
+    at_zero = send(b, "POST", f"/api/creations/{bid}/scenes", {"plan_id": plan_b2.json()["id"],
+                                                               "acknowledged_warnings": ["low_resolution"]}, placed["revision"])
+    assert (at_zero.status_code, at_zero.json()["error"]["code"]) == (402, "no_credit"), at_zero.text
+    balances(103, 0)
+    assert b.get(f"/api/jobs/{scene_job_a}").json()["error"]["code"] == "not_found"
 
     # Same bytes: B uploads A's original, then A's generated scene as a style. The answers are those of new bytes; B
     # reads the file it uploaded, and still nothing that is A's.

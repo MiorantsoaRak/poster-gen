@@ -55,12 +55,20 @@ def call_spec(settings, kind: str) -> CallSpec | None:
     return CallSpec(provider, model, dict(rates), 0 if provider == "stub" else usd_to_micros(estimate))
 
 
-def provider_guard(conn, settings, shop, estimate_micros):
+def paused(conn) -> str | None:
+    """When the operator paused new requests to the AI for the whole service (shops.pause), or None (D-BALANCE-003)."""
+    return conn.execute(text("SELECT value FROM meta WHERE key='generation_paused'")).scalar()
+
+
+def provider_guard(conn, settings, shop, estimate_micros, *, admission=True):
     """Whether a provider call may be reserved for this shop (D-MULTI-SHOP-005), inside the caller's admission
-    transaction: a refusal raises, so nothing is reserved. The service's cap comes before the shop's own day, so that
-    every shop is told the service is paused. Not the prepaid balance's seam: a credit is debited apart from it."""
+    transaction: a refusal raises, so nothing is reserved. The service's pause and cap come before the shop's own day,
+    so that every shop is told the service is paused. Not the prepaid balance's seam: a credit is debited apart from it."""
     if conn.execute(text("SELECT state FROM shop_profile WHERE id=:shop"), {"shop": shop}).scalar() != "active":
         raise Refused("shop_suspended", 403)
+    # The operator's pause stops new requests only: a 429 retry of an admitted job is not one (_reserve, call 2).
+    if admission and paused(conn) is not None:
+        raise Refused("budget_exhausted", 429)
     if spent_micros(conn, settings) + estimate_micros > usd_to_micros(settings.spend_cap_usd):
         raise Refused("budget_exhausted", 429)
     # A budget of the admission day: a reservation counts on the UTC day it was made, also when it is sent after midnight.
@@ -69,8 +77,21 @@ def provider_guard(conn, settings, shop, estimate_micros):
         raise Refused("shop_daily_limit", 429)
 
 
+CHARGED = ("scene", "text_texture")  # a refinement is costed as a scene (call_spec): one answer for both
+
+
+def blocked(conn, settings, shop, kind) -> Refused | None:
+    """Why this charged operation would be refused now whatever the shop's credits (D-BALANCE-003): the admission's own
+    guard with that operation's own estimate, read-only. None: nothing but the credits decides."""
+    try:
+        provider_guard(conn, settings, shop, call_spec(settings, kind).estimate_micros)
+    except Refused as refused:
+        return refused
+    return None
+
+
 def _reserve(conn, settings, shop, job_id, call_no, spec: CallSpec):
-    provider_guard(conn, settings, shop, spec.estimate_micros)
+    provider_guard(conn, settings, shop, spec.estimate_micros, admission=call_no == 1)
     conn.execute(text("INSERT INTO poster_calls (id,job_id,call_no,provider,model,rate_card_json,status,cost_micros,"
                       "cost_is_estimate,created_at) VALUES (:id,:job,:n,:provider,:model,:rates,'reserved',:cost,1,:now)"),
                  {"id": str(uuid4()), "job": job_id, "n": call_no, "provider": spec.provider, "model": spec.model,

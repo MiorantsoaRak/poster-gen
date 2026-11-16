@@ -12,6 +12,7 @@ from affiche.posters.models import Document, canonical
 from affiche.posters.planner import ClaudePlanner, MODEL, PlannerError
 from affiche.posters.service import PosterService
 from affiche.posters.worker import run_job
+from affiche.visuals.admission import spent_micros
 from test_api import client, create_draft, login, password_hash, post, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_db import engine  # noqa: F401
@@ -278,4 +279,5 @@ def test_http_text_proposal_preview_apply_replay_and_ownership(client, settings)
     assert client.post(f"/api/text-proposals/{id}/apply", json={}, headers=headers).json() == result.json()
     assert client.get(f"/api/text-proposals/{key()}").status_code == 404
     assert client.get(f"/api/text-effects/{key()}").status_code == 404
-    assert client.get("/api/usage").json()["recorded_micros"] == 0
+    with client.app.state.engine.connect() as conn:
+        assert spent_micros(conn, settings, shop=1) == 0

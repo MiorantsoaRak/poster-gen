@@ -29,7 +29,7 @@ TIMEOUT_S = 20  # the whole provider call; the client gives up at 30 s
 MAX_TOKENS = 1024
 THINKING = {"type": "between_tools"}  # "disabled" is refused (400) by this model
 STALE_S = 60  # a read still 'running' after this was cut by a crash or a lost answer
-DAILY_LIMIT = 200  # reads per shop and UTC day; the spend cap stays the money guard
+DAILY_LIMIT = 100  # reads per shop and UTC day, whatever its credits (R-BALANCE-007); the spend cap stays the money guard
 # Reads of one shop in progress at once: a device sends one at a time (ADR-098), so two lets two phones read together.
 RUNNING_LIMIT = 2
 SYSTEM = (
