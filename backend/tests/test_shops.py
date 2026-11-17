@@ -1,15 +1,19 @@
 import os
+import re
+import shlex
+import shutil
 import sqlite3
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from affiche import runtime, shops
+from affiche import backup, runtime, shops
 from affiche.api import create_app
 from affiche.config import load_settings
-from affiche.db import make_engine, write_tx
+from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import auth, credits, jobs
 from affiche.posters.auth import PASSWORDS, identifier_key
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_0012, client, credentials, failures, login,  # noqa: F401
@@ -511,3 +515,411 @@ def test_a_purchase_text_whose_read_back_fails_is_not_saved(command, engine, mon
     assert command("purchase-text", "Pack de 10 crédits : 10 000 Ar.") == (1, "", "refused: disk I/O error\n")
     with engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='purchase_text_fr'").first() is None
+
+
+# --- The restore's copy (D-BALANCE-005): a backup by affiche.backup, lines written after it, then the backup put back
+# as restore.sh puts it, the database it replaced kept beside it -------------------------------------------------------
+
+KEPT = "affiche.db.before-restore-20261117T090000Z"
+LEDGER = ("SELECT p.identifier, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref, g.job_id, g.note, g.actor,"
+          " g.created_at FROM credit_grants g JOIN shop_profile p ON p.id = g.shop_id ORDER BY g.id")
+NAME = 'Chez "Rado"\n$(touch pwned)'
+
+
+def written(monkeypatch, day):
+    """The lines that follow carry this date (credits stamps each one with utc_now)."""
+    monkeypatch.setattr(credits, "utc_now", lambda: f"{day}T10:00:00.000000+00:00")
+
+
+def done(command, *argv):
+    code, out, err = command(*argv)
+    assert (code, err) == (0, ""), err
+    return out
+
+
+def backed_up(folder):
+    """The nightly backup of the test's data folder: one consistent copy of the database as it is now."""
+    return folder / "backups" / "db" / backup.run(folder, folder / "backups")["db_file"]
+
+
+def put_back(engine, folder, copy):
+    """restore.sh: the live database set aside under its kept name with its -wal (taken while a connection is open, so
+    its last lines are still in the -wal), the backup in its place, started once. Returns the kept file."""
+    kept = folder / KEPT
+    shutil.copy(folder / "affiche.db", kept)
+    shutil.copy(folder / "affiche.db-wal", f"{kept}-wal")
+    engine.dispose()  # the service stops
+    shutil.copy(copy, folder / "affiche.db")
+    with engine.connect():  # the application's start, once
+        pass
+    engine.dispose()
+    return kept
+
+
+def read(database, sql):
+    db = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+    try:
+        return db.execute(sql).fetchall()
+    finally:
+        db.close()
+
+
+def kept_bytes(kept):
+    return kept.read_bytes(), Path(f"{kept}-wal").read_bytes()
+
+
+def test_the_copy_brings_a_chain_of_moves_back_in_its_order_with_its_dates_and_a_rerun_copies_nothing(
+        command, engine, tmp_path, monkeypatch):
+    """A→B→C with A created last: the shops' ids run against the movement, so a copy shop by shop would bring B's grant
+    before A's reversal, and be refused."""
+    with write_tx(engine) as conn:
+        for identifier in ("boutiquec", "boutiqueb", "boutiquea"):  # shops 2, 3, 4
+            shops.create_shop(conn, identifier, None, HASH)
+    written(monkeypatch, "2026-09-01")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "5000", "--method", "cash", "--ref", "P-1")
+    copy = backed_up(tmp_path)
+    written(monkeypatch, "2026-10-02")
+    done(command, "grant", "boutiquea", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1",
+         "--note", "pack de 10")
+    done(command, "move-payment", "mv-1", "boutiquea", "boutiqueb", "--note", "mauvaise boutique")
+    written(monkeypatch, "2026-11-03")
+    done(command, "move-payment", "MV-1", "boutiqueb", "boutiquec", "--note", "encore la mauvaise")
+    done(command, "grant", "boutiqueb", "2", "--offered", "--ref", "geste")
+    kept = put_back(engine, tmp_path, copy)
+    monkeypatch.setattr(credits, "utc_now", utc_now)  # today's clock again: a copied line keeps its own date
+    live, unchanged = tmp_path / "affiche.db", (tmp_path / "affiche.db").read_bytes()
+    original = kept_bytes(kept)
+    lines_to_copy = (
+        "line 3 of the kept database (boutiquea grant 'MV-1'), +10 credits, +10000 Ar, written "
+        "2026-10-02T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 4 of the kept database (boutiquea correction 'MV-1'), -10 credits, -10000 Ar, written "
+        "2026-10-02T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 5 of the kept database (boutiqueb grant 'MV-1'), +10 credits, +10000 Ar, written "
+        "2026-10-02T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 6 of the kept database (boutiqueb correction 'MV-1'), -10 credits, -10000 Ar, written "
+        "2026-11-03T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 7 of the kept database (boutiquec grant 'MV-1'), +10 credits, +10000 Ar, written "
+        "2026-11-03T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 8 of the kept database (boutiqueb grant 'geste'), +2 credits, written 2026-11-03T10:00:00.000000+00:00 "
+        "by operator\n")
+    header = f"the kept database {kept} holds 8 credit lines: 2 here already, 6 to copy, 0 skipped\n"
+    assert command("after-restore", str(kept)) == (0, header + "to copy: " + lines_to_copy.format("to copy")
+                                                   + "report only, nothing written: run again with --apply to copy\n", "")
+    assert live.read_bytes() == unchanged and kept_bytes(kept) == original  # read only, the kept -wal never folded in
+    assert command("after-restore", str(kept), "--apply") == (
+        0, header + "copied: " + lines_to_copy.format("copied") + "copied 6 lines\n", "")
+    assert kept_bytes(kept) == original
+    # Every line, in its order, with its shop by identifier, its date, actor, note, amounts and reference as stored.
+    assert read(live, LEDGER) == read(kept, LEDGER)
+    by_month = ("SELECT substr(created_at, 1, 7), SUM(amount_ar) FROM credit_grants WHERE amount_ar IS NOT NULL"
+                " GROUP BY 1 ORDER BY 1")
+    assert read(live, by_month) == read(kept, by_month) == [("2026-09", 5000), ("2026-10", 10000), ("2026-11", 0)]
+    assert read(live, "SELECT p.identifier, SUM(g.amount_ar) FROM credit_grants g JOIN shop_profile p ON p.id = g.shop_id"
+                      " WHERE g.ref = 'MV-1' GROUP BY 1 ORDER BY 1") == [
+        ("boutiquea", 0), ("boutiqueb", 0), ("boutiquec", 10000)]  # the payment's money in C only
+    assert [available(engine, shop) for shop in (2, 3, 4)] == [10, 2, 0]
+    ledger = read(live, LEDGER)
+    assert command("after-restore", str(kept), "--apply") == (
+        0, f"the kept database {kept} holds 8 credit lines: 8 here already, 0 to copy, 0 skipped\nnothing to copy\n", "")
+    assert read(live, LEDGER) == ledger
+
+
+def test_a_shop_created_after_the_backup_blocks_the_whole_copy_until_its_printed_command_creates_it(
+        command, engine, tmp_path, monkeypatch):
+    """Mapped by identifier: chezrado was shop 3 in the kept database and is shop 2 once created again."""
+    copy = backed_up(tmp_path)
+    written(monkeypatch, "2026-11-10")
+    done(command, "create", "Autre", "--welcome", "0")
+    done(command, "create", "Chez Rado", "--name", NAME, "--welcome", "3")  # not the default welcome
+    done(command, "grant", "chezrado", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-3")
+    done(command, "grant", "originalphone", "4", "--offered", "--ref", "geste")
+    kept = put_back(engine, tmp_path, copy)
+    code, out, err = command("after-restore", str(kept), "--apply")
+    assert (code, err) == (1, "refused: nothing copied: chezrado missing here; create each with the command above, then "
+                              "run after-restore again\n")
+    assert lines(engine) == []  # not even the line of the shop that is here
+    printed = re.search(r"^  (python -m affiche\.shops create chezrado .*? --welcome 0)$", out, re.M | re.S).group(1)
+    assert shlex.split(printed) == ["python", "-m", "affiche.shops", "create", "chezrado", "--name", NAME, "--welcome", "0"]
+    assert out == (
+        f"the kept database {kept} holds 4 credit lines: 1 here already, 3 to copy, 0 skipped\n"
+        "to copy: line 2 of the kept database (chezrado grant 'welcome'), +3 credits, written "
+        "2026-11-10T10:00:00.000000+00:00 by operator\n"
+        "to copy: line 3 of the kept database (chezrado grant 'MV-3'), +10 credits, +10000 Ar, written "
+        "2026-11-10T10:00:00.000000+00:00 by operator\n"
+        "to copy: line 4 of the kept database (originalphone grant 'geste'), +4 credits, written "
+        "2026-11-10T10:00:00.000000+00:00 by operator\n"
+        "shops of the kept database missing here: create each with this command, then run after-restore again\n"
+        "  python -m affiche.shops create autre --welcome 0\n"
+        f"  {printed}\n")
+    code, out, _ = command("after-restore", str(kept))
+    assert code == 0 and out.endswith(f"  {printed}\nreport only, nothing written: create the missing shops first, then "
+                                      "run again with --apply\n")
+    assert lines(engine) == [] and not list(tmp_path.rglob("pwned")) and not Path("pwned").exists()  # printed, never run
+    # The operator runs it: the shell gives the command exactly these arguments.
+    assert done(command, *shlex.split(printed)[3:]).startswith("shop 2 created: identifier chezrado, active, no welcome")
+    code, out, _ = command("after-restore", str(kept), "--apply")
+    assert code == 0 and out.endswith("\n  python -m affiche.shops create autre --welcome 0\ncopied 3 lines\n")
+    assert lines(engine) == [(2, "grant", "offered", 3, None, None, "welcome", None, "Crédits de bienvenue", "operator"),
+                             (2, "grant", "bought", 10, 10000, "mvola", "MV-3", None, None, "operator"),
+                             (1, "grant", "offered", 4, None, None, "geste", None, None, "operator")]
+    with engine.connect() as conn:
+        assert shops.find_shop(conn, "chezrado").name == NAME
+    assert not list(tmp_path.rglob("pwned")) and not Path("pwned").exists()
+
+
+def test_a_repayment_is_copied_only_once_its_job_is_here_an_image_that_took_a_credit(
+        command, engine, tmp_path, monkeypatch):
+    """D-BALANCE-005's table: succeeded and counted here, copied; ended without an image, skipped; still running,
+    decided after it ends; absent, skipped (its charge went with it). The images made after the backup are counted, and
+    a balance a copied line takes below zero is said."""
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "made", "succeeded")
+        job(conn, "ended", "running")
+        job(conn, "waiting", "running")
+    copy = backed_up(tmp_path)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id IN ('ended', 'waiting')")
+        job(conn, "new", "succeeded")
+    written(monkeypatch, "2026-11-12")
+    for id in ("made", "ended", "waiting", "new"):
+        done(command, "correct", "originalphone", "+1", "--ref", f"defaut-{id}", "--job", id, "--note", "produit déformé")
+    done(command, "correct", "originalphone", "-100", "--ref", "retrait", "--note", "remboursé")
+    kept = put_back(engine, tmp_path, copy)
+    with write_tx(engine) as conn:  # after the restart, one ended without an image; one still runs
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='failed' WHERE id='ended'")
+    skipped = (
+        "skipped line 3 of the kept database (originalphone correction 'defaut-ended'): its job is failed here and holds "
+        "no credit\n"
+        "skipped line 4 of the kept database (originalphone correction 'defaut-waiting'): its job is still running here: "
+        "decide after it ends, by running after-restore again\n"
+        "skipped line 5 of the kept database (originalphone correction 'defaut-new'): its job is not here (made after "
+        "the backup): the restore removed that image and its charge\n")
+    to_copy = (
+        "{0}: line 2 of the kept database (originalphone correction 'defaut-made'), +1 credits, written "
+        "2026-11-12T10:00:00.000000+00:00 by operator\n"
+        "{0}: line 6 of the kept database (originalphone correction 'retrait'), -100 credits, written "
+        "2026-11-12T10:00:00.000000+00:00 by operator\n")
+    after = ("originalphone: 1 images made after the backup are gone and are not charged\n"
+             "originalphone: available -1 after the copy, below zero, with 1 generations waiting or running: each of "
+             "them that ends without an image gives one credit back; what stays below zero is yours to settle\n")
+    header = f"the kept database {kept} holds 6 credit lines: 1 here already, 2 to copy, 3 skipped\n"
+    assert command("after-restore", str(kept)) == (
+        0, header + skipped + to_copy.format("to copy") + after
+        + "report only, nothing written: run again with --apply to copy\n", "")
+    assert command("after-restore", str(kept), "--apply") == (
+        0, header + skipped + to_copy.format("copied") + after + "copied 2 lines\n", "")
+    assert available(engine) == -1
+    with write_tx(engine) as conn:  # the generation that ran succeeds: its repayment comes on the next run
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id='waiting'")
+    assert command("after-restore", str(kept), "--apply") == (
+        0, f"the kept database {kept} holds 6 credit lines: 3 here already, 1 to copy, 2 skipped\n"
+           + skipped.split("\n", 1)[0] + "\n" + skipped.split("\n")[2] + "\n"
+           "copied: line 4 of the kept database (originalphone correction 'defaut-waiting'), +1 credits, written "
+           "2026-11-12T10:00:00.000000+00:00 by operator\n"
+           "originalphone: 1 images made after the backup are gone and are not charged\ncopied 1 lines\n", "")
+    assert [(line.credits, line.ref, line.job_id) for line in lines(engine)] == [
+        (1, "defaut-made", "made"), (-100, "retrait", None), (1, "defaut-waiting", "waiting")]
+    assert available(engine) == 0
+
+
+def test_a_payment_typed_again_is_here_in_any_spelling_and_one_typed_into_another_shop_is_skipped(
+        command, engine, tmp_path):
+    second_shop(engine)  # boutiquedeux, its credits at line 2
+    copy = backed_up(tmp_path)
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "7000", "--method", "mvola", "--ref", "MV-7")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "8000", "--method", "mvola", "--ref", "MV-8")
+    kept = put_back(engine, tmp_path, copy)
+    # From his payment records, the operator types both again after the restore: one in its shop, one in another.
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "7000", "--method", "mvola", "--ref", "mv-7")
+    done(command, "grant", "boutiquedeux", "10", "--bought", "--amount-ar", "8000", "--method", "mvola", "--ref", "mv-8")
+    skipped = (0, f"the kept database {kept} holds 4 credit lines: 3 here already, 0 to copy, 1 skipped\n"
+                  "here already: line 3 of the kept database (originalphone grant 'MV-7'), typed as 'mv-7' (line 3 here)\n"
+                  "skipped line 4 of the kept database (originalphone grant 'MV-8'): this payment's lines here (line 4 "
+                  "here 'mv-8') are not the first ones of its kept history: this database's history stands; check this "
+                  "payment by hand (grant, move-payment)\nnothing to copy\n", "")
+    assert command("after-restore", str(kept)) == skipped
+    assert command("after-restore", str(kept), "--apply") == skipped
+    ledger = lines(engine)
+    done(command, "move-payment", "MV-8", "boutiquedeux", "originalphone", "--note", "mauvaise boutique")
+    assert command("after-restore", str(kept), "--apply") == (
+        0, f"the kept database {kept} holds 4 credit lines: 4 here already, 0 to copy, 0 skipped\n"
+           "here already: line 3 of the kept database (originalphone grant 'MV-7'), typed as 'mv-7' (line 3 here)\n"
+           "here already: line 4 of the kept database (originalphone grant 'MV-8'), typed as 'mv-8' (line 6 here)\n"
+           "nothing to copy\n", "")
+    assert lines(engine)[:2] == ledger[:2] and len(lines(engine)) == 4  # the two typed again and the move, no more
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT SUM(amount_ar) FROM credit_grants").scalar() == 15000  # each payment once
+
+
+def test_a_reference_the_copy_would_write_two_ways_in_one_shop_is_refused_and_both_lines_named(command, engine, tmp_path):
+    copy = backed_up(tmp_path)
+    done(command, "grant", "originalphone", "10", "--offered", "--ref", "MV-9")
+    kept = put_back(engine, tmp_path, copy)
+    done(command, "correct", "originalphone", "+1", "--ref", "mv-9", "--note", "geste")  # under the grant's reference
+    refused = (1, "", "refused: line 2 of the kept database (originalphone grant 'MV-9') and line 2 here 'mv-9' write one "
+                      "reference two ways in originalphone: nothing copied, nothing guessed\n")
+    assert command("after-restore", str(kept)) == refused
+    assert command("after-restore", str(kept), "--apply") == refused
+    assert [line.ref for line in lines(engine)] == ["mv-9"]
+
+
+def test_a_line_the_database_refuses_rolls_the_whole_copy_back_and_is_named(command, engine, tmp_path):
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "made", "succeeded")
+    copy = backed_up(tmp_path)
+    done(command, "grant", "originalphone", "1", "--offered", "--ref", "geste-1")
+    done(command, "correct", "originalphone", "+1", "--ref", "defaut-1", "--job", "made", "--note", "produit déformé")
+    done(command, "grant", "originalphone", "1", "--offered", "--ref", "geste-2")
+    kept = put_back(engine, tmp_path, copy)
+    with write_tx(engine) as conn:  # no operator command leads here any more: a rule of the database stands in for one
+        conn.exec_driver_sql("CREATE TRIGGER refuses BEFORE INSERT ON credit_grants WHEN NEW.ref = 'defaut-1' "
+                             "BEGIN SELECT RAISE(ABORT, 'not this one'); END")
+    assert command("after-restore", str(kept), "--apply") == (
+        1, "", "refused: line 3 of the kept database (originalphone correction 'defaut-1') is refused here (not this "
+               "one): nothing copied\n")
+    assert lines(engine) == []  # geste-1, written before it, rolled back with it
+
+
+def test_a_kept_database_missing_unreadable_or_older_than_0014_gives_nothing_to_copy(command, engine, tmp_path, monkeypatch):
+    kept, live = tmp_path / KEPT, tmp_path / "affiche.db"
+    engine.dispose()  # its -wal folded in: the bytes below stay as they are unless something writes
+    unchanged = live.read_bytes()
+    assert command("after-restore", str(kept), "--apply") == (1, "", f"refused: no kept database at {kept}: {shops.LOSS}\n")
+    kept.write_bytes(b"not a database")
+    assert command("after-restore", str(kept), "--apply") == (
+        1, "", f"refused: the kept database {kept} cannot be read (file is not a database): {shops.LOSS}\n")
+    if os.name == "posix" and os.geteuid():  # root reads it anyway
+        kept.chmod(0)
+        assert command("after-restore", str(kept)) == (
+            1, "", f"refused: the kept database {kept} cannot be read (unable to open database file): {shops.LOSS}\n")
+    old = make_engine(tmp_path / "old")
+    migrate_to(old, "0013", monkeypatch)
+    old.dispose()
+    older = tmp_path / "old" / "affiche.db"
+    assert command("after-restore", str(older), "--apply") == (
+        0, f"the kept database {older} is older than migration 0014: no credit was ever granted there; nothing to copy\n",
+        "")
+    assert live.read_bytes() == unchanged
+
+
+def test_a_payment_moved_in_another_order_after_the_restore_is_never_taken_out_of_every_shop(command, engine, tmp_path):
+    """Kept: A→B→C. After the restore: A→C→B. B's reversal alone is missing here, and the database would accept it:
+    the payment would then be in no shop (Codex, T-BALANCE-005 r1). This database's history stands."""
+    second_shop(engine)
+    done(command, "create", "troisieme", "--welcome", "0")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    copy = backed_up(tmp_path)
+    done(command, "move-payment", "MV-1", "originalphone", "boutiquedeux", "--note", "erreur")
+    done(command, "move-payment", "MV-1", "boutiquedeux", "troisieme", "--note", "erreur")
+    done(command, "grant", "originalphone", "2", "--offered", "--ref", "geste")
+    kept = put_back(engine, tmp_path, copy)
+    done(command, "move-payment", "MV-1", "originalphone", "troisieme", "--note", "erreur")
+    done(command, "move-payment", "MV-1", "troisieme", "boutiquedeux", "--note", "erreur")
+    code, out, err = command("after-restore", str(kept), "--apply")
+    assert (code, err) == (0, "") and "skipped line" in out and "(boutiquedeux correction 'MV-1')" in out, out
+    assert out.endswith("copied 1 lines\n")  # the offered grant, not held back by the payment
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(
+            "SELECT p.identifier, SUM(g.credits), SUM(g.amount_ar) FROM credit_grants g JOIN shop_profile p"
+            " ON p.id = g.shop_id WHERE g.ref = 'MV-1' GROUP BY p.identifier HAVING SUM(g.amount_ar) > 0").all() == [
+                ("boutiquedeux", 10, 10000)]
+
+
+def paid(engine):
+    with engine.connect() as conn:
+        return [tuple(row) for row in conn.exec_driver_sql(
+            "SELECT p.identifier, SUM(g.credits), SUM(g.amount_ar) FROM credit_grants g JOIN shop_profile p"
+            " ON p.id = g.shop_id WHERE g.amount_ar IS NOT NULL GROUP BY p.identifier HAVING SUM(g.amount_ar) > 0"
+            " ORDER BY 1")]
+
+
+def test_a_payment_typed_again_with_other_figures_is_not_completed_from_the_kept_history(command, engine, tmp_path):
+    """Same shops and kinds, other contents (Codex, T-BALANCE-005 r2): a move against an amount fix; an amount fix
+    against a grant typed again with the right amount. Neither kept line is copied over them."""
+    second_shop(engine)
+    copy = backed_up(tmp_path)
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    done(command, "move-payment", "MV-1", "originalphone", "boutiquedeux", "--note", "erreur")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-2")
+    done(command, "correct", "originalphone", "0", "--ref", "MV-2", "--amount-ar", "+1000", "--note", "faute de frappe")
+    kept = put_back(engine, tmp_path, copy)
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "mv-1")
+    done(command, "correct", "originalphone", "0", "--ref", "mv-1", "--amount-ar", "+1000", "--note", "faute de frappe")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "11000", "--method", "mvola", "--ref", "MV-2")
+    before = lines(engine)
+    code, out, err = command("after-restore", str(kept), "--apply")
+    assert (code, err) == (0, "") and out.endswith("nothing to copy\n") and out.count("skipped line") == 2, out
+    assert lines(engine) == before and paid(engine) == [("originalphone", 20, 22000)]
+
+
+def test_a_repayment_under_a_payments_reference_is_copied_once_its_job_succeeds_after_the_payment_moved(
+        command, engine, tmp_path):
+    """Skipped while its job runs, it leaves a gap in the payment's history here: the next run must not read its own
+    earlier copy as another history (Codex, T-BALANCE-005 r2)."""
+    second_shop(engine)
+    done(command, "create", "troisieme", "--welcome", "0")
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "waiting", "running")
+    done(command, "grant", "boutiquedeux", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    copy = backed_up(tmp_path)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id='waiting'")
+    done(command, "correct", "originalphone", "+1", "--ref", "MV-1", "--job", "waiting", "--note", "produit déformé")
+    done(command, "move-payment", "MV-1", "boutiquedeux", "troisieme", "--note", "erreur")
+    kept = put_back(engine, tmp_path, copy)
+    assert done(command, "after-restore", str(kept), "--apply").endswith("copied 2 lines\n")  # the move
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id='waiting'")
+    assert done(command, "after-restore", str(kept), "--apply").endswith("copied 1 lines\n")
+    assert [line.job_id for line in lines(engine) if line.job_id] == ["waiting"]
+    assert paid(engine) == [("troisieme", 10, 10000)]
+
+
+def test_a_repayment_typed_under_a_payments_reference_never_passes_for_its_reversal(command, engine, tmp_path):
+    """Kept: A's payment moved to B. Here: the grant typed again, then a job repaid under its reference, in the place
+    of the reversal. B's grant alone would be copied: the payment in two shops (Codex, T-BALANCE-005 r3)."""
+    second_shop(engine)
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "made", "succeeded")
+    copy = backed_up(tmp_path)
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    done(command, "move-payment", "MV-1", "originalphone", "boutiquedeux", "--note", "erreur")
+    kept = put_back(engine, tmp_path, copy)
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "mv-1")
+    done(command, "correct", "originalphone", "+1", "--ref", "mv-1", "--job", "made", "--note", "produit déformé")
+    out = done(command, "after-restore", str(kept), "--apply")
+    assert out.endswith("nothing to copy\n") and "skipped line" in out and "(boutiquedeux grant 'MV-1')" in out, out
+    assert paid(engine) == [("originalphone", 10, 10000)]
+
+
+def test_a_repayment_is_here_only_by_its_job_whatever_took_its_reference(command, engine, tmp_path):
+    """Deferred while its job ran, then its place (shop, correction, reference) taken by the payment's reversal, or by
+    another job's repayment: neither passes for it (Codex, T-BALANCE-005 r4). It is named for a repayment by hand."""
+    second_shop(engine)
+    with write_tx(engine) as conn:
+        product(conn)
+        job(conn, "made", "running")
+        job(conn, "other", "succeeded")
+        job(conn, "third", "succeeded")
+    done(command, "grant", "originalphone", "10", "--bought", "--amount-ar", "10000", "--method", "mvola", "--ref", "MV-1")
+    done(command, "grant", "originalphone", "1", "--offered", "--ref", "geste")
+    copy = backed_up(tmp_path)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id='made'")
+    done(command, "correct", "originalphone", "+1", "--ref", "MV-1", "--job", "made", "--note", "produit déformé")
+    done(command, "correct", "originalphone", "+1", "--ref", "geste", "--job", "other", "--note", "produit déformé")
+    kept = put_back(engine, tmp_path, copy)
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("UPDATE poster_jobs SET status='succeeded' WHERE id='made'")
+    done(command, "move-payment", "MV-1", "originalphone", "boutiquedeux", "--note", "erreur")
+    done(command, "correct", "originalphone", "+1", "--ref", "geste", "--job", "third", "--note", "refait")
+    before = lines(engine)
+    out = done(command, "after-restore", str(kept), "--apply")
+    assert "0 to copy, 2 skipped" in out and "repay job made by hand" in out and "repay job other by hand" in out, out
+    assert lines(engine) == before
+    done(command, "correct", "originalphone", "+1", "--ref", "defaut-made", "--job", "made", "--note", "à la main")
+    assert "1 skipped" in done(command, "after-restore", str(kept), "--apply")  # made is here by its job, under any name

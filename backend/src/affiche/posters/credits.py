@@ -62,7 +62,8 @@ def _ref(ref) -> tuple[str, str]:
 # the spelling its shop already uses, and a move or an amount fix the payment's own. Not covered: lines written outside
 # these functions, and spellings that differ by more than case and spaces ("MV-123" and "MV123" are two references).
 # Holding it for every writer needs a later migration (a stored key and its unique index).
-LINES = text("SELECT g.id, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref, p.identifier FROM credit_grants g"
+LINES = text("SELECT g.id, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref, g.job_id, p.identifier FROM"
+             " credit_grants g"
              " JOIN shop_profile p ON p.id = g.shop_id WHERE g.shop_id = COALESCE(:shop, g.shop_id) ORDER BY g.id")
 
 
@@ -82,14 +83,17 @@ def _spelling(lines, typed) -> str:
     return spellings.pop() if spellings else typed
 
 
-def _line(conn, shop, kind, credits, ref, actor, note, *, origin=None, amount_ar=None, method=None, job_id=None) -> int:
+def _line(conn, shop, kind, credits, ref, actor, note, *, origin=None, amount_ar=None, method=None, job_id=None,
+          at=None) -> int:
+    """One plain INSERT, so that every rule and trigger of 0014 judges it. `at`: the restore's copy keeps the date the
+    line was first written (shops.after_restore)."""
     if abs(credits) > MOST or amount_ar is not None and abs(amount_ar) > MOST:  # before the driver's OverflowError
         raise ValueError(f"a line carries at most {MOST:,} credits and {MOST:,} Ar")
     return conn.execute(text(
         "INSERT INTO credit_grants (shop_id,kind,origin,credits,amount_ar,method,ref,job_id,note,actor,created_at)"
         " VALUES (:shop,:kind,:origin,:credits,:amount,:method,:ref,:job,:note,:actor,:now) RETURNING id"),
         {"shop": shop, "kind": kind, "origin": origin, "credits": credits, "amount": amount_ar, "method": method,
-         "ref": ref, "job": job_id, "note": note, "actor": actor, "now": utc_now()}).scalar_one()
+         "ref": ref, "job": job_id, "note": note, "actor": actor, "now": utc_now() if at is None else at}).scalar_one()
 
 
 def _bought(lines):

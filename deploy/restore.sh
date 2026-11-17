@@ -4,9 +4,11 @@
 # Under the lock that the release and daily.sh take, in order: stop the service; put the backup in place (each run
 # keeps the database it replaces as affiche.db.before-restore-<time>, never overwritten); run the application's own
 # start once in a one-off container (lock, migrations, checks; no server), which also brings a backup from before
-# migration 0013 to this version; end every session; list the shops. It NEVER starts the service: the repairs only
-# the operator knows come first. Any failed step stops it with what state the service and the data are in
-# (backend/tests/test_restore_script.py runs this file with a fake docker).
+# migration 0013 to this version; end every session; list the shops; report the credit lines of the database it
+# replaced that the backup lacks (read only: the operator copies them with --apply). It NEVER starts the service: the
+# repairs only the operator knows come first. Any failed step stops it with what state the service and the data are in;
+# a failed report does not, the database being restored by then (backend/tests/test_restore_script.py runs this file
+# with a fake docker).
 set -eu
 [ "$#" = 1 ] || { echo "usage: sudo sh restore.sh <file name in backups/db, for example affiche-20261116T004000Z.db>"; exit 2; }
 FILE="$1"
@@ -61,12 +63,17 @@ op python -m affiche.shops end-sessions --all || fail "ending every session"
 STATE="THE SERVICE IS STOPPED; the database is the backup $FILE at this version, with no session"
 shops="$(op python -m affiche.shops list)" || fail "listing the shops"
 printf '%s\n' "$shops"
+# Read only, and the restore is done by now: a failure here is said, and changes nothing above.
+op python -m affiche.shops after-restore "$BEFORE" \
+  || echo "THE CREDIT REPORT FAILED (above); the restore itself is done and nothing was copied. Run after-restore again (below); if the database it replaced cannot be read, redo the grants and corrections made since the backup from your payment records."
 echo "RESTORED: $FILE is in place, at this version, with every session ended. THE SERVICE IS STOPPED."
 echo "The database it replaced is $BEFORE in the volume affiche-ia_data: remove it only when you are satisfied."
 echo "Before you start it, redo by hand each change made after the time of this backup (this script cannot know them):"
-echo "  each shop created:     create <identifier> --name \"<name>\""
+echo "  each shop created:     the line that after-restore printed for it (python -m affiche.shops create ... --welcome 0), else create <identifier> --name \"<name>\" --welcome 0"
+echo "  then the credit lines: after-restore $BEFORE --apply (copies them back in their order, with their dates; nothing while a shop is missing)"
 echo "  each password reset:   set-password <identifier>"
 echo "  each suspension:       suspend <identifier> --yes"
+echo "  a pause set since:     pause --yes; a purchase text set since: purchase-text \"<text>\""
 # A backup from before migration 0013 has no password for shop 1: without one, the service refuses to start.
 printf '%s\n' "$shops" | awk -F '\t' '$4 == "no password" { print "  " $2 " has no password (a backup from before migration 0013): set-password " $2 (($1 == 1) ? ", or put its hash back in /opt/affiche-ia/secrets/app.env as SHOP_PASSWORD_HASH; without either the service refuses to start" : "") }'
 echo "Run each one as: sudo env REVISION=$REV docker compose -f $DIR/app/deploy/compose.yml run --rm operator python -m affiche.shops <command>"

@@ -25,6 +25,16 @@ operator ─▶ python -m affiche.shops grant | move-payment | correct | create 
            | after-restore [--apply]
 ```
 
+### Amended on 2026-11-17, after the code review of T-BALANCE-005
+
+Four review rounds ([r1](../reviews/t-balance-005-code-r1.md) to [r4](../reviews/t-balance-005-code-r4.md)) each showed an ordinary operator history, after a restore, in which the copy of D-BALANCE-005 put a payment in two shops or in none; the database rules of 0014 accept those lines one by one. The copy therefore judges a payment (a reference key that carries ariary in either database) as a whole:
+
+- its missing lines are copied only when its lines here, in order, are the first lines of its kept history (shop, kind, credits, ariary), and each line here that sits in the place of a kept one is that line (credits, ariary, job);
+- otherwise its missing lines are skipped and named, the history of this database stands, and every other line is still copied. A skip, not a refusal of the whole copy: a line is never removed, so a refusal could never be lifted;
+- a job repayment is here only when its job is repaid here, under any reference; when another correction took its reference, it is named for a repayment by hand.
+
+The former check "a payment that another shop holds is refused" is gone: the first rule covers it.
+
 ### Amended on 2026-11-17, after the code review of T-BALANCE-001
 
 Round 1 of that review ([report](../reviews/t-balance-001-code-r1.md)) showed two ways around the database rules of D-BALANCE-001: `INSERT OR REPLACE` rewrote a credit line (a REPLACE's delete fires no DELETE trigger with `recursive_triggers` off), and a job that took a credit could be replaced or deleted. Migration 0014 (never applied to a real database) gains four triggers; **where D-BALANCE-001 below says five triggers, seven guard lines or six guarded objects, read nine, eleven and ten.**

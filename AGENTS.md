@@ -50,7 +50,7 @@ Backend (`backend/`, Python 3.12 with uv; verified 2026-11-09 on Windows 10):
 | Run all tests | `uv run pytest -q` |
 | Run local draft API | `uv run python -m affiche.api` (requires APP_ORIGIN; shop passwords: `uv run python -m affiche.shops`; see backend/api/README.md) |
 | API/domain regression tests | `uv run pytest tests/test_api.py tests/test_poster_drafts.py -q` |
-| Operator: shops and credits (never migrates: start the API once first; `--help` for each; deploy/README.md "Shops", "Credits") | `uv run python -m affiche.shops list\|create [--welcome N]\|set-password\|end-sessions\|suspend --yes\|enable\|grant\|move-payment\|correct\|pause --yes\|resume\|purchase-text` |
+| Operator: shops and credits (never migrates: start the API once first; `--help` for each; deploy/README.md "Shops", "Credits") | `uv run python -m affiche.shops list\|create [--welcome N]\|set-password\|end-sessions\|suspend --yes\|enable\|grant\|move-payment\|correct\|pause --yes\|resume\|purchase-text\|after-restore <kept database> [--apply]` |
 | New migration file (hand-written SQL) | `uv run alembic revision -m "<message>"` |
 | One-time cutout model download (224 MB, to `%USERPROFILE%\.rembg\models\`) | `uv run python -c "from rembg import new_session; new_session('birefnet-general-lite')"` |
 | Real-model cutout tests (opt-in, about 2 min on CPU) | `uv run pytest -m rembg tests/test_cutout.py -q` |

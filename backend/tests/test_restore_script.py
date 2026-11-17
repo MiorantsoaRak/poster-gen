@@ -7,7 +7,8 @@ import pytest
 from test_release_script import DEPLOY, REV, executable, on_box
 
 FILE = "affiche-20261116T004000Z.db"
-STEPS = ["inspect", "stop", "copy", "run1", "run2", "run3"]  # image, stop, backup in place, start once, sessions, list
+# image, stop, backup in place, start once, sessions, list, the credit report
+STEPS = ["inspect", "stop", "copy", "run1", "run2", "run3", "run4"]
 START = "sudo docker start affiche-ia-affiche-ia-1"
 
 
@@ -40,9 +41,18 @@ def test_a_restore_runs_every_step_in_order_and_leaves_the_service_stopped(tmp_p
     assert before.read_bytes() == b"live database" and f"The database it replaced is /data/{before.name} in the volume" in output
     assert (data / f"{before.name}-wal").read_bytes() == b"live wal" and not (data / "affiche.db-wal").exists()
     assert "2 sessions ended (every shop)" in output and "2\tboutiquedeux\tsuspended\tpassword" in output
-    assert f"RESTORED: {FILE} is in place, at this version, with every session ended. THE SERVICE IS STOPPED." in output
+    # The report reads the database set aside, by the path the operator service sees, after the shops list.
+    assert ("2\tboutiquedeux\tsuspended\tpassword\t2026-11-15\tB\nto copy: line 7 of the kept database (originalphone "
+            f"grant 'MV-1')\nRESTORED: {FILE} is in place, at this version, with every session ended. THE SERVICE IS "
+            "STOPPED.") in output
     for repair in ("create <identifier>", "set-password <identifier>", "suspend <identifier> --yes"):
         assert repair in output
+    assert ("  each shop created:     the line that after-restore printed for it (python -m affiche.shops create ... "
+            "--welcome 0), else create <identifier> --name \"<name>\" --welcome 0\n"
+            f"  then the credit lines: after-restore /data/{before.name} --apply (copies them back in their order, with "
+            "their dates; nothing while a shop is missing)\n") in output
+    assert "  a pause set since:     pause --yes; a purchase text set since: purchase-text \"<text>\"\n" in output
+    assert "THE CREDIT REPORT FAILED" not in output
     assert (f"sudo env REVISION={REV} docker compose -f {tmp_path / 'opt'}/app/deploy/compose.yml run --rm operator "
             "python -m affiche.shops <command>") in output
     assert f"Then start the service: {START}" in output and "has no password" not in output
@@ -77,6 +87,25 @@ def test_a_failed_step_stops_the_restore_before_the_next_and_never_starts_the_se
     assert code == 1, output
     assert calls == STEPS[:STEPS.index(reached) + 1], output  # nothing after the failed step, never a start
     assert f"RESTORE FAILED: {message}" in output and "RESTORED" not in output and START not in output
+
+
+def no_database_before(tmp_path):
+    for file in ("affiche.db", "affiche.db-wal"):
+        (tmp_path / "data" / file).unlink()
+
+
+@pytest.mark.parametrize("fake", [{"docker_fail": "run4"}, {"after_restore": "failed"}, {"prepare": no_database_before}],
+                         ids=["docker fails to run it", "the kept database cannot be read", "nothing was replaced"])
+def test_a_failed_credit_report_is_said_and_the_restore_still_ends_restored_and_stopped(tmp_path, fake):
+    """The report only reads, and comes after the restore is done: its failure stops nothing and the closing list
+    follows, with what to do about the credit lines."""
+    code, output, calls = restore(tmp_path, **fake)
+    assert code == 0 and calls == STEPS, output  # never a start
+    assert ("THE CREDIT REPORT FAILED (above); the restore itself is done and nothing was copied. Run after-restore "
+            "again (below); if the database it replaced cannot be read, redo the grants and corrections made since the "
+            f"backup from your payment records.\nRESTORED: {FILE} is in place") in output
+    assert "RESTORE FAILED" not in output and "then the credit lines: after-restore /data/affiche.db.before-restore-" in output
+    assert (tmp_path / "data" / "affiche.db").read_bytes() == b"the backup"
 
 
 def test_a_database_set_aside_earlier_is_never_overwritten(tmp_path):

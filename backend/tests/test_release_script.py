@@ -21,7 +21,7 @@ OLD = "0123456789ab"  # the old container's id
 FAKE_DOCKER = r"""#!/bin/sh
 # Docker on the box as release.sh and restore.sh call it. FAKE_DOCKER_FAIL names the call that fails in docker
 # itself, before any container runs, as <name> (exit 1) or <name>:<status>: inspect, build, stop, copy (restore.sh's
-# docker run), run1, run2, run3 (the compose runs, in order), up.
+# docker run), run1, run2, run3, run4 (the compose runs, in order), up.
 C=affiche-ia-affiche-ia-1
 LABEL='{{index .Config.Labels "org.opencontainers.image.revision"}}'
 log() { printf '%s\n' "$*" >> "$FAKE_LOG"; }
@@ -131,6 +131,12 @@ elif [ "$*" = "-m affiche.shops list" ]; then
   if [ -n "${FAKE_PRE0013:-}" ]; then printf '1\toriginalphone\tactive\tno password\t2026-11-13\tOriginal Phone Mada\n'; exit 0; fi
   printf '1\toriginalphone\tactive\tpassword\t2026-11-13\tOriginal Phone Mada\n2\tboutiquedeux\tsuspended\tpassword\t2026-11-15\tB\n'
   exit 0
+elif [ "$#" = 4 ] && [ "$1 $2 $3" = "-m affiche.shops after-restore" ] \
+    && case "$4" in "$FAKE_DATA"/affiche.db.before-restore-*Z) true ;; *) false ;; esac; then
+  if [ ! -f "$4" ]; then echo "refused: no kept database at $4: nothing to copy: the restore's loss policy applies" >&2; exit 1; fi
+  if [ "${FAKE_AFTER_RESTORE:-ok}" = ok ]; then echo "to copy: line 7 of the kept database (originalphone grant 'MV-1')"; exit 0; fi
+  echo "refused: the kept database $4 cannot be read (file is not a database)" >&2
+  exit 1
 fi
 printf 'UNEXPECTED python %s\n' "$*" >> "$FAKE_LOG"
 exit 99

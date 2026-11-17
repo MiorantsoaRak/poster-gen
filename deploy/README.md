@@ -452,13 +452,27 @@ done. `/opt/affiche-ia/restore.sh` does the part that can be checked, and never 
    checks, no server; this brings a backup from before migration 0013 to this version), ends every session and
    lists the shops. Each run keeps the database it replaces as `/data/affiche.db.before-restore-<time>` (with its
    `-wal` file) in the volume `affiche-ia_data`, and never overwrites one. A missing asset file is copied beside its
-   place and then renamed, so a copy cut short is done again by the next run.
+   place and then renamed, so a copy cut short is done again by the next run. Last, it runs `after-restore` on the
+   database it replaced: a report of the credit lines that the backup lacks ("Credits after a restore", below). The
+   report writes nothing.
 3. If a step fails, the script stops with `RESTORE FAILED: <step>. <state>.`: the state says whether the service
    is stopped and which database is in place. Correct the cause and run the script again, or, if the database was
-   not replaced, start the service again with `sudo docker start affiche-ia-affiche-ia-1`.
+   not replaced, start the service again with `sudo docker start affiche-ia-affiche-ia-1`. A failed report is not a
+   failed restore: the script says `THE CREDIT REPORT FAILED`, and continues to `RESTORED`. Run `after-restore`
+   yourself.
 4. On success it ends with `RESTORED: <file> is in place, at this version, with every session ended. THE SERVICE IS
-   STOPPED.`, the list of the repairs and the exact command to run them with the operator service ("Shops"). Redo
-   each `create`, `set-password` and `suspend --yes` made after the time of the backup.
+   STOPPED.`, the list of the repairs and the exact command to run them with the operator service ("Shops"). Do
+   them in this order:
+   - Each shop created after the time of the backup: the `create … --welcome 0` line that the report printed for it.
+     The line is quoted for the shell: type it after `sudo env REVISION=… docker compose … run --rm operator`. The
+     shop's own welcome credits come back with the copy. If there is no report, `create <identifier> --name "<name>"
+     --welcome 0`.
+   - The credit lines: `after-restore /data/affiche.db.before-restore-<time> --apply`, with the path that the
+     script printed. It copies them in one transaction, in the order they were written, with their dates. It copies
+     nothing while a shop it needs is missing. After each correction, run it again: it skips a line that is already
+     here.
+   - Each `set-password` and `suspend --yes` made after the time of the backup; `pause --yes` and `purchase-text` if
+     they were set since.
 5. If it says `originalphone has no password (a backup from before migration 0013)`, run `set-password
    originalphone`, or put the pilot's hash back in `/opt/affiche-ia/secrets/app.env` as `SHOP_PASSWORD_HASH`. With
    neither, the service refuses to start.
@@ -467,11 +481,34 @@ done. `/opt/affiche-ia/restore.sh` does the part that can be checked, and never 
    ago"`, then sign in.
 8. Give each owner whose password changed after the time of the backup the new password that `set-password` printed.
 
+**Credits after a restore** (`python -m affiche.shops after-restore <kept database> [--apply]`). The grants,
+corrections and generations go back to the time of the backup. The images made after that time are gone, so they
+are not charged: the report gives their number for each shop. The grants and corrections made after that time are
+copied back from the database that the restore replaced, which the command only reads.
+
+- **Already here.** A line is here when this database has a line of the same shop (by identifier), kind and
+  reference. Case and extra spaces do not count, so a payment that you typed again after the restore is not copied
+  a second time. The copy keeps each reference as it was written.
+- **A repayment** (`correct … --job`) is copied only when its job here made its image and took a credit. If the job
+  still waits or runs, run `after-restore` again after it ends. If the job ended without an image, or is not here
+  (made after the backup), the line is skipped with its reason. If another correction of that shop has taken its
+  reference since the restore, the line is skipped and named: repay that job by hand under a reference not used yet.
+- **A payment whose history here departs from the kept one** (typed again in another shop, with another amount or number of
+  credits, or moved or corrected in another way) is not
+  copied: its lines are skipped and named, and the history of this database stands. The other lines are copied.
+  Check that payment by hand: `grant` it if no shop has it, `move-payment` if the wrong shop has it.
+- **Refused, nothing copied, the lines named:** one reference written two ways in one shop; a line that the
+  database refuses (for example, a job that you repaid again after the restore).
+- **A balance below zero after the copy** is said, with the number of generations that wait or run. Each of them
+  that ends without an image gives one credit back. What stays below zero is yours to settle.
+- **No kept database, or one that cannot be read:** the loss policy applies. Do the grants and corrections made
+  since the backup again from your payment records. A kept database from before migration 0014 has nothing to copy.
+
 Never mount `/data` read-only for any of this: a database in write-ahead mode cannot be opened on a read-only
 volume. After a restore, **the ledger has lost the spend made since that backup**, and a generation that was
 reserved at backup time runs again: compare `/api/status` with the provider's dashboard and lower
-`SPEND_CAP_USD` by the difference. Remove `/data/affiche.db.before-restore-<time>` and its `-wal` file only when you
-are satisfied.
+`SPEND_CAP_USD` by the difference. Remove `/data/affiche.db.before-restore-<time>` and its `-wal` and `-shm` files
+only when you are satisfied (`after-restore` reads it through SQLite, which makes the `-shm` file).
 
 **Proof before the first pilot day (development machine):** copy one `db/affiche-*.db` and `assets/` from the
 box, put them in a new folder as `affiche.db` and `assets/`, start the API on it with `DATA_DIR` set to that
@@ -516,6 +553,8 @@ stops at the rehearsal (`No such revision`) and changes nothing.
 - **`restore.sh`, the operator service and the deadlines**, also with the fake `docker` only
   (`backend/tests/test_restore_script.py`): that `docker compose run --rm operator` writes nothing to the journal,
   that `up` and `build` leave the operator service alone (its profile), the real `timeout` around a hung backup, and the removal of a backup container that outlived it.
+  `after-restore` read the kept database read-only, with and without its `-wal`, on SQLite 3.46.1 and 3.53.1 on the
+  development machine, not on the image's 3.40.1 in the operator container.
 
 Proven on 2026-11-13: the image builds on the box; the hardened container starts and stays healthy; Chromium
 starts in it; the Caddy block (valid, and the French 503 answers while no container existed); HTTP redirects to

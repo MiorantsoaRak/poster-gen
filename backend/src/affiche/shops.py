@@ -16,6 +16,7 @@ join it. Passwords are hashed by the caller, outside the transaction.
     python -m affiche.shops pause --yes                                   without --yes, only says whether it is paused
     python -m affiche.shops resume
     python -m affiche.shops purchase-text ["…"]                          without a text, prints the current one
+    python -m affiche.shops after-restore <kept database> [--apply]      without --apply, only reports
 
 The command reads the data folder from the settings, as the other commands do, and never migrates: it refuses unless
 the database is at this code's head. It takes no lock, so it runs beside the API. Exit 0 done, 1 refused (one line on
@@ -23,7 +24,10 @@ stderr, nothing written), 2 usage.
 """
 import argparse
 import secrets
+import shlex
+import sqlite3
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from pathlib import Path
@@ -162,6 +166,165 @@ def headroom(conn: Connection, settings) -> dict:
     return {"cap": usd_to_micros(settings.spend_cap_usd), "spent": spent_micros(conn, settings),
             "outstanding": outstanding, "images": images, "unit": total / count,
             "cost": -(-outstanding * total // count)}
+
+
+# In the kept ledger's global insertion order: a move's reversal comes before its grant, whatever the shops' ids.
+KEPT_LINES = ("SELECT g.id, p.identifier, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref, g.job_id, g.note,"
+              " g.actor, g.created_at FROM credit_grants g JOIN shop_profile p ON p.id = g.shop_id ORDER BY g.id")
+KEPT_IMAGES = ("SELECT j.id, p.identifier FROM poster_jobs j JOIN shop_profile p ON p.id = j.shop_id"
+               " WHERE j.takes_credit = 1 AND j.status = 'succeeded'")
+LOSS = ("nothing to copy: the restore's loss policy applies (the grants and corrections made since the backup are "
+        "gone); redo them from your payment records")
+
+
+def _kept(kept: Path):
+    """(names by identifier, lines, counted images) of the database a restore replaced, None when it is older than
+    0014 (no line was ever granted there). Read through a read-only connection of its own: never written, and its -wal
+    never checkpointed into it. No ATTACH: SQLite refuses one inside the copy's transaction."""
+    try:
+        if not kept.is_file():
+            raise ValueError(f"no kept database at {kept}: {LOSS}")
+        db = sqlite3.connect(f"{kept.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            db.row_factory = sqlite3.Row
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credit_grants'").fetchone() is None:
+                return None
+            return (dict(db.execute("SELECT identifier, name FROM shop_profile").fetchall()),
+                    db.execute(KEPT_LINES).fetchall(), db.execute(KEPT_IMAGES).fetchall())
+        finally:
+            db.close()
+    except (sqlite3.Error, OSError) as error:
+        raise ValueError(f"the kept database {kept} cannot be read ({error}): {LOSS}") from None
+
+
+def _unpaid(job) -> str | None:
+    """Why a repayment is not copied: its job here (D-BALANCE-005's table), or None when it is a counted image."""
+    if job is None:
+        return "its job is not here (made after the backup): the restore removed that image and its charge"
+    if job.status in ("queued", "running"):
+        return f"its job is still {job.status} here: decide after it ends, by running after-restore again"
+    if job.status != "succeeded" or job.takes_credit != 1:
+        return f"its job is {job.status} here and holds no credit"
+    return None
+
+
+def _kept_line(row) -> str:
+    return f"line {row['id']} of the kept database ({row['identifier']} {row['kind']} {row['ref']!r})"
+
+
+def _named_lines(lines) -> str:
+    return ", ".join(f"{line['name']} {line['ref']!r}" for line in lines)
+
+
+def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[str], list[str]]:
+    """D-BALANCE-005, the restore's copy: (the report, the missing shops that block it). A line of the kept database is
+    here when this database has its shop identifier, kind and reference key (credits._key), whatever the spelling. Each
+    other one is copied with apply, in the kept ledger's order, by a plain INSERT that keeps its ref as stored, its
+    date, actor, note, amounts and method, so that 0014's rules judge each as it came; a repayment only when its job is
+    here a succeeded image that took a credit. A payment (a reference that carries ariary) is copied only when its lines
+    here are the first ones of its kept history, shop, kind, credits and ariary: moved or typed otherwise since the restore, this database's history
+    stands and the rest is skipped, as replaying it could take the payment out of every shop. Nothing is copied while
+    one of the lines belongs to a missing shop. A refusal is a ValueError: the caller's transaction rolls back whatever was copied."""
+    read = _kept(kept)
+    if read is None:
+        return [f"the kept database {kept} is older than migration 0014: no credit was ever granted there; nothing to "
+                "copy"], []
+    names, lines, images = read
+    shops = dict(conn.execute(text("SELECT identifier, id FROM shop_profile")).all())
+    jobs_here = {job.id: job for job in conn.execute(text("SELECT id, status, takes_credit FROM poster_jobs"))}
+    here = [{"shop": line.identifier, "kind": line.kind, "ref": line.ref, "key": credits._key(line.ref),
+             "credits": line.credits, "amount": line.amount_ar, "job": line.job_id, "name": f"line {line.id} here"}
+            for line in conn.execute(credits.LINES, {"shop": None})]
+    # By key: is it a payment; its lines in the kept ledger; its lines here, each with what it moves. Repayments stay
+    # out: they carry no ariary, each has its own rule below, and one skipped while its job ran is copied later.
+    paid, there, mine = set(), {}, {}
+    for row in lines:
+        if row["job_id"] is None:
+            there.setdefault(credits._key(row["ref"]), []).append(
+                (row["identifier"], row["kind"], row["credits"], row["amount_ar"]))
+            paid |= {credits._key(row["ref"])} if row["amount_ar"] is not None else set()
+    for line in here:
+        if line["job"] is None:
+            mine.setdefault(line["key"], []).append((line["shop"], line["kind"], line["credits"], line["amount"]))
+            paid |= {line["key"]} if line["amount"] is not None else set()
+    differs = {key for key in paid & mine.keys() if mine[key] != there.get(key, [])[:len(mine[key])]}
+    # And a line here in the place of a kept one (same shop, kind, key) must be that line: a repayment typed under the
+    # payment's reference would else pass for its reversal, and the payment be copied into a second shop.
+    slots = {(line["shop"], line["kind"], line["key"]): (line["credits"], line["amount"], line["job"]) for line in here}
+    differs |= {key for row in lines if (key := credits._key(row["ref"])) in paid
+                and slots.get((row["identifier"], row["kind"], key), (row["credits"], row["amount_ar"], row["job_id"]))
+                != (row["credits"], row["amount_ar"], row["job_id"])}
+    held, copy, report, present = list(here), [], [], 0  # held: what this database will hold, line by line of the copy
+    for row in lines:
+        shop, key, what = row["identifier"], credits._key(row["ref"]), _kept_line(row)
+        same = next((line for line in here if (line["shop"], line["kind"], line["key"]) == (shop, row["kind"], key)),
+                    None)
+        if row["job_id"] is not None:  # a repayment is here when its job is repaid here, whatever sits in its place
+            repaid = next((line for line in here if line["job"] == row["job_id"]), None)
+            if repaid is None and same is not None and not _unpaid(jobs_here.get(row["job_id"])):
+                report.append(f"skipped {what}: its reference is used here by {same['name']} for another correction: "
+                              f"repay job {row['job_id']} by hand under a reference not used yet (correct … --job)")
+                continue
+            same = repaid
+        if same is not None:  # typed again after the restore, maybe in another spelling: never twice
+            present += 1
+            if same["ref"] != row["ref"]:
+                report.append(f"here already: {what}, typed as {same['ref']!r} ({same['name']})")
+            continue
+        if key in differs and row["job_id"] is None:
+            report.append(f"skipped {what}: this payment's lines here ("
+                          + _named_lines([line for line in here if line["key"] == key])
+                          + ") are not the first ones of its kept history: this database's history stands; check this "
+                            "payment by hand (grant, move-payment)")
+            continue
+        if row["job_id"] is not None and (why := _unpaid(jobs_here.get(row["job_id"]))):
+            report.append(f"skipped {what}: {why}")
+            continue
+        # 0014's unique key and payment triggers compare the stored text: a second spelling of one key would pass them.
+        spelled = [line for line in held if line["shop"] == shop and line["key"] == key and line["ref"] != row["ref"]]
+        if spelled:
+            raise ValueError(f"{what} and {_named_lines(spelled)} write one reference two ways in {shop}: nothing "
+                             "copied, nothing guessed")
+        held.append({"shop": shop, "ref": row["ref"], "key": key, "name": f"line {row['id']} of the kept database"})
+        copy.append(row)
+    blocked = sorted({row["identifier"] for row in copy} - shops.keys())
+    copied = apply and not blocked
+    for row in copy:
+        if copied:
+            try:
+                credits._line(conn, shops[row["identifier"]], row["kind"], row["credits"], row["ref"], row["actor"],
+                              row["note"], origin=row["origin"], amount_ar=row["amount_ar"], method=row["method"],
+                              job_id=row["job_id"], at=row["created_at"])
+            except IntegrityError as error:
+                raise ValueError(f"{_kept_line(row)} is refused here ({error.orig}): nothing copied") from None
+        amount = f", {row['amount_ar']:+d} Ar" if row["amount_ar"] is not None else ""
+        report.append(f"{'copied' if copied else 'to copy'}: {_kept_line(row)}, {row['credits']:+d} credits{amount}, "
+                      f"written {row['created_at']} by {row['actor']}")
+    lost = Counter(shop for id, shop in images if id not in jobs_here)
+    report += [f"{shop}: {count} images made after the backup are gone and are not charged"
+               for shop, count in sorted(lost.items())]
+    for shop, id in sorted(shops.items()):
+        now = credits.balance(conn, id)
+        after = now["available"] + (0 if copied else sum(row["credits"] for row in copy if row["identifier"] == shop))
+        if after < 0:
+            report.append(f"{shop}: available {after} after the copy, below zero, with {now['pending']} generations "
+                          "waiting or running: each of them that ends without an image gives one credit back; what "
+                          "stays below zero is yours to settle")
+    if missing := sorted(names.keys() - shops.keys()):
+        report.append("shops of the kept database missing here: create each with this command, then run after-restore "
+                      "again")
+        report += ["  " + shlex.join(["python", "-m", "affiche.shops", "create", shop,
+                                      *(["--name", names[shop]] if names[shop] else []), "--welcome", "0"])
+                   for shop in missing]
+    if not copy:
+        report.append("nothing to copy")
+    elif not apply:
+        report.append("report only, nothing written: " + ("create the missing shops first, then run again with "
+                                                          "--apply" if blocked else "run again with --apply to copy"))
+    elif copied:
+        report.append(f"copied {len(copy)} lines")
+    return [f"the kept database {kept} holds {len(lines)} credit lines: {present} here already, {len(copy)} to copy, "
+            f"{len(lines) - present - len(copy)} skipped", *report], blocked
 
 
 class Refusal(Exception):
@@ -332,6 +495,15 @@ def _purchase_text(engine, args):
           f"{'' if stored else ' (not set: the fallback every shop reads)'}")
 
 
+def _after_restore(engine, args):
+    with write_tx(engine) if args.apply else engine.connect() as conn:
+        report, blocked = after_restore(conn, args.kept, apply=args.apply)
+    print("\n".join(report))
+    if args.apply and blocked:
+        raise Refusal(f"nothing copied: {', '.join(blocked)} missing here; create each with the command above, then "
+                      "run after-restore again")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m affiche.shops",
@@ -400,6 +572,13 @@ def build_parser() -> argparse.ArgumentParser:
     sentence.add_argument("text", nargs="?", help="the packs, the mobile money number, the reference to write, and when "
                                                   "credits arrive (1 to 500 characters)")
     sentence.set_defaults(handler=_purchase_text)
+    restore = commands.add_parser("after-restore", help="after a restore: the credit lines of the database it replaced "
+                                                        "that this one lacks; --apply copies them back")
+    restore.add_argument("kept", type=Path, help="the database the restore replaced: "
+                                                 "/data/affiche.db.before-restore-<time>, opened read-only")
+    restore.add_argument("--apply", action="store_true", help="copy them in one transaction, in their order and with "
+                                                              "their dates; without it, only report")
+    restore.set_defaults(handler=_after_restore)
     return parser
 
 
