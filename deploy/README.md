@@ -200,22 +200,23 @@ could not be removed.` and starts nothing: run `sudo docker rm -f affiche-ia-bac
 If the release prints `THE SERVICE IS DOWN: the previous container did not start again`, start it at once with
 `sudo docker start affiche-ia-affiche-ia-1`, then do steps 1 to 3.
 
-### Release 1 (migrations 0013 to 0015: several shops, credits)
+### Release 1 (migrations 0013 to 0016: several shops, credits, the operator dashboard)
 
-The first release with migrations 0013, 0014 and 0015 (designs: `docs/project/designs/multi-shop.md` and
-`prepaid-balance.md`, "Release gate"; 0015 only adds the two triggers that stop a shop's row being replaced). Do
-also the credit steps of the next section. In this order:
+The first release with migrations 0013, 0014, 0015 and 0016 (designs: `docs/project/designs/multi-shop.md` and
+`prepaid-balance.md`, "Release gate"; 0015 only adds the two triggers that stop a shop's row being replaced; 0016
+only adds the empty table of the operator's sessions, `admin-dashboard.md`). Do also the credit steps and the
+dashboard steps of the next two sections. In this order:
 1. On mx1, run `sudo sh /opt/affiche-ia/daily.sh`. Check that `/opt/affiche-ia/backups/last-backup.json` has
    today's time.
 2. Optional, the day before: copy that backup's `db/affiche-<stamp>.db` to the development machine. From
    `backend/`, run `uv run python -m affiche.rehearse <copy>`. It shows the counts early, with the development SQLite.
-3. Run the release command as usual. Its rehearsal runs 0013 to 0015 on a fresh copy of the live database, in
+3. Run the release command as usual. Its rehearsal runs 0013 to 0016 on a fresh copy of the live database, in
    the release image, before anything is stopped.
 4. Read the report. Its first line must show SQLite 3.40.1 (the image's Debian) and the release's revision.
 5. Check the report: each table that existed before has the same rows and hash before and after (a table the
    migrations add shows `None` before; a line that ends with `(over …)` compares only the columns it names); the
-   version goes from `0012` to `0015`; each `0013 ADDED`, `0014 ADDED` and `0015 ADDED` line says `as expected`
-   (0015 checks the shop's triggers in place of 0013, so 0013 has no line for them); each of the fourteen
+   version goes from `0012` to `0016`; each `0013 ADDED`, `0014 ADDED`, `0015 ADDED` and `0016 ADDED` line says
+   `as expected` (0015 checks the shop's triggers in place of 0013, so 0013 has no line for them); each of the fourteen
    `guard …` lines says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
 6. Check that the three ledger sums are the same before and after. Save the whole report as
    `docs/project/reviews/release-1-rehearsal-<date>.md`.
@@ -249,6 +250,22 @@ is refused before anything is sent, and costs nothing. Around the steps above:
    It states the packs, the mobile money number, the reference to write, and when the credits arrive.
 5. Tell the pilot « C’est prêt ».
 
+### Release 1: the operator dashboard (migration 0016)
+
+Release 1 also adds the operator dashboard ("Operator dashboard"). No password exists for it until you set one, so
+the first deploy takes four steps:
+1. The release's own `verify.sh` run is the routing check: `/api/admin/shops` without a session must answer 401 (a
+   404 fails: the dashboard's routes are missing). It only warns: "no operator password yet: run python -m
+   affiche.shops operator-password, then run verify.sh again".
+2. Set the password in the running container, and keep it in your password manager:
+   `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops operator-password`.
+3. The readiness check, by hand: `sudo sh /opt/affiche-ia/verify.sh <revision>`. It finds the password set and
+   writes the marker `/opt/affiche-ia/operator-ready`. From then on every release fails while the password is unset.
+4. Sign in at `https://affiches.miorantsoa.app/admin/` from your phone.
+
+The pilot's opening grant stays the command line's (step 3 of the previous section). Then check that the dashboard
+shows 30 credits available for `originalphone`.
+
 ### The first start after migration 0013
 
 Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH` is read at one start only:
@@ -259,9 +276,9 @@ Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH`
   (step 9 above). Change a password with `set-password` ("Shops").
 
 **If the new container does not start after the migration** (the release prints "THE SERVICE IS DOWN" and the
-container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 to 0015 run in
+container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 to 0016 run in
 one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migrations, as
-below, leaves it at 0015: fix forward.
+below, leaves it at 0016: fix forward.
 - The log says "Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set". Give shop 1 a password with
   the new image, through the operator service (no container log: "Shops"), then start it:
 
@@ -314,7 +331,7 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops create <ide
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops set-password <identifier>
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops suspend <identifier> --yes
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops enable <identifier>
-sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-sessions <identifier>   # or --all
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-sessions <identifier>   # or --all, or --operator
 ```
 
 - **create** makes an active shop and prints its password once. In the same step it grants the shop 5 offered
@@ -330,7 +347,8 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-session
   reverses a suspension. If the reason is a leaked password, also run `set-password`.
 - **enable** makes the shop and its sessions work again. Its data was never touched. Cancelled jobs stay
   cancelled.
-- **end-sessions** signs one shop, or every shop (`--all`), out on every device.
+- **end-sessions** signs one shop out on every device. `--all` signs out every shop and the operator's dashboard
+  (after a restore); `--operator` signs out the operator's dashboard only ("Operator dashboard").
 - **list** shows each shop's id, identifier, state, `password` or `no password` (never the password itself),
   creation day and name.
 
@@ -414,6 +432,60 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
   (your hours): 1 to 500 characters. Without a text, the command prints the current one. Until you set it, the shops
   read « Pour obtenir des crédits, contactez » followed by `SUPPORT_CONTACT_FR`, or « l’administrateur ».
 
+## Operator dashboard
+
+**State on 2026-11-17: being built for Release 1** (`docs/project/designs/admin-dashboard.md`). The two commands of
+this section exist. The page, its journal lines and the checks of `verify.sh` come with the rest of the release.
+
+The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
+phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an
+operator session is never a shop's. The command line stays: it does everything the dashboard does, also when nobody
+can sign in.
+
+**The password.** Only the command sets it, in the running container:
+
+```bash
+sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops operator-password
+```
+
+It prints a new password of 26 characters once (about 129 bits), keeps only its Argon2 hash in the database, and
+ends every operator session in the same step. Keep it in your password manager: it controls every shop and has no
+second factor. While the service is stopped, run it through the operator service ("Where a printed password goes"),
+never with `docker compose run … affiche-ia`. To change the password, run the command again: the old password and
+every operator session stop at once. Until a password is set, the dashboard's sign-in names the command.
+
+**A lost phone or laptop that you know nobody opened** (locked, and found again): `end-sessions --operator` (every
+operator session ends, no shop's), then `operator-password`. In every other case, follow the next paragraph.
+
+**A suspected compromise** (a session you did not open, a line or a journal line you did not make). Over SSH, in
+this order, each with `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops <command>`:
+1. `pause --yes`: no new request reaches the AI.
+2. `operator-password`: every operator session ends, the stolen one too; keep the new password.
+3. `purchase-text`: read it; set it again if it is not yours.
+4. `end-sessions --all`: every shop session and every operator session ends; the shops sign in again.
+5. `set-password` for every shop whose password was set from the dashboard in that time
+   (`journalctl -t affiche-ia | grep "action=password_set"`). The journal is best effort and keeps about 14 days:
+   when in doubt, every shop. Give each new password to its owner in person.
+6. `suspend --yes` every shop you did not create (`list` shows each creation day; the journal's `shop_created`).
+7. Check every credit line with the suspect actor (`dashboard:<8 hex>`, in each shop's history) against your payment
+   records. Take back unjustified credits with `correct -n`. Move a payment back with `move-payment` while its
+   credits are unspent.
+8. `resume`.
+
+The journal cannot prove that a stolen session was never used: a line is missing when the process stopped after the action. Do the whole procedure unless you know the session was never out of your hands.
+
+**What the dashboard leaves behind.** Its credit lines carry the actor `dashboard:<8 hex>`, which names a session,
+not a person; the command line's carry `operator`. Each of its other actions is one journal line, written after the
+action, best effort: `journalctl -t affiche-ia | grep "operator action"`. A line is missing when the process stopped
+between the two, and the journal keeps about 14 days ("Operate", Logs). The command line's own actions write no
+journal line: their output goes to your terminal only. The Service screen lists the live operator sessions, with
+their address and browser.
+
+**The marker of `verify.sh`.** Each release's `verify.sh` asks the dashboard whether an operator password is set. If
+it is, `verify.sh` writes `/opt/affiche-ia/operator-ready` once. If it is not: a warning while the marker is missing
+(the first deploy, "Release 1: the operator dashboard"), a failure once the marker exists (for example after a
+restore of an older database). Then run `operator-password`, and `verify.sh` again.
+
 ## Secrets (on the box, never in git)
 
 `/opt/affiche-ia/secrets/app.env` (root, 600): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SPEND_CAP_USD`,
@@ -444,17 +516,19 @@ machine regularly. This is still to be decided.
 
 **A restore rolls back every shop.** Passwords, suspensions and sessions go back to the time of the backup: a
 password reset made after that time is undone, the session of a lost phone works again, a suspended shop can send
-provider calls again, and a shop created after that time is gone. So the service stays stopped until the repairs are
-done. `/opt/affiche-ia/restore.sh` does the part that can be checked, and never starts the service.
+provider calls again, and a shop created after that time is gone. The operator's dashboard password goes back too,
+maybe to one you replaced since. So the service stays stopped until the repairs are done.
+`/opt/affiche-ia/restore.sh` does the part that can be checked, and never starts the service.
 
 1. Choose a copy: `sudo ls -lt /opt/affiche-ia/backups/db`.
 2. Run `sudo sh /opt/affiche-ia/restore.sh <file>`, with the file name only (for example
    `affiche-20261116T004000Z.db`). Under the lock that the releases and the nightly backup take, it stops the
    service, puts the copy in place, runs the application's start once in a one-off container (migrations and
-   checks, no server; this brings a backup from before migration 0013 to this version), ends every session and
-   lists the shops. Each run keeps the database it replaces as `/data/affiche.db.before-restore-<time>` (with its
-   `-wal` file) in the volume `affiche-ia_data`, and never overwrites one. A missing asset file is copied beside its
-   place and then renamed, so a copy cut short is done again by the next run. Last, it runs `after-restore` on the
+   checks, no server; this brings a backup from before migration 0013 to this version), ends every session (the
+   operator's too) and lists the shops. Each run keeps the database it replaces as
+   `/data/affiche.db.before-restore-<time>` (with its `-wal` file) in the volume `affiche-ia_data`, and never
+   overwrites one. A missing asset file is copied beside its place and then renamed, so a copy cut short is done
+   again by the next run. Last, it runs `after-restore` on the
    database it replaced: a report of the credit lines that the backup lacks ("Credits after a restore", below). The
    report writes nothing.
 3. If a step fails, the script stops with `RESTORE FAILED: <step>. <state>.`: the state says whether the service
@@ -465,6 +539,9 @@ done. `/opt/affiche-ia/restore.sh` does the part that can be checked, and never 
 4. On success it ends with `RESTORED: <file> is in place, at this version, with every session ended. THE SERVICE IS
    STOPPED.`, the list of the repairs and the exact command to run them with the operator service ("Shops"). Do
    them in this order:
+   - The operator's password, always and first: `operator-password`, now, before the service starts. The restored
+     database holds the backup's password; ending the sessions alone does not stop it. Keep the new one in your
+     password manager.
    - Each shop created after the time of the backup: the `create … --welcome 0` line that the report printed for it.
      The line is quoted for the shell: type it after `sudo env REVISION=… docker compose … run --rm operator`. The
      shop's own welcome credits come back with the copy. If there is no report, `create <identifier> --name "<name>"

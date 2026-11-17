@@ -169,8 +169,8 @@ def command(env, engine, tmp_path, capsys):
     return run
 
 
-def printed_password(out):
-    line, = [line for line in out.splitlines() if line.startswith("password (shown once")]
+def printed_password(out, label="password (shown once"):
+    line, = [line for line in out.splitlines() if line.startswith(label)]
     return line.rsplit(": ", 1)[1]
 
 
@@ -226,12 +226,75 @@ def test_the_operator_ends_sessions_suspends_and_enables(command, engine, passwo
     assert "already active" in command("enable", "boutiquedeux")[1]
     assert command("end-sessions", "originalphone")[:2] == (0, "1 sessions ended (originalphone (shop 1, « sans nom »))\n")
     assert auth.session_shop(engine, a) is None and auth.session_shop(engine, b) == shop_b
-    assert command("end-sessions", "--all")[:2] == (0, "1 sessions ended (every shop)\n")
+    assert command("end-sessions", "--all")[:2] == (0, "1 sessions ended (every shop); 0 operator sessions ended\n")
     assert auth.session_shop(engine, b) is None
     assert command("enable", "nobody") == (1, "", "refused: no shop has the identifier nobody\n")
 
 
+def operator_session(engine, token):
+    """An operator session row, as the dashboard's sign-in writes it (D-ADMIN-001)."""
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO operator_sessions VALUES (?,?,'2099-01-01T00:00:00.000000+00:00','203.0.113.1',"
+                             "NULL)", (auth.token_hash(token), utc_now()))
+
+
+def operator_state(engine):
+    """(the stored operator hash, how many operator sessions)."""
+    with engine.connect() as conn:
+        return (conn.exec_driver_sql("SELECT value FROM meta WHERE key=?", (auth.OPERATOR_KEY,)).scalar(),
+                conn.exec_driver_sql("SELECT count(*) FROM operator_sessions").scalar_one())
+
+
+def test_the_operator_password_is_printed_once_stored_hashed_and_ends_every_operator_session(command, engine, caplog,
+                                                                                            password_hash):
+    with write_tx(engine) as conn:
+        shops.set_password(conn, 1, password_hash)
+    shop, _ = auth.login(engine, IDENTIFIER, PASSWORD, "203.0.113.1")
+    operator_session(engine, "phone")
+    operator_session(engine, "laptop")
+    code, out, err = command("operator-password")
+    password = printed_password(out, "operator password (shown once")
+    assert (code, err, out) == (0, "", "new operator password; 2 operator sessions ended\noperator password (shown once; "
+                                       f"keep it in your password manager): {password}\n")
+    assert len(password) == 26 and set(password) <= set(shops.ALPHABET) and password not in caplog.text
+    stored, sessions = operator_state(engine)
+    assert sessions == 0 and stored.startswith("$argon2") and PASSWORDS.verify(password, stored) and stored not in out
+    assert auth.session_shop(engine, shop) == 1  # no shop's session ends
+    assert len(shops.new_password()) == 12  # a shop's password is unchanged
+    operator_session(engine, "phone")
+    code, out, _ = command("operator-password")  # run again: the hash is replaced
+    again = printed_password(out, "operator password (shown once")
+    assert code == 0 and again != password and out.startswith("new operator password; 1 operator sessions ended\n")
+    replaced, sessions = operator_state(engine)
+    assert sessions == 0 and PASSWORDS.verify(again, replaced) and not PASSWORDS.verify(password, replaced)
+    # One transaction: when the sessions cannot be ended, the new hash is not written either.
+    operator_session(engine, "phone")
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("CREATE TRIGGER stuck BEFORE DELETE ON operator_sessions BEGIN SELECT RAISE(ABORT, 'stuck'); "
+                             "END")
+    assert command("operator-password") == (1, "", "refused: stuck\n")
+    assert operator_state(engine) == (replaced, 1)
+
+
+def test_end_sessions_operator_ends_only_the_operators_and_all_ends_both(command, engine, password_hash):
+    with write_tx(engine) as conn:
+        shops.set_password(conn, 1, password_hash)
+    shop, _ = auth.login(engine, IDENTIFIER, PASSWORD, "203.0.113.1")
+    operator_session(engine, "phone")
+    operator_session(engine, "laptop")
+    assert command("end-sessions", "--operator") == (0, "2 operator sessions ended\n", "")
+    assert operator_state(engine)[1] == 0 and auth.session_shop(engine, shop) == 1
+    operator_session(engine, "phone")
+    assert command("end-sessions", "originalphone")[:2] == (0, "1 sessions ended (originalphone (shop 1, « sans nom »))\n")
+    assert operator_state(engine)[1] == 1  # one shop's sessions: never the operator's
+    shop, _ = auth.login(engine, IDENTIFIER, PASSWORD, "203.0.113.1")
+    assert command("end-sessions", "--all") == (0, "1 sessions ended (every shop); 1 operator sessions ended\n", "")
+    assert operator_state(engine)[1] == 0 and auth.session_shop(engine, shop) is None
+
+
 @pytest.mark.parametrize("argv", [[], ["suspend"], ["end-sessions"], ["end-sessions", "x", "--all"], ["delete", "x"],
+                                  ["end-sessions", "x", "--operator"], ["end-sessions", "--all", "--operator"],
+                                  ["operator-password", "x"],
                                   ["grant", "x", "1", "--ref", "r"], ["grant", "x", "1", "--offered", "--bought", "--ref", "r"],
                                   ["grant", "x", "1.5", "--offered", "--ref", "r"], ["grant", "x", "1", "--offered"],
                                   ["correct", "x", "1", "--ref", "r"], ["move-payment", "r", "a", "--note", "n"],
@@ -284,7 +347,7 @@ def test_a_backup_from_before_0013_is_migrated_and_repaired_before_the_service_s
     assert shops.main(["list"], env_file=None) == 0
     assert capsys.readouterr().out.startswith("1\toriginalphone\tactive\tno password\t")  # restore.sh names it
     assert shops.main(["end-sessions", "--all"], env_file=None) == 0
-    assert capsys.readouterr().out == "1 sessions ended (every shop)\n"
+    assert capsys.readouterr().out == "1 sessions ended (every shop); 0 operator sessions ended\n"
     assert shops.main(["set-password", "originalphone"], env_file=None) == 0
     password = printed_password(capsys.readouterr().out)
     settings.shop_password_hash = None  # removed from app.env after Release 1

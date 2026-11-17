@@ -125,7 +125,7 @@ elif [ "$*" = "-m affiche.backup $FAKE_BACKUPS" ] && [ -f "$FAKE_DATA/affiche.db
   echo "backup FAILED: OSError: [Errno 28] No space left on device" >&2
   exit 1
 elif [ "$*" = "-m affiche.shops end-sessions --all" ]; then
-  echo "2 sessions ended (every shop)"
+  echo "2 sessions ended (every shop); 1 operator sessions ended"
   exit 0
 elif [ "$*" = "-m affiche.shops list" ]; then
   if [ -n "${FAKE_PRE0013:-}" ]; then printf '1\toriginalphone\tactive\tno password\t2026-11-13\tOriginal Phone Mada\n'; exit 0; fi

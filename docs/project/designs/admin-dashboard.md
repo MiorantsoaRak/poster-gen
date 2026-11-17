@@ -195,7 +195,7 @@ DELETE /api/admin/sessions          protected
 |---|---|---|
 | Guessing the password | the two per-address limits | 429 after 5 failures from one address; Argon2 at most twice at a time; about 129 bits |
 | Many addresses guessing | nothing global, on purpose | one Argon2 per try; each live session shows its address on the Service screen |
-| A stolen session | the operator | the "suspected compromise" procedure (Security); ending operator sessions alone is enough only when the session was not used |
+| A stolen session | the operator | the "suspected compromise" procedure (Security); ending operator sessions alone is never shown to be enough by the journal (T-ADMIN-001 review) |
 | The database or a backup is read | — | offline Argon2 against about 129 bits; run `operator-password` to be sure |
 | No password set | `meta` | 409 `operator_not_set`; the page names the command; verify.sh warns at the first deploy and fails afterwards (D-ADMIN-007) |
 | A backup restored | the runbook | the backup's password and sessions return; restore.sh ends the sessions; `operator-password` runs before the start |
@@ -763,7 +763,7 @@ kept (after navigation, reload, a new tab)
 7. Check every credit line with the suspect actor (`dashboard:<8 hex>`, in each shop's history) against your payment records. Take back unjustified credits with `correct -n`. Move a payment back with `move-payment` while its credits are unspent.
 8. `resume`.
 
-When the stolen session was never used (no line and no journal line with its actor), steps 1 and 2 are enough.
+The journal cannot prove that a stolen session was never used: a line is missing when the process stopped after the action. Do the whole procedure unless you know the session was never out of your hands.
 
 **Residual, same origin** (round 1, rulings): the dashboard and the shops' pages share an origin. Injected shop-page JavaScript in the operator's browser could read admin data and perform writes using the operator cookie; HttpOnly, Path and SameSite do not prevent that. A separate build is not an origin boundary. Today the shops' pages render shop text through Vue's escaping and use no `v-html` (checked: none in frontend/src). The full fix is a separate origin, owner decision 6.
 

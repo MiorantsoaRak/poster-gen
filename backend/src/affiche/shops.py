@@ -1,11 +1,13 @@
-"""The operator's actions on shops and their credits (D-MULTI-SHOP-003, D-BALANCE-005). Each function takes a
-connection and never commits: the caller holds the transaction (write_tx), so that a later record of the action can
-join it. Passwords are hashed by the caller, outside the transaction.
+"""The operator's actions on shops and their credits (D-MULTI-SHOP-003, D-BALANCE-005), and the operator's own password
+(D-ADMIN-001). Each function takes a connection and never commits: the caller holds the transaction (write_tx), so that
+a later record of the action can join it. Passwords are hashed by the caller, outside the transaction.
 
     python -m affiche.shops list
     python -m affiche.shops create <identifier> [--name "Nom affiché"] [--welcome 5]   prints the password once
     python -m affiche.shops set-password <identifier>                     prints the new password once; ends its sessions
-    python -m affiche.shops end-sessions (<identifier> | --all)
+    python -m affiche.shops end-sessions (<identifier> | --all | --operator)   --all: every shop's and the operator's
+    python -m affiche.shops operator-password                             the dashboard's password, printed once; ends
+                                                                          every operator session
     python -m affiche.shops suspend <identifier> --yes                    without --yes, only shows the shop
     python -m affiche.shops enable <identifier>
     python -m affiche.shops grant <identifier> <credits> --offered --ref <reference> [--note "…"]
@@ -42,17 +44,17 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from affiche.config import BACKEND_DIR, ENV_FILE, ConfigError, load_settings
 from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import credits, jobs
-from affiche.posters.auth import PASSWORDS, identifier_key
+from affiche.posters.auth import OPERATOR_KEY, PASSWORDS, identifier_key
 from affiche.posters.models import Profile
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import usd_to_micros
 
-# No 0/o, 1/l/i: read aloud and typed on a phone. Twelve of them: about 59 bits.
+# No 0/o, 1/l/i: read aloud and typed on a phone. Twelve of them: about 59 bits; the operator's 26, about 129.
 ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
-def new_password() -> str:
-    return "".join(secrets.choice(ALPHABET) for _ in range(12))
+def new_password(length: int = 12) -> str:
+    return "".join(secrets.choice(ALPHABET) for _ in range(length))
 
 
 def find_shop(conn: Connection, identifier: str):
@@ -92,6 +94,19 @@ def end_sessions(conn: Connection, shop_id: int | None = None) -> int:
     if shop_id is None:
         return conn.execute(text("DELETE FROM sessions")).rowcount
     return conn.execute(text("DELETE FROM sessions WHERE shop_id=:shop"), {"shop": shop_id}).rowcount
+
+
+def end_operator_sessions(conn: Connection) -> int:
+    """Every operator session, and no shop's. Returns how many ended."""
+    return conn.execute(text("DELETE FROM operator_sessions")).rowcount
+
+
+def set_operator_password(conn: Connection, password_hash: str) -> int:
+    """D-ADMIN-001: the only writer of the operator's hash. Every operator session ends in the same transaction, so that
+    none outlives the password it was opened with. Returns how many ended."""
+    conn.execute(text("INSERT INTO meta VALUES (:key, :hash) ON CONFLICT(key) DO UPDATE SET value=excluded.value"),
+                 {"key": OPERATOR_KEY, "hash": password_hash})
+    return end_operator_sessions(conn)
 
 
 def _state(conn: Connection, shop_id: int) -> str:
@@ -377,10 +392,22 @@ def _set_password(engine, args):
 
 
 def _end_sessions(engine, args):
-    shop = None if args.all else _shop(engine, args.identifier)
+    shop = None if args.all or args.operator else _shop(engine, args.identifier)
     with write_tx(engine) as conn:
-        ended = end_sessions(conn, None if shop is None else shop.id)
-    print(f"{ended} sessions ended ({'every shop' if shop is None else _named(shop)})")
+        done = [] if args.operator else [f"{end_sessions(conn, None if shop is None else shop.id)} sessions ended "
+                                         f"({'every shop' if shop is None else _named(shop)})"]
+        if shop is None:  # --all or --operator (D-ADMIN-007)
+            done.append(f"{end_operator_sessions(conn)} operator sessions ended")
+    print("; ".join(done))
+
+
+def _operator_password(engine, _args):
+    password = new_password(26)  # it controls every shop, with no second factor
+    password_hash = PASSWORDS.hash(password)
+    with write_tx(engine) as conn:
+        ended = set_operator_password(conn, password_hash)
+    print(f"new operator password; {ended} operator sessions ended\n"
+          f"operator password (shown once; keep it in your password manager): {password}")
 
 
 def _suspend(engine, args):
@@ -521,11 +548,15 @@ def build_parser() -> argparse.ArgumentParser:
     reset = commands.add_parser("set-password", help="a new password, printed once; ends that shop's sessions")
     reset.add_argument("identifier")
     reset.set_defaults(handler=_set_password)
-    end = commands.add_parser("end-sessions", help="sign one shop, or every shop (after a restore), out everywhere")
+    end = commands.add_parser("end-sessions", help="sign one shop, every shop and the operator (after a restore), or the "
+                                                   "operator alone, out everywhere")
     whom = end.add_mutually_exclusive_group(required=True)
     whom.add_argument("identifier", nargs="?")
-    whom.add_argument("--all", action="store_true")
+    whom.add_argument("--all", action="store_true", help="every shop's sessions and the operator's")
+    whom.add_argument("--operator", action="store_true", help="every operator session, and no shop's")
     end.set_defaults(handler=_end_sessions)
+    commands.add_parser("operator-password", help="a new password for the operator's dashboard, printed once; ends every "
+                                                  "operator session").set_defaults(handler=_operator_password)
     stop = commands.add_parser("suspend", help="stop a shop; enable reverses it. Without --yes, only shows the shop")
     stop.add_argument("identifier")
     stop.add_argument("--yes", action="store_true")

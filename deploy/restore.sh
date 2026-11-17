@@ -4,11 +4,11 @@
 # Under the lock that the release and daily.sh take, in order: stop the service; put the backup in place (each run
 # keeps the database it replaces as affiche.db.before-restore-<time>, never overwritten); run the application's own
 # start once in a one-off container (lock, migrations, checks; no server), which also brings a backup from before
-# migration 0013 to this version; end every session; list the shops; report the credit lines of the database it
-# replaced that the backup lacks (read only: the operator copies them with --apply). It NEVER starts the service: the
-# repairs only the operator knows come first. Any failed step stops it with what state the service and the data are in;
-# a failed report does not, the database being restored by then (backend/tests/test_restore_script.py runs this file
-# with a fake docker).
+# migration 0013 to this version; end every session, the operator's too; list the shops; report the credit lines of
+# the database it replaced that the backup lacks (read only: the operator copies them with --apply). It NEVER starts
+# the service: the repairs only the operator knows come first, the operator's password first of all. Any failed step
+# stops it with what state the service and the data are in; a failed report does not, the database being restored by
+# then (backend/tests/test_restore_script.py runs this file with a fake docker).
 set -eu
 [ "$#" = 1 ] || { echo "usage: sudo sh restore.sh <file name in backups/db, for example affiche-20261116T004000Z.db>"; exit 2; }
 FILE="$1"
@@ -69,6 +69,7 @@ op python -m affiche.shops after-restore "$BEFORE" \
 echo "RESTORED: $FILE is in place, at this version, with every session ended. THE SERVICE IS STOPPED."
 echo "The database it replaced is $BEFORE in the volume affiche-ia_data: remove it only when you are satisfied."
 echo "Before you start it, redo by hand each change made after the time of this backup (this script cannot know them):"
+echo "  the operator's password: operator-password (the restored database holds the backup's password; run it now, before the service starts)"
 echo "  each shop created:     the line that after-restore printed for it (python -m affiche.shops create ... --welcome 0), else create <identifier> --name \"<name>\" --welcome 0"
 echo "  then the credit lines: after-restore $BEFORE --apply (copies them back in their order, with their dates; nothing while a shop is missing)"
 echo "  each password reset:   set-password <identifier>"

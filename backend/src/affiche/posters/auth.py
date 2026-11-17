@@ -20,6 +20,8 @@ from affiche.posters.store import Refused
 log = logging.getLogger(__name__)
 PASSWORDS = PasswordHash.recommended()
 COOKIE = "affiche_session"
+# meta's key for the operator's Argon2 hash (D-ADMIN-001). Its only writer is shops.set_operator_password: no HTTP route.
+OPERATOR_KEY = "operator_password_hash"
 # One Argon2 check takes tens of MiB. Forty worker threads verifying at once would pass the container's memory
 # limit and restart it in the middle of a paid job; two at a time is plenty for one shop.
 VERIFYING = threading.BoundedSemaphore(2)

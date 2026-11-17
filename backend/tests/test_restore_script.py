@@ -40,13 +40,18 @@ def test_a_restore_runs_every_step_in_order_and_leaves_the_service_stopped(tmp_p
     before, = data.glob("affiche.db.before-restore-*Z")
     assert before.read_bytes() == b"live database" and f"The database it replaced is /data/{before.name} in the volume" in output
     assert (data / f"{before.name}-wal").read_bytes() == b"live wal" and not (data / "affiche.db-wal").exists()
-    assert "2 sessions ended (every shop)" in output and "2\tboutiquedeux\tsuspended\tpassword" in output
+    assert "2 sessions ended (every shop); 1 operator sessions ended" in output  # the operator's too (D-ADMIN-007)
+    assert "2\tboutiquedeux\tsuspended\tpassword" in output
     # The report reads the database set aside, by the path the operator service sees, after the shops list.
     assert ("2\tboutiquedeux\tsuspended\tpassword\t2026-11-15\tB\nto copy: line 7 of the kept database (originalphone "
             f"grant 'MV-1')\nRESTORED: {FILE} is in place, at this version, with every session ended. THE SERVICE IS "
             "STOPPED.") in output
     for repair in ("create <identifier>", "set-password <identifier>", "suspend <identifier> --yes"):
         assert repair in output
+    # The backup's operator password is replaced first, before the service starts (D-ADMIN-001, after a restore).
+    assert ("(this script cannot know them):\n  the operator's password: operator-password (the restored database holds "
+            "the backup's password; run it now, before the service starts)\n  each shop created:") in output
+    assert output.index("operator-password") < output.index(START)
     assert ("  each shop created:     the line that after-restore printed for it (python -m affiche.shops create ... "
             "--welcome 0), else create <identifier> --name \"<name>\" --welcome 0\n"
             f"  then the credit lines: after-restore /data/{before.name} --apply (copies them back in their order, with "
