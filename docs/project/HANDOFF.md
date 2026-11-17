@@ -2,6 +2,27 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
+## Release 1: multi-shop and prepaid balance built — Claude, 2026-11-17 (READ FIRST for Release 1)
+
+**Done, committed locally, nothing pushed, nothing deployed:** the multi-shop feature (T-MULTI-SHOP-001 to 006, ADR-108) and the prepaid balance (T-PENDING-KINDS, T-BALANCE-001 to 006, ADR-109; design `designs/prepaid-balance.md` v4 with its two amendments of 2026-11-17 at the top). TODO.md holds each task's detail and review reports. `main` is ahead of `origin/main`; push and deploy only on the user's word, and no deploy before Release 1 is complete.
+
+**Last verified on this Linux machine (stub, zero spend, SQLite 3.53.1):** backend `uv run pytest -q -rf` 1346 passed, 3 deselected; `tests/mutant_two_shops.py` killed; frontend 227 tests and build; `browser_smoke.py`, `chat_browser.py`, `editor_refinements_browser.py` passed.
+
+**Exact next step:** T-SHOP-REPLACE (forward migration 0015; required before the Release 1 deploy). Then the admin dashboard (requirements exist; its design must include the Reka UI trial the user agreed to), the conditions of use, the shop dashboard, « Partager ».
+
+**Waiting for the user's yes (defaults in force until then):**
+- French sentences: the sign-out confirmation, the pause sentence, the cleanup-failure sentence (multi-shop); « 1 crédit · il vous en reste N. Bientôt à court : … », the zero sentence followed by the purchase text on the chat card, « 1 crédit, une seule fois pour cette demande » in the editor's dialog for a lost answer (T-BALANCE-006).
+- Owner decisions listed under T-BALANCE-006 in TODO.md and at the end of the design; T-DEPLOY-DOCKER-RUN is proposed, not confirmed.
+- At the release, by the user: warn the pilot, `grant originalphone 30 --offered --ref pilot-opening`, then `purchase-text`.
+
+**Landmines:**
+- Not proven: migration 0014 and `after-restore` on the release image's SQLite 3.40.1 (the release rehearsal is the gate); `release.sh`, `restore.sh` and the read-only open of the kept database in the operator container have only run against the fake docker.
+- Review state: the last fixes of T-BALANCE-005 (after round 4) and of T-BALANCE-006 (after round 1), both APPROVE WITH FIXES, were not reviewed again.
+- The browser smokes failed now and then because they uploaded a photo while the field was still disabled (the upload is dropped); they now wait for the field. The backend's one unexplained failure (T-SUITE-FLAKE) has not come back; still run with `-rf`.
+- After a refused editor request (4xx) the browser takes a new request key (`mutation()` in `frontend/src/api.ts`); a kept key now means a lost answer only.
+- A chat left open shows the old balance until the next read (dialog, job, return to the tab, reload); the server decides at admission.
+- The checkout is shared with a Codex session: its uncommitted work (PROJECT.md, its hunks in DECISIONS.md, TODO.md and this file, `brand/`, the mockups folders, the social-publishing research) must never be staged with Claude's commits.
+
 ## Codex Doka Studio — Signal kit v1 delivered, 2026-11-15
 
 **User decisions:** Doka Studio is the selected brand name; Signal is the chosen identity direction. The user then said **“go”** to the offered final logo kit, authorizing Phase 7 of the invoked logo-design skill. PROJECT.md metadata records the delivered digital kit; application code and technical identifiers remain as before for this track. Claude’s Release 1 changes below are independent and must be preserved.
