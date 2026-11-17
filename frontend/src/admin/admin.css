@@ -1,0 +1,66 @@
+/* The operator's page (D-ADMIN-005), apart from the shops' style.css. The Signal kit's palette (T-BRAND-DOKA): charcoal on
+   warm paper, Signal yellow as the accent with charcoal text on it, never white; both themes from the device; the
+   system's fonts. One column at 360 px: fields at 16 px, targets 44 px high, long values wrap anywhere. */
+:root {
+  --paper: #f5f1e8; --charcoal: #20201d; --signal: #f2c744;
+  --ground: var(--paper); --surface: #fffdf8; --text: var(--charcoal); --muted: #57534a; --line: #cfc7b6; --bad: #a3271f; --focus: var(--charcoal);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ground: var(--charcoal); --surface: #2b2b27; --text: var(--paper); --muted: #c9c3b6; --line: #55534c; --bad: #ff9a8f; --focus: var(--signal) }
+}
+
+* { box-sizing: border-box }
+body { margin: 0; background: var(--ground); color: var(--text); font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; overflow-wrap: anywhere }
+h1 { font-size: 24px; line-height: 32px; margin: 16px 0 }
+h2 { font-size: 18px; line-height: 24px; margin: 24px 0 8px }
+p { margin: 0 0 8px }
+small { display: block; color: var(--muted); font-size: 14px }
+a { color: inherit }
+code { font-family: ui-monospace, monospace }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px }
+[tabindex='-1']:focus { outline: none }
+
+button, input { font: inherit; color: inherit }
+button { min-height: 44px; padding: 0 16px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface); font-weight: 700; cursor: pointer }
+button.primary { background: var(--signal); border-color: var(--signal); color: var(--charcoal) }
+button[aria-disabled='true'] { opacity: .6; cursor: progress }
+input { min-height: 44px; width: 100%; padding: 8px 12px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface) }
+label { font-weight: 700 }
+summary { min-height: 44px; padding: 10px 0; font-weight: 700; cursor: pointer }
+nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; font-weight: 700 }
+
+.page, .bar, .banner { max-width: 960px; margin-inline: auto; padding-inline: 16px }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding-block: 8px; border-bottom: 2px solid var(--line) }
+.bar .brand { margin: 0; font-weight: 800 }
+.bar nav { margin-right: auto }
+.actor { color: var(--muted); font-size: 14px }
+.stack { display: grid; gap: 8px; max-width: 480px }
+.stack button { justify-self: start }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 }
+.fold { border-block: 2px solid var(--line); margin: 16px 0; padding-bottom: 8px }
+.refusal { color: var(--bad); font-weight: 700 }
+.refusal:empty, [role='status']:empty { margin: 0 }
+.note { border-left: 4px solid var(--signal); padding-left: 12px }
+.banner { padding-block: 8px; background: var(--signal); color: var(--charcoal); font-weight: 700; margin-bottom: 0 }
+.shown { width: min(928px, calc(100% - 32px)); margin: 16px auto; padding: 12px 16px; border: 2px solid var(--signal); border-radius: 8px; background: var(--surface) }
+.secret { font-size: 20px; letter-spacing: .05em; user-select: all }
+.name { font-size: 18px }
+
+table { width: 100%; border-collapse: collapse }
+th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line) }
+th { color: var(--muted); font-size: 14px }
+/* Only the identifier and the name may break inside a word; short values and headings keep theirs. */
+.shops th, .shops td:nth-child(n+3) { overflow-wrap: normal }
+/* Below 600 px each shop is a card: its identifier first, then each value with its column's name. */
+@media (max-width: 599px) {
+  .shops thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
+  .shops, .shops tbody, .shops tr, .shops td { display: block }
+  .shops tr { margin-bottom: 12px; padding: 4px 12px 8px; border: 2px solid var(--line); border-radius: 8px; background: var(--surface) }
+  .shops td { padding: 2px 0; border: 0 }
+  .shops td[data-label]::before { content: attr(data-label) ': '; color: var(--muted) }
+}
+
+dialog { width: min(32rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 16px 20px; border: 2px solid var(--text); border-radius: 12px; background: var(--surface); color: var(--text) }
+dialog::backdrop { background: rgb(0 0 0 / .55) }
+dialog h2 { margin-top: 0 }

@@ -470,6 +470,29 @@ def test_the_built_frontend_is_public_and_everything_under_api_stays_closed(sett
         assert client.get("/api/shop-profile").status_code == 200
 
 
+def test_the_operators_page_is_served_at_admin_by_the_same_mount(settings, tmp_path, monkeypatch):
+    """D-ADMIN-005: the second build pass writes dist/admin/; the one static mount serves it, public like the shops' page."""
+    build = tmp_path / "dist"
+    (build / "admin" / "assets").mkdir(parents=True)
+    (build / "index.html").write_text("<!doctype html><title>Atelier</title>", encoding="utf-8")
+    (build / "admin" / "index.html").write_text("<!doctype html><title>Doka Studio · Operator</title>", encoding="utf-8")
+    (build / "admin" / "assets" / "index-abc123.js").write_text("console.log(2)", encoding="utf-8")
+    monkeypatch.setattr(rendering, "BUILD_DIR", build)
+    settings.serve_frontend = True
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        page = client.get("/admin/")
+        assert page.status_code == 200 and "Operator" in page.text and page.headers["cache-control"] == "no-cache"
+        assert client.get("/admin/index.html").text == page.text
+        # Without the slash Starlette's StaticFiles (html=True) redirects to it: a directory's address ends in "/".
+        bare = client.get("/admin", follow_redirects=False)
+        assert bare.status_code == 307 and bare.headers["location"] == f"{ORIGIN}/admin/"
+        script = client.get("/admin/assets/index-abc123.js")
+        assert script.status_code == 200 and script.text == "console.log(2)"
+        assert "Atelier" in client.get("/").text  # the shops' page stays at /
+        missing = client.get("/admin/assets/gone.js")
+        assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
+
+
 def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
     engine = client.app.state.engine
     assert auth.limit_key("2001:db8:1:2:aaaa::1") == auth.limit_key("2001:db8:1:2:bbbb::9") == "2001:db8:1:2::"
