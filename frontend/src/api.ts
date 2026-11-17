@@ -244,11 +244,22 @@ export async function mutation<T>(path: string, body: unknown, revision?: number
   const signature = JSON.stringify([path, body, revision, method])
   const operation = key ?? uncertain.get(signature) ?? crypto.randomUUID()
   if (!key) uncertain.set(signature, operation)
-  const result = await api<T>(path, { method, quiet, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation,
-    ...(revision === undefined ? {} : { 'If-Match': `"${revision}"` }) }, body: JSON.stringify(body) })
+  let result: T
+  try {
+    result = await api<T>(path, { method, quiet, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation,
+      ...(revision === undefined ? {} : { 'If-Match': `"${revision}"` }) }, body: JSON.stringify(body) })
+  } catch (reason) {
+    // A refusal (4xx) stored nothing under the key (the server stores only what it accepted): the key is not kept, so
+    // that `retained` means a lost answer only.
+    if (reason instanceof ApiError && reason.status >= 400 && reason.status < 500) uncertain.delete(signature)
+    throw reason
+  }
   uncertain.delete(signature)
   return result
 }
+/** Whether a request to `path` lost its answer and keeps its key: sent again unchanged, the server answers what it stored
+ *  (an admitted image, whatever the balance says now: D-BALANCE-006). */
+export const retained = (path: string) => [...uncertain.keys()].some(signature => JSON.parse(signature)[0] === path)
 
 // Addresses of images made by the server, with its encoder's version: the browser keeps them a year (ADR-087). Keep in
 // step with backend/src/affiche/api.py (THUMBNAIL_VERSION, DISPLAY_VERSION) and rendering.CANVAS_IMAGE_VERSION; an

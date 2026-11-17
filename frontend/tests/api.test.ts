@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { api, bind, BUNDLE, clockSkew, mutation, open, read } from '../src/api'
+import { api, bind, BUNDLE, clockSkew, mutation, open, read, retained } from '../src/api'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 // The shop's requests leave only once the gate has opened on the bound shop (D-MULTI-SHOP-007): shop 1 here.
@@ -34,6 +34,22 @@ it('reuses an uncertain mutation key after a lost response, then starts a new ac
   expect(requests[0].headers).toEqual(requests[1].headers)
   expect(requests[2].headers).not.toEqual(requests[1].headers)
   expect(requests[0].body).toBe(requests[1].body)
+})
+it('keeps the key of a lost answer only: a refusal stored nothing, so the next tap is a new request (D-BALANCE-006)', async () => {
+  const refused = async () => new Response(JSON.stringify({ error: { code: 'no_credit', message_fr: 'Plus de crédit.' } }), { status: 402 })
+  const fetch = vi.fn().mockRejectedValueOnce(new Error('lost')).mockImplementationOnce(answer()).mockImplementationOnce(refused).mockImplementation(answer())
+  vi.stubGlobal('fetch', fetch)
+  await expect(mutation('/api/creations/c/scenes', { value: 1 }, 2)).rejects.toThrow('Connexion')
+  expect(retained('/api/creations/c/scenes')).toBe(true)
+  expect(retained('/api/creations/c/refinements')).toBe(false)
+  await mutation('/api/creations/c/scenes', { value: 1 }, 2)  // the same key: the server answers what it stored
+  expect(retained('/api/creations/c/scenes')).toBe(false)
+  await expect(mutation('/api/creations/c/scenes', { value: 2 }, 2)).rejects.toThrow('Plus de crédit.')
+  expect(retained('/api/creations/c/scenes')).toBe(false)
+  await mutation('/api/creations/c/scenes', { value: 2 }, 2)
+  const keys = fetch.mock.calls.map(call => ((call as unknown as [string, RequestInit])[1].headers as Record<string, string>)['Idempotency-Key'])
+  expect(keys[0]).toBe(keys[1])
+  expect(new Set(keys.slice(1)).size).toBe(3)  // after the refusal, a new key
 })
 it('reads the server clock from the Date header; a response without one keeps the last reading', async () => {
   vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(answer({ Date: new Date(Date.now() + 30_000).toUTCString() })).mockImplementation(answer()))

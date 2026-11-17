@@ -10,6 +10,7 @@ import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from '
 import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
+import { ended, ONCE } from './generation'
 
 const props = defineProps<{ adapter: ChatAdapter }>()
 const emit = defineEmits<{ steps: [] }>()
@@ -73,7 +74,7 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…'
 const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
 const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
-const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value); return button === 'resume' && starting.value ? null : button }
+const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value, !free(item) && state.credit.stop); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
 // An untapped change card can be taken back: « Annuler ».
 const untapped = (item: Item) => changes(item.card) && !item.spent && !item.done
@@ -84,7 +85,9 @@ const stale = computed(() => openCard() ? '' : staleLine(state.stale))
 const staleCard = computed(() => items.value.filter(untapped).pop())
 // A small photo is agreed before a whole new scene only: a refinement and a free change ask nothing.
 const asksPhoto = (item: Item) => smallPhoto.value && [null, 'scene'].includes(effect(item))
-const limitOf = (item: Item) => paid(item.card) && !item.spent && !item.done && !free(item) ? limitLine(left.value) : ''
+// A card whose tap would be a new image request: it says what that costs, or what stops it in place of its button.
+const costs = (item: Item) => paid(item.card) && !item.spent && !item.done && !free(item)
+const limitOf = (item: Item) => costs(item) ? limitLine(left.value) : ''
 // A price card from before says the price is redrawn; a price that is a layer is only changed.
 const lineOf = (item: Item) => !item.spent && !item.done && !item.card?.effect && free(item) ? `Je change le prix sur l’affiche : ${price(item.card!.words?.price_ar)}.` : item.text
 
@@ -330,6 +333,8 @@ async function replay(item: Item) {
   try { answer = await mutation<{ job_id?: unknown }>(request.path, request.body, request.revision, item.id) } catch (reason) { failure = reason }
   if (!mine(at)) return
   starting.value = false
+  // A request the server never took, refused for want of credit: the balance shown was stale. The card keeps its request.
+  if (failure instanceof ApiError && failure.code === 'no_credit') props.adapter.recount()
   if (typeof answer?.job_id !== 'string') return conclude(item, failure)
   item.job = answer.job_id; item.card!.error = undefined; save()
   props.adapter.follow({ id: answer.job_id, kind: request.path.endsWith('/refinements') ? 'refine' : 'scene', status: 'queued', result_ref: null, error_code: null })
@@ -412,7 +417,8 @@ async function reconcile() {
     open.done = true; open.card!.error = undefined
     app('Le produit, le titre et le prix sont-ils exacts ?', { kind: 'result', visual_id: job.result_ref ?? undefined })
   }
-  else { open.done = true; app(state.error || 'Cette version n’a pas abouti. Aucune image n’a été ajoutée.'); state.error = ''; again(open) }
+  // The editor's sentence when it followed the end (poll); else the same one, for a job that ended while no page was open.
+  else { open.done = true; app(state.error || ended(job)); state.error = ''; again(open) }
   save()
 }
 
@@ -520,6 +526,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
         <template v-for="button in [buttonOf(item)]" :key="button ?? ''">
           <p v-if="button === 'resume'">L’affiche n’a peut-être pas été lancée.</p>
           <p v-if="limitOf(item)" class="chat-limit">{{ limitOf(item) }}</p>
+          <p v-if="costs(item) && state.credit.stop" class="why" role="status">{{ state.credit.text }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
             <button v-if="button === 'create'" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
@@ -533,7 +540,8 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
             <button v-if="stale && item === staleCard" type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.', item)">Remettre les textes de l’image</button>
             <button v-if="item.card && !item.done && offersSteps(item.card)" type="button" class="secondary" @click="emit('steps')">Pas à pas</button>
           </div>
-          <small v-if="(button === 'create' && !free(item)) || button === 'retry' || button === 'resume'">{{ state.cost }}</small>
+          <small v-if="button === 'create' && !free(item)">{{ state.credit.text }}</small>
+          <small v-else-if="button === 'retry' || button === 'resume'">{{ ONCE }}</small>
           <small v-if="button === 'create' && item.card?.kind === 'recap'">Une erreur ? Écrivez la correction.</small>
         </template>
       </div>

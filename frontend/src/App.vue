@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import { announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, seen, shopKey, shopStorage, state, support, thumbnailUrl, upload, verify, type SessionAnswer } from './api'
+import { announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, thumbnailUrl, upload, verify, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
-import { elapsedLabel, localTime, overdue, phase, retryDelay, type Phase } from './generation'
+import { credit, elapsedLabel, ended, localTime, ONCE, overdue, phase, retryDelay, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
@@ -12,11 +12,11 @@ import { colourPalette, samplePhoto, validColour, type Palette } from './palette
 import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Words } from './chat'
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
-interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; scene_estimate_micros: number; plan_estimate_micros: number; texture_estimate_micros: number; formats_enabled?: Format[] }
+interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[] }
 interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
-interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null }
+interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
 const identifier = ref(''), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
@@ -27,6 +27,16 @@ const loaded = ref(false), shown = computed(() => state.value === 'shown' && loa
 const signing = ref(false), gateError = ref(''), keepEdits = ref(false)
 const elsewhere = computed(() => state.value === 'out' && (seen.value === 'other' || typeof seen.value === 'number'))
 const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
+// The shop's credits (D-BALANCE-006): read on their own, so that a failed read never stops the page; null while unread or
+// after a failed read, never 0. Only the latest read counts: an older answer may arrive last.
+const balance = ref<Balance | null>(null)
+let balanceTurn = 0
+async function readBalance() {
+  const turn = ++balanceTurn
+  let read: Balance | null = null
+  try { read = await api<Balance>('/api/balance', { quiet: true }) } catch { /* unknown: the server decides at the tap */ }
+  if (turn === balanceTurn) balance.value = read
+}
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -623,28 +633,36 @@ const vModal = {
   mounted(el: HTMLElement & { back?: Element | null }) { el.back = document.activeElement; el.tabIndex = -1; (el.querySelector<HTMLElement>('[data-focus]') ?? el).focus() },
   unmounted(el: HTMLElement & { back?: Element | null }) { (el.back as HTMLElement | null)?.focus?.() },
 }
-// A paid call is never one tap: the owner sees what it does and what it costs, then confirms.
-const paid = ref<{ title: string; text: string; cost: string; label: string; run: () => Promise<void> } | null>(null)
-const costLine = (micros?: number) => micros ? `Réserve de budget : ${dollars(micros)}. Le coût réel est comptabilisé après le traitement ; cette réserve n’est pas une facture ni un plafond du fournisseur.` : 'Mode de démonstration : aucune dépense.'
+// A paid call is never one tap: the owner sees what it does and what it costs, then confirms. A new image (`charged`) says
+// its credit, read again as the dialog opens, and what stops it, with « Fermer » alone (D-BALANCE-006). `again`: a
+// request to its route lost its answer and keeps its key (api.ts retained): sent again, the server answers what it
+// stored, whatever the balance says now; a request it never took is refused there with its own sentence.
+const paid = ref<{ title: string; text: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void> } | null>(null)
+const paidCost = computed(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
+  : paid.value.again ? { stop: false, text: ONCE } : credit(balance.value, paid.value.charged))
+const unanswered = (route: string) => retained(`/api/creations/${creation.value?.id}/${route}`)
 function askScene() {
   if (whyNoHeadline.value) { error.value = whyNoHeadline.value; go('textes'); return }  // also for « Nouvelle version »
-  paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: costLine(caps.value?.scene_estimate_micros),
+  void readBalance()
+  paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: '', charged: 'scene', again: unanswered('scenes'),
     text: visuals.value.length ? 'Une nouvelle image avec vos textes et réglages actuels. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
 }
 function askLook() {
-  paid.value = { title: 'Créer un style depuis cette affiche ?', label: 'Créer le style', cost: costLine(caps.value?.plan_estimate_micros),
+  paid.value = { title: 'Créer un style depuis cette affiche ?', label: 'Créer le style', cost: 'Sans crédit.',
     text: 'Le style de l’affiche modèle est décrit (fond, lumière, couleurs), jamais son produit ni ses textes. Il est enregistré à côté des autres.', run: createLook }
 }
 function askRefine() {
-  paid.value = { title: 'Ajuster la scène ?', label: 'Lancer l’ajustement', cost: costLine(caps.value?.scene_estimate_micros),
+  void readBalance()
+  paid.value = { title: 'Ajuster la scène ?', label: 'Lancer l’ajustement', cost: '', charged: 'scene', again: unanswered('refinements'),
     text: 'L’IA refait la scène selon votre consigne. C’est une nouvelle version : les autres sont conservées.', run: refineScene }
 }
 function askText() {
-  paid.value = { title: 'Proposer un ajustement du texte ?', label: 'Lancer la proposition', cost: costLine(caps.value?.plan_estimate_micros),
+  paid.value = { title: 'Proposer un ajustement du texte ?', label: 'Lancer la proposition', cost: 'Sans crédit.',
     text: 'Un réglage est proposé pour le texte sélectionné. Rien ne change sur l’affiche avant votre accord.', run: proposeText }
 }
 function askEffect() {
-  paid.value = { title: 'Générer la matière du texte ?', label: 'Générer la matière', cost: costLine(caps.value?.texture_estimate_micros),
+  void readBalance()
+  paid.value = { title: 'Générer la matière du texte ?', label: 'Générer la matière', cost: '', charged: 'text_texture', again: unanswered('text-effects'),
     text: 'L’IA crée une matière pour les lettres. Vous la vérifiez avant de l’appliquer.', run: generateEffect }
 }
 function askDiscard() {
@@ -688,7 +706,7 @@ function askRemoveLook() {
       if (look.value === target.id) { pickLook('clair'); rememberStyle() }
     } }
 }
-function confirmPaid() { const action = paid.value; paid.value = null; if (action) perform(action.run) }
+function confirmPaid() { const action = paid.value; if (paidCost.value.stop) return; paid.value = null; if (action) perform(action.run) }
 function changePriceLater() {
   finalPreview.value = null
   notice.value = 'Modifiez le prix dans « Textes », puis créez une nouvelle version : le prix est dessiné dans l’image.'
@@ -797,18 +815,9 @@ const saveLabel = computed(() => ({ saved: 'Enregistré', dirty: 'Modifications 
 const shownPrice = (value: number) => value.toLocaleString('fr-FR')
 function tidyPrice() { try { priceText.value = shownPrice(parsePrice(priceText.value)) } catch { /* the error is already beside the field */ } }
 const day = (stamp: string) => { const date = new Date(stamp); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium' }).format(date) }
-const dollars = (micros = 0) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(micros / 1e6)
 
 // An error already written beside its field is not repeated in the general message.
 class Shown extends Error {}
-// Why a generation failed, in the owner's words: what he can do differs with the cause.
-function jobFailure(code: string | null) {
-  const kept = ' Vos images et votre affiche sont conservées.'
-  if (code === 'refused') return 'Le service d’images a refusé cette demande (photo ou texte non accepté). Essayez une autre photo, ou changez le titre ou l’ambiance.' + kept
-  if (['timeout', 'provider_error', 'rate_limited', 'invalid_response'].includes(code ?? '')) return 'Le service d’images n’a pas répondu correctement. Réessayez dans une minute.' + kept
-  if (['quota', 'auth', 'budget_exhausted'].includes(code ?? '')) return 'Le compte du service d’images doit être vérifié par l’administrateur (quota, clé ou budget). Vous pouvez encore modifier et télécharger vos affiches.'
-  return `La tâche n’a pas abouti${code ? ` (code : ${code})` : ''}.${kept} Vous pouvez réessayer.`
-}
 function checkedPrice(text: string, field?: string) {
   try { const value = parsePrice(text); priceError.value = ''; return value }
   catch (reason) {
@@ -843,6 +852,7 @@ async function perform(action: () => Promise<void>) {
   busy.value = true; error.value = ''; notice.value = ''; fieldError.value = null
   if (working) markWorking(working)
   try { await action() } catch (reason) {
+    if (reason instanceof ApiError && reason.code === 'no_credit') void readBalance()  // the balance shown was stale
     // Behind an open dialog the groups are inert: there the refusal goes to the message above the dialog.
     // In the chat no group is on screen either: the refusal goes to the general message.
     const held = doc.value && !modalOpen.value && !chatting.value && reason instanceof ApiError ? refusalGroup(reason) : undefined
@@ -855,6 +865,7 @@ async function perform(action: () => Promise<void>) {
   }
 }
 async function loadShop() {
+  void readBalance()  // apart: its failure does not stop the page
   const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<Listing>('/api/creations?limit=50')])
   Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; library.value = list.items; libraryNext.value = list.next_cursor; activeTotal.value = list.total; showRemoved.value = false
   savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
@@ -1166,11 +1177,15 @@ function onVisibility() {
   visible.value = !document.hidden
   if (!visible.value) return close()
   void ask()
+  if (loaded.value) void readBalance()  // another tab or device may have spent credits meanwhile
   if (job.value && !polling) { clearTimeout(pollTimer); poll() }
 }
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
 function follow(value: Job, found = false) {
   clearTimeout(pollTimer); round++; job.value = value; failures = 0; offline.value = false; decoded.value = false; runningSince.value = null; arrived = ''
+  // Every 202 of an image request ends here (the editor's, the chat's, a replay): it took a credit. Read for any job,
+  // which is simpler than listing the kinds, and costs one quiet read.
+  void readBalance()
   // A scene of this size is on its way: undo must not bring another format back (D-POSTER-FORMAT-001 v2 point 8).
   if (waitJob.value && doc.value) history.keepFormat(doc.value.primary_format)
   since.value = found ? localTime(value.created_at, clockSkew, Date.now()) : Date.now(); now.value = Date.now()
@@ -1199,6 +1214,7 @@ async function poll() {
     offline.value = false
     if (response.status === 'running' && runningSince.value === null) runningSince.value = localTime(response.started_at, clockSkew, Date.now())
     job.value = response
+    if (!['queued', 'running'].includes(response.status)) void readBalance()  // an image's credit is spent or back
     if (job.value.status === 'succeeded') {
       const completed = job.value
       if (completed.kind === 'render') {
@@ -1248,7 +1264,7 @@ async function poll() {
       return
     }
     if (['failed', 'interrupted', 'cancelled'].includes(job.value.status)) {
-      error.value = job.value.status === 'interrupted' ? 'La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.' : job.value.kind === 'look' ? 'Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.' : jobFailure(job.value.error_code)
+      error.value = ended(job.value)
       job.value = null; return
     }
     failures = 0; pollTimer = setTimeout(poll, 2000)
@@ -1266,7 +1282,13 @@ async function poll() {
     pollTimer = setTimeout(poll, retryDelay(++failures))
   } finally { polling-- }
 }
-async function cancelJob() { await mutation(`/api/jobs/${job.value!.id}/cancel`, {}); job.value = null; clearTimeout(pollTimer) }
+async function cancelJob() {
+  const cancelled = await mutation<Job>(`/api/jobs/${job.value!.id}/cancel`, {})
+  job.value = null; clearTimeout(pollTimer)
+  // Its credit is back at once (D-BALANCE-002): said as poll() says it, and read again.
+  if (cancelled.credit === 'given_back') notice.value = ended(cancelled)
+  void readBalance()
+}
 // The new version fades in once drawn, not while its image was still on its way.
 function canvasDrawn(ready: boolean) {
   canvasReady.value = ready
@@ -1370,7 +1392,11 @@ const typePrice = (value: number) => { priceText.value = shownPrice(value); chan
 const told = (action: () => Promise<void>) => new Promise<void>((done, fail) => {
   if (busy.value) return fail(new Error(waiting))
   let failure: unknown
-  void perform(async () => { try { await action() } catch (reason) { failure = reason; throw new Shown() } }).then(() => failure === undefined ? done() : fail(failure))
+  void perform(async () => { try { await action() } catch (reason) {
+    failure = reason
+    if (reason instanceof ApiError && reason.code === 'no_credit') void readBalance()  // as perform does
+    throw new Shown()
+  } }).then(() => failure === undefined ? done() : fail(failure))
 })
 // A version becomes the poster's, as a tap on it in the editor, saved. `owned` runs after the awaited refresh, right
 // before the document changes: a tab that lost the chat changes nothing. false: the poster does not list this version.
@@ -1397,7 +1423,7 @@ function setWords(words: Words) {
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
     shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
-    busy, cost: computed(() => costLine(caps.value?.scene_estimate_micros)) }),
+    busy, credit: computed(() => credit(balance.value, 'scene')) }),  // a recap is a scene, a change a scene or a refinement
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
   start: (key, style, smallPhotoAccepted, sending, identity) => told(async () => {
     pickLook(style)
@@ -1463,6 +1489,7 @@ const chat: ChatAdapter = {
   attempts: async () => (await api<{ items: Job[] }>(`/api/creations/${creation.value!.id}/jobs`, { quiet: true })).items,
   job: id => api<Job>(`/api/jobs/${id}`, { quiet: true }),
   follow: found => follow(found as Job, true),
+  recount: () => void readBalance(),
   review: visual => { review.value = visual; resetChecks() },
   download: () => { void perform(renderFinal) },
 }
@@ -1765,13 +1792,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div v-if="chosen" class="layer-properties">
               <template v-if="chosen.kind === 'text'"><p class="sub">Typographie</p><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label></div><div class="form-row"><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: capsuleFill(), border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><div class="checks-row switches"><label class="check switch"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check switch"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div><button v-if="chosen.texture_effect_id" class="quiet" @click="patchLayer(chosen.id, { texture_effect_id: null })">Retirer la matière du texte</button></template>
               <p class="sub">Position et dimensions</p><div class="form-row" v-for="pair in ([['x','y'],['width','height']] as const)" :key="pair[0]"><label v-for="field in pair" :key="field">{{ { x:'Position X', y:'Position Y', width:'Largeur', height:'Hauteur' }[field] }}<input type="number" :value="Math.round(chosen[field])" @change="numeric(field, $event)" /></label></div>
-              <template v-if="chosen.kind === 'text' && ['title','price'].includes(chosen.role)"><p class="sub">Ajuster ce texte avec une consigne</p><p class="help">Seul le {{ chosen.role === 'price' ? 'prix' : 'titre' }} sélectionné sera ajusté. La scène reste intacte.</p><label>Votre consigne<textarea v-model="polish" name="polish" autocomplete="off" maxlength="500" rows="3" placeholder="Ex. Un titre doré avec une ombre légère…" /></label><button :disabled="busy || !!job || !polish.trim() || !caps?.planner_available" @click="askText">Proposer un ajustement</button><small v-if="caps?.planner_available">Coût estimé : {{ dollars(caps?.plan_estimate_micros) }}</small><p v-else class="help">Les consignes ne sont pas encore disponibles. Les réglages manuels restent disponibles.</p>
+              <template v-if="chosen.kind === 'text' && ['title','price'].includes(chosen.role)"><p class="sub">Ajuster ce texte avec une consigne</p><p class="help">Seul le {{ chosen.role === 'price' ? 'prix' : 'titre' }} sélectionné sera ajusté. La scène reste intacte.</p><label>Votre consigne<textarea v-model="polish" name="polish" autocomplete="off" maxlength="500" rows="3" placeholder="Ex. Un titre doré avec une ombre légère…" /></label><button :disabled="busy || !!job || !polish.trim() || !caps?.planner_available" @click="askText">Proposer un ajustement</button><small v-if="caps?.planner_available">Sans crédit.</small><p v-else class="help">Les consignes ne sont pas encore disponibles. Les réglages manuels restent disponibles.</p>
               <p v-if="caps?.planner_available && whyNoText" class="why" role="status">{{ whyNoText }}</p>
-              <div v-if="proposal && proposal.layer_id === selected" class="plan"><p>{{ proposal.patch.summary_fr }}</p><template v-if="proposal.status === 'pending'"><div v-if="proposal.patch.content_change"><p><strong>Contenu partagé modifié</strong> · Toutes les tailles de cette affiche sont concernées.</p><p>Avant : {{ proposal.before.offer[proposal.patch.content_change.field] }}<br />Après : {{ proposal.patch.content_change.value }}</p><label class="check"><input v-model="acknowledgeContent" type="checkbox" />Je confirme ce nouveau contenu.</label></div><button :disabled="busy || (!!proposal.patch.content_change && !acknowledgeContent)" @click="perform(applyProposal)">Appliquer au texte</button><button class="quiet" :disabled="busy" @click="perform(rejectProposal)">Refuser l’ajustement</button></template><template v-else-if="proposal.status === 'applied' && proposal.patch.texture_request"><p>Matière proposée : {{ proposal.patch.texture_request.description }}</p><button :disabled="busy || !!job" @click="askEffect">Générer la matière du texte</button><small>Appel image distinct : {{ dollars(caps?.texture_estimate_micros) }}</small></template></div>
+              <div v-if="proposal && proposal.layer_id === selected" class="plan"><p>{{ proposal.patch.summary_fr }}</p><template v-if="proposal.status === 'pending'"><div v-if="proposal.patch.content_change"><p><strong>Contenu partagé modifié</strong> · Toutes les tailles de cette affiche sont concernées.</p><p>Avant : {{ proposal.before.offer[proposal.patch.content_change.field] }}<br />Après : {{ proposal.patch.content_change.value }}</p><label class="check"><input v-model="acknowledgeContent" type="checkbox" />Je confirme ce nouveau contenu.</label></div><button :disabled="busy || (!!proposal.patch.content_change && !acknowledgeContent)" @click="perform(applyProposal)">Appliquer au texte</button><button class="quiet" :disabled="busy" @click="perform(rejectProposal)">Refuser l’ajustement</button></template><template v-else-if="proposal.status === 'applied' && proposal.patch.texture_request"><p>Matière proposée : {{ proposal.patch.texture_request.description }}</p><button :disabled="busy || !!job" @click="askEffect">Générer la matière du texte</button><small>{{ credit(balance, 'text_texture').text }}</small></template></div>
               <div v-if="effect?.status === 'proposed' && effect.layer_id === selected" class="plan"><p>Vérifiez la matière dans l’aperçu. Les lettres et le montant restent exacts.</p><button :disabled="busy" @click="perform(() => decideEffect('apply'))">Appliquer la matière</button><button class="quiet" :disabled="busy" @click="perform(() => decideEffect('reject'))">Refuser la matière</button></div>
               </template>
             </div>
-            <div v-else-if="currentVisual"><p class="sub">Cadrage de l’image complète</p><p v-if="cropLocked" class="help">Le cadrage est verrouillé : le logo en haut utilise l’espace réservé de cette version, et un autre cadrage bloquerait le téléchargement.</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" :disabled="cropLocked" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" :disabled="cropLocked" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" :disabled="cropLocked" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !!whyNoRefine" @click="askRefine">Ajuster la scène</button><small>Appel image estimé : {{ dollars(caps?.scene_estimate_micros) }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
+            <div v-else-if="currentVisual"><p class="sub">Cadrage de l’image complète</p><p v-if="cropLocked" class="help">Le cadrage est verrouillé : le logo en haut utilise l’espace réservé de cette version, et un autre cadrage bloquerait le téléchargement.</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" :disabled="cropLocked" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" :disabled="cropLocked" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" :disabled="cropLocked" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !!whyNoRefine" @click="askRefine">Ajuster la scène</button><small>{{ credit(balance, 'scene').text }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
             <p v-else class="help">Choisissez un élément sous l’affiche pour le régler.</p>
             <!-- On a phone the editor's bar has no room for it: the application's theme is switched here. -->
             <button type="button" class="secondary panel-theme" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" />{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</button>
@@ -1843,9 +1870,9 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div>
     </div>
     <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" @keydown.esc="paid = null"><div class="confirm">
-      <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paid.cost" class="cost">{{ paid.cost }}</p>
-      <label v-if="smallPhoto && paid.run === createScene" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-      <div class="row"><button class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">Annuler</button></div>
+      <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
+      <label v-if="smallPhoto && paid.run === createScene && !paidCost.stop" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
+      <div class="row"><button v-if="!paidCost.stop" class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
     </div></div>
     <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ confirmedDownload ? 'Votre affiche est prête' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ confirmedDownload ? 'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>

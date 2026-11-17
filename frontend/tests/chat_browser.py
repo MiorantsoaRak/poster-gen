@@ -26,6 +26,9 @@ POSTER_FONTS = re.compile(r"/fonts/(NotoSerif|Montserrat|NotoSans-Bold)")
 PLAN_STALE = "L’affiche a changé depuis la préparation de cette génération."
 INVALID_PLAN = "Cette composition n’est pas valable (un élément sort de l’affiche ou en recouvre un autre). Annulez le dernier déplacement et réessayez."
 UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cette affiche. Ouvrez Pas à pas pour la retrouver."
+# What a card that pays for an image says (D-BALANCE-006): its credit and what is left (the smokes' shop has 100), and under
+# « Reprendre » or « Réessayer » that the kept request is paid once.
+COST, ONCE = re.compile(r"1 crédit · il vous en reste \d+"), "1 crédit, une seule fois pour cette demande"
 
 
 def sign_in(page):
@@ -155,7 +158,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(recap.locator(".recap b")).to_have_text("Sony WH-1000XM6 noir")
     expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^700\s000 Ar$"))
     expect(recap).to_contain_text("Style : comme votre inspiration")
-    expect(recap).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(recap).to_contain_text(COST)
     expect(recap.locator(".pic")).to_have_count(2)
     expect(thread.locator(".bubble.me")).to_contain_text("Sony WH-1000XM6 noir, 700 000 Ar")
     expect(field).to_be_focused()
@@ -393,7 +396,7 @@ def walk_desktop(browser, errors, product, inspiration):
     page.reload()
     context.unroute("**/scenes")
     expect(resume).to_be_visible()
-    expect(resume.locator("xpath=../..")).to_contain_text("Mode de démonstration : aucune dépense.")  # its cost, as for « Créer »
+    expect(resume.locator("xpath=../..")).to_contain_text(ONCE)  # its cost, once
     assert scenes.count(card["id"]) == 1, scenes
     resume.click()
     expect(page.get_by_role("button", name="Vérifier", exact=True)).to_be_visible(timeout=30000)
@@ -497,7 +500,7 @@ def walk_changes(browser, errors, session, data):
     say(page, "fond plus sombre")
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text("Scène : « fond plus sombre »")
-    expect(card).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(card).to_contain_text(COST)
     first = versions()[0]["id"]
     assert len(reads) == 1 and bodies[-1]["visual_id"] == first, (reads, bodies)  # the read names the version shown
     both_themes(page, "change card, desktop", "chat-change-1366")
@@ -531,7 +534,7 @@ def walk_changes(browser, errors, session, data):
     page.get_by_role("button", name="Fermer").click()
     resume = thread.get_by_role("button", name="Reprendre")
     expect(resume).to_be_visible()
-    expect(resume.locator("xpath=../..")).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(resume.locator("xpath=../..")).to_contain_text(ONCE)
     expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()  # the waiting card comes first
     page.wait_for_timeout(500)
     assert sent["refinements"] == [kept["id"]], sent
@@ -565,7 +568,7 @@ def walk_changes(browser, errors, session, data):
     say(page, "prix 650 000 Ar")
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text(re.compile(r"Prix : 650\s000 Ar"))
-    expect(card).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(card).to_contain_text(COST)
     expect(cancel).to_be_visible()
     assert bodies[-1]["visual_id"] == first, bodies[-1]
     redo.click()
@@ -650,7 +653,7 @@ def walk_changes(browser, errors, session, data):
     context.unroute("**/scenes")
     assert creation()["document"]["offer"] | {"currency": "MGA"} == {"title": "WH-1000XM6 Pro", "price_ar": 600000, "currency": "MGA"} and len(made("scene")) == 3
     stale = thread.locator(".bubble.bot").last
-    expect(stale).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(stale).to_contain_text(COST)
     expect(stale.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler", "Remettre les textes de l’image"])
     both_themes(page, "the image still shows other words, desktop", "chat-stale-1366")
     # The download of the old image is refused by the server; in the chat its sentence is in the general message.
@@ -751,7 +754,7 @@ def walk_changes(browser, errors, session, data):
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text("je refais l’affiche avec 550 000 Ar")
     expect(card.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler"])
-    expect(card).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(card).to_contain_text(COST)
     assert items()[-1]["card"] == {"kind": "change", "words": {"price_ar": 550000}, "said": "prix 550 000 Ar"}, items()[-1]
     cancel.click()
     context.unroute("**/api/reads")
@@ -957,7 +960,7 @@ def walk_changes(browser, errors, session, data):
     say(page, "titre Casque JBL Tune 520 Max")
     card = thread.locator(".bubble.bot").last
     expect(card.locator("p.lines")).to_have_text("Titre : Casque JBL Tune 520 Max")
-    expect(card).not_to_contain_text("Mode de démonstration")
+    expect(card).not_to_contain_text("crédit")  # a free change says no cost
     expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
     looks_right(page, "free title change", "chat-free-title-1366.png")
     change.click()
@@ -968,7 +971,7 @@ def walk_changes(browser, errors, session, data):
     context.unroute("**/api/reads")
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text(re.compile(r"Je change le prix sur l’affiche : 290\s000 Ar\."))
-    expect(card).not_to_contain_text("Mode de démonstration")
+    expect(card).not_to_contain_text("crédit")
     expect(card).not_to_contain_text("dessiné dans l’image")
     expect(create).to_have_count(0)
     looks_right(page, "free price change", "chat-free-price-1366.png")
@@ -1524,6 +1527,40 @@ def walk_failed(browser, errors, product):
     jobs = page.request.get(f"{smoke.ORIGIN}/api/creations/{page.url.split('#message-')[1]}/jobs").json()["items"]
     assert [(job["kind"], job["status"]) for job in jobs if job["kind"] == "scene"] == [("scene", "interrupted")], jobs  # a provider error may have been billed: not retried
     looks_right(page, "image job failed, 360 px", "chat-job-failed-360.png")
+    # A job that ends while no page hears of it (its polls held) is said at the next opening as the editor says it: its
+    # cause, then that its credit is back (T-BALANCE-006 review r1). Its own end once (interrupted); then its view
+    # rewritten on the reopened page as failed, then as cancelled.
+    poster = page.url.split("#message-")[1]
+    returned = thread.locator(".bubble.bot", has_text="Votre crédit vous a été rendu.")
+    for status, code, said in ((None, None, "La génération a été interrompue."),
+                               ("failed", "refused", "Le service d’images a refusé cette demande"),
+                               ("cancelled", "shop_suspended", "La tâche n’a pas abouti (code : shop_suspended).")):
+        before = returned.count()
+        page.route("**/api/jobs/*", lambda route: None)  # never answered on this page
+        create.tap()
+        for _ in range(100):  # the card just tapped holds its job, which has ended on the server
+            waiting = [item for item in page.evaluate(THREAD, poster)["items"] if item.get("spent") and not item.get("done")]
+            job = waiting[-1].get("job") if waiting else None
+            if job and page.request.get(f"{smoke.ORIGIN}/api/jobs/{job}").json()["status"] not in ("queued", "running"):
+                break
+            page.wait_for_timeout(100)
+        else:
+            raise AssertionError("the card's job did not end")
+        page.unroute("**/api/jobs/*")
+
+        def rewritten(status, code):  # Playwright passes the request too to a handler of two parameters, defaults included
+            def handle(route):
+                answer = route.fetch()
+                route.fulfill(response=answer, json=answer.json() | {"status": status, "error_code": code})
+            return handle
+        if status:
+            page.route(f"**/api/jobs/{job}", rewritten(status, code))
+        page.reload()
+        expect(returned).to_have_count(before + 1, timeout=15000)
+        expect(returned.last).to_contain_text(said)
+        if status:
+            page.unroute(f"**/api/jobs/{job}")
+        expect(create).to_be_enabled()
     context.close()
 
 
@@ -1807,7 +1844,7 @@ def walk_rest(browser, errors, product, inspiration):
     say(page, "mets le style luxe sombre")
     expect(last.locator("p.lines")).to_have_text("Style : Luxe sombre L’affiche modèle n’est plus suivie. Les ajustements de scène demandés avant ne sont pas repris.")
     expect(last.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler"])
-    expect(last).to_contain_text("Mode de démonstration : aucune dépense.")
+    expect(last).to_contain_text(COST)
     assert bodies[-1]["visual_id"] == second["id"], bodies[-1]
     both_themes(page, "style change card", "chat-restyle-1366")
     # « Annuler » gives the words back, as on a change card; nothing was asked for the poster.

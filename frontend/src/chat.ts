@@ -36,7 +36,7 @@ export interface SceneRequest { path: string; body: unknown; revision: number }
 export interface Draft { name: string | null; price_ar: number | null; style: Style | null; identity: boolean | null; pictures: Picture[] }
 /** A paid read on its way: its key and exact body, never changed, so that a retry is the same request for the server. */
 export interface Pending { key: string; body: string; text: string }
-export interface JobRow { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null }
+export interface JobRow { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; credit?: string | null }
 
 /** What App.vue hands to the chat: its own refs (unwrapped) and functions, so the routes, guards and retries stay the editor's. */
 export interface ChatAdapter {
@@ -44,7 +44,8 @@ export interface ChatAdapter {
     creation: Creation | null; offer: { title: string; price_ar: number } | undefined; visuals: Visual[]; selected: string | undefined; job: { id: string; kind: string; status: string } | null; phase: Phase | null; offline: boolean
     /** The selected version's stored title and price, each only when it differs from the document's. */
     stale: Stale
-    busy: boolean; look: string; paletteLoading: boolean; cost: string; height: number; error: string; notice: string
+    /** What a new image costs, as the editor's dialog says it (generation.ts credit); `stop`: no new paid tap. */
+    busy: boolean; look: string; paletteLoading: boolean; credit: { stop: boolean; text: string }; height: number; error: string; notice: string
     intake: { name: string; price: string; confirmed: boolean }; photos: { asset: string; warnings: string[] }[]; styleReference: string | null
     /** What the shop's profile holds; `ticked`: the form of « Pas à pas » has the logo or the contact ticked. */
     shop: Shop
@@ -71,6 +72,8 @@ export interface ChatAdapter {
   attempts(): Promise<{ kind: string; status: string }[]>
   job(id: string): Promise<JobRow>
   follow(job: JobRow): void
+  /** Reads the shop's credits again (a 402 says the balance shown was stale). */
+  recount(): void
   review(visual: Visual): void
   download(): void
   /** Set by the chat: whether a paid card of its thread waits for its answer (« Se déconnecter » says so before it signs
@@ -237,8 +240,10 @@ export function supersede(items: Item[]) {
 export type CardButton = 'photo' | 'create' | 'retry' | 'resume' | 'fix' | 'resend' | 'review' | 'download'
 /** The one action a card shows; null when it only shows its text or its outcome. `version` is the state of a result's
  *  version; it is downloaded only while it is the one `selected` in the document (the export renders that one).
- *  `left`: the versions the poster may still ask for; at none, no card offers a new one. */
-export function cardButton(item: Item, version?: Visual['status'], selected?: string, left: number | null = null): CardButton | null {
+ *  `left`: the versions the poster may still ask for; at none, no card offers a new one. `stop`: the shop's credits or
+ *  what blocks an image stop a new request (generation.ts credit); a kept request is never stopped by it (D-BALANCE-006):
+ *  the server answers what it stored, or refuses it with its own sentence. */
+export function cardButton(item: Item, version?: Visual['status'], selected?: string, left: number | null = null, stop = false): CardButton | null {
   const card = item.card
   if (!card) return null
   if (card.kind === 'result') return version === 'pending_review' ? 'review' : version === 'approved' && card.visual_id === selected ? 'download' : null
@@ -246,7 +251,7 @@ export function cardButton(item: Item, version?: Visual['status'], selected?: st
   if (item.done) return null
   // A spent card whose request may have left without an answer: that same request again, never by itself. « Réessayer »
   // after a refusal seen here, « Reprendre » in a later view (a reload, a return from « Pas à pas »).
-  if (paid(card)) return !item.spent ? left !== null && left <= 0 ? null : 'create' : item.request && !item.job ? card.error ? 'retry' : 'resume' : null
+  if (paid(card)) return !item.spent ? (left !== null && left <= 0) || stop ? null : 'create' : item.request && !item.job ? card.error ? 'retry' : 'resume' : null
   if (card.kind === 'ask_photo') return 'photo'
   return card.kind === 'failed' && card.retry ? 'resend' : null
 }

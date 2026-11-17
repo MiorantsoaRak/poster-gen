@@ -150,6 +150,7 @@ def test_an_image_takes_one_credit_and_no_other_job_takes_any(engine, settings, 
     with engine.connect() as conn:
         taken = dict(conn.execute(text("SELECT id, takes_credit FROM poster_jobs")).all())
     assert taken == {id: 1 for id in images} | {id: 0 for id in others}
+    assert [view(engine, id)["credit"] for id in images + others] == ["pending"] * 3 + [None] * 5
 
 
 def test_no_credit_is_said_last_and_no_refusal_takes_anything(engine, settings, creation, tmp_path, input_id):
@@ -267,11 +268,12 @@ def test_a_job_ending_without_an_image_gives_its_credit_back_and_a_version_spend
     a requeue is the same job, counted once; its version spends it. Failures by the worker: the parametrised policy test."""
     def admitted():
         id = enqueue(engine, settings, creation)
-        assert balance(engine) == {"available": 99, "pending": 1}
+        assert balance(engine) == {"available": 99, "pending": 1} and view(engine, id)["credit"] == "pending"
         return id
 
     def given_back(id, status):
         assert view(engine, id)["status"] == status and balance(engine) == {"available": 100, "pending": 0}
+        assert view(engine, id)["credit"] == "given_back"  # what the browser says it with (D-BALANCE-006)
         with write_tx(engine) as conn:
             shops.enable(conn, 1)
 
@@ -305,7 +307,7 @@ def test_a_job_ending_without_an_image_gives_its_credit_back_and_a_version_spend
     jobs.dispatch(engine, id)
     jobs.spool(tmp_path, job, {"visual": "v"}, cost_micros=170000)
     jobs.finish_spool(engine, tmp_path, id, lambda *_: "v")
-    assert balance(engine) == {"available": 99, "pending": 0}  # spent
+    assert balance(engine) == {"available": 99, "pending": 0} and view(engine, id)["credit"] == "spent"
     with engine.connect() as conn:  # the operator's grant of the fixture: a credit back is never a line
         assert conn.execute(text("SELECT COUNT(*) FROM credit_grants")).scalar_one() == 1
 
@@ -719,7 +721,9 @@ def test_spool_mismatch_and_unknown_cost_are_not_trusted(engine, settings, creat
     envelope["input_hash"] = job["input_hash"]
     jobs.spool_path(tmp_path, id).write_text(json.dumps(envelope), encoding="utf-8")
     jobs.finish_spool(engine, tmp_path, id, lambda *_: "ok")
-    assert spent(engine, settings) == 400000 and view(engine, id)["usage"]["estimated"] is True
+    assert spent(engine, settings) == 400000
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT cost_is_estimate FROM poster_calls WHERE job_id=:id"), {"id": id}).scalar_one() == 1
 
 
 def test_only_one_rate_limit_retry_replaces_rejected_reservation(engine, settings, creation):

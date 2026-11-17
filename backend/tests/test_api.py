@@ -27,6 +27,7 @@ from affiche.api import create_app, uvicorn_options
 from affiche.config import ConfigError, load_settings
 from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import auth, credits, jobs, rendering, store
+from affiche.posters.models import canonical
 from affiche.visuals.admission import spent_micros
 from test_config import env  # noqa: F401
 from test_db import credited, migrate_to
@@ -84,7 +85,7 @@ def create_draft(client):
     return result.json()
 
 
-def test_owned_job_status_usage_and_cancel(client, settings):
+def test_owned_job_status_credit_and_cancel(client, settings):
     assert client.get("/api/balance").status_code == 401
     assert client.get("/api/capabilities").status_code == 401
     login(client)
@@ -93,12 +94,13 @@ def test_owned_job_status_usage_and_cancel(client, settings):
         result = jobs.enqueue(conn, settings, 1, creation["id"], 1, "render", {"prompt": "private prompt"})
     response = client.get(result["status_url"])
     assert response.status_code == 200 and response.json()["status"] == "queued"
+    assert response.json()["credit"] is None and "usage" not in response.json()  # a render takes no credit, and no cost is shown
     assert "private prompt" not in response.text
     assert client.get(f"/api/creations/{creation['id']}/jobs").json()["items"] == [response.json()]
     assert client.get(f"/api/creations/{uuid4()}/jobs").status_code == 404
+    # The planner's estimate (100000 here) is not given: no dollar figure reaches a shop (D-BALANCE-004).
     assert client.get("/api/capabilities").json() == {"image_mode": "stub", "planner_mode": "disabled",
-        "planner_available": False, "scene_estimate_micros": 0, "plan_estimate_micros": 100000, "texture_estimate_micros": 0,
-        "formats_enabled": ["feed"], "chat_available": False}
+        "planner_available": False, "formats_enabled": ["feed"], "chat_available": False}
     assert client.get("/api/jobs/" + str(uuid4())).status_code == 404
     assert client.get("/api/usage").status_code == 404  # removed: a shop reads credits, never dollars (D-BALANCE-004)
     with client.app.state.engine.connect() as conn:
@@ -106,6 +108,26 @@ def test_owned_job_status_usage_and_cancel(client, settings):
     assert operator_client(client).get("/api/status").json()["spend"]["cap_micros"] == 20000000
     assert post(client, result["status_url"] + "/cancel", {}).json()["status"] == "cancelled"
     assert post(client, result["status_url"] + "/cancel", {}).status_code == 409
+
+
+def old_cancellation(engine, job_id, shop=1) -> tuple[str, dict]:
+    """A cancellation answered before migration 0014, stored under its key as the old code stored it: with the job's
+    cost. Returns the key and the stored body."""
+    stored = {"id": job_id, "status": "cancelled", "result_ref": None, "error_code": None, "created_at": utc_now(),
+              "started_at": None, "finished_at": utc_now(), "kind": "scene", "usage": {"recorded_micros": 400000, "estimated": True}}
+    operation = str(uuid4())
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO mutation_keys VALUES (?,?,?,?,?,?,?,?)", (
+            shop, operation, "POST", f"/api/jobs/{job_id}/cancel", store._sha(canonical({"body": {}, "revision": None})),
+            200, canonical(stored), utc_now()))
+    return operation, stored
+
+
+def test_a_cancellation_answered_before_0014_is_replayed_without_its_cost(client):
+    login(client)
+    operation, stored = old_cancellation(client.app.state.engine, str(uuid4()))
+    replayed = client.post(f"/api/jobs/{stored['id']}/cancel", json={}, headers={"Idempotency-Key": operation})
+    assert replayed.status_code == 200 and replayed.json() == {key: value for key, value in stored.items() if key != "usage"}
 
 
 def operator_client(client):

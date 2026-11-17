@@ -138,15 +138,18 @@ def enqueue(conn, settings, shop, creation_id, revision, kind, payload) -> dict:
     return {"job_id": id, "status_url": f"/api/jobs/{id}"}
 
 
+# What a job's credit is doing (D-BALANCE-004), from its status alone: any other end gave it back.
+CREDIT = {"queued": "pending", "running": "pending", "succeeded": "spent"}
+
+
 def get_job(conn, shop, id):
+    """A shop's view of its job: never a cost (no dollar figure reaches a shop, R-BALANCE-001)."""
     job = _owned(conn, "poster_jobs", shop, id)
-    cost = conn.execute(text("SELECT COALESCE(SUM(cost_micros),0), COALESCE(MAX(cost_is_estimate),0)"
-                             " FROM poster_calls WHERE job_id=:id"), {"id": id}).one()
     # A style brief runs as a planner job (the kinds are fixed by migration 0006), but its result is a look,
     # not a plan: clients must not load it as one. The canonical payload of such a job has the single key "look".
     kind = "look" if job["kind"] == "plan" and job["input_json"].startswith('{"look":') else job["kind"]
     return {key: job[key] for key in ("id", "status", "result_ref", "error_code", "created_at", "started_at", "finished_at")} | {
-        "kind": kind, "usage": {"recorded_micros": cost[0], "estimated": bool(cost[1])}}
+        "kind": kind, "credit": CREDIT.get(job["status"], "given_back") if job["takes_credit"] else None}
 
 
 def cancel_queued(conn, id, now, code=None):
@@ -165,7 +168,10 @@ def cancel(engine, shop, key, id):
             raise Refused("already_started", 409)
         cancel_queued(conn, id, utc_now())
         return 200, get_job(conn, shop, id)
-    return mutate(engine, shop, key, "POST", f"/api/jobs/{id}/cancel", {}, apply)
+    status, body = mutate(engine, shop, key, "POST", f"/api/jobs/{id}/cancel", {}, apply)
+    # An answer stored before migration 0014 holds the job's cost, and a replay returns it as stored (D-BALANCE-004).
+    body.pop("usage", None)
+    return status, body
 
 
 def claim(engine, kinds: tuple[str, ...]):

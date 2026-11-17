@@ -216,7 +216,8 @@ def test_stub_planner_and_manual_rebase_are_explicit(engine, settings, input_id)
     assert revised["source"] == "manual" and revised["origin_revision"] == 2 and revised["parent_plan_id"] == plan_id
     with engine.connect() as conn:
         assert visuals.get_plan(conn, 1, plan_id)["origin_revision"] == 1
-        assert jobs.get_job(conn, 1, response[1]["job_id"])["usage"]["recorded_micros"] == 0
+        assert conn.execute(text("SELECT SUM(cost_micros) FROM poster_calls WHERE job_id=:id"),
+                            {"id": response[1]["job_id"]}).scalar_one() == 0
 
 
 def test_cross_input_visual_and_outside_crop_rejected(engine, settings, input_id):
@@ -608,7 +609,8 @@ def test_a_scene_of_the_wrong_size_fails_the_job_and_keeps_its_cost(engine, sett
         failed = jobs.get_job(conn, 1, job["id"])
         assert (failed["status"], failed["error_code"]) == ("failed", "invalid_response")
         # The answer's usage is not read once its size is wrong: the reservation stays in the ledger, marked estimated.
-        assert failed["usage"] == {"recorded_micros": 400_000, "estimated": True}
+        assert conn.execute(text("SELECT SUM(cost_micros), MAX(cost_is_estimate) FROM poster_calls WHERE job_id=:id"),
+                            {"id": job["id"]}).one() == (400_000, 1)
         assert spent_micros(conn, settings) == 400_000
         assert conn.execute(text("SELECT COUNT(*) FROM poster_visuals")).scalar_one() == 0
         assert store.get_creation(conn, 1, story["id"])["revision"] == 1

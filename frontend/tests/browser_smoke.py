@@ -18,11 +18,12 @@ from PIL import Image, ImageChops, ImageDraw
 from uuid import uuid4
 
 from affiche import shops
-from affiche.api import BUNDLE, create_app
+from affiche.api import BUNDLE, MESSAGES, create_app
 from affiche.config import Settings
 from affiche.db import make_engine, write_tx
 from affiche.posters import credits
 from affiche.posters.auth import PASSWORDS
+from affiche.visuals.gateway import StubProvider
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "outputs" / "editor-smoke"
@@ -294,6 +295,7 @@ def walk_look(browser, session, scheme, errors):
     check_one_blur(device, f"intake at 360 px, {theme}")
     check_contrast(device, f"intake at 360 px, {theme}, no stored choice")
     shot(device, f"look-360-{theme}-creer.png", full_page=False)
+    expect(device.get_by_label("Photos du produit")).to_be_enabled()  # the page's opening is over (perform drops a busy tap)
     device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
     expect(device.locator(".photo-strip img")).to_have_count(1)
     device.get_by_label("Nom du produit", exact=True).fill(f"CMF Buds 2a {theme}")
@@ -408,6 +410,7 @@ def walk_wait(browser, session, errors):
     device.set_default_timeout(10000)
     device.on("pageerror", lambda error: errors.append(str(error)))
     device.goto(ORIGIN)
+    expect(device.get_by_label("Photos du produit")).to_be_enabled()  # the page's opening is over
     device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
     expect(device.locator(".photo-strip img")).to_have_count(1)
     device.get_by_label("Nom du produit", exact=True).fill("Écouteurs attente")
@@ -567,6 +570,30 @@ def walk_wait(browser, session, errors):
     # another generation.
     screen.locator(".review-panel").get_by_role("button", name="Fermer").click()
     check_still(screen, still, "after a new version at 1366 px")
+    # « Annuler la demande »: the cancellation's answer says the credit is back, which is said, and the balance is read
+    # again (T-BALANCE-006 review r1). The scheduler claims a queued job within a second, so a real one cannot be cancelled
+    # from here: the job is held at « queued » and the answer is the server's for a queued job (its view with status
+    # cancelled and its credit given back, test_poster_jobs.py), while the real job runs and ends behind.
+    balance_reads = []
+    screen.on("request", lambda request: balance_reads.append(request.url) if request.url.endswith("/api/balance") else None)
+    screen.route("**/api/jobs/*/cancel", lambda route: route.fulfill(json=screen.request.get(route.request.url.removesuffix("/cancel")).json()
+                                                                     | {"status": "cancelled", "credit": "given_back"}))
+    held["status"] = "queued"
+    screen.get_by_role("button", name="Nouvelle version").click()
+    screen.get_by_role("button", name="Lancer la génération").click()
+    expect(screen.locator(".wait [role=status]")).to_contain_text("Votre demande est en attente.")
+    reads = len(balance_reads)
+    screen.get_by_role("button", name="Annuler la demande").click()
+    expect(screen.locator(".message.notice")).to_contain_text("Votre crédit vous a été rendu.")
+    expect(screen.locator(".wait")).to_have_count(0)
+    for _ in range(50):  # the real job ends before the next request: one image at a time per poster
+        jobs = screen.request.get(f"{ORIGIN}/api/creations/{poster}/jobs").json()["items"]
+        if len(balance_reads) > reads and not any(job["status"] in ("queued", "running") for job in jobs):
+            break
+        screen.wait_for_timeout(200)
+    else:
+        raise AssertionError(("no balance read after the cancellation, or the job still runs", balance_reads[reads:]))
+    screen.unroute("**/api/jobs/*/cancel")
     held["status"] = "running"
     screen.get_by_role("button", name="Nouvelle version").click()
     screen.get_by_role("button", name="Lancer la génération").click()
@@ -577,7 +604,7 @@ def walk_wait(browser, session, errors):
     expect(screen.locator(".wait")).to_have_count(0)
     asked = len(polls)
     screen.wait_for_timeout(3000)
-    assert len(polls) == asked and len(scenes) == 4, (polls[asked:], scenes)
+    assert len(polls) == asked and len(scenes) == 5, (polls[asked:], scenes)
     desk.close()
     # The elapsed time rests on what the real answers carried: UTC stamps with their offset, the server's Date header.
     assert stamps and all(re.search(r"\+00:00$", created) and (started is None or re.search(r"\+00:00$", started)) and date
@@ -714,6 +741,7 @@ def walk_words(browser, session, errors):
     review = page.get_by_role("heading", name="Vérifier la fidélité du produit")
 
     def make(name, price):
+        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way to « Créer » is over (perform drops a busy tap)
         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
         expect(page.locator(".photo-strip img")).to_have_count(1)
         page.get_by_label("Nom du produit", exact=True).fill(name)
@@ -1952,6 +1980,284 @@ def walk_review_r2(browser, errors, data, only=()):
     engine.dispose()
 
 
+def walk_credits(browser, errors, data, app):
+    """The prepaid balance in the browser (D-BALANCE-006) at 360 × 740 with a touch pointer, on a shop of its own granted 5
+    credits: the cost and what is left; « Bientôt à court » with the purchase text at 3; a refused image's credit given
+    back; the service's pause told before the tap; a free change by message kept while paused and at zero; nothing sent
+    at zero; a lost answer taken up at zero, and while paused, in the editor and in the chat (« Reprendre »), one job each;
+    a chat retry refused for want of credit, kept, with the balance read again; checking, editing, downloading and « Mes
+    affiches » at zero. Each dialog in both themes. No « $ » or « USD » on any screen (a check of the screens:
+    test_two_shops.py walks every answer of the API)."""
+    engine = make_engine(Path(data))
+    password = os.urandom(12).hex()
+    hashed = PASSWORDS.hash(password)  # Argon2 outside the transaction, as the operator's command does
+    with write_tx(engine) as conn:
+        shop = shops.create_shop(conn, "Boutique Credits", "Boutique Credits", hashed)
+        credits.grant(conn, shop, 5, origin="offered", ref="smoke", actor="tests")
+    purchase = f"Pour obtenir des crédits, contactez {SUPPORT}."
+    zero = f"Il ne vous reste plus de crédit : rien ne sera envoyé. Vos affiches restent disponibles. {purchase}"
+    once = "1 crédit, une seule fois pour cette demande"
+    sent, balance_reads = [], []  # every new image request that left the browser (its path and its key); each balance read
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
+    context.on("request", lambda request: sent.append((request.url.rsplit("/", 1)[1], request.headers.get("idempotency-key")))
+               if request.method == "POST" and re.search(r"/(scenes|refinements|text-effects)$", request.url) else None)
+    context.on("request", lambda request: balance_reads.append(request.url) if request.url.endswith("/api/balance") else None)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(ORIGIN)
+    page.get_by_label("Identifiant de la boutique", exact=True).fill("Boutique Credits")
+    page.get_by_label("Mot de passe", exact=True).fill(password)
+    page.get_by_role("button", name="Ouvrir l’atelier").click()
+    dialog, cost, thread = page.get_by_role("dialog"), page.locator(".confirm .cost"), page.get_by_role("log")
+    review = page.get_by_role("heading", name="Vérifier la fidélité du produit")
+    balance = lambda: page.request.get(f"{ORIGIN}/api/balance").json()  # noqa: E731
+    jobs = lambda kind: [job for job in page.request.get(f"{ORIGIN}/api/creations/{poster}/jobs").json()["items"] if job["kind"] == kind]  # noqa: E731
+
+    def looks(where, name):
+        for scheme, theme in (("light", "clair"), ("dark", "sombre")):
+            page.emulate_media(color_scheme=scheme)
+            page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+            page.wait_for_function(NO_SIDEWAYS)
+            check_contrast(page, f"{where} at 360 px, {theme}")
+            shot(page, f"credits-360-{theme}-{name}.png", full_page=False)
+        assert all(button.bounding_box()["height"] >= 44 for button in dialog.get_by_role("button").all()), where
+        shown = page.locator("body").inner_text()
+        assert "$" not in shown and "USD" not in shown, (where, shown)
+
+    def adjust():  # « Ajuster la scène » opens its dialog, which reads the balance again
+        page.get_by_role("tab", name="Réglages", exact=True).tap()
+        page.get_by_label("Ajustement de la scène").fill("Une lumière plus chaude")
+        page.get_by_role("button", name="Ajuster la scène", exact=True).tap()
+        expect(dialog).to_contain_text("Ajuster la scène ?")
+
+    def approve():
+        expect(review).to_be_visible(timeout=30000)
+        page.get_by_role("button", name="Tout est conforme, approuver").tap()
+        expect(review).to_have_count(0)
+
+    def say(text):
+        page.get_by_label("Votre message").fill(text)
+        page.get_by_role("button", name="Envoyer").click()
+        return thread.locator(".bubble.bot").last
+
+    def priced(price):  # a free change is saved in the document; no image is asked
+        for _ in range(50):
+            if page.request.get(f"{ORIGIN}/api/creations/{poster}").json()["document"]["offer"]["price_ar"] == price:
+                return
+            page.wait_for_timeout(200)
+        raise AssertionError(f"the price {price} was not saved")
+
+    # A first poster: what it costs and what is left, then one credit spent. Its price is not drawn in the image, so that
+    # a price change by message is free (further down).
+    expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the page's opening is over (perform drops a busy tap)
+    page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
+    expect(page.locator(".photo-strip img")).to_have_count(1)
+    page.get_by_label("Nom du produit", exact=True).fill("Casque Kilo")
+    page.get_by_label("Prix en ariary", exact=True).fill("150 000")
+    page.get_by_label("Les photos correspondent").check()
+    page.get_by_role("button", name="Préparer mon affiche").tap()
+    page.get_by_label("Dessiner aussi le prix dans l’image").uncheck()
+    page.get_by_role("button", name="Continuer", exact=True).tap()
+    page.get_by_role("button", name="Continuer", exact=True).tap()
+    page.get_by_role("button", name="Générer l’affiche").tap()
+    expect(cost).to_have_text("1 crédit · il vous en reste 5")
+    looks("the first poster's dialog", "5")
+    page.get_by_role("button", name="Lancer la génération").tap()
+    approve()
+    poster = page.url.split("#")[1]
+    # One more version: 4 left, then 3, where the dialog says how to buy and its button stays.
+    adjust()
+    expect(cost).to_have_text("1 crédit · il vous en reste 4")
+    page.get_by_role("button", name="Lancer l’ajustement").tap()
+    approve()
+    assert balance()["available"] == 3
+    adjust()
+    expect(cost).to_have_text(f"1 crédit · il vous en reste 3. Bientôt à court : {purchase}")
+    expect(dialog.get_by_role("button", name="Lancer l’ajustement")).to_be_visible()
+    looks("« Bientôt à court »", "3")
+    # The image service refuses the next one (a stub that fails once, as STUB_FAIL=refused would every time): the job ends
+    # without an image, and its credit is back.
+    service = app.state.poster_service
+    kept, service.provider = service.provider, StubProvider(["refused"])
+    try:
+        page.get_by_role("button", name="Lancer l’ajustement").tap()
+        expect(page.locator(".message.error")).to_contain_text("Le service d’images a refusé cette demande", timeout=30000)
+    finally:
+        service.provider = kept
+    expect(page.locator(".message.error")).to_contain_text("Votre crédit vous a été rendu.")
+    assert [job["credit"] for job in jobs("refine") if job["status"] == "failed"] == ["given_back"] and balance()["available"] == 3
+    page.locator(".message.error").get_by_role("button", name="Fermer").tap()
+    # A free change by message (the price is not drawn) is read, then the operator pauses the service. Its button stays,
+    # although a new image is stopped (ChatView.vue buttonOf: `!free(item)`); the price is changed and no image is asked.
+    page.goto(f"{ORIGIN}/#message-{poster}")
+    card = say("prix 160 000 Ar")
+    expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    before = len(sent)
+    with page.expect_response("**/api/balance"):
+        page.reload()  # the pause is read with the page
+    page.wait_for_timeout(500)  # the read balance is applied: a card it stops loses its button by now
+    card = thread.locator(".bubble.bot").last
+    expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
+    expect(card).not_to_contain_text(MESSAGES["budget_exhausted"])
+    card.get_by_role("button", name="Changer").tap()
+    expect(thread).to_contain_text("C’est changé sur l’affiche.")
+    priced(160000)
+    # Paused, the editor's dialog says so before the tap, without the purchase text, and offers « Fermer » only.
+    page.goto(f"{ORIGIN}/#{poster}")
+    adjust()
+    expect(cost).to_have_text(MESSAGES["budget_exhausted"])
+    expect(dialog).not_to_contain_text(purchase)
+    expect(dialog.get_by_role("button")).to_have_text(["Fermer"])
+    looks("paused", "pause")
+    dialog.get_by_role("button", name="Fermer").tap()
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    assert len(sent) == before, sent
+
+    # The editor's last credit, its answer lost (the server takes the request, the connection drops): at zero, and while
+    # paused, reopening the dialog still offers that request (api.ts retained), and the server answers it with the job it
+    # made. One job, one key (T-BALANCE-006 review r1).
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop, -2, ref="smoke-two", note="the last credit", actor="tests")
+    page.reload()  # the operator's correction is read with the page, as after any return to it
+    adjust()
+    expect(cost).to_have_text(f"1 crédit · il vous en reste 1. Bientôt à court : {purchase}")
+
+    def drop_answer(route):
+        route.fetch()  # the server has taken the request
+        route.abort()  # and the page never hears of it
+    context.route("**/refinements", drop_answer)
+    refines = len(jobs("refine"))
+    page.get_by_role("button", name="Lancer l’ajustement").tap()
+    expect(page.locator(".message.error")).to_contain_text("Connexion interrompue")
+    context.unroute("**/refinements")
+    assert balance()["available"] == 0 and len(jobs("refine")) == refines + 1
+    page.locator(".message.error").get_by_role("button", name="Fermer").tap()
+    adjust()
+    expect(cost).to_have_text(once)
+    expect(dialog.get_by_role("button")).to_have_text(["Lancer l’ajustement", "Annuler"])
+    dialog.get_by_role("button", name="Annuler").tap()
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    adjust()
+    expect(cost).to_have_text(once)
+    looks("a lost answer at zero, paused", "perdue")
+    page.get_by_role("button", name="Lancer l’ajustement").tap()
+    approve()
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    assert len(jobs("refine")) == refines + 1 and sent[-1] == sent[-2] and sent[-1][0] == "refinements", sent
+
+    # By message, a credit again (the operator's). The card's request never reaches the server (the connection drops):
+    # « Réessayer ». Another device spends the credit meanwhile, so the balance shown is stale: the retry is refused (402)
+    # with how to buy, stays offered, and the balance is read again.
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop, 1, ref="smoke-three", note="one more", actor="tests")
+    page.goto(f"{ORIGIN}/#message-{poster}")
+    page.reload()
+    card = say("fond plus sombre")
+    expect(card).to_contain_text(f"1 crédit · il vous en reste 1. Bientôt à court : {purchase}")
+    context.route("**/refinements", lambda route: route.abort())
+    card.get_by_role("button", name="Créer", exact=True).tap()
+    retry = thread.get_by_role("button", name="Réessayer")
+    expect(retry).to_be_visible()
+    context.unroute("**/refinements")
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop, -1, ref="smoke-four", note="spent on another device", actor="tests")
+    reads = len(balance_reads)
+    retry.tap()
+    expect(thread).to_contain_text(f"{MESSAGES['no_credit']} {purchase}")
+    expect(retry).to_be_visible()
+    for _ in range(50):
+        if len(balance_reads) > reads:
+            break
+        page.wait_for_timeout(100)
+    else:
+        raise AssertionError("the balance was not read again after the chat's 402")
+    # The credit is back; the same request takes it, and its answer is lost: the page reloaded at zero still offers
+    # « Reprendre », which sends it with its key; the server answers what it stored, one job.
+    with write_tx(engine) as conn:
+        credits.correct(conn, shop, 1, ref="smoke-five", note="one more", actor="tests")
+    stuck = []
+
+    def lose_answer(route):
+        route.fetch()  # the server has taken the request
+        stuck.append(route)  # and the page never hears of it
+    context.route("**/refinements", lose_answer)
+    retry.tap()
+    for _ in range(100):
+        if stuck:
+            break
+        page.wait_for_timeout(100)
+    assert stuck and balance()["available"] == 0
+    refines = len(jobs("refine"))
+    page.reload()
+    context.unroute("**/refinements")
+    resume = thread.get_by_role("button", name="Reprendre")
+    expect(resume).to_be_visible()
+    expect(resume.locator("xpath=../..")).to_contain_text(once)
+    looks("« Reprendre » at zero", "reprendre")
+    resume.tap()
+    expect(thread).to_contain_text("Version 4 prête.", timeout=30000)
+    assert len(jobs("refine")) == refines and sent[-1] == sent[-2] == sent[-3] and sent[-1][0] == "refinements", sent
+    # A new card at zero says so in place of its button; nothing is sent.
+    before = len(sent)
+    card = say("fond plus clair")
+    expect(card).to_contain_text(zero)
+    expect(card.get_by_role("button")).to_have_text(["Annuler"])
+    looks("a chat card at zero", "chat-zero")
+    card.get_by_role("button", name="Annuler").tap()
+    # A free change at zero keeps its button: the price is changed and no image is asked.
+    card = say("prix 180 000 Ar")
+    expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
+    expect(card).not_to_contain_text(zero)
+    card.get_by_role("button", name="Changer").tap()
+    priced(180000)
+    assert len(sent) == before, sent
+    # Checking is free at zero: the new version is approved.
+    thread.get_by_role("button", name="Vérifier", exact=True).tap()
+    approve()
+
+    # The editor at zero: the dialog says how to buy, offers « Fermer » only, and nothing leaves.
+    page.goto(f"{ORIGIN}/#{poster}")
+    adjust()
+    expect(cost).to_have_text(zero)
+    expect(dialog.get_by_role("button")).to_have_text(["Fermer"])
+    looks("the editor at zero", "zero")
+    dialog.get_by_role("button", name="Fermer").tap()
+    assert len(sent) == before, sent
+    # Editing is free at zero: the scene's zoom, saved.
+    revision = page.request.get(f"{ORIGIN}/api/creations/{poster}").json()["revision"]
+    page.get_by_label("Zoom").evaluate("e => { e.value = '1.3'; e.dispatchEvent(new Event('input', { bubbles: true })) }")
+    for _ in range(50):
+        if page.request.get(f"{ORIGIN}/api/creations/{poster}").json()["revision"] > revision:
+            break
+        page.wait_for_timeout(200)
+    else:
+        raise AssertionError("the edit at zero was not saved")
+    # And so is downloading.
+    page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).tap()
+    expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
+    page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).tap()
+    link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+    expect(link).to_be_visible()
+    downloaded = page.request.get(ORIGIN + link.get_attribute("href"))
+    assert downloaded.status == 200 and downloaded.headers["content-type"] == "image/png", downloaded.status
+    page.locator(".final-preview").get_by_role("button", name="Fermer").tap()
+    # « Mes affiches » lists the poster at zero.
+    page.goto(f"{ORIGIN}/#affiches")
+    expect(page.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
+    expect(page.get_by_text("Casque Kilo").first).to_be_visible()
+    shown = page.locator("body").inner_text()
+    assert "$" not in shown and "USD" not in shown, shown
+    assert balance() | {"blocked": None} == {"available": 0, "pending": 0, "purchase_fr": purchase, "blocked": None}
+    context.close()
+    engine.dispose()
+
+
 def credited(engine):
     """100 offered credits for the pilot shop, as the operator grants them: a shop starts at zero, and every image job
     takes one (D-BALANCE-002)."""
@@ -2198,9 +2504,9 @@ def run():
                         expect(page.locator(".format-ask")).to_have_count(0)
                         page.get_by_label("Nom du style").fill("Vagues bleues")
                         page.get_by_role("button", name="Enregistrer ce style").click()
-                        # A paid action is confirmed first, with its cost; cancelling does nothing.
+                        # A paid action is confirmed first, with its cost (a style takes no credit); cancelling does nothing.
                         expect(page.get_by_role("dialog")).to_contain_text("Créer un style depuis cette affiche ?")
-                        expect(page.get_by_role("dialog")).to_contain_text("aucune dépense")
+                        expect(page.get_by_role("dialog")).to_contain_text("Sans crédit.")
                         check_contrast(page, "paid confirmation")
                         shot(page, "confirm.png", full_page=False)
                         page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
@@ -2423,8 +2729,9 @@ def run():
                         page.get_by_label("Votre consigne").fill("Une couleur dorée")
                         before_polish = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
-                        # Every paid call is confirmed with its cost first; Escape or "Annuler" backs out.
-                        expect(page.get_by_role("dialog")).to_contain_text("aucune dépense")
+                        # Every paid call is confirmed with its cost first (a text proposal takes no credit); Escape or
+                        # "Annuler" backs out.
+                        expect(page.get_by_role("dialog")).to_contain_text("Sans crédit.")
                         page.keyboard.press("Escape")
                         expect(page.get_by_role("dialog")).to_have_count(0)
                         page.get_by_role("button", name="Proposer un ajustement", exact=True).click()
@@ -2593,6 +2900,7 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
                         page.locator(".nav a", has_text="Créer").click()
+                        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
                         page.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i sceau")
@@ -2767,6 +3075,7 @@ def run():
                         # upload, and the paid confirmation asks for the agreement itself instead of failing with a vague message.
                         page.locator(".nav a", has_text="Créer").click()
                         Image.new("RGB", (474, 474), (200, 200, 205)).save(OUTPUT / "small.png")
+                        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         page.get_by_label("Photos du produit").set_input_files(OUTPUT / "small.png")
                         expect(page.get_by_text("Photo petite", exact=False)).to_be_visible()
                         page.get_by_label("Nom du produit", exact=True).fill("Petite photo")
@@ -2850,6 +3159,7 @@ def run():
                         nav.locator("a", has_text="Mes affiches").tap()
                         expect(nav.locator("a[aria-current=page]")).to_contain_text("Mes affiches")
                         nav.locator("a", has_text="Créer").tap()
+                        expect(mobile.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         mobile.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(mobile.locator(".photo-strip img")).to_have_count(1)
                         mobile.get_by_label("Nom du produit", exact=True).fill("Soundcore R50i téléphone")
@@ -3029,6 +3339,7 @@ def run():
                         expect(other.get_by_label("Titre", exact=True)).to_be_visible()
                         assert other.url.endswith(f"#{copy_id}"), other.url
                         other.close()
+                        walk_credits(browser, errors, data, servers[0][0].config.app)
                         # Last on this server: it ends shop 1's sessions and suspends it for a while.
                         walk_two_shops(browser, errors, data)
                         walk_review_r2(browser, errors, data)
@@ -3042,7 +3353,7 @@ def run():
                             finally:
                                 stop(*formats_server)  # before its data directory is removed
                         assert not errors, errors
-                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, two shops in one browser (the identity gate, sign-out, cookies with and without the lock), three formats, zero spend.")
+                        print("Browser smoke passed: upload, identity, lost-response replay, scene/review, price undo, keyboard, autosave/reopen/conflict copy, overflow/glyph warnings, desktop/mobile, the prepaid balance at 360 px (cost, few left, a credit given back, the pause, zero, « Reprendre » at zero), two shops in one browser (the identity gate, sign-out, cookies with and without the lock), three formats, zero spend.")
                     except Exception:
                         page.screenshot(path=str(OUTPUT / "failure.png"), full_page=True)
                         print(page.locator("body").inner_text(), flush=True)

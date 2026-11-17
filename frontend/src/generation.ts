@@ -28,3 +28,39 @@ export function localTime(stamp: string | null | undefined, skew: number | null,
 
 // After a failed poll the next one waits 2 s, 4 s, 8 s, then 10 s each time.
 export const retryDelay = (failures: number) => [2000, 4000, 8000][failures - 1] ?? 10000
+
+// Why a generation failed, in the owner's words: what he can do differs with the cause.
+function jobFailure(code: string | null) {
+  const kept = ' Vos images et votre affiche sont conservées.'
+  if (code === 'refused') return 'Le service d’images a refusé cette demande (photo ou texte non accepté). Essayez une autre photo, ou changez le titre ou l’ambiance.' + kept
+  if (['timeout', 'provider_error', 'rate_limited', 'invalid_response'].includes(code ?? '')) return 'Le service d’images n’a pas répondu correctement. Réessayez dans une minute.' + kept
+  if (['quota', 'auth', 'budget_exhausted'].includes(code ?? '')) return 'Le compte du service d’images doit être vérifié par l’administrateur (quota, clé ou budget). Vous pouvez encore modifier et télécharger vos affiches.'
+  return `La tâche n’a pas abouti${code ? ` (code : ${code})` : ''}.${kept} Vous pouvez réessayer.`
+}
+/** What the owner is told when a followed job ends failed, interrupted or cancelled: its cause, then, when the job took a
+ *  credit, that it is back (D-BALANCE-006). */
+export function ended(job: { status: string; kind: string; error_code: string | null; credit?: string | null }) {
+  const said = job.status === 'interrupted' ? 'La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé.'
+    : job.kind === 'look' ? 'Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.'
+    : jobFailure(job.error_code)
+  return job.credit === 'given_back' ? `${said} Votre crédit vous a été rendu.` : said
+}
+
+/** Under « Reprendre » and « Réessayer », and in the editor's dialog for a request that lost its answer: the server answers
+ *  what it stored, so the credit is taken once (D-BALANCE-006). */
+export const ONCE = '1 crédit, une seule fois pour cette demande'
+
+// The shop's credits as GET /api/balance gives them (D-BALANCE-004). The browser holds null while they are unread or
+// their read failed: unknown, never 0.
+export type Charged = 'scene' | 'text_texture'
+export interface Balance { available: number; pending: number; purchase_fr: string; blocked: Record<Charged, { reason: string; message_fr: string } | null> }
+/** What a button that makes a new image says, and whether it may send (D-BALANCE-006), in the server's order: what blocks
+ *  this operation, then no credit, then few left. `stop`: nothing is sent, the dialog only closes. Unknown: the server decides. */
+export function credit(balance: Balance | null, kind: Charged): { stop: boolean; text: string } {
+  if (!balance) return { stop: false, text: '1 crédit · solde indisponible pour le moment' }
+  const blocked = balance.blocked[kind]
+  if (blocked) return { stop: true, text: blocked.message_fr }
+  if (balance.available <= 0) return { stop: true, text: `Il ne vous reste plus de crédit : rien ne sera envoyé. Vos affiches restent disponibles. ${balance.purchase_fr}` }
+  const left = `1 crédit · il vous en reste ${balance.available}${balance.pending > 0 ? `, ${balance.pending} en attente` : ''}`
+  return { stop: false, text: balance.available <= 3 ? `${left}. Bientôt à court : ${balance.purchase_fr}` : left }
+}

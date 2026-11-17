@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { elapsedLabel, localTime, OVERDUE_MS, overdue, phase, retryDelay } from '../src/generation'
+import { credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, type Balance } from '../src/generation'
 
 describe('phase of a generation, from the job and the image', () => {
   it.each([['queued', false, 'queued'], ['running', false, 'running'], ['succeeded', false, 'receiving'], ['succeeded', true, 'ready'],
@@ -42,4 +42,55 @@ describe('server time on this device', () => {
 
 describe('next poll after a failure', () => {
   it.each([[1, 2000], [2, 4000], [3, 8000], [4, 10000], [40, 10000]])('after %d failures: %d ms', (failures, delay) => expect(retryDelay(failures)).toBe(delay))
+})
+
+describe('what a new image says it costs, and what stops it (D-BALANCE-006)', () => {
+  const PURCHASE = 'Pour obtenir des crédits, contactez l’administrateur.'
+  const DAY = { reason: 'day', message_fr: 'La boutique a atteint sa limite d’images pour aujourd’hui.' }
+  const PAUSE = { reason: 'service', message_fr: 'Le service est en pause.' }
+  const balance = (available: number, pending = 0, blocked: Partial<Balance['blocked']> = {}): Balance =>
+    ({ available, pending, purchase_fr: PURCHASE, blocked: { scene: null, text_texture: null, ...blocked } })
+  it('normal: the cost and what is left, with what waits', () => {
+    expect(credit(balance(4), 'scene')).toEqual({ stop: false, text: '1 crédit · il vous en reste 4' })
+    expect(credit(balance(12, 2), 'text_texture')).toEqual({ stop: false, text: '1 crédit · il vous en reste 12, 2 en attente' })
+  })
+  it.each([1, 2, 3])('bientôt à court at %d: how to buy, the button as usual', available => {
+    expect(credit(balance(available), 'scene')).toEqual({ stop: false, text: `1 crédit · il vous en reste ${available}. Bientôt à court : ${PURCHASE}` })
+  })
+  it('bientôt à court says what waits too', () => {
+    expect(credit(balance(1, 1), 'scene').text).toBe(`1 crédit · il vous en reste 1, 1 en attente. Bientôt à court : ${PURCHASE}`)
+  })
+  it.each([0, -1])('zero (%d): nothing is sent, and how to buy', available => {
+    expect(credit(balance(available, 2), 'scene')).toEqual({ stop: true, text: `Il ne vous reste plus de crédit : rien ne sera envoyé. Vos affiches restent disponibles. ${PURCHASE}` })
+  })
+  it('blocked: its own sentence, no purchase text, nothing is sent; it comes before the lack of credit', () => {
+    for (const available of [0, 2, 50]) {
+      expect(credit(balance(available, 0, { scene: DAY }), 'scene')).toEqual({ stop: true, text: DAY.message_fr })
+      expect(credit(balance(available, 0, { scene: PAUSE, text_texture: PAUSE }), 'text_texture')).toEqual({ stop: true, text: PAUSE.message_fr })
+    }
+  })
+  it('reads its own entry: a text material is not blocked while scenes are', () => {
+    expect(credit(balance(5, 0, { scene: DAY }), 'text_texture')).toEqual({ stop: false, text: '1 crédit · il vous en reste 5' })
+  })
+  it('unknown (unread or failed): never 0, the server decides', () => {
+    expect(credit(null, 'scene')).toEqual({ stop: false, text: '1 crédit · solde indisponible pour le moment' })
+  })
+})
+
+describe('what a followed job that made nothing says', () => {
+  const job = (status: string, credit: string | null, kind = 'scene', error_code: string | null = null) => ({ status, kind, error_code, credit })
+  it.each(['failed', 'interrupted', 'cancelled'])('%s with its credit given back: the cause, then the credit', status => {
+    const said = ended(job(status, 'given_back', 'scene', 'refused'))
+    expect(said.endsWith(' Votre crédit vous a été rendu.')).toBe(true)
+    expect(said.replace(' Votre crédit vous a été rendu.', '')).toBe(ended(job(status, null, 'scene', 'refused')))
+  })
+  it('keeps each cause', () => {
+    expect(ended(job('interrupted', 'given_back'))).toBe('La génération a été interrompue. Aucun nouvel appel automatique n’a été lancé. Votre crédit vous a été rendu.')
+    expect(ended(job('failed', null, 'look'))).toBe('Le style n’a pas pu être décrit à partir de cette affiche. Essayez une autre image ; rien n’est perdu.')
+    expect(ended(job('failed', 'given_back', 'scene', 'refused'))).toMatch(/^Le service d’images a refusé cette demande.* Votre crédit vous a été rendu\.$/)
+  })
+  it('says nothing of a credit for a job that took none, or a view without the field', () => {
+    expect(ended(job('failed', null, 'text_patch', 'timeout'))).not.toContain('crédit')
+    expect(ended({ status: 'failed', kind: 'scene', error_code: null })).not.toContain('crédit')
+  })
 })

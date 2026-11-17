@@ -189,6 +189,23 @@ it('gives a change card the paid button of a recap, and none once the poster has
   expect(cardButton({ ...change, spent: true, request: kept, card: { ...change.card!, error: 'x' } })).toBe('retry')
   expect(cardButton({ ...change, spent: true, request: kept, job: 'j' })).toBeNull()
 })
+it('stops only a new paid tap at zero credits or while blocked; « Reprendre » and « Réessayer » stay (D-BALANCE-006)', () => {
+  const kept = { path: '/api/creations/c/scenes', body: {}, revision: 2 }
+  for (const card of [{ kind: 'recap' }, { kind: 'change', effect: 'refine' as const }, { kind: 'change', effect: 'scene' as const }, { kind: 'restyle', style: 'sombre' as const }]) {
+    expect(cardButton(item({ card }), undefined, undefined, null, true)).toBeNull()  // its sentence in place of the button
+    expect(cardButton(item({ card }), undefined, undefined, null, false)).toBe('create')
+    // A kept request is not a new one: the server answers what it stored, or refuses it with its own sentence.
+    expect(cardButton(item({ card, spent: true, request: kept }), undefined, undefined, 0, true)).toBe('resume')
+    expect(cardButton(item({ card: { ...card, error: 'Il ne vous reste plus de crédit' }, spent: true, request: kept }), undefined, undefined, 0, true)).toBe('retry')
+  }
+  // A free price change costs nothing: ChatView never passes `stop` for it (`!free(item) && state.credit.stop`).
+  const free = item({ card: { kind: 'change', effect: 'free', words: { price_ar: 650000 } } })
+  expect(effectOf(free.card!)).toBe('free')
+  expect(cardButton(free, undefined, undefined, null, false)).toBe('create')
+  // Other cards do not pay, and are as they were.
+  expect(cardButton(item({ card: { kind: 'ask_photo' } }), undefined, undefined, null, true)).toBe('photo')
+  expect(cardButton(item({ card: { kind: 'result', visual_id: 'v' } }), 'approved', 'v', null, true)).toBe('download')
+})
 it('converts a card from before D-005 at both entries, and leaves the server\'s cards as they are', () => {
   const said = 'prix 650 000 Ar'
   // An old price card sets its price alone and has no effect of its own; the price the image showed is no longer kept.

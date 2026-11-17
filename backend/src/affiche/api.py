@@ -520,9 +520,6 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     def capabilities():
         return {"image_mode": settings.image_provider, "planner_mode": settings.planner_provider,
                 "planner_available": settings.planner_provider == "stub" or (settings.planner_provider == "claude" and settings.anthropic_api_key is not None),
-                "scene_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_scene_usd),
-                "plan_estimate_micros": 0 if settings.planner_provider == "stub" else usd_to_micros(settings.estimate_plan_usd),
-                "texture_estimate_micros": 0 if settings.image_provider == "stub" else usd_to_micros(settings.estimate_texture_usd),
                 "formats_enabled": list(settings.formats_enabled), "chat_available": reads.available(settings)}
 
     @protected.post("/api/reads", status_code=201)

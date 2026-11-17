@@ -17,7 +17,8 @@ from starlette.routing import Mount
 from affiche.api import create_app
 from affiche.db import write_tx
 from affiche.posters import credits, rendering, visuals
-from test_api import HEADERS, ORIGIN, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
+from test_api import (HEADERS, ORIGIN, PASSWORD, client, create_draft, credentials, login, old_cancellation,  # noqa: F401
+                      password_hash, post, second_shop, settings)
 from test_config import env  # noqa: F401
 from test_poster_drafts import key, photo
 
@@ -26,7 +27,7 @@ EXEMPT = {
     ("GET", "/api/session"), ("POST", "/api/session"),  # the session itself: sign-in by identifier is test_api's
     ("DELETE", "/api/session"),  # ends the caller's own session only; a stale tab's is refused below
     ("POST", "/api/session/password"),  # takes no id: always the session's own shop; another shop untouched in test_shops
-    ("GET", "/api/capabilities"),  # the service's modes and estimates: nothing of any shop
+    ("GET", "/api/capabilities"),  # the service's modes: nothing of any shop (walked for dollar figures below)
     ("GET", "/api/status"),  # the operator's: 404 to both shops below, its spoofing matrix in test_api
 }
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
@@ -88,9 +89,39 @@ def sign_in_second_shop(client):
     return b, shop_b
 
 
+# Routes whose successful answer the dollar walk does not read, each for its reason.
+NOT_WALKED = {
+    ("GET", "/api/assets/{sha}"), ("GET", "/api/thumbnails/{sha}"),  # an image's bytes: no JSON, no key
+    ("GET", "/api/renders/{id}/preview"), ("GET", "/api/confirmations/{id}/download"),  # a PNG's bytes: no key
+    ("GET", "/api/status"),  # the operator's: 404 to every shop (asserted in the test)
+}
+
+
+def route_of(schema, request):
+    """The (method, path template) of the schema that a request was answered by."""
+    found = [(method, template) for method, template in schema
+             if method == request.method and re.fullmatch(re.sub(r"\{\w+\}", "[^/]+", template), request.url.path)]
+    assert len(found) == 1, (request.method, request.url.path, found)
+    return found[0]
+
+
+def json_keys(value):
+    """Every key of a JSON answer, at every depth."""
+    if isinstance(value, dict):
+        for name, item in value.items():
+            yield name
+            yield from json_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from json_keys(item)
+
+
 def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothing(planner_stub, client, settings):
     a, engine = client, client.app.state.engine
+    answers = []  # every answer either shop receives, for the walk of dollar figures at the end
+    a.event_hooks["response"].append(answers.append)
     b, shop_b = sign_in_second_shop(a)
+    b.event_hooks["response"].append(answers.append)
 
     # Shop A: one object of every kind, through the routes (test_tenancy_audit.py:101-150).
     logo_a = a.post("/api/assets", files={"file": ("l.png", photo(colour="red"), "image/png")}, data={"role": "logo"}).json()["asset"]
@@ -343,11 +374,57 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
 
     # The operator's view answers neither shop.
     assert a.get("/api/status").status_code == b.get("/api/status").status_code == 404
+
+    # The routes the flow above reached only through a refusal, each answered once with success, so that the walk below
+    # reads their own answers (T-BALANCE-006 review r1). A's objects change from here on.
+    def current():
+        return a.get(f"/api/creations/{cid}").json()["revision"]
+
+    for path in (f"/api/plans/{plan_a['id']}", f"/api/creations/{cid}/versions/1", f"/api/text-proposals/{proposal_a}"):
+        assert a.get(path).status_code == 200, path
+    done = [send(a, "POST", f"/api/plans/{plan_a['id']}/revisions", {
+                 k: plan_a["plan"][k] for k in ("scene", "product_region", "overlay_regions", "palette")}, current()),
+            send(a, "POST", f"/api/text-effects/{effect_a}/apply", None, current())]
+    done.append(send(a, "PUT", f"/api/creations/{cid}", a.get(f"/api/creations/{cid}").json()["document"], current()))
+
+    def made(route, body):
+        started = send(a, "POST", f"/api/creations/{cid}/{route}", body, current())
+        assert started.status_code == 202, (route, started.text)
+        return wait(a, started.json()["status_url"])
+
+    made("refinements", {"base_visual_id": visual_a, "instruction_fr": "Plus de lumière"})
+    asked = {"layer_id": title_a, "instruction_fr": "Rouge"}
+    done.append(send(a, "POST", f"/api/text-proposals/{made('text-proposals', asked)}/reject"))
+    applied = made("text-proposals", asked)
+    done.append(send(a, "POST", f"/api/text-proposals/{applied}/apply", {}, current()))
+    done.append(send(a, "POST", f"/api/text-effects/{made('text-effects', {'layer_id': title_a, 'proposal_id': applied})}/reject"))
+    copied = send(a, "POST", f"/api/creations/{cid}/copies", {"source_revision": current(), "reason": "price_update"})
+    abandoned = send(a, "POST", f"/api/creations/{copied.json()['id']}/abandon", None, copied.json()["revision"])
+    done += [copied, abandoned, send(a, "POST", f"/api/creations/{copied.json()['id']}/restore", None, abandoned.json()["revision"]),
+             send(a, "PUT", f"/api/looks/{look_a}", {"name": "Style A bis"}), send(a, "DELETE", f"/api/looks/{look_a}"),
+             a.post("/api/session/password", json={"current_password": PASSWORD, "new_password": secrets.token_hex(8)})]
+    assert all(answer.is_success for answer in done), [(answer.request.url.path, answer.text) for answer in done if not answer.is_success]
+    # No dollar figure in any answer to a shop (D-BALANCE-004, R-BALANCE-001): every JSON answer of this test walked to
+    # its last key, the service's capabilities and a cancellation stored before 0014 and replayed included. /api/status,
+    # the operator's, gave both shops its 404 just above.
+    assert a.get("/api/capabilities").status_code == b.get("/api/capabilities").status_code == 200
+    operation, _ = old_cancellation(engine, scene_job_a)
+    assert a.post(f"/api/jobs/{scene_job_a}/cancel", json={}, headers={"Idempotency-Key": operation}).status_code == 200
+    assert b.delete("/api/session").json() == {"authenticated": False}  # B's last request: its session ends
+    schema ={(method.upper(), path) for path, methods in a.get("/api/openapi.json").json()["paths"].items() for method in methods}
+    json_answers = [answer for answer in answers if answer.headers.get("content-type", "").startswith("application/json")]
+    walked = [answer.json() for answer in json_answers]
+    dollars = {name for body in walked for name in json_keys(body) if re.search("micros|usage|cost|estimate|usd", name, re.I)}
+    assert len(walked) > 100 and dollars == set(), (len(walked), dollars)
+    # The walk sees a successful answer of every route a shop reads, apart from the refusals of the attempts above: a
+    # dollar field added to a route's own answer could not hide behind its refusals.
+    succeeded = {route_of(schema, answer.request) for answer in json_answers if answer.is_success
+                 and answer.request.url.path != "/api/openapi.json"}
+    assert succeeded == schema - NOT_WALKED, f"no successful answer walked: {sorted(schema - NOT_WALKED - succeeded)}"
     # Every route of the schema is attempted, answers with the shop's own data only, or is exempt for a stated reason.
     # What this does not see: a route hidden from the schema (include_in_schema=False) or a mount, which
     # test_every_route_the_application_answers_is_in_the_schema refuses below; and a route put in OWN or EXEMPT
     # without its check, which only a reader of those two sets can catch.
-    schema = {(method.upper(), path) for path, methods in a.get("/api/openapi.json").json()["paths"].items() for method in methods}
     covered = {(method, template) for method, template, _ in attempts + after_scene} | OWN | EXEMPT
     assert covered == schema, f"not covered: {sorted(schema - covered)}; not in the schema: {sorted(covered - schema)}"
 

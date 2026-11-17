@@ -34,9 +34,9 @@ Every mutating request requires `Origin: <APP_ORIGIN>`. Authenticate with `POST 
 | GET `/api/creations/{id}/versions/{revision}` | exact revision | saved document |
 | POST `/api/creations/{id}/copies` | source revision, reason; replacement input or conflict document when applicable | linked new draft, no generation; a conflict document in another format follows the PUT rule; a copy onto a new input keeps the source's format, which it may then change |
 | POST `/api/creations/{id}/abandon` | no body or `{}` | read-only draft; active image job blocks abandonment |
-| GET `/api/jobs/{id}` | owned job | status, result ID, safe error code, recorded cost/estimate flag; no prompt/source body |
+| GET `/api/jobs/{id}` | owned job | status, result ID, safe error code, `credit` (`pending`, `spent`, `given_back`; `null` for a job that takes none); no cost, no prompt/source body |
 | POST `/api/jobs/{id}/cancel` | no body or `{}`, Idempotency-Key | queued job only; releases unsent reservation |
-| GET `/api/capabilities` | authenticated | configured provider availability and estimates, `formats_enabled`; no credentials |
+| GET `/api/capabilities` | authenticated | configured provider availability, `formats_enabled`; no credentials, no cost estimate |
 | GET `/api/creations/{id}/jobs` | owned creation | latest 50 jobs, active first, allowing reload recovery |
 | GET `/api/balance` | authenticated; takes no id: always the session's shop | `{available, pending, purchase_fr, blocked: {scene, text_texture}}`: the shop's credits (`pending`: its images waiting or running), how to get more (the operator's text, else the support contact), and for each charged operation `null` or `{reason, message_fr}`, what would refuse it now whatever the credits: `"service"` (the operator's pause, the cap, no image provider) or `"day"` (the shop's day). A refinement is costed as a scene. No dollar figure |
 | GET `/api/status` | the operator: loopback caller and loopback Host (inside the container) | commit, migration, backup, the service's spend and recent failures; anyone else 404 |
