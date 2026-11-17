@@ -17,7 +17,7 @@ import browser_smoke as smoke
 from affiche import shops
 from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import credits
-from affiche.posters.auth import PASSWORDS
+from affiche.posters.auth import PASSWORDS, token_hash
 
 OUTPUT = smoke.ROOT / "outputs" / "admin-browser"
 ADMIN = f"{smoke.ORIGIN}/admin/"
@@ -40,6 +40,10 @@ UNCERTAIN = "It may have been recorded: the history is read again below. Sending
 CAP_WARNING = "Warning: the outstanding credits would cost more than what is left of the cap. Raise SPEND_CAP_USD (deploy/README.md)."
 OFFERED_REF = re.compile(r"^offered-\d{8}-\d{6}-[a-z2-9]{6}$")
 APOSTROPHE = "’"
+# Service (T-ADMIN-007): the longest purchase text, unbroken, with markup that must stay text; a browser name of 200
+# characters, the most an operator session keeps.
+TEXT500 = "<b>Pack</b> " + "W" * 488
+LONG_AGENT = "Mozilla/5.0 (Linux; Android 14) " + "X" * 168
 
 
 def wait_for(page, url):
@@ -1052,6 +1056,206 @@ def walk_keyboard(browser, errors):
         context.close()
 
 
+def walk_service(browser, engine, errors):
+    """T-ADMIN-007 at 360 × 640, with a second device signed in: the Service screen with the worst values (a 500-character
+    purchase text, a 200-character browser name), the pause (Esc and Cancel send nothing, a 503 said as unknown, a double
+    tap sent once) and its end, an answer that arrives after the operator left the screen, the purchase text (shown as
+    text, a blank one refused, kept across a lost session), the live operator sessions with this device marked, and « End
+    all operator sessions »: both devices reach the sign-in form."""
+    with write_tx(engine) as conn:  # the earlier walks' sessions: this walk counts its own two
+        shops.end_operator_sessions(conn)
+    mobile = {"viewport": {"width": 360, "height": 640}, "is_mobile": True, "has_touch": True}
+    context, other = browser.new_context(**mobile, color_scheme="light"), browser.new_context(**mobile, user_agent=LONG_AGENT)
+    page, laptop = context.new_page(), other.new_page()
+    for each in (page, laptop):
+        each.set_default_timeout(10000)
+        each.on("pageerror", lambda error: errors.append(str(error)))
+    writes, reads = [], []  # the Service screen's requests, (method, path) and reads of the service
+    context.on("request", lambda request: writes.append((request.method, request.url.split("/api/admin/")[-1]))
+               if "/api/admin/service/" in request.url else reads.append(1) if request.url.endswith("/api/admin/service") else None)
+    try:
+        wait_for(laptop, ADMIN)
+        sign_in(laptop)
+        expect(laptop.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+        page.goto(ADMIN)
+        sign_in(page)
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+        link = page.get_by_role("link", name="Service", exact=True)
+        tab_to(page, link)  # the keyboard alone
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("heading", name="Service", level=1)).to_be_focused()
+        expect(link).to_have_attribute("aria-current", "page")
+
+        # What runs, the spend, the limits: the server's figures.
+        with engine.connect() as conn:
+            migration = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        main = page.locator("main")
+        expect(main.locator("p", has_text="Version")).to_have_text(re.compile(rf"^Version dev · schema {migration} · started \d{{4}}-\d\d-\d\d \d\d:\d\d UTC$"))
+        expect(main.get_by_text("Last backup: unknown", exact=True)).to_be_visible()  # the smokes' server keeps no backup
+        expect(main.get_by_text(re.compile(r"^Jobs failed or interrupted in the last 24 hours: \d+$"))).to_be_visible()
+        expect(main.locator("p", has_text="Service cap")).to_have_text(re.compile(r"^Service cap \$20\.00: \$\d+\.\d\d spent, \$\d+\.\d\d left\. .* Counted from 2026-11-06\.$"))
+        expect(main.get_by_text("Provider spend per shop: $2.00 · messages read per shop: 100", exact=True)).to_be_visible()
+
+        # The live operator sessions: both devices, this one marked once, the other's 200-character browser name.
+        sessions = page.locator("section", has=page.get_by_role("heading", name="Operator sessions")).locator("li")
+        expect(sessions).to_have_count(2)
+        expect(sessions.filter(has_text="this device")).to_have_count(1)
+        expect(sessions.filter(has_text=LONG_AGENT)).not_to_contain_text("this device")
+        expect(sessions.filter(has_text=LONG_AGENT)).to_contain_text("Address 127.0.0.1")
+
+        # The pause: Esc and Cancel send nothing and give the focus back; a 503 is said as unknown, never as done, and the
+        # service is read again; then a double tap on « Pause » pauses once.
+        state = page.locator("section", has=page.get_by_role("heading", name="New requests to the AI"))
+        status, alert = state.locator("[role=status]"), state.locator("[role=alert]")
+        expect(state).to_contain_text("Running: new requests reach the AI.")
+        toggle = state.get_by_role("button", name="Pause new requests…", exact=True)
+        tab_to(page, toggle)
+        page.keyboard.press("Enter")
+        dialog = page.get_by_role("alertdialog")
+        expect(dialog).to_have_accessible_name("Pause new requests?")
+        expect(dialog).to_have_accessible_description("No new request reaches the AI for any shop: images, styles, text proposals, "
+                                                      "reading messages. What was admitted finishes. Shops can still edit and download.")
+        expect(dialog.get_by_role("button", name="Cancel", exact=True)).to_be_focused()
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            page.wait_for_function(NO_SIDEWAYS)
+            for button in (dialog.get_by_role("button", name="Cancel"), dialog.get_by_role("button", name="Pause", exact=True)):
+                expect(button).to_be_in_viewport(ratio=1)
+        page.emulate_media(color_scheme="light")
+        page.keyboard.press("Escape")
+        expect(dialog).to_be_hidden()
+        expect(toggle).to_be_focused()
+        dialog, confirm = ask(page, toggle, "Pause new requests?", "Pause")
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(toggle).to_be_focused()
+        assert writes == [], writes
+        page.route("**/api/admin/service/pause", unanswered_503)
+        dialog, confirm = ask(page, toggle, "Pause new requests?", "Pause")
+        before = len(reads)
+        confirm.click()
+        expect(alert).to_have_text(f"The server{APOSTROPHE}s storage is busy or unavailable. It may have been done. Read the state here; « Refresh » reads it again.")
+        expect(status).to_have_text("")
+        wait_until(page, lambda: len(reads) > before)
+        expect(state).to_contain_text("Running: new requests reach the AI.")  # the server, read again, says
+        page.unroute("**/api/admin/service/pause", unanswered_503)
+        dialog, confirm = ask(page, toggle, "Pause new requests?", "Pause")
+        before = len(writes)
+        confirm.evaluate("button => { button.click(); button.click() }")
+        expect(status).to_have_text("Paused.")
+        expect(alert).to_have_text("")
+        expect(state.locator("p").first).to_have_text(re.compile(r"^Paused since \d{4}-\d\d-\d\d \d\d:\d\d UTC: no new request reaches the AI for any shop\.$"))
+        assert writes[before:] == [("POST", "service/pause")], writes[before:]
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT value FROM meta WHERE key='generation_paused'")).scalar() is not None
+        resume = state.get_by_role("button", name="Resume", exact=True)
+        expect(resume).to_be_focused()  # the same control, now « Resume »
+
+        # Resumed, but its answer arrives once the operator is on another screen: it shows nowhere.
+        held = []
+        page.route("**/api/admin/service/resume", lambda route: held.append((route, route.fetch())))
+        dialog, confirm = ask(page, resume, "Resume the service?", "Resume")
+        expect(dialog).to_have_accessible_description("New requests reach the AI again, for every shop.")
+        confirm.click()
+        wait_until(page, lambda: held)
+        page.get_by_role("link", name="Shops", exact=True).click()
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_focused()
+        route, response = held.pop()
+        route.fulfill(response=response)
+        page.wait_for_timeout(500)  # an absence: the late answer gets its chance to land
+        expect(page.get_by_text("Resumed.")).to_have_count(0)
+        page.unroute("**/api/admin/service/resume")
+        link.click()
+        expect(state).to_contain_text("Running: new requests reach the AI.")  # read afresh
+        expect(status).to_have_text("")
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT value FROM meta WHERE key='generation_paused'")).scalar() is None
+
+        # The purchase text: the fallback until one is set (French, as shops read it); a blank one refused with what was
+        # typed kept; the longest, with markup, shown as text; a double tap saves once.
+        section = page.locator("section", has=page.get_by_role("heading", name="Purchase text"))
+        shown, said, refused = section.locator(".purchase"), section.locator("[role=status]"), section.locator("[role=alert]")
+        expect(section).to_contain_text("(none set: every shop reads this fallback)")
+        expect(shown).to_have_attribute("lang", "fr")
+        expect(shown).to_have_text(f"Pour obtenir des crédits, contactez {smoke.SUPPORT}.")
+        area = page.get_by_label("New text, 1 to 500 characters", exact=True)
+        expect(area).to_have_value("")
+        area.fill(" \n ")
+        save = section.get_by_role("button", name="Save", exact=True)
+        save.click()
+        expect(refused).to_have_text("a purchase text has 1 to 500 characters")
+        expect(area).to_have_value(" \n ")
+        area.fill(TEXT500 + "cut")  # never cut silently: refused by the server's rule, and what was typed stays
+        save.click()
+        expect(refused).to_have_text("a purchase text has 1 to 500 characters")
+        expect(area).to_have_value(TEXT500 + "cut")
+        area.fill(TEXT500)
+        before = len(writes)
+        save.evaluate("button => { button.click(); button.click() }")
+        expect(said).to_have_text("Saved. Every shop reads it from now on.")
+        expect(refused).to_have_text("")
+        expect(shown).to_have_text(TEXT500)
+        expect(shown.locator("b")).to_have_count(0)  # never HTML
+        expect(section).not_to_contain_text("none set")
+        assert writes[before:] == [("PUT", "service/purchase-text")], writes[before:]
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT value FROM meta WHERE key='purchase_text_fr'")).scalar() == TEXT500
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            check_layout(page, f"the Service screen at 360 px, {scheme}, a 500-character text and a 200-character browser")
+            page.screenshot(path=str(OUTPUT / f"service-360-{scheme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+
+        # This session ended elsewhere while a text was typed: the sign-in form, then the same screen with what was typed
+        # (no secret), nothing saved.
+        area.fill("Texte gardé pendant la connexion")
+        token = next(cookie["value"] for cookie in context.cookies() if cookie["name"] == "affiche_operator")
+        with write_tx(engine) as conn:
+            conn.execute(text("DELETE FROM operator_sessions WHERE token_hash=:hash"), {"hash": token_hash(token)})
+        save.click()
+        expect(password_field(page)).to_be_focused()
+        expect(page.locator("form", has=password_field(page)).get_by_role("alert")).to_have_text("Your session has ended. Sign in again.")
+        sign_in(page)
+        expect(page.get_by_role("heading", name="Service", level=1)).to_be_visible()
+        expect(area).to_have_value("Texte gardé pendant la connexion")
+        expect(shown).to_have_text(TEXT500)
+
+        # An older page: nothing saved, a reload asked for.
+        page.route("**/api/admin/service/purchase-text", lambda route: route.fulfill(status=409, json={"error": {
+            "code": "bundle_outdated", "message_fr": "…", "retryable": False}, "request_id": "r"}))
+        save.click()
+        expect(page.locator(".banner")).to_contain_text("This page is out of date: nothing was saved.")
+        page.unroute("**/api/admin/service/purchase-text")
+        page.locator(".banner").get_by_role("button", name="Reload", exact=True).click()
+        expect(page.get_by_role("heading", name="Service", level=1)).to_be_visible()
+        expect(sessions.filter(has_text="this device")).to_have_count(1)
+
+        # « End all operator sessions »: this device returns to the sign-in form at once, its cookie gone, what was typed
+        # dropped as at a sign-out; the other device's next request finds its session ended.
+        area.fill("Brouillon abandonné")
+        end_all = page.get_by_role("button", name="End all operator sessions", exact=True)
+        dialog, confirm = ask(page, end_all, "End all operator sessions?", "End all")
+        expect(dialog).to_have_accessible_description(f"Every operator session ends, this device{APOSTROPHE}s too. You will sign in again.")
+        confirm.click()
+        expect(password_field(page)).to_be_focused()
+        expect(page.locator("form", has=password_field(page)).get_by_role("alert")).to_have_text(
+            f"Every operator session has ended, this device{APOSTROPHE}s too. Sign in again.")
+        expect(page.get_by_role("heading", name="Service", level=1)).to_be_hidden()
+        assert not [cookie for cookie in context.cookies() if cookie["name"] == "affiche_operator"]
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM operator_sessions")).scalar_one() == 0
+        laptop.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        expect(password_field(laptop)).to_be_focused()
+        expect(laptop.locator("form", has=password_field(laptop)).get_by_role("alert")).to_have_text("Your session has ended. Sign in again.")
+        sign_in(page)  # a new session: the text area holds the stored text, not what was typed before « End all »
+        expect(area).to_have_value(TEXT500)
+        expect(sessions).to_have_count(1)
+        page.reload()
+        expect(page.get_by_role("heading", name="Service", level=1)).to_be_visible()  # the new session's cookie
+    finally:
+        context.close()
+        other.close()
+
+
 def walk_shops_page(browser, errors):
     """The shops' page asks for nothing under /admin/ (D-ADMIN-005: no byte of the operator's page reaches it)."""
     page = browser.new_page(viewport={"width": 360, "height": 640})
@@ -1083,6 +1287,7 @@ def run():
                         walk_money(browser, engine, errors)
                         walk_no_storage(browser, engine, errors)
                         walk_keyboard(browser, errors)
+                        walk_service(browser, engine, errors)
                         walk_shops_page(browser, errors)
                         assert not errors, errors
                     finally:
@@ -1105,7 +1310,11 @@ def run():
           "after the commit and sent again (as sent, once), the request frozen behind the confirmation, double taps, other "
           "values and another shop's payment, a 503 then a reload, a discard, a 401 mid-send, an answer dropped by a new "
           "session, two tabs (one with a confirmation open), a correction refused, a move and its repeat, a move refused "
-          "with the concession, a repayment, « Older », the payments of a period, storage refused, a grant by keyboard.")
+          "with the concession, a repayment, « Older », the payments of a period, storage refused, a grant by keyboard. "
+          "Service: its figures at 360 px with a 500-character text and a 200-character browser, the pause (Esc, Cancel, a 503 "
+          "said as unknown, a double tap sent once) and its end, an answer after leaving the screen, the purchase text as "
+          "text (blank refused, kept across a lost session), the operator sessions with this device marked, « End all "
+          "operator sessions » with a second device: both signed out.")
 
 
 if __name__ == "__main__":

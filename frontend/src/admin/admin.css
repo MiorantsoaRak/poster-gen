@@ -53,6 +53,7 @@ nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px;
 .lines li { padding: 8px 0; border-bottom: 1px solid var(--line) }
 .lines p { margin: 0 0 4px }
 .copyable { user-select: all }
+.purchase { border-left: 4px solid var(--line); padding-left: 12px }
 
 table { width: 100%; border-collapse: collapse }
 th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line) }

@@ -246,8 +246,9 @@ is refused before anything is sent, and costs nothing. Around the steps above:
    It prints `granted 30 offered credits to originalphone (line 1): available 30, en attente 0`, then the cap's
    headroom. Read the headroom line: if a `WARNING` line follows it, raise `SPEND_CAP_USD` ("Secrets"). If you type
    the command twice, the second is refused by its reference: nothing doubles.
-4. Set the purchase text: `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-text "…"`.
-   It states the packs, the mobile money number, the reference to write, and when the credits arrive.
+4. Set the purchase text: `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-text "…"`,
+   or « Purchase text » on the dashboard's Service screen once you can sign in to it ("Operator dashboard"). It states
+   the packs, the mobile money number, the reference to write, and when the credits arrive.
 5. Tell the pilot « C’est prêt ».
 
 ### Release 1: the operator dashboard (migration 0016)
@@ -436,11 +437,15 @@ reference is never written twice. Do not type the request again under a new refe
   left, a `WARNING` line follows: raise `SPEND_CAP_USD` ("Secrets") before the shops reach the cap.
 - **pause --yes** stops new requests to the AI for every shop: images, styles, text proposals and the reading of
   messages. Requests already admitted finish. The shops can still edit and download. Without `--yes`, the command
-  only says whether the service is paused. **resume** lifts the pause. To stop one shop, use `suspend`.
+  only says whether the service is paused. **resume** lifts the pause. To stop one shop, use `suspend`. On the
+  dashboard, the Service screen says whether the service is paused and since when, with « Pause new requests… » and
+  « Resume », each confirmed first.
 - **purchase-text "…"** sets the text that a shop reads when it has three credits or fewer. Write the packs and
   their prices, the mobile money number, the reference to write with the payment, and when the credits arrive
   (your hours): 1 to 500 characters. Without a text, the command prints the current one. Until you set it, the shops
-  read « Pour obtenir des crédits, contactez » followed by `SUPPORT_CONTACT_FR`, or « l’administrateur ».
+  read « Pour obtenir des crédits, contactez » followed by `SUPPORT_CONTACT_FR`, or « l’administrateur ». On the
+  dashboard, the Service screen shows the text as the shops read it, and « Save » sets a new one. Read the text shown
+  before you save: a save replaces the stored text, also one set from the command line in the meantime.
 
 ## Operator dashboard
 
@@ -448,8 +453,14 @@ reference is never written twice. Do not type the request again under a new refe
 this section exist, and so do the dashboard's sign-in, sign-out and « End all operator sessions » over HTTP, their
 journal lines and the checks of `verify.sh`, and its shop actions over HTTP (list, create, new password, end
 sessions, suspend, enable), its money actions (grant, correct, move a payment) with each shop's history and the payments
-of a period. The page at `/admin/` has the sign-in, the shops, each shop's access actions, money forms and history,
-and the Money screen (the payments of a period). The Service screen comes with the rest of the release.
+of a period, and its service actions (pause, resume, purchase text). The page at `/admin/` has the sign-in, the shops,
+each shop's access actions, money forms and history, the Service screen and the Money screen (the payments of a
+period). The usage report and the list of problems come with the rest of the release.
+
+**The Service screen** shows what `/api/status` shows (the version, the schema, the start, the age of the last
+backup, « late » after 48 hours and « unknown » when its marker cannot be read), the spend against the cap with the
+cap's headroom, the pause, the purchase text, the daily limits (read-only: the spend per shop is `SHOP_DAILY_SPEND_USD` in the secrets file, the messages read per shop are set in the code), and the
+live operator sessions. « Refresh » reads it again.
 
 The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
 phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an
@@ -469,7 +480,9 @@ never with `docker compose run … affiche-ia`. To change the password, run the 
 every operator session stop at once. Until a password is set, the dashboard's sign-in names the command.
 
 **A lost phone or laptop that you know nobody opened** (locked, and found again): `end-sessions --operator` (every
-operator session ends, no shop's), then `operator-password`. In every other case, follow the next paragraph.
+operator session ends, no shop's), then `operator-password`. From another device that is still signed in,
+« End all operator sessions » on the Service screen does what `end-sessions --operator` does, that device's session
+included. In every other case, follow the next paragraph.
 
 **A suspected compromise** (a session you did not open, a line or a journal line you did not make). Over SSH, in
 this order, each with `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops <command>`:
@@ -493,7 +506,7 @@ not a person; the command line's carry `operator`. Each of its other actions is 
 action, best effort: `journalctl -t affiche-ia | grep "operator action"`. A line is missing when the process stopped
 between the two, and the journal keeps about 14 days ("Operate", Logs). The command line's own actions write no
 journal line: their output goes to your terminal only. The Service screen lists the live operator sessions, with
-their address and browser.
+their start, their end, their address and browser, and marks « this device ».
 
 **`verify.sh` and the operator password.** Each release's `verify.sh` asks the dashboard whether an operator
 password is set, and fails when it is not (for example after a restore of an older database): run

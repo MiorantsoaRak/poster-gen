@@ -2,10 +2,12 @@
 // operator (owner decision 10).
 import { AdminError } from './adminApi'
 
-export type Route = { view: 'shops' } | { view: 'shop'; id: number } | { view: 'money' }
-/** The view of an address's hash: `#/shops/<id>` is one shop, `#/money` the payments, anything else the shop list. */
+export type Route = { view: 'shops' } | { view: 'shop'; id: number } | { view: 'money' } | { view: 'service' }
+/** The view of an address's hash: `#/shops/<id>` is one shop, `#/money` the payments, `#/service` the service, anything
+ *  else the shop list. */
 export function route(hash: string): Route {
   if (hash === '#/money') return { view: 'money' }
+  if (hash === '#/service') return { view: 'service' }
   const found = /^#\/shops\/([1-9][0-9]{0,8})$/.exec(hash)
   return found ? { view: 'shop', id: Number(found[1]) } : { view: 'shops' }
 }

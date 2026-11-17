@@ -458,6 +458,21 @@ def _backup_state(folder) -> dict | None:
     return {"finished_at": finished, "age_hours": round(age, 1), "late": age > 48}
 
 
+def status_view(conn, settings: Settings, started_at: str) -> dict:
+    """Which code runs, the last backup, the service's spend, recent failures: /api/status's answer, and the head of the
+    dashboard's Service screen (D-ADMIN-004). No provider call."""
+    since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="microseconds")
+    return {"commit": os.environ.get("REVISION") or "dev",
+            "migration": conn.execute(text("SELECT version_num FROM alembic_version")).scalar(),
+            "started_at": started_at,
+            "backup": _backup_state(settings.backup_dir),
+            "spend": {"recorded_micros": spent_micros(conn, settings),
+                      "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()},
+            "failed_jobs_24h": conn.execute(text(
+                "SELECT count(*) FROM poster_jobs WHERE status IN ('failed','interrupted') AND finished_at>:since"),
+                {"since": since}).scalar_one()}
+
+
 def create_app(settings: Settings | None = None, prepare: Callable[[Engine], None] | None = None) -> FastAPI:
     """`prepare(engine)` runs once at start, under the API's lock and after the migrations, before anything else
     (deploy/phone_session.py sets its one-off password there): a folder another process holds is left untouched."""
@@ -520,19 +535,9 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
 
     @protected.get("/api/status")
     def status():
-        """For the operator only (AccessBoundary answers 404 to any other caller, signed in or not: operator()): which
-        code runs, the last backup, the service's spend, recent failures. No provider call."""
-        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat(timespec="microseconds")
+        """For the operator only (AccessBoundary answers 404 to any other caller, signed in or not: operator())."""
         with app.state.engine.connect() as conn:
-            return {"commit": os.environ.get("REVISION") or "dev",
-                    "migration": conn.execute(text("SELECT version_num FROM alembic_version")).scalar(),
-                    "started_at": app.state.started_at,
-                    "backup": _backup_state(settings.backup_dir),
-                    "spend": {"recorded_micros": spent_micros(conn, settings),
-                              "cap_micros": usd_to_micros(settings.spend_cap_usd), "since": settings.spend_cap_since.isoformat()},
-                    "failed_jobs_24h": conn.execute(text(
-                        "SELECT count(*) FROM poster_jobs WHERE status IN ('failed','interrupted') AND finished_at>:since"),
-                        {"since": since}).scalar_one()}
+            return status_view(conn, settings, app.state.started_at)
 
     @protected.get("/api/capabilities")
     def capabilities():

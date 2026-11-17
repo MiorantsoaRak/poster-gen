@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// The operator's dashboard (D-ADMIN-005): sign-in, the shops, one shop's money and access, the payments. The view comes
-// from the address's hash (admin.ts route). A 401 shows the sign-in form in place of the view, which stays mounted with
-// what was typed; never with a password the server made or a shop's data (leave).
+// The operator's dashboard (D-ADMIN-005): sign-in, the shops, one shop's money and access, the service, the payments. The
+// view comes from the address's hash (admin.ts route). A 401 shows the sign-in form in place of the view, which stays
+// mounted with what was typed; never with a password the server made or a shop's data (leave).
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import Confirm, { type Question } from './Confirm.vue'
 import Payments from './Payments.vue'
+import Service from './Service.vue'
 import { AdminError, call, newEpoch } from './adminApi'
 import {
   CAP_WARNING, PENDING, UNSTORED, WHOLE, concession, correctionRequest, count, describe, dollars, grantRequest, grouped,
@@ -62,6 +63,7 @@ const forms = computed(() => drafts.value && drafts.value.shop === current.value
 const pendingHere = computed(() => current.value ? kept[current.value.shop.id] : undefined)
 const others = computed(() => (shops.value ?? []).filter(shop => shop.id !== current.value?.shop.id))
 const correctionFold = ref<HTMLDetailsElement>(), reasonField = ref<HTMLTextAreaElement>(), payments = ref<InstanceType<typeof Payments>>()
+const service = ref<InstanceType<typeof Service>>(), purchaseDraft = ref<string>()  // the Service screen's text area
 // A money answer belongs to its shop and its form, as an access action's note does.
 const result = ref<{ shop: number; form: Form; lines: string[]; refused: boolean; warning?: string }>()
 const said = (form: Form, refused: boolean) => {
@@ -87,7 +89,7 @@ function leave(all: boolean) {
   copied.value = listMessage.value = createMessage.value = shopMessage.value = headerMessage.value = ''
   creating.value = busy.value = asking.value = older.value = false
   sending.clear()
-  if (all) { draft.value = blank(); drafts.value = undefined }
+  if (all) { draft.value = blank(); drafts.value = undefined; purchaseDraft.value = undefined }
 }
 
 /** What a refused request says. A 401 is shown on the sign-in form, which takes the view's place; a defect is not an
@@ -117,7 +119,8 @@ async function load() {
     if (drafts.value?.shop !== at.id) drafts.value = { shop: at.id, grant: newGrant(), correction: newCorrection(), move: newMove() }
     await Promise.all([loadShop(at.id), loadHistory(at.id), loadShops()])  // the shops: the move's destinations
   } else if (at.view === 'shops') await loadShops()
-  else await payments.value?.read()  // on its first opening it reads itself, once mounted
+  else if (at.view === 'service') await service.value?.read()
+  else await payments.value?.read()  // on its first opening each reads itself, once mounted
 }
 async function loadShops() {
   try { shops.value = (await call<{ items: Shop[] }>('/api/admin/shops')).items; listMessage.value = '' }
@@ -183,6 +186,14 @@ async function signOut() {
   finally { signingOut.value = false }
   await nextTick(); passwordField.value?.focus()
 }
+/** « End all operator sessions » answered (Service): the server ended this session with the others and deleted its
+ *  cookie, so the page is signed out as by « Sign out ». */
+async function ended() {
+  leave(true)
+  signInMessage.value = 'Every operator session has ended, this device’s too. Sign in again.'
+  await nextTick(); passwordField.value?.focus()
+}
+const ask = (question: Question) => confirm.value!.ask(question)
 /** A sign-out refused or unanswered: whether the server ended the session is not known here, so the server is asked.
  *  Until it says, and if it cannot, the page stays signed out. */
 async function unsure(error: unknown) {
@@ -435,6 +446,7 @@ async function repay(job: JobItem) {
       <p class="brand">Doka Studio · Operator</p>
       <nav aria-label="Dashboard">
         <a href="#/shops" :aria-current="route.view === 'shops' ? 'page' : undefined">Shops</a> ·
+        <a href="#/service" :aria-current="route.view === 'service' ? 'page' : undefined">Service</a> ·
         <a href="#/money" :aria-current="route.view === 'money' ? 'page' : undefined">Money</a>
       </nav>
       <span class="actor">{{ session?.actor }}</span>
@@ -487,6 +499,11 @@ async function repay(job: JobItem) {
     <main v-else-if="route.view === 'money'" class="page">
       <h1 ref="heading" tabindex="-1">Money</h1>
       <Payments v-if="signedIn" ref="payments" :failure="failure" />
+    </main>
+
+    <main v-else-if="route.view === 'service'" class="page">
+      <h1 ref="heading" tabindex="-1">Service</h1>
+      <Service v-if="signedIn" ref="service" v-model:draft="purchaseDraft" :failure="failure" :ask="ask" :ended="ended" :reload="load" />
     </main>
 
     <main v-else class="page">

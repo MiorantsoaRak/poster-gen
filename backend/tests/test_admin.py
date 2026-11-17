@@ -1,7 +1,8 @@
 """The operator's sign-in, sessions and request boundary (D-ADMIN-001, R-ADMIN-001) as tested properties: the rows of the
 design's three security matrices for the routes that exist, the limits, the session checked again inside a write, the
 journal line under the real launcher, and that no HTTP route writes the operator's password. Then the dashboard's
-routes (D-ADMIN-003): each answer's HTTP body, the command line's refusals, and nothing written by a refused write."""
+routes (D-ADMIN-003, D-ADMIN-004): each answer's HTTP body, the command line's refusals, and nothing written by a
+refused write."""
 import logging
 import os
 import re
@@ -23,11 +24,12 @@ from sqlalchemy import event, text
 from affiche import api as affiche_api, shops
 from affiche.api import create_app
 from affiche.db import make_engine, utc_now, write_tx
-from affiche.posters import auth, credits, store
+from affiche.posters import auth, credits, jobs, store
 from affiche.posters.auth import PASSWORDS
 from affiche.posters.credits import MOST
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_most_one_past_the_limit, client,  # noqa: F401
-                      credentials, failures, login, operator_client, password_hash, second_shop, settings, slow_wrong)
+                      create_draft, credentials, failures, login, operator_client, password_hash, second_shop, settings,
+                      slow_wrong)
 from test_config import env  # noqa: F401
 
 OPERATOR = os.urandom(13).hex()  # a throwaway operator password of 26 characters per test process
@@ -47,7 +49,11 @@ ANSWERS = {("DELETE", "/api/admin/sessions"): (None, 200),
            ("POST", "/api/admin/shops/{id}/corrections"): ({"credits": -1, "ref": "retrait-1", "note": "erreur"}, 201),
            ("POST", "/api/admin/payments/move"): ({"ref": "MV-1", "from_shop": 1, "to_shop": 2, "note": "mauvaise boutique"},
                                                  201),
-           ("GET", "/api/admin/payments"): (None, 200)}
+           ("GET", "/api/admin/payments"): (None, 200),
+           ("GET", "/api/admin/service"): (None, 200),
+           ("POST", "/api/admin/service/pause"): (None, 200),
+           ("POST", "/api/admin/service/resume"): (None, 200),
+           ("PUT", "/api/admin/service/purchase-text"): ({"text": "Pack 10 : 10 000 Ar par MVola."}, 200)}
 NOBODY = {"authenticated": False, "configured": True}
 PAST = "2000-01-01T00:00:00.000000+00:00"
 
@@ -710,9 +716,11 @@ def test_every_write_finds_its_session_ended_after_the_boundary_and_writes_nothi
     login(client)  # what a new password or an end of sessions would delete
     signed_in(device(client))  # what « End all » would delete
     signed_in(client)
-    if path.endswith("/enable"):
-        with write_tx(engine) as conn:
+    with write_tx(engine) as conn:
+        if path.endswith("/enable"):
             shops.suspend(conn, 1)
+        elif path.endswith("/resume"):
+            shops.pause(conn)
     before, real = snapshot(engine), auth.operator_session
 
     def then_ended(engine, token):
@@ -1077,3 +1085,132 @@ def test_payments_of_a_period_count_whole_utc_days_and_a_moved_payment_once(clie
         assert refusal(client.get("/api/admin/payments", params=params)) == (422, "validation_error"), params
     assert client.get("/api/admin/payments", params={"start": "2025-10-02", "end": "2025-10-01"}).json()["error"][
         "field"] == "start"
+
+
+# The service (T-ADMIN-007, R-ADMIN-005, R-ADMIN-006): /api/status's view shared, the pause, the purchase text, the
+# operator's sessions.
+FALLBACK = "Pour obtenir des crédits, contactez l’administrateur."
+
+
+def test_the_service_holds_status_views_fields_and_api_status_answers_as_before(client, settings, set_operator, tmp_path,
+                                                                                monkeypatch):
+    """status_view moved out of /api/status (D-ADMIN-004): /api/status answers its six fields and nothing else, with
+    the values it gave before; the service answer holds the same, then what the operator acts on."""
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    monkeypatch.setenv("REVISION", "abc123")
+    settings.backup_dir = tmp_path / "backups"
+    settings.backup_dir.mkdir()
+    finished = datetime.now(UTC).isoformat(timespec="seconds")
+    (settings.backup_dir / "last-backup.json").write_text('{"finished_at": "%s"}' % finished, encoding="utf-8")
+    posters(engine, 1, ("f1", "active", T, "failed"))
+    with write_tx(engine) as conn:
+        conn.execute(text("UPDATE poster_jobs SET finished_at=:now"), {"now": utc_now()})
+        migration = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    before = {"commit": "abc123", "migration": migration, "started_at": client.app.state.started_at,
+              "backup": {"finished_at": finished, "age_hours": 0.0, "late": False},
+              "spend": {"recorded_micros": 0, "cap_micros": 20_000_000, "since": settings.spend_cap_since.isoformat()},
+              "failed_jobs_24h": 1}
+    assert operator_client(client).get("/api/status").json() == before
+    service = client.get("/api/admin/service").json()
+    with engine.connect() as conn:
+        headroom = shops.headroom(conn, settings)
+    assert service == before | {
+        "paused_since": None, "purchase_text": {"stored": None, "shown": FALLBACK}, "headroom": headroom,
+        "limits": {"shop_daily_spend_micros": int(settings.shop_daily_spend_usd * 1_000_000), "reads_per_day": 100},
+        "operator_sessions": service["operator_sessions"]}
+    assert refusal(client.get("/api/status")) == (404, "not_found")  # the operator's cookie opens no shop route
+
+
+def test_pause_and_resume_stop_and_free_a_shops_next_scene_and_log_only_a_change(client, set_operator, caplog):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    login(client)  # the pilot shop, on the same browser
+    creation = create_draft(client)
+    plan = client.post(f'/api/creations/{creation["id"]}/plans', headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())},
+                       json={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
+    assert plan.status_code == 201, plan.text
+
+    def scene():
+        return client.post(f'/api/creations/{creation["id"]}/scenes', json={"plan_id": plan.json()["id"],
+                           "acknowledged_warnings": ["low_resolution"]}, headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())})
+
+    def made():
+        with engine.connect() as conn:
+            return conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one()
+
+    paused = client.post("/api/admin/service/pause")
+    with engine.connect() as conn:
+        since = jobs.paused(conn)
+    assert (paused.status_code, paused.json()) == (200, {"changed": True, "paused_since": since}) and since
+    assert client.get("/api/admin/service").json()["paused_since"] == since
+    count = made()
+    assert refusal(scene()) == (429, "budget_exhausted")  # the shop is told the pause's sentence; nothing is admitted
+    assert made() == count
+    assert client.post("/api/admin/service/pause").json() == {"changed": False, "paused_since": since}
+    assert client.post("/api/admin/service/resume").json() == {"changed": True}
+    assert client.post("/api/admin/service/resume").json() == {"changed": False}
+    assert client.get("/api/admin/service").json()["paused_since"] is None
+    assert scene().status_code == 202 and made() == count + 1
+    assert [line for line in journal_lines(caplog) if "service_" in line] == [
+        f"operator action=service_paused shop=- actor={actor}", f"operator action=service_resumed shop=- actor={actor}"]
+
+
+def test_the_purchase_text_is_set_and_read_back_and_a_blank_one_is_refused(client, set_operator, caplog):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    login(client)
+    sentence = "Pack 10 : 10 000 Ar par MVola au 034 00 000 00, référence : votre identifiant."
+
+    def put(body):
+        return client.put("/api/admin/service/purchase-text", json=body)
+
+    answer = put({"text": f"  {sentence}\n"})
+    assert (answer.status_code, answer.json()) == (200, {"stored": sentence, "shown": sentence})  # stripped, as stored
+    assert client.get("/api/admin/service").json()["purchase_text"] == {"stored": sentence, "shown": sentence}
+    assert client.get("/api/balance").json()["purchase_fr"] == sentence  # what every shop reads
+    longest = "é" * 500
+    assert put({"text": longest}).json() == {"stored": longest, "shown": longest}
+    before = snapshot(engine)
+    blank = put({"text": " \n\t "})
+    assert (blank.status_code, blank.json()["error"]) == (409, operator_refused("a purchase text has 1 to 500 characters"))
+    # Blank or too long: the command line's own rule and sentence (D-ADMIN-004), counted once stripped, in characters.
+    for body in ({"text": ""}, {"text": "x" * 501}):
+        again = put(body)
+        assert (again.status_code, again.json()["error"]) == (409, operator_refused("a purchase text has 1 to 500 characters")), body
+    for body in ({"text": 5}, {}, {"text": "x", "stored": "y"}, {"text": "x" * 2001}):
+        assert refusal(put(body)) == (422, "validation_error"), body
+    assert snapshot(engine) == before
+    assert put({"text": longest}).status_code == 200  # sent again: written again, as the design says
+    edge = "é" * 499 + "😀"  # 500 characters to the server, 501 UTF-16 units to a browser's maxlength
+    assert put({"text": f"{edge} "}).json() == {"stored": edge, "shown": edge}
+    assert put({"text": longest}).status_code == 200
+    assert [line for line in journal_lines(caplog) if "purchase_text" in line] == [
+        f"operator action=purchase_text_set shop=- actor={actor}"] * 5  # never the text itself
+
+
+def test_the_service_lists_the_live_operator_sessions_and_marks_the_callers(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    other = sign_in(laptop := device(client), **{"User-Agent": "Laptop/1.0"}).json()["actor"]
+    agent = "Phone/2.0 " + "x" * 300
+    mine = sign_in(client, **{"User-Agent": agent}).json()["actor"]
+    signed_in(old := device(client))
+    with write_tx(engine) as conn:  # expired: kept until the next sign-in, never listed
+        conn.execute(text("UPDATE operator_sessions SET expires_at=:past WHERE token_hash=:hash"),
+                     {"past": PAST, "hash": auth.token_hash(old.cookies.get(auth.OPERATOR_COOKIE))})
+    rows = sessions(engine)
+    assert len(rows) == 3
+    answer = client.get("/api/admin/service")
+    assert answer.json()["operator_sessions"] == [
+        {"actor": other, "created_at": rows[0].created_at, "expires_at": rows[0].expires_at, "address": "testclient",
+         "agent": "Laptop/1.0", "current": False},
+        {"actor": mine, "created_at": rows[1].created_at, "expires_at": rows[1].expires_at, "address": "testclient",
+         "agent": agent[:200], "current": True}]
+    assert not any(row.token_hash in answer.text for row in rows)  # the actor names a session; no hash leaves
+    assert [row["current"] for row in laptop.get("/api/admin/service").json()["operator_sessions"]] == [True, False]
+    assert laptop.delete("/api/admin/sessions").json() == {"ended": 3}  # « End all »: this device's too
+    assert refusal(client.get("/api/admin/service")) == refusal(laptop.get("/api/admin/service")) == (401, "unauthenticated")

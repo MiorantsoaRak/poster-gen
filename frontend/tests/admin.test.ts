@@ -17,7 +17,7 @@ const links = (page: string) => [...sources[page]!.matchAll(/\b(?:src|href)="([^
 const admin = Object.entries(sources).filter(([path]) => path.startsWith('../src/admin/'))
 
 it('keeps the operator page and the shops apart: neither imports the other (D-ADMIN-005)', () => {
-  expect(admin.map(([path]) => path).sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts'].map(name => `../src/admin/${name}`).sort())
+  expect(admin.map(([path]) => path).sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts'].map(name => `../src/admin/${name}`).sort())
   for (const [path, text] of admin)
     for (const name of imports(text)) expect(name === 'vue' || /^\.\/[^/]+$/.test(name), `${path} imports ${name}`).toBe(true)
   const shops = Object.entries(sources).filter(([path]) => path.startsWith('../src/') && !path.startsWith('../src/admin/'))
@@ -32,11 +32,16 @@ it('names the same bundle as the shops, so that the server refuses both old page
   expect(ADMIN_BUNDLE).toBe(BUNDLE)
 })
 
-it('reads the view from the hash: one shop by its id, the payments, anything else the shop list', () => {
+it('reads the view from the hash: one shop by its id, the payments, the service, anything else the shop list', () => {
   expect(route('#/shops/12')).toEqual({ view: 'shop', id: 12 })
   expect(route('#/money')).toEqual({ view: 'money' })
-  for (const hash of ['', '#', '#/shops', '#/shops/', '#/shops/0', '#/shops/012', '#/shops/12/x', '#/shops/-1', '#/shops/1e3', '#/service'])
+  expect(route('#/service')).toEqual({ view: 'service' })
+  for (const hash of ['', '#', '#/shops', '#/shops/', '#/shops/0', '#/shops/012', '#/shops/12/x', '#/shops/-1', '#/shops/1e3', '#/service/', '#/services'])
     expect(route(hash), hash).toEqual({ view: 'shops' })
+})
+
+it('renders what the server sends as text only: no v-html in the operator page (a shop or a stolen session writes some of it)', () => {
+  for (const [path, text] of admin) expect(/v-html|innerHTML/.test(text), path).toBe(false)
 })
 
 it('says each refusal in English, and the operator’s refusals with their own detail', () => {

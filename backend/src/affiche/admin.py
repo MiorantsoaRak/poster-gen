@@ -1,7 +1,7 @@
-"""The operator's dashboard over HTTP (D-ADMIN-001, D-ADMIN-003): its own sign-in, sessions and cookie, apart from every
-shop's. AccessBoundary (api.py) gives these routes request.state.operator and never a shop. Every write runs in
-operator_tx, which finds the session still live once the write lock is held, calls the command line's own functions
-(shops.*, credits.*) and logs one line after its commit."""
+"""The operator's dashboard over HTTP (D-ADMIN-001, D-ADMIN-003, D-ADMIN-004): its own sign-in, sessions and cookie,
+apart from every shop's. AccessBoundary (api.py) gives these routes request.state.operator and never a shop. Every write
+runs in operator_tx, which finds the session still live once the write lock is held, calls the command line's own
+functions (shops.*, credits.*) and logs one line after its commit."""
 import logging
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from affiche import shops
 from affiche.config import Settings
 from affiche.db import utc_now, write_tx
-from affiche.posters import auth, credits, reads
+from affiche.posters import auth, credits, jobs, reads
 from affiche.posters.models import Id, Model
 from affiche.posters.store import Refused
 from affiche.visuals.admission import spent_micros
@@ -63,6 +63,10 @@ class Move(Model):
     from_shop: int = Field(ge=1, le=MOST)
     to_shop: int = Field(ge=1, le=MOST)
     note: Note
+
+
+class PurchaseText(Model):
+    text: str = Field(max_length=2000)  # a bound on the body only: shops.set_purchase_text judges it, once stripped (409)
 
 
 def existing(error: credits.Recorded) -> dict:
@@ -124,6 +128,17 @@ def item(conn, shop) -> dict:
     return {"id": shop.id, "identifier": shop.identifier, "name": shop.name, "state": shop.state,
             "has_password": bool(shop.has_password), "created_at": shop.created_at, **credits.balance(conn, shop.id),
             **conn.execute(COUNTS, {"shop": shop.id, "now": utc_now()}).one()._asdict()}
+
+
+def purchase(conn, settings: Settings) -> dict:
+    """The purchase text as stored (None: never set) and as every shop reads it (credits.purchase_text's fallback)."""
+    return {"stored": conn.execute(text("SELECT value FROM meta WHERE key='purchase_text_fr'")).scalar(),
+            "shown": credits.purchase_text(conn, settings)}
+
+
+# The live operator sessions, oldest first. Never the token's hash: the actor names a session well enough.
+LIVE = text("SELECT token_hash, created_at, expires_at, address, agent FROM operator_sessions WHERE expires_at>:now"
+            " ORDER BY created_at")
 
 
 def router(settings: Settings) -> APIRouter:
@@ -289,6 +304,47 @@ def router(settings: Settings) -> APIRouter:
             items = credits.payments(conn, start, end)
         return {"start": start.isoformat(), "end": end.isoformat(), "received_ar": sum(item["amount_ar"] for item in items),
                 "items": items}
+
+    # The service (D-ADMIN-004): /api/status's view, the pause, the purchase text, the limits, the operator's sessions.
+    @protected.get("/api/admin/service")
+    def service(request: Request):
+        from affiche.api import status_view  # api imports this module
+        current = request.state.operator.token_hash
+        with request.app.state.engine.connect() as conn:
+            return {**status_view(conn, settings, request.app.state.started_at), "paused_since": jobs.paused(conn),
+                    "purchase_text": purchase(conn, settings), "headroom": shops.headroom(conn, settings),
+                    "limits": {"shop_daily_spend_micros": usd_to_micros(settings.shop_daily_spend_usd),
+                               "reads_per_day": reads.DAILY_LIMIT},
+                    "operator_sessions": [{"actor": auth.operator_actor(row.token_hash), "created_at": row.created_at,
+                                           "expires_at": row.expires_at, "address": row.address, "agent": row.agent,
+                                           "current": row.token_hash == current}
+                                          for row in conn.execute(LIVE, {"now": utc_now()})]}
+
+    @protected.post("/api/admin/service/pause")
+    def pause(request: Request):
+        """No new request to the AI for any shop; what was admitted finishes (shops.pause)."""
+        with operator_tx(request.app.state.engine, request) as conn:
+            changed, since = shops.pause(conn), jobs.paused(conn)
+        if changed:
+            journal("service_paused", request.state.operator.actor)
+        return {"changed": changed, "paused_since": since}
+
+    @protected.post("/api/admin/service/resume")
+    def resume(request: Request):
+        with operator_tx(request.app.state.engine, request) as conn:
+            changed = shops.resume(conn)
+        if changed:
+            journal("service_resumed", request.state.operator.actor)
+        return {"changed": changed}
+
+    @protected.put("/api/admin/service/purchase-text")
+    def purchase_text(body: PurchaseText, request: Request):
+        """Read back in the transaction that writes it, as the command line does. Sent again, it is written again."""
+        with operator_tx(request.app.state.engine, request) as conn:
+            shops.set_purchase_text(conn, body.text)
+            answer = purchase(conn, settings)
+        journal("purchase_text_set", request.state.operator.actor)
+        return answer
 
     routes.include_router(protected)
     return routes
