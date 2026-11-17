@@ -47,6 +47,24 @@
   - user steps at the release (not a task): warn the pilot, then `grant originalphone 30 --offered --ref pilot-opening` right after the release (user decision 2026-11-16), then `purchase-text`. Open for the user, each on its default until the task that builds it: a text material costs a credit; credit back at once on an unknown outcome; suspension as the only per-shop stop; the pause lets admitted jobs finish. Not built: automatic credit back for a fidelity defect; a monthly cap.
 - [x] T-SHOP-REPLACE (done 2026-11-17: migration 0015, triggers `shop_profile_never_replaced` and `shop_profile_same_shop`; a rename to a free identifier stays possible; `keep_shop` joins the guards, fourteen lines; a migration retires an earlier ADDED check only by naming it in `SUPERSEDES`; Codex r1 APPROVE WITH FIXES, reviews/t-shop-replace-code-r1.md, fixes not reviewed again; backend 1437 passed on SQLite 3.53.1, not run on 3.40.1; Codex notes sessions rows can still be REPLACEd, see T-SESSION-REPLACE; found 2026-11-17 in T-BALANCE-001's review; **required before the Release 1 deploy**, Codex r2 rules it P1) `shop_profile` (migration 0013) can be rewritten by `INSERT OR REPLACE`: reproduced, a new identifier at the same shop id inherits the old shop's balance, with foreign keys on. Also cover a plain update of a shop's id or rowid with foreign keys off. No code does either. A forward migration (0015) with BEFORE INSERT / BEFORE UPDATE guards as in 0014, entered in `rehearse.GUARDS`.
   - verify: a direct-SQL test per bypass through the three kinds of writer of test_credits.py, each refused; `uv run pytest -q` → all passed
+- T-ADMIN (design [admin-dashboard](designs/admin-dashboard.md) v3, ADR-110; each task's scope, tests and mutation checks are in its "Tasks" section; 001-007 are the core, 008-010 may move after Release 1 on the user's word):
+- [ ] T-ADMIN-001 Migration 0016 (`operator_sessions`), `operator-password`, `end-sessions --operator`/`--all`, restore.sh's closing list, the runbook with the suspected-compromise procedure.
+  - verify: `uv run pytest tests/test_db.py tests/test_shops.py tests/test_restore_script.py -q` → pass; `sh -n ../deploy/restore.sh`; `uv run pytest -q -rf` → all passed
+- [ ] T-ADMIN-002 Operator sign-in, sign-out, session read, the request boundary, "end all", the app's INFO log handler proved under the real launcher, verify.sh.
+  - verify: `uv run pytest tests/test_admin.py tests/test_api.py tests/test_two_shops.py -q` → pass; `sh -n ../deploy/verify.sh`; full suite
+- [ ] T-ADMIN-003 Shop routes (create, suspend, enable, reset password, end sessions) on the shared write frame; refusals with `detail`.
+  - verify: `uv run pytest tests/test_admin.py tests/test_shops.py tests/test_api.py tests/test_two_shops.py -q` → pass; full suite
+- [ ] T-ADMIN-004 Money routes (grant, correct, move, history, payments by period); 409 `already_recorded` with the existing line and `moved_to`.
+  - verify: `uv run pytest tests/test_admin.py tests/test_credits.py tests/test_shops.py -q` → pass; full suite
+- [ ] T-ADMIN-005 The page: sign-in, shop list, one shop's access actions; the shops' built files byte-identical.
+  - verify: `corepack npm@10 test && corepack npm@10 run build`; `sha256sum -c` of the shops' files; `admin_browser.py`; the three shop smokes
+- [ ] T-ADMIN-006 The page: money forms with kept requests, history, payments, 360 px with worst-case content.
+  - verify: as T-ADMIN-005
+- [ ] T-ADMIN-007 The service screen: status, pause/resume, purchase text, live operator sessions, "End all".
+  - verify: `uv run pytest tests/test_admin.py tests/test_api.py -q`; npm test and build; `admin_browser.py`; full suite
+- [ ] T-ADMIN-008 (may move after Release 1) The usage report.
+- [ ] T-ADMIN-009 (may move after Release 1) Problems and queue.
+- [ ] T-ADMIN-010 (may move after Release 1) The Reka UI trial (AlertDialog; kept only if it beats the native dialog on a measured point).
 - [ ] T-SESSION-REPLACE (proposed by Claude 2026-11-17 from the T-SHOP-REPLACE review, not confirmed by the user) A `sessions` row can be rewritten by `INSERT OR REPLACE` on its token hash and so change shop, with foreign keys on (migration 0005). No code does it. Decide whether it needs the same guards before Release 1.
 - [ ] T-DEPLOY-DOCKER-RUN (proposed by Claude 2026-11-16, not yet confirmed by the user; before the Release 1 deploy) Run `deploy/release.sh` and `deploy/restore.sh` once against real Docker on a throwaway host, never the shared box: the operator service writes nothing to the journal; `up` and `build` leave it alone; `docker exec` output stays out of the journal; the real `timeout` around a hung backup and the removal of `affiche-ia-backup`; a restore from a backup taken before migration 0013.
   - verify: the commands and their output, kept in `docs/project/reviews/`.
