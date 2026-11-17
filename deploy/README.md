@@ -402,7 +402,8 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
 - **A payment is in one shop at a time.** A bought grant whose reference any shop holds is refused, and no option
   forces it.
 - **A payment credited to the wrong shop:** `move-payment <reference> <wrong shop> <right shop> --note "…"`. It moves
-  the whole payment, its credits and its ariary, in one step. It is refused when the wrong shop has spent some of
+  the whole payment, its credits and its ariary, in one step. A move typed again is refused, with the line of the
+  correction that holds it. It is refused when the wrong shop has spent some of
   those credits: the payment then stays where it is. To serve the right shop anyway, give it an offered grant:
   `grant <right shop> <n> --offered --ref <reference>-geste --note "paiement <reference> crédité par erreur à <wrong shop>"`.
   It shows as offered and counts no money.
@@ -437,7 +438,8 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
 **State on 2026-11-17: being built for Release 1** (`docs/project/designs/admin-dashboard.md`). The two commands of
 this section exist, and so do the dashboard's sign-in, sign-out and « End all operator sessions » over HTTP, their
 journal lines and the checks of `verify.sh`, and its shop actions over HTTP (list, create, new password, end
-sessions, suspend, enable). The page and the dashboard's other actions come with the rest of the release.
+sessions, suspend, enable), its money actions (grant, correct, move a payment) with each shop's history and the payments
+of a period. The page and the dashboard's other actions come with the rest of the release.
 
 The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
 phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an

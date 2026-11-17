@@ -289,7 +289,8 @@ log.info(…)                                         # non-money writes only, a
 |---|---|
 | pydantic `ValidationError` (the shop's name, `Profile`). It is a `ValueError`, so it comes first | 422 `validation_error`, `field: "name"` |
 | `credits.Recorded` | 409 `already_recorded`, `detail` = its message, `existing` = its line and `moved_to` |
-| another `ValueError`, a `LookupError` | 409 `operator_refused`, `detail` = its message |
+| another `ValueError` | 409 `operator_refused`, `detail` = its message |
+| a `LookupError` (amended after the code review: `KeyError` and `IndexError` are defects; an unknown shop is 404 before the write) | 500, sanitised, rolled back |
 | `IntegrityError` (a rule of 0014 or 0015) | 409 `operator_refused`, `detail` = the driver's message only (`error.orig`), as shops.py:608-609 |
 | an unknown shop id | 404 `not_found` |
 | any other `SQLAlchemyError`, `OSError`; a lock not obtained | 503 `storage_unavailable` (existing, api.py:279-284) |

@@ -54,7 +54,7 @@
   - verify: `uv run pytest tests/test_admin.py tests/test_api.py tests/test_two_shops.py -q` → pass; `sh -n ../deploy/verify.sh`; full suite
 - [x] T-ADMIN-003 (done 2026-11-17; Codex r1 APPROVE WITH FIXES, reviews/t-admin-003-004-code-r1.md; its fix, a defect inside a write is a 500 and never a refusal, is in T-ADMIN-004's commit and was not reviewed again; backend 1479 passed at this state) Shop routes (create, suspend, enable, reset password, end sessions) on the shared write frame; refusals with `detail`.
   - verify: `uv run pytest tests/test_admin.py tests/test_shops.py tests/test_api.py tests/test_two_shops.py -q` → pass; full suite
-- [ ] T-ADMIN-004 Money routes (grant, correct, move, history, payments by period); 409 `already_recorded` with the existing line and `moved_to`.
+- [x] T-ADMIN-004 (done 2026-11-17; Codex r1 APPROVE WITH FIXES, no double-write path found, reviews/t-admin-003-004-code-r1.md; fixes not reviewed again: a `LookupError` is no longer a refusal, the last possible end date is 422; backend 1493 passed on SQLite 3.53.1; no real server run) Money routes (grant, correct, move, history, payments by period); 409 `already_recorded` with the existing line and `moved_to`.
   - verify: `uv run pytest tests/test_admin.py tests/test_credits.py tests/test_shops.py -q` → pass; full suite
 - [ ] T-ADMIN-005 The page: sign-in, shop list, one shop's access actions; the shops' built files byte-identical.
   - verify: `corepack npm@10 test && corepack npm@10 run build`; `sha256sum -c` of the shops' files; `admin_browser.py`; the three shop smokes

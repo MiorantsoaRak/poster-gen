@@ -4,9 +4,10 @@ operator_tx, which finds the session still live once the write lock is held, cal
 (shops.*, credits.*) and logs one line after its commit."""
 import logging
 from contextlib import contextmanager
-from typing import Annotated
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.security import APIKeyCookie
 from pydantic import Field, SecretStr, ValidationError
 from sqlalchemy import text
@@ -17,13 +18,16 @@ from affiche import shops
 from affiche.config import Settings
 from affiche.db import utc_now, write_tx
 from affiche.posters import auth, credits, reads
-from affiche.posters.models import Model
+from affiche.posters.models import Id, Model
 from affiche.posters.store import Refused
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import usd_to_micros
 
 log = logging.getLogger(__name__)
-ShopId = Annotated[int, Path(ge=1, le=credits.MOST)]
+MOST = credits.MOST  # a model field named `credits` would hide the module below it
+ShopId = Annotated[int, Path(ge=1, le=MOST)]
+Ref = Annotated[str, Field(min_length=1, max_length=100)]  # credits._ref's own rule judges it after
+Note = Annotated[str, Field(min_length=1, max_length=500)]
 
 
 class OperatorLogin(Model):
@@ -33,7 +37,39 @@ class OperatorLogin(Model):
 class NewShop(Model):
     identifier: str = Field(min_length=1, max_length=64)  # create_shop's own rule refuses what is not 3 to 32
     name: str | None = None  # the profile's own rule (Profile) judges it
-    welcome: int = Field(ge=0, le=credits.MOST)  # typed at each creation (R-ADMIN-006): no default
+    welcome: int = Field(ge=0, le=MOST)  # typed at each creation (R-ADMIN-006): no default
+
+
+# The money bodies (D-ADMIN-003). No Idempotency-Key: the reference is the key, as migration 0014 enforces.
+class Grant(Model):
+    credits: int = Field(ge=1, le=MOST)
+    origin: Literal["offered", "bought"]
+    ref: Ref
+    note: Note | None = None
+    amount_ar: int | None = Field(default=None, ge=1, le=MOST)
+    method: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class Correction(Model):
+    credits: int = Field(ge=-MOST, le=MOST)
+    ref: Ref
+    note: Note
+    amount_ar: int | None = Field(default=None, ge=-MOST, le=MOST)
+    job_id: Id | None = None
+
+
+class Move(Model):
+    ref: Ref
+    from_shop: int = Field(ge=1, le=MOST)
+    to_shop: int = Field(ge=1, le=MOST)
+    note: Note
+
+
+def existing(error: credits.Recorded) -> dict:
+    """The line that holds the request's place, as the page compares it (D-ADMIN-005), and where a move went."""
+    moved = error.moved_to
+    return {**error.line._asdict(),
+            "moved_to": None if moved is None else {"id": moved.id, "shop_id": moved.shop_id, "identifier": moved.identifier}}
 
 
 @contextmanager
@@ -48,7 +84,9 @@ def operator_tx(engine, request: Request):
             yield conn
     except ValidationError:  # a ValueError, so first; only the shop's name meets a model's rule in shops.py
         raise Refused("validation_error", field="name") from None
-    except (ValueError, LookupError) as error:
+    except credits.Recorded as error:  # a ValueError too: a request sent again, written once
+        raise Refused("already_recorded", 409, detail=str(error), existing=existing(error)) from None
+    except ValueError as error:  # never LookupError: a KeyError would be a defect answered as a refusal, with its text
         raise Refused("operator_refused", 409, detail=str(error)) from None
     except IntegrityError as error:  # a rule of 0014 or 0015: the driver's message, never the statement's parameters
         raise Refused("operator_refused", 409, detail=str(error.orig)) from None
@@ -197,6 +235,60 @@ def router(settings: Settings) -> APIRouter:
         if changed:
             journal("shop_enabled", request.state.operator.actor, shop.identifier)
         return {"changed": changed}
+
+    # Money: credits.grant, credits.correct and credits.move, as the command line calls them, under the session's actor.
+    # No journal line: the ledger holds each, with the same actor (D-ADMIN-002).
+    @protected.get("/api/admin/shops/{id}/history")
+    def history(id: ShopId, request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 50,
+                before: Annotated[str | None, Query(max_length=100)] = None):
+        with request.app.state.engine.connect() as conn:
+            find(conn, id)
+            items, cursor = credits.history(conn, id, before=before, limit=limit)
+        return {"items": items, "next_cursor": cursor}
+
+    @protected.post("/api/admin/shops/{id}/grants", status_code=201)
+    def grant(id: ShopId, body: Grant, request: Request):
+        actor = request.state.operator.actor
+        with operator_tx(request.app.state.engine, request) as conn:
+            find(conn, id)
+            line = credits.grant(conn, id, body.credits, origin=body.origin, ref=body.ref, actor=actor,
+                                 note=body.note, amount_ar=body.amount_ar, method=body.method)
+            answer = {"line": line, "balance": credits.balance(conn, id),
+                      "headroom": shops.headroom(conn, settings)}
+        return answer
+
+    @protected.post("/api/admin/shops/{id}/corrections", status_code=201)
+    def correct(id: ShopId, body: Correction, request: Request):
+        with operator_tx(request.app.state.engine, request) as conn:
+            find(conn, id)
+            line = credits.correct(conn, id, body.credits, ref=body.ref, note=body.note, actor=request.state.operator.actor,
+                                   amount_ar=body.amount_ar, job_id=body.job_id)
+            balance = credits.balance(conn, id)
+        return {"line": line, "balance": balance}
+
+    @protected.post("/api/admin/payments/move", status_code=201)
+    def move(body: Move, request: Request):
+        with operator_tx(request.app.state.engine, request) as conn:
+            find(conn, body.from_shop)
+            find(conn, body.to_shop)
+            lines = credits.move(conn, body.ref, body.from_shop, body.to_shop, request.state.operator.actor, body.note)
+            balances = {"from": credits.balance(conn, body.from_shop), "to": credits.balance(conn, body.to_shop)}
+        return {"lines": list(lines), "balances": balances}
+
+    @protected.get("/api/admin/payments")
+    def payments(request: Request, start: date | None = None, end: date | None = None):
+        """Whole UTC days, end included; by default the current UTC month."""
+        month = datetime.now(UTC).date().replace(day=1)
+        start = start or month
+        end = end or (month + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+        if start > end:
+            raise Refused("validation_error", field="start")
+        if end == date.max:  # its next day, the period's bound, does not exist
+            raise Refused("validation_error", field="end")
+        with request.app.state.engine.connect() as conn:
+            items = credits.payments(conn, start, end)
+        return {"start": start.isoformat(), "end": end.isoformat(), "received_ar": sum(item["amount_ar"] for item in items),
+                "items": items}
 
     routes.include_router(protected)
     return routes

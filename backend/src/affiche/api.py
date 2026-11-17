@@ -82,6 +82,7 @@ MESSAGES = {
         "wrong_credentials": "Identifiant ou mot de passe incorrect.",
         "operator_not_set": "Aucun mot de passe d’opérateur n’est défini : lancez python -m affiche.shops operator-password sur le serveur.",
         "operator_refused": "Refusé : rien n’a été écrit.",  # the operator's; its detail says why
+        "already_recorded": "Déjà enregistré : rien n’a été écrit de plus.",  # the operator's; existing is the line
         "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
         "shop_changed": "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.",
         "wrong_password": "Le mot de passe actuel n’est pas le bon.",

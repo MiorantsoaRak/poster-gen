@@ -2,6 +2,7 @@
 proven by a statement the database itself refuses, the module's functions, and the guards on a fresh database."""
 import sqlite3
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import exc
@@ -491,7 +492,7 @@ def test_a_payment_moves_whole_once_its_credits_are_unspent_and_never_back(db):
         (1, "correction", None, -10, -10000, None, "MV-1", "mauvaise boutique"),
         (2, "grant", "bought", 10, 10000, "mvola", "MV-1", "mauvaise boutique")]
     for args, match in ((("MV-1", 2, 1), "destination shop already has a line"),  # back where it was
-                        (("MV-1", 1, 3), "already moved or corrected in the source shop"),
+                        (("MV-1", 1, 3), r"already moved or corrected in the source shop \(line 2\)$"),
                         (("MV-1", 2, 2), "moves to another shop"),
                         (("MV-9", 2, 3), "no bought grant with the reference 'MV-9'")):
         with pytest.raises(ValueError, match=match), write_tx(db) as conn:
@@ -505,6 +506,95 @@ def test_a_payment_moves_whole_once_its_credits_are_unspent_and_never_back(db):
         credits.move(conn, "MV-1", 2, 3, "operator", "encore")  # on to a third shop: the first one's total is 0
         assert [credits.balance(conn, shop)["available"] for shop in (1, 2, 3)] == [0, 0, 10]
     assert rows(db, "SELECT SUM(amount_ar) FROM credit_grants") == [(10000,)]
+
+
+def test_a_request_already_written_is_refused_with_the_line_that_holds_it(db):
+    """credits.Recorded (D-ADMIN-003): still a ValueError, so one line for the command line, carrying the line that
+    holds the request's place, as LINES reads it (its shop by id and identifier)."""
+    with write_tx(db) as conn:
+        credits.grant(conn, 1, 5, origin="offered", ref="welcome", actor="operator")  # line 1
+        credits.grant(conn, 1, 10, origin="bought", ref="MV-1", actor="operator", amount_ar=10000, method="mvola")  # 2
+        job(conn, "done", "succeeded")
+        credits.correct(conn, 1, 1, ref="repay-done", note="défaut", actor="operator", job_id="done")  # 3
+        credits.correct(conn, 1, 0, ref="mv-1", note="montant", actor="operator", amount_ar=-500)  # 4: an amount fix
+    for write, line, match in (
+            (lambda conn: credits.grant(conn, 1, 5, origin="offered", ref="WELCOME", actor="operator"), 1,
+             r"already has a grant with the reference 'welcome' \(line 1\)"),
+            (lambda conn: credits.grant(conn, 2, 10, origin="bought", ref="mv-1", actor="operator", amount_ar=10000,
+                                        method="mvola"), 2, r"'MV-1' is already recorded in shop originalphone \(line 2\)"),
+            (lambda conn: credits.correct(conn, 1, 1, ref="autre", note="n", actor="operator", job_id="done"), 3,
+             r"this job was already repaid \(line 3\)"),
+            (lambda conn: credits.correct(conn, 1, -1, ref="repay-done", note="n", actor="operator"), 3,
+             r"already has a correction with the reference 'repay-done' \(line 3\)"),
+            (lambda conn: credits.correct(conn, 1, 0, ref="MV-1", note="n", actor="operator", amount_ar=-500), 4,
+             r"the payment 'MV-1' was already moved or corrected in this shop$")):
+        with pytest.raises(credits.Recorded, match=match) as refused, write_tx(db) as conn:
+            write(conn)
+        held = refused.value.line
+        assert (held.id, held.shop_id, held.identifier, refused.value.moved_to) == (line, 1, "originalphone", None)
+    assert rows(db, "SELECT count(*) FROM credit_grants") == [(4,)]
+
+
+def test_a_move_sent_again_names_its_correction_and_the_grant_it_wrote_when_one_can_be_told(db):
+    with write_tx(db) as conn:
+        credits.grant(conn, 1, 10, origin="bought", ref="MV-1", actor="operator", amount_ar=10000, method="mvola")  # 1
+        assert credits.move(conn, "MV-1", 1, 2, "operator", "erreur") == (2, 3)
+        assert credits.move(conn, "MV-1", 2, 3, "operator", "encore") == (4, 5)  # a chain: on to shop 3
+        credits.grant(conn, 1, 10, origin="bought", ref="MV-2", actor="operator", amount_ar=10000, method="mvola")  # 6
+        credits.correct(conn, 1, 0, ref="MV-2", note="montant", actor="operator", amount_ar=-1000)  # 7: an amount fix
+        credits.grant(conn, 1, 5, origin="bought", ref="OM-7", actor="operator", amount_ar=500, method="orange")  # 8
+        credits.correct(conn, 1, 1, ref="om-7", note="geste", actor="operator")  # 9: a plain correction, no ariary
+    # Sent again, sent to another shop after the first, sent again after the chain: the grant it wrote from that shop.
+    for (ref, source, destination), line, moved_to in ((("MV-1", 1, 2), 2, (3, 2)), (("mv-1", 1, 3), 2, (3, 2)),
+                                                       (("MV-1", 2, 1), 4, (5, 3)), (("MV-2", 1, 2), 7, None),
+                                                       (("OM-7", 1, 2), 9, None)):
+        with pytest.raises(credits.Recorded, match=rf"the payment '{ref.upper()}' was already moved or corrected in the "
+                                                   rf"source shop \(line {line}\)$") as refused, write_tx(db) as conn:
+            credits.move(conn, ref, source, destination, "operator", "encore")
+        went = refused.value.moved_to
+        assert (refused.value.line.id, None if went is None else (went.id, went.shop_id)) == (line, moved_to), ref
+    assert rows(db, "SELECT count(*) FROM credit_grants") == [(9,)]
+
+
+def test_the_history_merges_the_lines_and_every_job_that_took_a_credit_newest_first(db):
+    old, free, lost, wait, other = (str(uuid4()) for _ in range(5))
+    later, latest = "2026-11-16T11:00:00.000000+00:00", "2026-11-16T12:00:00.000000+00:00"
+    with write_tx(db) as conn:
+        line(conn, ref="welcome")  # line 1, at T
+        line(conn, shop=2, ref="theirs")  # another shop's
+        line(conn, credits=2, ref="geste")  # line 3, at T too: lines by id, newest first
+        for id, status, takes, shop in ((old, "succeeded", 1, 1), (free, "succeeded", 0, 1), (lost, "failed", 1, 1),
+                                        (wait, "queued", 1, 1), (other, "succeeded", 1, 2)):
+            job(conn, id, status, shop=shop, takes=takes)
+        conn.exec_driver_sql("UPDATE poster_jobs SET created_at=?, finished_at=? WHERE id=?", (later, later, lost))
+        conn.exec_driver_sql("UPDATE poster_jobs SET created_at=? WHERE id=?", (latest, wait))
+        repay = credits.correct(conn, 1, 1, ref=f"repay-{old}", note="défaut", actor="operator", job_id=old)  # line 4
+        repaid_at = conn.exec_driver_sql("SELECT created_at FROM credit_grants WHERE id=?", (repay,)).scalar_one()
+        items, cursor = credits.history(conn, 1)
+    lines = {"origin": None, "amount_ar": None, "method": None, "job_id": None, "note": None, "actor": "operator"}
+    jobs = {"kind": "scene", "result_ref": None, "error_code": None, "finished_at": None, "repaid_by": None}
+    assert cursor is None and items == [
+        {"type": "line", "id": 4, "kind": "correction", "credits": 1, "ref": f"repay-{old}", "at": repaid_at} | lines
+        | {"job_id": old, "note": "défaut"},
+        {"type": "job", "id": wait, "status": "queued", "creation_id": wait, "at": latest, "credit": "pending"} | jobs,
+        {"type": "job", "id": lost, "status": "failed", "creation_id": lost, "at": later, "credit": "given_back"} | jobs
+        | {"finished_at": later},  # its credit came back: shown, explained by its end
+        {"type": "line", "id": 3, "kind": "grant", "credits": 2, "ref": "geste", "at": T} | lines | {"origin": "offered"},
+        {"type": "line", "id": 1, "kind": "grant", "credits": 10, "ref": "welcome", "at": T} | lines | {"origin": "offered"},
+        {"type": "job", "id": old, "status": "succeeded", "creation_id": old, "at": T, "credit": "spent"} | jobs
+        | {"repaid_by": 4}]
+    pages, cursor = [], None
+    with db.connect() as conn:
+        while True:  # one at a time: every tie crosses a page
+            page, cursor = credits.history(conn, 1, before=cursor, limit=1)
+            pages += page
+            if cursor is None:
+                break
+        assert pages == items and credits.history(conn, 1, limit=2)[1] == f"{latest}|job|{wait}"
+        assert credits.history(conn, 1, before=f"{T}|line|3", limit=50)[0] == items[4:]
+        for bad in ("x", f"{T}|line|x", f"{T}|job|1", f"{T}|other|1", f"{T}|line|1|2"):
+            with pytest.raises(Refused, match="invalid_cursor"):
+                credits.history(conn, 1, before=bad)
 
 
 def test_a_payment_whose_credits_are_spent_stays_where_it_is(db):

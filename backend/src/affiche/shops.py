@@ -184,16 +184,17 @@ IMAGE_COSTS = text(
 def headroom(conn: Connection, settings) -> dict:
     """The cap is cumulative (D-BALANCE-003): what is left of it, against what every shop's unspent credits would cost at
     the average real cost of the last 50 images, or ESTIMATE_SCENE_USD before any. Micro-USD; the cost is rounded up
-    once, at the end, so that a cap short by less than a credit still warns; the unit is for display."""
+    once, at the end, so that a cap short by less than a credit still warns; the unit is for display. `warning`: the
+    outstanding credits would cost more than what is left (grant's, and the dashboard's)."""
     outstanding = sum(max(credits.balance(conn, shop)["available"], 0)
                       for shop in conn.execute(text("SELECT id FROM shop_profile")).scalars().all())
     images, total = conn.execute(IMAGE_COSTS, {"kinds": sorted(jobs.IMAGE_KINDS)}).one()
     if not images:  # no real image cost yet: the estimate, as the cost of one image
         total = usd_to_micros(settings.estimate_scene_usd)
     count = images or 1
-    return {"cap": usd_to_micros(settings.spend_cap_usd), "spent": spent_micros(conn, settings),
-            "outstanding": outstanding, "images": images, "unit": total / count,
-            "cost": -(-outstanding * total // count)}
+    cap, spent, cost = usd_to_micros(settings.spend_cap_usd), spent_micros(conn, settings), -(-outstanding * total // count)
+    return {"cap": cap, "spent": spent, "left": cap - spent, "outstanding": outstanding, "images": images,
+            "unit": total / count, "cost": cost, "warning": cost > cap - spent}
 
 
 # In the kept ledger's global insertion order: a move's reversal comes before its grant, whatever the shops' ids.
@@ -465,14 +466,13 @@ def _grant(engine, args):
         line = credits.grant(conn, shop.id, args.credits, origin=origin, ref=args.ref, actor="operator", note=args.note,
                              amount_ar=args.amount_ar, method=args.method)
         after, room = _balance(conn, shop.id), headroom(conn, args.settings)
-    left, cost = room["cap"] - room["spent"], room["cost"]
     unit = f"average of the last {room['images']} images" if room["images"] else "ESTIMATE_SCENE_USD: no image cost yet"
     # What is left rounded down and the cost up, as the warning compares them.
     print(f"granted {args.credits} {origin} credits to {shop.identifier} (line {line}): {after}\n"
           f"service cap {_usd(room['cap'])} USD: {_usd(room['spent'])} spent since {args.settings.spend_cap_since}, "
-          f"{_usd(left, ROUND_FLOOR)} left; credits outstanding in all shops {room['outstanding']} × "
-          f"{room['unit'] / 1_000_000:.3f} USD ({unit}) = {_usd(cost, ROUND_CEILING)} USD")
-    if cost > left:
+          f"{_usd(room['left'], ROUND_FLOOR)} left; credits outstanding in all shops {room['outstanding']} × "
+          f"{room['unit'] / 1_000_000:.3f} USD ({unit}) = {_usd(room['cost'], ROUND_CEILING)} USD")
+    if room["warning"]:
         print("WARNING: the outstanding credits would cost more than what is left of the cap: raise SPEND_CAP_USD "
               "(deploy/README.md)")
 

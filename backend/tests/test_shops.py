@@ -418,8 +418,8 @@ def test_create_grants_the_welcome_credits_in_the_shops_own_transaction(command,
 def test_the_headroom_prices_the_outstanding_credits_at_the_last_50_real_image_costs(engine, env):
     settings = load_settings(env_file=None)  # a cap of 20 USD since today; ESTIMATE_SCENE_USD 0.40
     with engine.connect() as conn:  # no real image cost yet: the estimate
-        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 0, "outstanding": 100, "images": 0,
-                                                  "unit": 400_000, "cost": 40_000_000}
+        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 0, "left": 20_000_000, "outstanding": 100,
+                                                  "images": 0, "unit": 400_000, "cost": 40_000_000, "warning": True}
     image_calls(engine, 1_000_000, at=f"{TODAY}T00:00:00.000000+00:00")  # older than the last 50
     image_calls(engine, *[40_000] * 50)
     image_calls(engine, 900_000, estimate=1)  # a reservation kept as an estimate
@@ -431,8 +431,9 @@ def test_the_headroom_prices_the_outstanding_credits_at_the_last_50_real_image_c
         job(conn, "late", shop=2)
     with engine.connect() as conn:
         assert credits.balance(conn, 2)["available"] == -1
-        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 4_805_000, "outstanding": 100,
-                                                  "images": 50, "unit": 40_000, "cost": 4_000_000}
+        assert shops.headroom(conn, settings) == {"cap": 20_000_000, "spent": 4_805_000, "left": 15_195_000,
+                                                  "outstanding": 100, "images": 50, "unit": 40_000, "cost": 4_000_000,
+                                                  "warning": False}
 
 
 def test_the_headroom_rounds_up_only_at_the_end_so_a_short_cap_always_warns(command, engine, env):
@@ -503,7 +504,7 @@ def test_move_payment_moves_a_whole_unspent_payment_and_a_correction_under_its_r
     command("grant", "originalphone", "10", "--bought", "--amount-ar", "5000", "--method", "cash", "--ref", "MV-2")
     assert command("correct", "originalphone", "+1", "--ref", "mv-2", "--note", "geste")[0] == 0
     assert command("move-payment", "MV-2", "originalphone", "boutiquetrois", "--note", "mauvaise boutique") == (
-        1, "", "refused: the payment 'MV-2' was already moved or corrected in the source shop\n")
+        1, "", "refused: the payment 'MV-2' was already moved or corrected in the source shop (line 10)\n")
     assert command("correct", "originalphone", "0", "--ref", "MV-2", "--amount-ar", "500", "--note", "montant") == (
         1, "", "refused: the payment 'MV-2' was already moved or corrected in this shop\n")
     with engine.connect() as conn:

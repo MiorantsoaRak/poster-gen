@@ -25,22 +25,29 @@ from affiche.api import create_app
 from affiche.db import make_engine, utc_now, write_tx
 from affiche.posters import auth, credits, store
 from affiche.posters.auth import PASSWORDS
+from affiche.posters.credits import MOST
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_most_one_past_the_limit, client,  # noqa: F401
-                      credentials, failures, login, operator_client, password_hash, settings, slow_wrong)
+                      credentials, failures, login, operator_client, password_hash, second_shop, settings, slow_wrong)
 from test_config import env  # noqa: F401
 
 OPERATOR = os.urandom(13).hex()  # a throwaway operator password of 26 characters per test process
 PUBLIC = {("GET", "/api/admin/session"), ("POST", "/api/admin/session"), ("DELETE", "/api/admin/session")}
 # Every protected admin route, with a request the operator sends ({id}: shop 1) and the status of its answer. A route
-# under /api/admin/ in neither set fails the tests.
+# under /api/admin/ in neither set fails the tests. The move needs answerable()'s shop 2 and payment.
 ANSWERS = {("DELETE", "/api/admin/sessions"): (None, 200),
            ("GET", "/api/admin/shops"): (None, 200),
-           ("POST", "/api/admin/shops"): ({"identifier": "Boutique Deux", "name": None, "welcome": 5}, 201),
+           ("POST", "/api/admin/shops"): ({"identifier": "Boutique Trois", "name": None, "welcome": 5}, 201),
            ("GET", "/api/admin/shops/{id}"): (None, 200),
            ("POST", "/api/admin/shops/{id}/password"): (None, 200),
            ("DELETE", "/api/admin/shops/{id}/sessions"): (None, 200),
            ("POST", "/api/admin/shops/{id}/suspend"): (None, 200),
-           ("POST", "/api/admin/shops/{id}/enable"): (None, 200)}
+           ("POST", "/api/admin/shops/{id}/enable"): (None, 200),
+           ("GET", "/api/admin/shops/{id}/history"): (None, 200),
+           ("POST", "/api/admin/shops/{id}/grants"): ({"credits": 2, "origin": "offered", "ref": "geste-1"}, 201),
+           ("POST", "/api/admin/shops/{id}/corrections"): ({"credits": -1, "ref": "retrait-1", "note": "erreur"}, 201),
+           ("POST", "/api/admin/payments/move"): ({"ref": "MV-1", "from_shop": 1, "to_shop": 2, "note": "mauvaise boutique"},
+                                                 201),
+           ("GET", "/api/admin/payments"): (None, 200)}
 NOBODY = {"authenticated": False, "configured": True}
 PAST = "2000-01-01T00:00:00.000000+00:00"
 
@@ -121,6 +128,13 @@ def protected_admin_routes(app):
 
 def call(client, method, path, body=None, **headers):
     return client.request(method, re.sub(r"\{\w+\}", "1", path), json=body, headers=headers)
+
+
+def answerable(engine):
+    """What ANSWERS' requests need to succeed: shop 2, and a bought payment of shop 1 to move there."""
+    second_shop(engine)
+    with write_tx(engine) as conn:
+        credits.grant(conn, 1, 10, origin="bought", ref="MV-1", actor="tests", amount_ar=10000, method="mvola")
 
 
 def test_without_a_password_sign_in_names_the_command_and_nothing_is_verified_or_counted(client, set_operator, monkeypatch):
@@ -449,6 +463,7 @@ def test_end_all_checks_the_session_again_inside_its_write(client, set_operator,
 
 def test_every_protected_admin_route_answers_a_live_operator(client, set_operator, never_logged):
     set_operator()
+    answerable(client.app.state.engine)
     for method, path in protected_admin_routes(client.app):
         signed_in(client)
         body, status = ANSWERS[(method, path)]
@@ -691,6 +706,7 @@ def test_every_write_finds_its_session_ended_after_the_boundary_and_writes_nothi
     check 5)."""
     engine = client.app.state.engine
     set_operator()
+    answerable(engine)  # every request below would succeed: what it would write is what the snapshot checks
     login(client)  # what a new password or an end of sessions would delete
     signed_in(device(client))  # what « End all » would delete
     signed_in(client)
@@ -743,6 +759,22 @@ def test_a_session_that_expires_while_the_write_waits_for_the_lock_writes_nothin
         assert conn.exec_driver_sql("SELECT state FROM shop_profile WHERE id=1").scalar_one() == "active"
 
 
+def test_a_defect_inside_a_write_is_a_500_without_its_text_and_writes_nothing(client, set_operator, monkeypatch):
+    """A KeyError is a defect, never a refusal: not 409 with the exception's text (Codex, T-ADMIN-003 r1)."""
+    set_operator()
+    signed_in(client)
+
+    def defect(conn, shop_id):
+        conn.execute(text("UPDATE shop_profile SET state='suspended' WHERE id=:id"), {"id": shop_id})
+        raise KeyError("secret-looking text")
+
+    monkeypatch.setattr(shops, "suspend", defect)
+    answer = client.post("/api/admin/shops/1/suspend")
+    assert answer.status_code == 500 and "secret-looking" not in answer.text
+    with client.app.state.engine.connect() as conn:
+        assert conn.execute(text("SELECT state FROM shop_profile WHERE id=1")).scalar_one() == "active"
+
+
 def test_a_write_that_cannot_take_the_lock_answers_503_and_writes_nothing(client, settings, set_operator):
     engine = client.app.state.engine
     set_operator()
@@ -775,3 +807,273 @@ def test_only_the_operators_refusals_carry_a_detail_or_an_existing_line(client):
     login(client)
     assert set(client.get("/api/creations?before=x").json()["error"]) == KEYS
     assert {"detail", "existing"} <= set(client.app.openapi()["components"]["schemas"]["ErrorDetail"]["properties"])
+
+
+# Money (T-ADMIN-004, R-ADMIN-003): credits.grant, credits.correct and credits.move under the session's actor. A request
+# sent again is written once and answered with the line that holds its place.
+def lines(engine):
+    with engine.connect() as conn:
+        return conn.exec_driver_sql("SELECT id, shop_id, kind, origin, credits, amount_ar, method, ref, job_id, note, actor"
+                                    " FROM credit_grants ORDER BY id").all()
+
+
+def stored(engine, id):
+    """A line as `existing` shows it."""
+    with engine.connect() as conn:
+        return dict(conn.exec_driver_sql(
+            "SELECT g.id, g.shop_id, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref, g.job_id, g.created_at,"
+            " p.identifier FROM credit_grants g JOIN shop_profile p ON p.id = g.shop_id WHERE g.id=?", (id,)).mappings().one())
+
+
+def recorded(answer, detail, line, moved_to=None):
+    assert (answer.status_code, answer.json()["error"]) == (409, {
+        "code": "already_recorded", "message_fr": "Déjà enregistré : rien n’a été écrit de plus.", "retryable": False,
+        "detail": detail, "existing": line | {"moved_to": moved_to}}), answer.text
+
+
+def new_shops(client, *identifiers):
+    """Shops with no credit; their ids."""
+    return [client.post("/api/admin/shops", json={"identifier": identifier, "welcome": 0}).json()["shop"]["id"]
+            for identifier in identifiers]
+
+
+def test_a_grant_answers_its_line_the_balance_after_it_and_the_headroom(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    two, = new_shops(client, "Boutique Deux")
+    posters(engine, two, ("q1", "active", T, "queued"))  # an image waiting: a balance is not the sum of the lines
+    taken = client.post("/api/admin/shops/1/corrections", json={"credits": -100, "ref": "retrait", "note": "tests"})
+    assert (taken.status_code, taken.json()["balance"]) == (201, {"available": 0, "pending": 0})
+    room = {"cap": 20_000_000, "spent": 0, "left": 20_000_000, "images": 0, "unit": 400_000}  # ESTIMATE_SCENE_USD
+    offered = client.post(f"/api/admin/shops/{two}/grants",
+                          json={"credits": 5, "origin": "offered", "ref": "geste-1", "note": "bienvenue"})
+    assert (offered.status_code, offered.json()) == (201, {"line": 3, "balance": {"available": 4, "pending": 1},
+                                                           "headroom": room | {"outstanding": 4, "cost": 1_600_000,
+                                                                               "warning": False}})
+    bought = client.post(f"/api/admin/shops/{two}/grants", json={"credits": 60, "origin": "bought", "ref": "MV-123",
+                                                                 "amount_ar": 120000, "method": "MVola"})
+    assert (bought.status_code, bought.json()) == (201, {"line": 4, "balance": {"available": 64, "pending": 1},
+                                                         "headroom": room | {"outstanding": 64, "cost": 25_600_000,
+                                                                             "warning": True}})
+    assert lines(engine)[1:] == [(2, 1, "correction", None, -100, None, None, "retrait", None, "tests", actor),
+                                 (3, two, "grant", "offered", 5, None, None, "geste-1", None, "bienvenue", actor),
+                                 (4, two, "grant", "bought", 60, 120000, "mvola", "MV-123", None, None, actor)]
+    for body, status, code in (({"credits": 1, "origin": "bought", "ref": "x", "amount_ar": 100}, 409, "operator_refused"),
+                               ({"credits": 1, "origin": "offered", "ref": "x", "method": "cash"}, 409, "operator_refused"),
+                               ({"credits": 1, "origin": "offered", "ref": "x" * 101}, 422, "validation_error"),
+                               ({"credits": 1, "origin": "gift", "ref": "x"}, 422, "validation_error"),
+                               ({"credits": 0, "origin": "offered", "ref": "x"}, 422, "validation_error"),
+                               ({"credits": MOST + 1, "origin": "offered", "ref": "x"}, 422, "validation_error"),
+                               ({"credits": 1, "origin": "offered", "ref": "x", "actor": "operator"}, 422, "validation_error")):
+        assert refusal(client.post(f"/api/admin/shops/{two}/grants", json=body)) == (status, code), body
+    assert client.post(f"/api/admin/shops/{two}/grants", json={"credits": 1, "origin": "bought", "ref": "x",
+                                                                "amount_ar": 100}).json()["error"]["detail"] == (
+        "a bought grant needs its amount in ariary and its payment method")
+    assert refusal(client.post("/api/admin/shops/99/grants", json={"credits": 1, "origin": "offered", "ref": "x"})) == (
+        404, "not_found")
+    assert len(lines(engine)) == 4
+
+
+def test_a_grant_sent_again_is_written_once_and_answered_with_the_line_that_holds_it(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    two, three = new_shops(client, "Boutique Deux", "Boutique Trois")
+    bought = {"credits": 10, "origin": "bought", "ref": "MV-123", "amount_ar": 20000, "method": "mvola", "note": "pack"}
+    line = client.post(f"/api/admin/shops/{two}/grants", json=bought).json()["line"]
+    gift = {"credits": 2, "origin": "offered", "ref": "offered-20261117-101500-abcdef"}
+    given = client.post(f"/api/admin/shops/{two}/grants", json=gift).json()["line"]
+    count = len(lines(engine))
+    for sent in (bought, bought | {"ref": " mv-123 "}):  # the reference as the server compares it
+        recorded(client.post(f"/api/admin/shops/{two}/grants", json=sent),
+                 f"this shop already has a grant with the reference 'MV-123' (line {line})", stored(engine, line))
+    recorded(client.post(f"/api/admin/shops/{two}/grants", json=gift),
+             f"this shop already has a grant with the reference '{gift['ref']}' (line {given})", stored(engine, given))
+    # Another shop's line: the payment is boutiquedeux's, and only a move changes that.
+    recorded(client.post(f"/api/admin/shops/{three}/grants", json=bought),
+             f"the payment 'MV-123' is already recorded in shop boutiquedeux (line {line}): a payment changes shop only "
+             "by move-payment", stored(engine, line))
+    assert stored(engine, line)["shop_id"] == two and len(lines(engine)) == count
+    assert client.get(f"/api/admin/shops/{two}").json()["shop"]["available"] == 12
+
+
+def test_corrections_repayments_and_amount_fixes_keep_the_command_lines_rules(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    two, = new_shops(client, "Boutique Deux")
+    done, lost = str(uuid4()), str(uuid4())
+    posters(engine, two, (done, "active", T, "succeeded"), (lost, "active", T, "failed"))
+    client.post(f"/api/admin/shops/{two}/grants", json={"credits": 3, "origin": "offered", "ref": "geste"})
+    path, count = f"/api/admin/shops/{two}/corrections", len(lines(engine))
+    below = client.post(path, json={"credits": -3, "ref": "retrait", "note": "trop"})
+    assert (below.status_code, below.json()["error"]) == (409, operator_refused("the balance would go below zero (available 2)"))
+    repay = {"credits": 1, "ref": f"repay-{done}", "note": "image défectueuse", "job_id": done}
+    first = client.post(path, json=repay)
+    assert (first.status_code, first.json()["balance"]) == (201, {"available": 3, "pending": 0})
+    repaid = first.json()["line"]
+    recorded(client.post(path, json=repay), f"this job was already repaid (line {repaid})", stored(engine, repaid))
+    recorded(client.post(path, json=repay | {"ref": "autre"}), f"this job was already repaid (line {repaid})",
+             stored(engine, repaid))  # one repayment per job, whatever its reference
+    failed = client.post(path, json={"credits": 1, "ref": f"repay-{lost}", "note": "x", "job_id": lost})
+    assert (failed.status_code, failed.json()["error"]) == (
+        409, operator_refused("only a succeeded job of this shop that took a credit can be repaid"))
+    taken = {"credits": -1, "ref": "retrait", "note": "erreur"}
+    line = client.post(path, json=taken).json()["line"]
+    recorded(client.post(path, json=taken), f"this shop already has a correction with the reference 'retrait' (line {line})",
+             stored(engine, line))
+    client.post(f"/api/admin/shops/{two}/grants", json={"credits": 10, "origin": "bought", "ref": "MV-9",
+                                                         "amount_ar": 10000, "method": "cash"})
+    fix = {"credits": 0, "ref": "mv-9", "note": "montant", "amount_ar": -1000}
+    fixed = client.post(path, json=fix)
+    assert (fixed.status_code, fixed.json()["balance"]) == (201, {"available": 12, "pending": 0})
+    recorded(client.post(path, json=fix), "the payment 'MV-9' was already moved or corrected in this shop",
+             stored(engine, fixed.json()["line"]))  # an amount fix sent again
+    for body in ({"credits": 1, "ref": "x"}, {"credits": 1, "ref": "x", "note": "n", "job_id": "not-a-uuid"},
+                 {"credits": -MOST - 1, "ref": "x", "note": "n"}):
+        assert refusal(client.post(path, json=body)) == (422, "validation_error"), body
+    assert lines(engine)[count:] == [
+        (repaid, two, "correction", None, 1, None, None, f"repay-{done}", done, "image défectueuse", actor),
+        (line, two, "correction", None, -1, None, None, "retrait", None, "erreur", actor),
+        (line + 1, two, "grant", "bought", 10, 10000, "cash", "MV-9", None, None, actor),
+        (line + 2, two, "correction", None, 0, -1000, None, "MV-9", None, "montant", actor)]
+
+
+def test_a_payment_moves_whole_while_unspent_and_a_move_sent_again_says_where_it_went(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    a, b, c = new_shops(client, "Boutique A", "Boutique B", "Boutique C")
+
+    def pay(shop, ref):
+        answer = client.post(f"/api/admin/shops/{shop}/grants", json={"credits": 10, "origin": "bought", "ref": ref,
+                                                                      "amount_ar": 20000, "method": "mvola"})
+        assert answer.status_code == 201, answer.text
+        return answer.json()["line"]
+
+    def move(ref, source, destination):
+        return client.post("/api/admin/payments/move", json={"ref": ref, "from_shop": source, "to_shop": destination,
+                                                              "note": "mauvaise boutique"})
+
+    def received():
+        with engine.connect() as conn:
+            return conn.exec_driver_sql("SELECT SUM(amount_ar) FROM credit_grants").scalar()
+
+    pay(a, "MV-1")
+    moved = move("mv-1", a, b)
+    reversal, grant = moved.json()["lines"]
+    assert (moved.status_code, moved.json()) == (201, {"lines": [reversal, grant], "balances": {
+        "from": {"available": 0, "pending": 0}, "to": {"available": 10, "pending": 0}}})
+    assert received() == 20000 and lines(engine)[-2:] == [
+        (reversal, a, "correction", None, -10, -20000, None, "MV-1", None, "mauvaise boutique", actor),
+        (grant, b, "grant", "bought", 10, 20000, "mvola", "MV-1", None, "mauvaise boutique", actor)]
+    went = {"id": grant, "shop_id": b, "identifier": "boutiqueb"}
+    already = f"the payment 'MV-1' was already moved or corrected in the source shop (line {reversal})"
+    count = len(lines(engine))
+    for destination in (b, c):  # sent again; then sent to another shop after the first: both name B's grant
+        recorded(move("MV-1", a, destination), already, stored(engine, reversal), went)
+    assert move("MV-1", b, c).status_code == 201  # on to C: A→B sent again still says where it went from A
+    recorded(move("MV-1", a, b), already, stored(engine, reversal), went)
+    pay(a, "MV-2")
+    fix = client.post(f"/api/admin/shops/{a}/corrections", json={"credits": 0, "ref": "MV-2", "note": "montant",
+                                                                 "amount_ar": -2000}).json()["line"]
+    count = len(lines(engine))
+    recorded(move("MV-2", a, b), f"the payment 'MV-2' was already moved or corrected in the source shop (line {fix})",
+             stored(engine, fix))  # corrected, not moved: an amount fix holds 0 credits and went nowhere
+    assert stored(engine, fix)["credits"] == 0
+    pay(b, "MV-3")
+    posters(engine, b, (str(uuid4()), "active", T, "succeeded"))  # one of its credits spent
+    spent = move("MV-3", b, c)
+    assert (spent.status_code, spent.json()["error"]) == (
+        409, operator_refused("the source shop has 9 credits left of the payment's 10: it stays where it is"))
+    for body in ({"ref": "MV-3", "from_shop": b, "to_shop": b, "note": "n"}, {"ref": "MV-9", "from_shop": b, "to_shop": c,
+                                                                                "note": "n"}):
+        assert refusal(client.post("/api/admin/payments/move", json=body)) == (409, "operator_refused"), body
+    assert refusal(move("MV-3", b, 99)) == (404, "not_found")
+    assert refusal(client.post("/api/admin/payments/move", json={"ref": "MV-3", "from_shop": b, "to_shop": c})) == (
+        422, "validation_error")  # a move needs its reason
+    assert len(lines(engine)) == count + 1 and received() == 60000 - 2000  # MV-3's grant only; each payment once
+
+
+def test_a_rule_of_the_database_refuses_with_the_drivers_message_and_writes_nothing(client, set_operator, monkeypatch):
+    """A line that the module let through and migration 0014 refuses (credits.grant replaced by a plain INSERT)."""
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    real, count = credits._line, len(lines(engine))
+    monkeypatch.setattr(credits, "grant", lambda conn, shop, number, **kwargs: real(conn, shop, "grant", number, "tests",
+                                                                                     "x", None, origin="offered"))
+    answer = client.post("/api/admin/shops/1/grants", json={"credits": 1, "origin": "offered", "ref": "autre"})
+    assert (answer.status_code, answer.json()["error"]) == (409, operator_refused("a credit line is never replaced"))
+    assert len(lines(engine)) == count
+
+
+def test_the_history_route_pages_one_shops_lines_and_jobs_newest_first(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    second_shop(engine)  # its own line: never in shop 1's history
+    done = str(uuid4())
+    posters(engine, 1, (done, "active", T, "succeeded"), (str(uuid4()), "active", T, None))
+    repaid = client.post("/api/admin/shops/1/corrections", json={"credits": 1, "ref": f"repay-{done}", "note": "défaut",
+                                                                 "job_id": done}).json()["line"]
+    whole = client.get("/api/admin/shops/1/history").json()
+    assert whole["next_cursor"] is None and [(item["type"], item["id"]) for item in whole["items"]] == [
+        ("line", repaid), ("line", 1), ("job", done)]
+    assert whole["items"][0] == {"type": "line", "id": repaid, "kind": "correction", "origin": None, "credits": 1,
+                                 "amount_ar": None, "method": None, "ref": f"repay-{done}", "job_id": done,
+                                 "note": "défaut", "actor": actor, "at": stored(engine, repaid)["created_at"]}
+    assert whole["items"][2] == {"type": "job", "id": done, "kind": "background", "status": "succeeded",
+                                 "credit": "spent", "creation_id": done, "result_ref": None, "error_code": None,
+                                 "at": T, "finished_at": None, "repaid_by": repaid}
+    pages, cursor = [], None
+    while True:
+        page = client.get("/api/admin/shops/1/history", params={"limit": 1} | ({"before": cursor} if cursor else {})).json()
+        pages += page["items"]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert pages == whole["items"]
+    for params in ({"before": "x"}, {"before": f"{T}|line|abc"}, {"before": f"{T}|job|1"}):
+        assert refusal(client.get("/api/admin/shops/1/history", params=params)) == (422, "invalid_cursor"), params
+    for limit in (0, 51):
+        assert refusal(client.get("/api/admin/shops/1/history", params={"limit": limit})) == (422, "validation_error")
+    assert refusal(client.get("/api/admin/shops/99/history")) == (404, "not_found")
+
+
+def test_payments_of_a_period_count_whole_utc_days_and_a_moved_payment_once(client, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    with write_tx(engine) as conn:  # lines at instants no route chooses
+        for ref, origin, amount, at in (("before", "bought", 1000, "2025-09-30T23:59:59.999999+00:00"),
+                                        ("first", "bought", 1000, "2025-10-01T00:00:00.000000+00:00"),
+                                        ("gift", "offered", None, "2025-10-15T00:00:00.000000+00:00"),
+                                        ("last", "bought", 3000, "2025-10-31T23:59:59.999999+00:00"),
+                                        ("after", "bought", 1000, "2025-11-01T00:00:00.000000+00:00")):
+            conn.exec_driver_sql("INSERT INTO credit_grants (shop_id,kind,origin,credits,amount_ar,method,ref,job_id,note,"
+                                 "actor,created_at) VALUES (1,'grant',?,1,?,?,?,NULL,NULL,'operator',?)",
+                                 (origin, amount, amount and "cash", ref, at))
+    october = client.get("/api/admin/payments", params={"start": "2025-10-01", "end": "2025-10-31"}).json()
+    item = {"shop_id": 1, "identifier": "originalphone", "kind": "grant", "origin": "bought", "credits": 1,
+            "method": "cash", "note": None, "actor": "operator"}
+    assert october == {"start": "2025-10-01", "end": "2025-10-31", "received_ar": 4000, "items": [
+        item | {"line": 3, "amount_ar": 1000, "ref": "first", "at": "2025-10-01T00:00:00.000000+00:00"},
+        item | {"line": 5, "amount_ar": 3000, "ref": "last", "at": "2025-10-31T23:59:59.999999+00:00"}]}
+    two, = new_shops(client, "Boutique Deux")
+    client.post("/api/admin/shops/1/grants", json={"credits": 10, "origin": "bought", "ref": "MV-1", "amount_ar": 5000,
+                                                   "method": "mvola"})
+    assert client.post("/api/admin/payments/move", json={"ref": "MV-1", "from_shop": 1, "to_shop": two,
+                                                         "note": "mauvaise boutique"}).status_code == 201
+    month = client.get("/api/admin/payments").json()  # the current UTC month by default
+    today = datetime.now(UTC).date()
+    assert (month["start"], month["end"]) == (today.replace(day=1).isoformat(), (
+        (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).isoformat())
+    assert [(item["shop_id"], item["kind"], item["amount_ar"]) for item in month["items"]] == [
+        (1, "grant", 5000), (1, "correction", -5000), (two, "grant", 5000)] and month["received_ar"] == 5000
+    for params in ({"start": "2025-10-02", "end": "2025-10-01"}, {"start": "2025-13-01"}, {"end": "hier"},
+                   {"end": "9999-12-31"}):  # the last day has no next day to bound the period
+        assert refusal(client.get("/api/admin/payments", params=params)) == (422, "validation_error"), params
+    assert client.get("/api/admin/payments", params={"start": "2025-10-02", "end": "2025-10-01"}).json()["error"][
+        "field"] == "start"
