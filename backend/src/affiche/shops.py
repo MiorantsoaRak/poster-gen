@@ -81,12 +81,25 @@ def create_shop(conn: Connection, identifier: str, name: str | None, password_ha
                         {"name": Profile(name=name).name, "now": now, "identifier": key, "hash": password_hash}).scalar_one()
 
 
-def set_password(conn: Connection, shop_id: int, password_hash: str) -> None:
-    """A new password ends every session of that shop, and no other shop's."""
+def open_shop(conn: Connection, identifier: str, name: str | None, password_hash: str, welcome: int,
+              actor: str) -> tuple[int, int | None]:
+    """A shop and its welcome grant, in the caller's transaction: a refused welcome leaves no shop behind
+    (R-BALANCE-006). Returns its id and the welcome line, None without one."""
+    try:
+        id = create_shop(conn, identifier, name, password_hash)
+    except IntegrityError:
+        raise ValueError(f"the identifier {identifier_key(identifier)} is already taken") from None
+    line = credits.grant(conn, id, welcome, origin="offered", ref="welcome", actor=actor,
+                         note="Crédits de bienvenue") if welcome else None
+    return id, line
+
+
+def set_password(conn: Connection, shop_id: int, password_hash: str) -> int:
+    """A new password ends every session of that shop, and no other shop's. Returns how many ended."""
     if conn.execute(text("UPDATE shop_profile SET password_hash=:hash WHERE id=:shop"),
                     {"hash": password_hash, "shop": shop_id}).rowcount != 1:
         raise LookupError(f"no shop {shop_id}")
-    end_sessions(conn, shop_id)
+    return end_sessions(conn, shop_id)
 
 
 def end_sessions(conn: Connection, shop_id: int | None = None) -> int:
@@ -369,13 +382,7 @@ def _create(engine, args):
     password = new_password()
     password_hash = PASSWORDS.hash(password)  # Argon2 is slow on purpose: never inside the write transaction
     with write_tx(engine) as conn:
-        try:
-            id = create_shop(conn, args.identifier, args.name, password_hash)
-        except IntegrityError:
-            raise Refusal(f"the identifier {identifier_key(args.identifier)} is already taken") from None
-        # In the shop's own transaction: a refused welcome leaves no shop behind (R-BALANCE-006).
-        line = credits.grant(conn, id, args.welcome, origin="offered", ref="welcome", actor="operator",
-                             note="Crédits de bienvenue") if args.welcome else None
+        id, line = open_shop(conn, args.identifier, args.name, password_hash, args.welcome, "operator")
     welcome = f"{args.welcome} offered welcome credits (line {line})" if line else "no welcome credits"
     print(f"shop {id} created: identifier {identifier_key(args.identifier)}, active, {welcome}\n"
           f"password (shown once, give it to the owner in person): {password}")

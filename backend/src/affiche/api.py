@@ -81,6 +81,7 @@ MESSAGES = {
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
         "wrong_credentials": "Identifiant ou mot de passe incorrect.",
         "operator_not_set": "Aucun mot de passe d’opérateur n’est défini : lancez python -m affiche.shops operator-password sur le serveur.",
+        "operator_refused": "Refusé : rien n’a été écrit.",  # the operator's; its detail says why
         "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
         "shop_changed": "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.",
         "wrong_password": "Le mot de passe actuel n’est pas le bon.",
@@ -169,6 +170,10 @@ def error_response(request: Request, error: store.Refused, message: str | None =
         body["field"] = error.field
     if error.current_revision is not None:
         body["current_revision"] = error.current_revision
+    if error.detail is not None:
+        body["detail"] = error.detail
+    if error.existing is not None:
+        body["existing"] = error.existing
     response = JSONResponse({"error": body, "request_id": request.state.request_id}, status_code=error.status)
     if error.code == "rate_limited":
         response.headers["Retry-After"] = "900"
@@ -322,6 +327,8 @@ class ErrorDetail(Model):
     retryable: bool
     field: str | None = None
     current_revision: int | None = None
+    detail: str | None = None  # the operator's refusals only (admin.py): the module's own sentence, in English
+    existing: dict | None = None  # already_recorded: the line that holds the request's place, and moved_to
 
 
 class ErrorView(Model):

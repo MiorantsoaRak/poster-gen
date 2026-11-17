@@ -21,8 +21,11 @@ MAX_UPLOAD_PIXELS = 40_000_000
 
 
 class Refused(Exception):
-    def __init__(self, code: str, status: int = 422, *, field: str | None = None, current_revision: int | None = None):
+    """`detail` and `existing` are the operator's only (D-ADMIN-003): a shop's refusal never carries them."""
+    def __init__(self, code: str, status: int = 422, *, field: str | None = None, current_revision: int | None = None,
+                 detail: str | None = None, existing: dict | None = None):
         self.code, self.status, self.field, self.current_revision = code, status, field, current_revision
+        self.detail, self.existing = detail, existing
         super().__init__(code)
 
 

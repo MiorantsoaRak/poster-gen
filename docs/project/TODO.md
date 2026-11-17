@@ -52,7 +52,7 @@
   - verify: `uv run pytest tests/test_db.py tests/test_shops.py tests/test_restore_script.py -q` → pass; `sh -n ../deploy/restore.sh`; `uv run pytest -q -rf` → all passed
 - [x] T-ADMIN-002 (done 2026-11-17; Codex r1 APPROVE WITH FIXES, no bypass found, reviews/t-admin-002-code-r1.md; fixes not reviewed again: `operator_not_set` before the limits; verify.sh fails on an unset password unless the release is run with `OPERATOR_BOOTSTRAP=1`, which replaces the design's marker file; backend 1466 passed; verify.sh only `sh -n`, never run on the box) Operator sign-in, sign-out, session read, the request boundary, "end all", the app's INFO log handler proved under the real launcher, verify.sh.
   - verify: `uv run pytest tests/test_admin.py tests/test_api.py tests/test_two_shops.py -q` → pass; `sh -n ../deploy/verify.sh`; full suite
-- [ ] T-ADMIN-003 Shop routes (create, suspend, enable, reset password, end sessions) on the shared write frame; refusals with `detail`.
+- [x] T-ADMIN-003 (done 2026-11-17; Codex r1 APPROVE WITH FIXES, reviews/t-admin-003-004-code-r1.md; its fix, a defect inside a write is a 500 and never a refusal, is in T-ADMIN-004's commit and was not reviewed again; backend 1479 passed at this state) Shop routes (create, suspend, enable, reset password, end sessions) on the shared write frame; refusals with `detail`.
   - verify: `uv run pytest tests/test_admin.py tests/test_shops.py tests/test_api.py tests/test_two_shops.py -q` → pass; full suite
 - [ ] T-ADMIN-004 Money routes (grant, correct, move, history, payments by period); 409 `already_recorded` with the existing line and `moved_to`.
   - verify: `uv run pytest tests/test_admin.py tests/test_credits.py tests/test_shops.py -q` → pass; full suite

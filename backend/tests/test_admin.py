@@ -1,6 +1,7 @@
 """The operator's sign-in, sessions and request boundary (D-ADMIN-001, R-ADMIN-001) as tested properties: the rows of the
 design's three security matrices for the routes that exist, the limits, the session checked again inside a write, the
-journal line under the real launcher, and that no HTTP route writes the operator's password."""
+journal line under the real launcher, and that no HTTP route writes the operator's password. Then the dashboard's
+routes (D-ADMIN-003): each answer's HTTP body, the command line's refusals, and nothing written by a refused write."""
 import logging
 import os
 import re
@@ -10,19 +11,19 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from affiche import api as affiche_api, shops
 from affiche.api import create_app
-from affiche.db import write_tx
-from affiche.posters import auth, store
+from affiche.db import make_engine, utc_now, write_tx
+from affiche.posters import auth, credits, store
 from affiche.posters.auth import PASSWORDS
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_most_one_past_the_limit, client,  # noqa: F401
                       credentials, failures, login, operator_client, password_hash, settings, slow_wrong)
@@ -30,8 +31,16 @@ from test_config import env  # noqa: F401
 
 OPERATOR = os.urandom(13).hex()  # a throwaway operator password of 26 characters per test process
 PUBLIC = {("GET", "/api/admin/session"), ("POST", "/api/admin/session"), ("DELETE", "/api/admin/session")}
-# Every protected admin route, with the operator's own answer. A route under /api/admin/ in neither set fails the tests.
-ANSWERS = {("DELETE", "/api/admin/sessions"): {"ended": 1}}
+# Every protected admin route, with a request the operator sends ({id}: shop 1) and the status of its answer. A route
+# under /api/admin/ in neither set fails the tests.
+ANSWERS = {("DELETE", "/api/admin/sessions"): (None, 200),
+           ("GET", "/api/admin/shops"): (None, 200),
+           ("POST", "/api/admin/shops"): ({"identifier": "Boutique Deux", "name": None, "welcome": 5}, 201),
+           ("GET", "/api/admin/shops/{id}"): (None, 200),
+           ("POST", "/api/admin/shops/{id}/password"): (None, 200),
+           ("DELETE", "/api/admin/shops/{id}/sessions"): (None, 200),
+           ("POST", "/api/admin/shops/{id}/suspend"): (None, 200),
+           ("POST", "/api/admin/shops/{id}/enable"): (None, 200)}
 NOBODY = {"authenticated": False, "configured": True}
 PAST = "2000-01-01T00:00:00.000000+00:00"
 
@@ -110,8 +119,8 @@ def protected_admin_routes(app):
     return sorted(admin - PUBLIC)
 
 
-def call(client, method, path, **headers):
-    return client.request(method, re.sub(r"\{\w+\}", "1", path), headers=headers)
+def call(client, method, path, body=None, **headers):
+    return client.request(method, re.sub(r"\{\w+\}", "1", path), json=body, headers=headers)
 
 
 def test_without_a_password_sign_in_names_the_command_and_nothing_is_verified_or_counted(client, set_operator, monkeypatch):
@@ -438,12 +447,16 @@ def test_end_all_checks_the_session_again_inside_its_write(client, set_operator,
     assert laptop.get("/api/admin/session").json()["authenticated"] is True and len(sessions(client.app.state.engine)) == 1
 
 
-def test_every_protected_admin_route_answers_a_live_operator(client, set_operator):
+def test_every_protected_admin_route_answers_a_live_operator(client, set_operator, never_logged):
     set_operator()
     for method, path in protected_admin_routes(client.app):
         signed_in(client)
-        answer = call(client, method, path)
-        assert (answer.status_code, answer.json()) == (200, ANSWERS[(method, path)]), (method, path)
+        body, status = ANSWERS[(method, path)]
+        answer = call(client, method, path, body)
+        assert (answer.status_code, "error" in answer.json()) == (status, False), (method, path, answer.text)
+        never_logged.append(answer.json().get("password", OPERATOR))
+        if (method, path) == ("DELETE", "/api/admin/sessions"):
+            assert answer.json() == {"ended": 1}
 
 
 def test_only_the_command_line_writes_the_operators_password():
@@ -499,3 +512,266 @@ def test_the_launcher_logs_the_operators_sign_in_on_stderr_and_no_secret(env, tm
     with sqlite3.connect(tmp_path / "affiche.db") as conn:
         stored = conn.execute("SELECT value FROM meta WHERE key=?", (auth.OPERATOR_KEY,)).fetchone()[0]
     assert all(secret not in stderr for secret in (password, token, auth.token_hash(token), stored))
+
+
+# Shops (T-ADMIN-003, R-ADMIN-002): every write calls the command line's functions in operator_tx.
+T = "2026-11-16T10:00:00.000000+00:00"
+KEYS = {"code", "message_fr", "retryable"}
+
+
+def posters(engine, shop, *rows):
+    """Posters written by hand: (id, status, created_at, its job's status or None). A job takes a credit and is of a
+    kind the API's scheduler never claims (background; service.KINDS), so it stays as written."""
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql(f"INSERT OR IGNORE INTO product_inputs VALUES ('in1',1,'P1','JBL','Bleu','[]','{{}}',NULL,'{T}')")
+        for id, status, at, job in rows:
+            conn.exec_driver_sql("INSERT INTO creations VALUES (?,?,NULL,1,?,?,?)", (id, shop, status, at, at))
+            conn.exec_driver_sql("INSERT INTO creation_versions VALUES (?,1,'{}','h',?)", (id, at))
+            if job is not None:
+                conn.exec_driver_sql("INSERT INTO poster_jobs (id,shop_id,creation_id,origin_revision,input_id,kind,input_json,"
+                                     "input_hash,status,created_at,started_at,takes_credit)"
+                                     " VALUES (?,?,?,1,'in1','background','{}','h',?,?,?,1)",
+                                     (id, shop, id, job, at, None if job == "queued" else at))
+
+
+def journal_lines(caplog):
+    return [record.getMessage() for record in caplog.records if record.name == "affiche.admin"]
+
+
+def snapshot(engine):
+    """Everything an admin write may change, but the operator's own sessions."""
+    with engine.connect() as conn:
+        return {table: conn.exec_driver_sql(f"SELECT * FROM {table} ORDER BY rowid").all()
+                for table in ("shop_profile", "sessions", "credit_grants", "poster_jobs", "meta")}
+
+
+def operator_refused(detail):
+    return {"code": "operator_refused", "message_fr": "Refusé : rien n’a été écrit.", "retryable": False, "detail": detail}
+
+
+def test_a_shop_created_from_the_dashboard_signs_in_at_once_with_its_password_shown_once(client, set_operator,
+                                                                                       never_logged, caplog):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    answer = client.post("/api/admin/shops", json={"identifier": "Boutique Deux", "name": " Chez Deux ", "welcome": 5})
+    assert answer.status_code == 201, answer.text
+    body = answer.json()
+    password = body["password"]
+    never_logged.append(password)
+    assert len(password) == 12 and set(password) <= set(shops.ALPHABET)
+    assert body == {"password": password, "welcome_line": body["welcome_line"], "shop": {
+        "id": 2, "identifier": "boutiquedeux", "name": "Chez Deux", "state": "active", "has_password": True,
+        "created_at": body["shop"]["created_at"], "available": 5, "pending": 0, "posters": 0, "last_poster_at": None,
+        "sessions": 0}}
+    with engine.connect() as conn:  # the welcome grant is the dashboard session's
+        line = conn.execute(text("SELECT shop_id, kind, origin, credits, ref, note, actor FROM credit_grants WHERE id=:id"),
+                            {"id": body["welcome_line"]}).one()
+    assert tuple(line) == (2, "grant", "offered", 5, "welcome", "Crédits de bienvenue", actor)
+    assert device(client).post("/api/session", json=credentials(password, "boutique deux")).json() == {
+        "authenticated": True, "shop_id": 2}
+    bare = client.post("/api/admin/shops", json={"identifier": "Boutique Trois", "welcome": 0})
+    never_logged.append(bare.json()["password"])
+    assert (bare.status_code, bare.json()["welcome_line"], bare.json()["shop"]["available"]) == (201, None, 0)
+    assert journal_lines(caplog)[-2:] == [f"operator action=shop_created shop=boutiquedeux actor={actor} welcome=5",
+                                          f"operator action=shop_created shop=boutiquetrois actor={actor} welcome=0"]
+
+
+def test_a_refused_creation_writes_nothing_and_says_why(client, set_operator, caplog):
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    before = snapshot(engine)
+    for body, status, error in (
+            ({"identifier": "Original-Phone", "welcome": 5}, 409,
+             operator_refused("the identifier originalphone is already taken")),
+            ({"identifier": "a-b", "welcome": 5}, 409, operator_refused("an identifier needs 3 to 32 letters or digits")),
+            ({"identifier": "troisieme", "name": "x" * 161, "welcome": 5}, 422,  # the profile's own rule
+             {"code": "validation_error", "message_fr": affiche_api.MESSAGES["validation_error"], "retryable": False,
+              "field": "name"})):
+        answer = client.post("/api/admin/shops", json=body)
+        assert (answer.status_code, answer.json()["error"]) == (status, error), body
+    for body in ({"identifier": "troisieme", "welcome": -1}, {"identifier": "troisieme", "welcome": credits.MOST + 1},
+                 {"identifier": "troisieme"}, {"identifier": "troisieme", "welcome": "5"},
+                 {"identifier": "troisieme", "welcome": 5, "password": "mine"}):
+        assert refusal(client.post("/api/admin/shops", json=body)) == (422, "validation_error"), body
+    assert snapshot(engine) == before
+    assert not [line for line in journal_lines(caplog) if "shop_created" in line]
+
+
+def test_the_list_and_one_shop_read_the_ledgers_and_todays_limits(client, settings, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    login(client)  # shop 1's one live session
+    today, yesterday = utc_now()[:10], (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+    posters(engine, 1, ("p1", "active", f"{yesterday}T08:00:00.000000+00:00", "queued"),
+            ("p2", "abandoned", f"{today}T00:00:00.000000+00:00", None),
+            ("p3", "active", f"{yesterday}T09:00:00.000000+00:00", "succeeded"))
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT INTO sessions VALUES (?,1,?)", (auth.token_hash("old"), PAST))  # expired
+        for call_no, at, cost in ((1, f"{yesterday}T23:59:59.999999+00:00", 50000), (2, f"{today}T00:00:01.000000+00:00", 120000)):
+            conn.exec_driver_sql("INSERT INTO poster_calls (id,job_id,call_no,provider,model,rate_card_json,status,"
+                                 "cost_micros,cost_is_estimate,created_at) VALUES (?,'p3',?,'openai','m','{}','succeeded',?,0,?)",
+                                 (f"c{call_no}", call_no, cost, at))
+        for key, at in (("r1", f"{yesterday}T23:59:59.999999+00:00"), ("r2", f"{today}T00:00:00.000000+00:00")):
+            conn.exec_driver_sql("INSERT INTO chat_reads (id,shop_id,creation_id,key,payload_sha,status,provider,model,"
+                                 "rate_card_json,cost_micros,cost_is_estimate,created_at) VALUES (?,1,NULL,?,'h','succeeded',"
+                                 "'claude','m','{}',3000,0,?)", (key, key, at))
+        pilot = shops.find_shop(conn, IDENTIFIER)
+        created_at = conn.exec_driver_sql("SELECT created_at FROM shop_profile WHERE id=1").scalar_one()
+    assert client.post("/api/admin/shops", json={"identifier": "Boutique Deux", "welcome": 0}).status_code == 201
+    items = client.get("/api/admin/shops").json()["items"]
+    assert [item["identifier"] for item in items] == ["boutiquedeux", "originalphone"]  # by identifier, not by id
+    assert items[1] == {"id": 1, "identifier": "originalphone", "name": pilot.name, "state": "active", "has_password": True,
+                        "created_at": created_at, "available": 98, "pending": 1, "posters": 2,
+                        "last_poster_at": f"{today}T00:00:00.000000+00:00", "sessions": 1}
+    assert client.get("/api/admin/shops/1").json() == {"shop": items[1], "limits": {
+        "day_spent_micros": 123000, "day_limit_micros": int(settings.shop_daily_spend_usd * 1_000_000),
+        "reads_today": 1, "reads_limit": 100}}
+    assert refusal(client.get("/api/admin/shops/99")) == (404, "not_found")
+    for id in ("0", "x", str(credits.MOST + 1)):
+        assert refusal(client.get(f"/api/admin/shops/{id}")) == (422, "validation_error"), id
+    with write_tx(engine) as conn:  # a backup from before 0013 restored: shop 1 has no password
+        conn.exec_driver_sql("UPDATE shop_profile SET password_hash=NULL WHERE id=1")
+    assert client.get("/api/admin/shops").json()["items"][1]["has_password"] is False
+
+
+def test_a_new_password_ending_sessions_suspend_and_enable_change_one_shop_and_log_only_a_change(client, set_operator,
+                                                                                               never_logged, caplog):
+    engine = client.app.state.engine
+    set_operator()
+    actor = signed_in(client)
+    login(client)  # shop 1, on the operator's browser: no write below touches it
+    first = client.post("/api/admin/shops", json={"identifier": "Boutique Deux", "welcome": 5}).json()["password"]
+    never_logged.append(first)
+    owner, phone = device(client), device(client)
+    for shop in (owner, phone):
+        assert shop.post("/api/session", json=credentials(first, "boutiquedeux")).status_code == 200
+    answer = client.post("/api/admin/shops/2/password")
+    reset = answer.json()["password"]
+    never_logged.append(reset)
+    assert (answer.status_code, answer.json()) == (200, {"password": reset, "sessions_ended": 2}) and reset != first
+    assert len(reset) == 12 and set(reset) <= set(shops.ALPHABET)
+    assert refusal(owner.get("/api/shop-profile")) == refusal(phone.get("/api/shop-profile")) == (401, "unauthenticated")
+    assert refusal(owner.post("/api/session", json=credentials(first, "boutiquedeux"))) == (401, "wrong_credentials")
+    assert owner.post("/api/session", json=credentials(reset, "boutiquedeux")).status_code == 200
+    assert client.delete("/api/admin/shops/2/sessions").json() == {"ended": 1}
+    assert client.delete("/api/admin/shops/2/sessions").json() == {"ended": 0}  # nothing left: no line
+    assert refusal(owner.get("/api/shop-profile")) == (401, "unauthenticated")
+    assert owner.post("/api/session", json=credentials(reset, "boutiquedeux")).status_code == 200
+    posters(engine, 2, ("q1", "active", T, "queued"), ("q2", "active", T, "queued"), ("r1", "active", T, "running"),
+            ("d1", "active", T, "succeeded"))
+    assert client.get("/api/admin/shops/2").json()["shop"]["available"] == 1
+    assert client.post("/api/admin/shops/2/suspend").json() == {"changed": True, "cancelled_jobs": 2}
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT id, status, error_code FROM poster_jobs ORDER BY id").all() == [
+            ("d1", "succeeded", None), ("q1", "cancelled", "shop_suspended"), ("q2", "cancelled", "shop_suspended"),
+            ("r1", "running", None)]  # a running job finishes (D-MULTI-SHOP-006)
+    shop = client.get("/api/admin/shops/2").json()["shop"]
+    assert (shop["state"], shop["available"], shop["pending"], shop["sessions"]) == ("suspended", 3, 1, 1)  # credits back
+    assert refusal(owner.get("/api/shop-profile")) == (401, "unauthenticated")  # its session kept, refused
+    assert client.post("/api/admin/shops/2/suspend").json() == {"changed": False, "cancelled_jobs": 0}
+    assert client.post("/api/admin/shops/2/enable").json() == {"changed": True}
+    assert owner.get("/api/shop-profile").status_code == 200
+    assert client.post("/api/admin/shops/2/enable").json() == {"changed": False}
+    assert client.get("/api/shop-profile").status_code == 200  # shop 1's session, through all of it
+    for method, path in (("POST", "password"), ("DELETE", "sessions"), ("POST", "suspend"), ("POST", "enable")):
+        assert refusal(client.request(method, f"/api/admin/shops/99/{path}")) == (404, "not_found")
+    assert journal_lines(caplog)[-5:] == [f"operator action={line} actor={actor}{extra}" for line, extra in (
+        ("shop_created shop=boutiquedeux", " welcome=5"), ("password_set shop=boutiquedeux", ""),
+        ("sessions_ended shop=boutiquedeux", " count=1"), ("shop_suspended shop=boutiquedeux", " cancelled=2"),
+        ("shop_enabled shop=boutiquedeux", ""))]
+
+
+@pytest.mark.parametrize("method, path", sorted(route for route in ANSWERS if route[0] != "GET"))
+def test_every_write_finds_its_session_ended_after_the_boundary_and_writes_nothing(client, set_operator, monkeypatch,
+                                                                                    method, path):
+    """The session ends after the boundary read it and before the handler's write: 401, nothing written (mutation
+    check 5)."""
+    engine = client.app.state.engine
+    set_operator()
+    login(client)  # what a new password or an end of sessions would delete
+    signed_in(device(client))  # what « End all » would delete
+    signed_in(client)
+    if path.endswith("/enable"):
+        with write_tx(engine) as conn:
+            shops.suspend(conn, 1)
+    before, real = snapshot(engine), auth.operator_session
+
+    def then_ended(engine, token):
+        found = real(engine, token)
+        with write_tx(engine) as conn:
+            conn.execute(text("DELETE FROM operator_sessions WHERE token_hash=:hash"), {"hash": auth.token_hash(token)})
+        return found
+
+    monkeypatch.setattr(auth, "operator_session", then_ended)
+    assert refusal(call(client, method, path, ANSWERS[(method, path)][0])) == (401, "unauthenticated")
+    assert snapshot(engine) == before and len(sessions(engine)) == 1
+
+
+def test_a_session_that_expires_while_the_write_waits_for_the_lock_writes_nothing(client, settings, set_operator,
+                                                                                 monkeypatch):
+    """operator_live reads the time once BEGIN IMMEDIATE holds the lock: a session live at the boundary and expired when
+    the lock comes is refused."""
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+    writer, locked, read, real = make_engine(settings.data_dir), threading.Event(), [], auth.operator_session
+    monkeypatch.setattr(auth, "operator_session", lambda engine, token: read.append(real(engine, token)) or read[-1])
+    with write_tx(engine) as conn:
+        conn.execute(text("UPDATE operator_sessions SET expires_at=:at"),
+                     {"at": (datetime.now(UTC) + timedelta(seconds=1.5)).isoformat(timespec="microseconds")})
+
+    def hold():
+        with write_tx(writer) as conn:
+            conn.exec_driver_sql("SELECT 1")
+            locked.set()
+            time.sleep(2.5)  # past the session's expiry, under the 5 s busy_timeout
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert locked.wait(5)
+        answer = client.post("/api/admin/shops/1/suspend")
+    finally:
+        holder.join(timeout=10)
+        writer.dispose()
+    assert read[0] is not None  # live at the boundary
+    assert refusal(answer) == (401, "unauthenticated")
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT state FROM shop_profile WHERE id=1").scalar_one() == "active"
+
+
+def test_a_write_that_cannot_take_the_lock_answers_503_and_writes_nothing(client, settings, set_operator):
+    engine = client.app.state.engine
+    set_operator()
+    signed_in(client)
+
+    def impatient(dbapi_conn, _record):  # 0.2 s in place of the 5 s busy_timeout: the same failure, sooner
+        dbapi_conn.execute("PRAGMA busy_timeout = 200")
+
+    event.listen(engine, "connect", impatient)
+    engine.dispose()  # the pool's connections wait 5 s
+    writer = make_engine(settings.data_dir)
+    try:
+        with write_tx(writer) as conn:
+            conn.exec_driver_sql("SELECT 1")  # BEGIN IMMEDIATE: the lock is held
+            answer = client.post("/api/admin/shops/1/suspend")
+    finally:
+        writer.dispose()
+        event.remove(engine, "connect", impatient)
+        engine.dispose()
+    assert (answer.status_code, answer.json()["error"]) == (503, {
+        "code": "storage_unavailable", "message_fr": affiche_api.MESSAGES["storage_unavailable"], "retryable": True})
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT state FROM shop_profile WHERE id=1").scalar_one() == "active"
+
+
+def test_only_the_operators_refusals_carry_a_detail_or_an_existing_line(client):
+    """store.Refused's two keys are written only when set, and only admin.py sets them: a shop's refusal is as before."""
+    assert set(client.get("/api/balance").json()["error"]) == KEYS
+    assert set(client.post("/api/session", json={"identifier": "", "password": "x"}).json()["error"]) == KEYS | {"field"}
+    login(client)
+    assert set(client.get("/api/creations?before=x").json()["error"]) == KEYS
+    assert {"detail", "existing"} <= set(client.app.openapi()["components"]["schemas"]["ErrorDetail"]["properties"])

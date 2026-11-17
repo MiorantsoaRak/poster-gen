@@ -436,8 +436,8 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
 
 **State on 2026-11-17: being built for Release 1** (`docs/project/designs/admin-dashboard.md`). The two commands of
 this section exist, and so do the dashboard's sign-in, sign-out and « End all operator sessions » over HTTP, their
-journal lines and the checks of `verify.sh`. The page and the dashboard's other actions come with the rest of the
-release.
+journal lines and the checks of `verify.sh`, and its shop actions over HTTP (list, create, new password, end
+sessions, suspend, enable). The page and the dashboard's other actions come with the rest of the release.
 
 The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
 phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an

@@ -522,6 +522,13 @@ def recover(engine):
         _sweep(conn)
 
 
+def today(conn, shop: int, now: str) -> int:
+    """This shop's reads on the UTC day of `now`: what DAILY_LIMIT counts (the admission, the operator's dashboard).
+    ISO text comparison: the date is a prefix of the day's first instant (as in spent_micros)."""
+    return conn.execute(text("SELECT COUNT(*) FROM chat_reads WHERE shop_id=:shop AND created_at>=:day"),
+                        {"shop": shop, "day": now[:10]}).scalar_one()
+
+
 def poster_words(conn, shop, document: dict, visual_id: str) -> dict:
     """The current words of a poster, read by the server: what the version the owner looks at was asked to draw (none
     when it draws no words), and the document's. The version must be one that the poster's listing shows."""
@@ -569,9 +576,7 @@ def _admit(engine, settings, shop, key, request: ReadRequest):
                 raise Refused("provider_mode_mismatch", 409)
             jobs.provider_guard(conn, settings, shop, spec.estimate_micros)
             now = utc_now()
-            # ISO text comparison: the date is a prefix of the day's first instant (as in spent_micros).
-            if conn.execute(text("SELECT COUNT(*) FROM chat_reads WHERE shop_id=:shop AND created_at>=:day"),
-                            {"shop": shop, "day": now[:10]}).scalar_one() >= DAILY_LIMIT:
+            if today(conn, shop, now) >= DAILY_LIMIT:
                 raise Refused("read_limit", 429)
             # The sweep above has closed the reads a crash left 'running', so a lost one frees its place.
             if conn.execute(text("SELECT COUNT(*) FROM chat_reads WHERE shop_id=:shop AND status='running'"),
