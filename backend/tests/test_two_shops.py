@@ -374,6 +374,15 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
 
     # The operator's view answers neither shop.
     assert a.get("/api/status").status_code == b.get("/api/status").status_code == 404
+    # Nor do the operator's routes (D-ADMIN-001), held by their prefix: they hold no shop's objects; to each shop the
+    # session read says nobody, and every one but the three public session operations is 401 (full matrix: test_admin).
+    operator = {(method.upper(), path) for path, methods in a.app.openapi()["paths"].items() for method in methods
+                if path.startswith("/api/admin/")}
+    for shop in (a, b):
+        assert shop.get("/api/admin/session").json() == {"authenticated": False, "configured": False}
+        for method, path in sorted(operator - {(public, "/api/admin/session") for public in ("GET", "POST", "DELETE")}):
+            answer = send(shop, method, re.sub(r"\{\w+\}", "1", path), {})
+            assert (answer.status_code, answer.json()["error"]["code"]) == (401, "unauthenticated"), (method, path)
 
     # The routes the flow above reached only through a refusal, each answered once with success, so that the walk below
     # reads their own answers (T-BALANCE-006 review r1). A's objects change from here on.
@@ -419,13 +428,13 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     # The walk sees a successful answer of every route a shop reads, apart from the refusals of the attempts above: a
     # dollar field added to a route's own answer could not hide behind its refusals.
     succeeded = {route_of(schema, answer.request) for answer in json_answers if answer.is_success
-                 and answer.request.url.path != "/api/openapi.json"}
-    assert succeeded == schema - NOT_WALKED, f"no successful answer walked: {sorted(schema - NOT_WALKED - succeeded)}"
+                 and answer.request.url.path != "/api/openapi.json"} - operator  # no shop reads the operator's
+    assert succeeded == schema - NOT_WALKED - operator, f"no successful answer walked: {sorted(schema - NOT_WALKED - operator - succeeded)}"
     # Every route of the schema is attempted, answers with the shop's own data only, or is exempt for a stated reason.
     # What this does not see: a route hidden from the schema (include_in_schema=False) or a mount, which
     # test_every_route_the_application_answers_is_in_the_schema refuses below; and a route put in OWN or EXEMPT
     # without its check, which only a reader of those two sets can catch.
-    covered = {(method, template) for method, template, _ in attempts + after_scene} | OWN | EXEMPT
+    covered = {(method, template) for method, template, _ in attempts + after_scene} | OWN | EXEMPT | operator
     assert covered == schema, f"not covered: {sorted(schema - covered)}; not in the schema: {sorted(covered - schema)}"
 
 

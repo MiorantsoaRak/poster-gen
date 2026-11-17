@@ -1,7 +1,9 @@
 #!/bin/sh
-# Post-deploy checks, run on the box by deploy.py under `timeout 300`. Usage: sh verify.sh <revision>
+# Post-deploy checks, run on the box by deploy.py under `timeout 300`. Usage: sh verify.sh <revision> [--operator-bootstrap]
+# --operator-bootstrap: the one deploy that brings the dashboard (Release 1), before an operator password can exist.
 set -u
 REV=$1
+BOOTSTRAP=${2:-}
 C=affiche-ia-affiche-ia-1
 PUBLIC=https://affiches.miorantsoa.app
 CRON_FILE=/etc/cron.d/affiche-ia
@@ -65,6 +67,19 @@ case "$body" in  # the answer may also say whom to contact (SUPPORT_CONTACT_FR)
 esac
 [ "$(answers "$PUBLIC/api/creations")" = 401 ] || fail "$PUBLIC/api/creations is not closed without a session"
 echo "ok: $PUBLIC serves the page and its manifest, the API answers through Caddy and is closed without a session"
+
+# The operator's dashboard (D-ADMIN-007). The 401 proves that nobody enters without a session, not that a route
+# exists: the refusal comes before routing. An unset password fails, except on the one deploy that says so.
+[ "$(answers "$PUBLIC/api/admin/shops")" = 401 ] || fail "$PUBLIC/api/admin/shops is not closed (401) without an operator session"
+body=$(curl -s --max-time 10 "$PUBLIC/api/admin/session")
+case "$body" in
+  '{"authenticated":false,"configured":true}')
+    echo "ok: the operator's routes are closed without a session, and the operator password is set" ;;
+  '{"authenticated":false,"configured":false}')
+    [ "$BOOTSTRAP" = --operator-bootstrap ] || fail "the operator password is not set: run python -m affiche.shops operator-password"
+    echo "WARNING: no operator password yet: run python -m affiche.shops operator-password, then run verify.sh again without --operator-bootstrap" ;;
+  *) fail "$PUBLIC/api/admin/session through Caddy answered: $body" ;;
+esac
 
 redirect=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 "http://affiches.miorantsoa.app/")
 [ "$redirect" = "308 $PUBLIC/" ] || fail "HTTP did not redirect to HTTPS: $redirect"

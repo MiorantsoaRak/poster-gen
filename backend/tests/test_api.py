@@ -206,7 +206,7 @@ DEVELOPER_ONLY = {"call_already_dispatched", "format_missing", "generated_refere
 def test_every_refusal_the_owner_can_meet_has_its_own_french_sentence(client):
     source = Path(affiche_api.__file__).parent
     raised = set()
-    for file in [*(source / "posters").glob("*.py"), source / "api.py"]:
+    for file in [*(source / "posters").glob("*.py"), source / "api.py", source / "admin.py"]:
         raised |= set(re.findall(r'Refused\(\s*"([a-z_]+)"', file.read_text(encoding="utf-8")))
     assert len(raised) > 70
     unexplained = raised - set(affiche_api.MESSAGES) - DEVELOPER_ONLY
@@ -509,6 +509,10 @@ class Counting:
         self.calls += 1
         return self.real.verify_and_update(password, stored)
 
+    def verify(self, password, stored):  # the operator's sign-in (test_admin)
+        self.calls += 1
+        return self.real.verify(password, stored)
+
     def hash(self, password):  # a password change hashes the new one: not a verification
         return self.real.hash(password)
 
@@ -587,6 +591,9 @@ def slow_wrong(monkeypatch, seconds):
             calls.append(password)
             time.sleep(seconds)
             return False, None
+
+        def verify(self, password, stored):  # the operator's sign-in (test_admin)
+            return self.verify_and_update(password, stored)[0]
 
     monkeypatch.setattr(auth, "PASSWORDS", Slow())
     return calls

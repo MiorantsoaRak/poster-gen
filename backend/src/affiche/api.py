@@ -10,6 +10,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from pathlib import Path as FilePath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -27,8 +28,8 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 
-from affiche import assets
-from affiche.config import Settings, load_settings
+from affiche import admin, assets
+from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, typography, visuals
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
@@ -79,6 +80,7 @@ MESSAGES = {
         "scene_format_mismatch": "Cette version a été faite pour un autre format d’affiche. Choisissez une version de ce format, ou générez-en une nouvelle.",
         "unauthenticated": "Connectez-vous pour continuer.", "forbidden_origin": "Origine de la demande refusée.",
         "wrong_credentials": "Identifiant ou mot de passe incorrect.",
+        "operator_not_set": "Aucun mot de passe d’opérateur n’est défini : lancez python -m affiche.shops operator-password sur le serveur.",
         "shop_suspended": "Cette boutique est suspendue. Contactez l’administrateur.",
         "shop_changed": "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.",
         "wrong_password": "Le mot de passe actuel n’est pas le bon.",
@@ -225,23 +227,31 @@ class AccessBoundary:
                 raise store.Refused("not_found", 404)
             if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("origin") != self.settings.app_origin:
                 raise store.Refused("forbidden_origin", 403)
+            # The operator's paths take their own branch before any shop rule (D-ADMIN-001): a shop's cookie is never
+            # read there and the operator's is read nowhere else, so neither session can stand for the other.
+            operator_path = scope["path"].startswith("/api/admin/")
+            request.state.operator = await run_in_threadpool(auth.operator_session, self.owner.state.engine,
+                                                             request.cookies.get(auth.OPERATOR_COOKIE)) if operator_path else None
+            if operator_path and scope["path"] != "/api/admin/session" and request.state.operator is None:
+                raise store.Refused("unauthenticated", 401)
             # Everything under /api/ needs a session; the built frontend (SERVE_FRONTEND) is public and holds no data.
             # The Origin check above and the size limits below stay on every path.
+            shop_path = api_path and not operator_path
             request.state.shop = await run_in_threadpool(auth.session_shop, self.owner.state.engine,
-                                                         request.cookies.get(auth.COOKIE)) if api_path else None
-            if api_path and scope["path"] not in ("/api/session", "/api/status") and request.state.shop is None:
+                                                         request.cookies.get(auth.COOKIE)) if shop_path else None
+            if shop_path and scope["path"] not in ("/api/session", "/api/status") and request.state.shop is None:
                 raise store.Refused("unauthenticated", 401)  # /api/status: only the operator reaches this line
             # A stale-tab guard, not authentication (D-MULTI-SHOP-002): a page bound to another shop than the cookie's
             # session reads and changes nothing, and an old tab of one shop cannot sign another out. A forged value only
             # gets the request refused; an absent one passes (images loaded by <img>, bundles that do not send it).
             claimed = request.headers.get("x-affiche-shop")
-            if (api_path and claimed is not None and not (scope["path"] == "/api/session" and request.method in ("GET", "POST"))
+            if (shop_path and claimed is not None and not (scope["path"] == "/api/session" and request.method in ("GET", "POST"))
                     and (request.state.shop is None or claimed != str(request.state.shop))):
                 raise store.Refused("shop_changed", 409)
             # An older open tab changes nothing and pays nothing: refused here, before any handler. It can still read
             # and sign out; its sign-in, which has no identifier, gets this sentence too, so a reload always works.
             bundle = request.headers.get("x-affiche-bundle", "")
-            if (api_path and (scope["path"], request.method) != ("/api/session", "DELETE")
+            if (api_path and (scope["path"], request.method) not in (("/api/session", "DELETE"), ("/api/admin/session", "DELETE"))
                     and request.method not in ("GET", "HEAD", "OPTIONS")
                     and not (bundle.isascii() and bundle.isdigit() and len(bundle) < 10 and int(bundle) >= BUNDLE)):
                 raise store.Refused("bundle_outdated", 409)
@@ -883,6 +893,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         return result_response(store.restore_creation(app.state.engine, request.state.shop, key, id, expected_revision(version)))
 
     app.include_router(protected)
+    app.include_router(admin.router(settings))
     if settings.serve_frontend:
         # After every route: a mount at / matches all paths, so it must be the last thing the router tries.
         app.mount("/", StaticFiles(directory=rendering.BUILD_DIR, html=True), name="frontend")
@@ -900,7 +911,19 @@ def uvicorn_options(settings: Settings) -> dict:
     return {**UVICORN, "host": settings.api_host, "forwarded_allow_ips": settings.forwarded_allow_ips}
 
 
-if __name__ == "__main__":
+def serve(env_file: FilePath | None = ENV_FILE):
+    """The container's command (python -m affiche.api). Uvicorn configures its own loggers only and leaves ours alone
+    (disable_existing_loggers false in its 0.54 LOGGING_CONFIG): without this handler the affiche loggers would drop INFO,
+    the operator's journal lines (D-ADMIN-002), and print warnings through Python's last resort only."""
     import uvicorn
-    configured = load_settings()
+    configured = load_settings(env_file)
+    handler = logging.StreamHandler()  # stderr, which the journald driver keeps
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    own = logging.getLogger("affiche")
+    own.addHandler(handler)
+    own.setLevel(logging.INFO)
     uvicorn.run(create_app(configured), **uvicorn_options(configured))
+
+
+if __name__ == "__main__":
+    serve()

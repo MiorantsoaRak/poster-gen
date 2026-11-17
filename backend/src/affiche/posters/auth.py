@@ -7,6 +7,7 @@ import secrets
 import threading
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from pwdlib import PasswordHash
@@ -22,6 +23,9 @@ PASSWORDS = PasswordHash.recommended()
 COOKIE = "affiche_session"
 # meta's key for the operator's Argon2 hash (D-ADMIN-001). Its only writer is shops.set_operator_password: no HTTP route.
 OPERATOR_KEY = "operator_password_hash"
+OPERATOR_COOKIE = "affiche_operator"  # Path=/api/admin: the browser sends it nowhere else, and only admin paths read it
+OPERATOR_SECONDS = 12 * 60 * 60  # fixed from sign-in (owner decision 7)
+OPERATOR_NAME = "#operator"  # its login_failures identifier: "#" is in no shop's ([a-z0-9]), so the counters never mix
 # One Argon2 check takes tens of MiB. Forty worker threads verifying at once would pass the container's memory
 # limit and restart it in the middle of a paid job; two at a time is plenty for one shop.
 VERIFYING = threading.BoundedSemaphore(2)
@@ -213,3 +217,88 @@ def logout(engine, token: str | None):
     if token:
         with write_tx(engine) as conn:
             conn.execute(text("DELETE FROM sessions WHERE token_hash=:hash"), {"hash": token_hash(token)})
+
+
+class Operator(NamedTuple):
+    """A live operator session (D-ADMIN-001). It holds no shop."""
+    actor: str  # dashboard:<first 8 hex of the token's hash>: names a session, not a person, and tells nothing of the token
+    token_hash: str
+    expires_at: str
+
+
+def operator_actor(digest: str) -> str:
+    return f"dashboard:{digest[:8]}"
+
+
+def operator_live(conn, digest: str) -> str | None:
+    """The expiry of a live operator session, else None. A write calls it first inside its write_tx, where BEGIN IMMEDIATE
+    already holds the lock: the time is read now, so a session ended or expired while the write waited is not live."""
+    return conn.execute(text("SELECT expires_at FROM operator_sessions WHERE token_hash=:hash AND expires_at>:now"),
+                        {"hash": digest, "now": utc_now()}).scalar()
+
+
+def operator_session(engine, token: str | None) -> Operator | None:
+    """Read on every /api/admin/ request, with no write on the read (ADR-065's rule for shops)."""
+    if not token or len(token) > 128:
+        return None
+    digest = token_hash(token)
+    with engine.connect() as conn:
+        expires = operator_live(conn, digest)
+    return None if expires is None else Operator(operator_actor(digest), digest, expires)
+
+
+def operator_configured(engine) -> bool:
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT EXISTS (SELECT 1 FROM meta WHERE key=:key)"), {"key": OPERATOR_KEY}).scalar_one() == 1
+
+
+def operator_login(engine, password: str, ip: str, agent: str | None, previous: str | None = None) -> tuple[str, Operator]:
+    """D-ADMIN-001, in the shape of login: the shops' limits under OPERATOR_NAME, Argon2 outside the write transaction in
+    one of the shops' two slots, and the hash read again in the transaction that writes. Unset, the password is refused
+    before any verification and nothing is counted: there is nothing to guess."""
+    key = limit_key(ip)
+    with engine.connect() as conn:
+        stored = conn.execute(text("SELECT value FROM meta WHERE key=:key"), {"key": OPERATOR_KEY}).scalar()
+        if stored is None:  # before the limits: the shops' failures from this address must not hide it
+            raise Refused("operator_not_set", 409)
+        if limited(conn, key, OPERATOR_NAME):
+            raise Refused("rate_limited", 429)
+    with VERIFYING:  # held until the failure or the session is committed, as login's
+        with engine.connect() as conn:
+            if limited(conn, key, OPERATOR_NAME):
+                raise Refused("rate_limited", 429)
+        ok = PASSWORDS.verify(password, stored)
+        now = datetime.now(UTC)
+        stamp = now.isoformat(timespec="microseconds")
+        with write_tx(engine) as conn:
+            conn.execute(text("DELETE FROM login_failures WHERE attempted_at<=:since"),
+                         {"since": (now-timedelta(minutes=15)).isoformat(timespec="microseconds")})
+            conn.execute(text("DELETE FROM operator_sessions WHERE expires_at<=:now"), {"now": stamp})
+            # Read again in the transaction that writes: a password set during the verification gives no session.
+            ok = ok and conn.execute(text("SELECT 1 FROM meta WHERE key=:key AND value=:stored"),
+                                     {"key": OPERATOR_KEY, "stored": stored}).first() is not None
+            if ok:
+                token = secrets.token_urlsafe(32)
+                expires = (now+timedelta(seconds=OPERATOR_SECONDS)).isoformat(timespec="microseconds")
+                if previous:  # this browser's earlier session: a new sign-in replaces it
+                    conn.execute(text("DELETE FROM operator_sessions WHERE token_hash=:hash"), {"hash": token_hash(previous)})
+                conn.execute(text("INSERT INTO operator_sessions VALUES (:hash,:now,:expires,:address,:agent)"),
+                             {"hash": token_hash(token), "now": stamp, "expires": expires,
+                              "address": (ip or "unknown")[:64], "agent": (agent or "")[:200] or None})
+            else:
+                conn.execute(text("INSERT INTO login_failures (ip,identifier,attempted_at) VALUES (:ip,:name,:now)"),
+                             {"ip": key, "name": OPERATOR_NAME, "now": stamp})
+    if not ok:  # the failure is committed before it is reported
+        raise Refused("wrong_credentials", 401)
+    digest = token_hash(token)
+    return token, Operator(operator_actor(digest), digest, expires)
+
+
+def operator_logout(engine, token: str | None) -> str | None:
+    """This browser's operator session ends; returns its actor when there was one to end."""
+    if not token:
+        return None
+    digest = token_hash(token)
+    with write_tx(engine) as conn:
+        ended = conn.execute(text("DELETE FROM operator_sessions WHERE token_hash=:hash"), {"hash": digest}).rowcount
+    return operator_actor(digest) if ended else None

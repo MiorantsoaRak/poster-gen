@@ -254,13 +254,13 @@ is refused before anything is sent, and costs nothing. Around the steps above:
 
 Release 1 also adds the operator dashboard ("Operator dashboard"). No password exists for it until you set one, so
 the first deploy takes four steps:
-1. The release's own `verify.sh` run is the routing check: `/api/admin/shops` without a session must answer 401 (a
-   404 fails: the dashboard's routes are missing). It only warns: "no operator password yet: run python -m
-   affiche.shops operator-password, then run verify.sh again".
+1. Run this one release with `OPERATOR_BOOTSTRAP=1` in front of the pyinfra command. Its `verify.sh` run checks
+   that `/api/admin/shops` answers 401 without a session (this proves that nobody enters, not that a route exists),
+   and only warns: "no operator password yet". Without that variable, a release fails while no password is set.
 2. Set the password in the running container, and keep it in your password manager:
    `sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops operator-password`.
-3. The readiness check, by hand: `sudo sh /opt/affiche-ia/verify.sh <revision>`. It finds the password set and
-   writes the marker `/opt/affiche-ia/operator-ready`. From then on every release fails while the password is unset.
+3. The readiness check, by hand: `sudo sh /opt/affiche-ia/verify.sh <revision>`. It must find the password set.
+   Never set `OPERATOR_BOOTSTRAP` again: from now on every release fails while the password is unset.
 4. Sign in at `https://affiches.miorantsoa.app/admin/` from your phone.
 
 The pilot's opening grant stays the command line's (step 3 of the previous section). Then check that the dashboard
@@ -435,7 +435,9 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
 ## Operator dashboard
 
 **State on 2026-11-17: being built for Release 1** (`docs/project/designs/admin-dashboard.md`). The two commands of
-this section exist. The page, its journal lines and the checks of `verify.sh` come with the rest of the release.
+this section exist, and so do the dashboard's sign-in, sign-out and « End all operator sessions » over HTTP, their
+journal lines and the checks of `verify.sh`. The page and the dashboard's other actions come with the rest of the
+release.
 
 The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
 phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an
@@ -481,10 +483,10 @@ between the two, and the journal keeps about 14 days ("Operate", Logs). The comm
 journal line: their output goes to your terminal only. The Service screen lists the live operator sessions, with
 their address and browser.
 
-**The marker of `verify.sh`.** Each release's `verify.sh` asks the dashboard whether an operator password is set. If
-it is, `verify.sh` writes `/opt/affiche-ia/operator-ready` once. If it is not: a warning while the marker is missing
-(the first deploy, "Release 1: the operator dashboard"), a failure once the marker exists (for example after a
-restore of an older database). Then run `operator-password`, and `verify.sh` again.
+**`verify.sh` and the operator password.** Each release's `verify.sh` asks the dashboard whether an operator
+password is set, and fails when it is not (for example after a restore of an older database): run
+`operator-password`, then `verify.sh` again. The only exception is the release run with `OPERATOR_BOOTSTRAP=1`
+("Release 1: the operator dashboard"), which warns.
 
 ## Secrets (on the box, never in git)
 

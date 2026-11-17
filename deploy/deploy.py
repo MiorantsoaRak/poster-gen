@@ -36,6 +36,8 @@ from pyinfra.operations import files, server
 
 REMOTE_DIR = "/opt/affiche-ia"
 CONTAINER = "affiche-ia-affiche-ia-1"  # compose project "affiche-ia", service "affiche-ia"
+# Only the release that brings the dashboard, before an operator password can exist (deploy/README.md, Release 1).
+OPERATOR_BOOTSTRAP = " --operator-bootstrap" if os.environ.get("OPERATOR_BOOTSTRAP") == "1" else ""
 # Everything the image is built from. REV and the archive use this list, so a docs or test edit neither
 # rebuilds nor restarts the application.
 IMAGE_PATHS = [
@@ -252,7 +254,7 @@ fi"""
 server.shell(
     name="Verify container, renderer, neighbours, public URL, cron and backup (300 s limit)",
     commands=[
-        f"""timeout --kill-after=10s 300 sh {REMOTE_DIR}/verify.sh {REV}; rc=$?
+        f"""timeout --kill-after=10s 300 sh {REMOTE_DIR}/verify.sh {REV}{OPERATOR_BOOTSTRAP}; rc=$?
 if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
   echo "Verification timed out after 300 s"
   docker logs --tail=80 {CONTAINER} 2>&1

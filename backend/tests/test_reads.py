@@ -252,8 +252,13 @@ def test_an_older_bundle_changes_nothing_and_pays_nothing(stub, client):
     count = lambda table: engine.connect().exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one()  # noqa: E731
     old = TestClient(client.app, base_url=ORIGIN, headers={"Origin": ORIGIN}, cookies=dict(client.cookies))  # no header
     refusal = {"code": "bundle_outdated", "retryable": False, "message_fr": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page."}
+    # The two sign-outs need no bundle; the operator's protected routes refuse a shop's tab (401) before it, and test_admin
+    # checks their bundle rule with an operator session (D-ADMIN-001). The operator's sign-in stays in.
     routes = [(method.upper(), path) for path, methods in client.app.openapi()["paths"].items() for method in methods
-              if method in ("post", "put", "patch", "delete") and (method, path) != ("delete", "/api/session")]
+              if method in ("post", "put", "patch", "delete")
+              and (method, path) not in (("delete", "/api/session"), ("delete", "/api/admin/session"))
+              and (path == "/api/admin/session" or not path.startswith("/api/admin/"))]
+    assert ("POST", "/api/admin/session") in routes
     assert len(routes) > 25 and ("PUT", "/api/creations/{id}") in routes and ("POST", "/api/session") in routes, routes
     before = {table: count(table) for table in ("chat_reads", "poster_jobs", "scene_plans", "mutation_keys", "creations", "creation_versions", "assets", "looks")}
     for bundle in (None, "2", "1", "0", "", "deux", "3.0", "-3", "٣".encode(), "1" * 12):
