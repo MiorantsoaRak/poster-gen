@@ -1026,3 +1026,10 @@
 - **Why:** recording actions inside `shops.py` was the most error-prone part of v1 (nested calls, refused restores) for one operator; a hash in the environment added a silent "dashboard off" state and a restart of every shop's service at each rotation.
 - **Residual, accepted for Release 1:** the dashboard shares the shops' origin, so a script injected in the shop app could act as the operator in the operator's browser; a subdomain would close it and needs a change on the shared box (the user's decision). A stolen operator session is bounded by the spend cap and the shop's daily limit, and what it creates outlives it: the runbook gets a suspected-compromise procedure.
 - **Not built:** cancelling a payment that never arrived (the ariary stay counted as received); two-factor sign-in; per-shop daily limits.
+
+## ADR-111 — Invented features: the owner is warned and checks; admin tasks 008 to 010 after Release 1 (2026-11-17)
+
+- **Decision (the user, 2026-11-17):** for R-TERMS-002 the default is kept: when a request asks for product features without listing them, the card says so before the paid tap (« L’IA choisira les caractéristiques : vérifiez-les avant de publier. ») and the check before download cannot be skipped. The alternative (the image writes only features the owner listed) is not built.
+- **Decision (the user, 2026-11-17):** T-ADMIN-008 (usage report), T-ADMIN-009 (problems and queue) and T-ADMIN-010 (Reka UI trial) are built after Release 1. The command line and `/api/status` cover usage and problems until then.
+- **Decision (the user, 2026-11-17):** the one open finding of T-ADMIN-006's third review is accepted as a known limit: no cross-tab lock around a kept money request's storage key (TODO.md, T-ADMIN-006; designs/admin-dashboard.md "Not built").
+- **Why:** the free « ajoute 4 lignes de caractéristiques » request is what the user did with his own poster on 2026-11-15, and the conditions of use (R-TERMS-001) put the check on the owner; the conditions gate inviting a second shop, the three admin screens do not.

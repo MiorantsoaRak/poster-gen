@@ -62,9 +62,9 @@
   - verify: as T-ADMIN-005
 - [x] T-ADMIN-007 The service screen: status, pause/resume, purchase text, live operator sessions, "End all". Done 2026-11-17: backend 1501 passed, 3 deselected (before the review fixes; test_admin.py and test_api.py 110 passed after them), frontend 244, build, 26 shop files identical, four browser smokes. Codex r1 APPROVE WITH FIXES (reviews/t-admin-007-code-r1.md): five fixes applied, not seen by Codex again. Left as is: a write still out when the operator leaves the Service screen and returns does not lock the new screen's buttons (a second pause answers "already paused"); the screen is read again when the first answer lands. Not verified: a real phone, a screen reader.
   - verify: `uv run pytest tests/test_admin.py tests/test_api.py -q`; npm test and build; `admin_browser.py`; full suite
-- [ ] T-ADMIN-008 (may move after Release 1) The usage report.
-- [ ] T-ADMIN-009 (may move after Release 1) Problems and queue.
-- [ ] T-ADMIN-010 (may move after Release 1) The Reka UI trial (AlertDialog; kept only if it beats the native dialog on a measured point).
+- [ ] T-ADMIN-008 (after Release 1: the user, 2026-11-17, ADR-111) The usage report.
+- [ ] T-ADMIN-009 (after Release 1: the user, 2026-11-17, ADR-111) Problems and queue.
+- [ ] T-ADMIN-010 (after Release 1: the user, 2026-11-17, ADR-111) The Reka UI trial (AlertDialog; kept only if it beats the native dialog on a measured point).
 - [ ] T-SESSION-REPLACE (proposed by Claude 2026-11-17 from the T-SHOP-REPLACE review, not confirmed by the user) A `sessions` row can be rewritten by `INSERT OR REPLACE` on its token hash and so change shop, with foreign keys on (migration 0005). No code does it. Decide whether it needs the same guards before Release 1.
 - [ ] T-DEPLOY-DOCKER-RUN (proposed by Claude 2026-11-16, not yet confirmed by the user; before the Release 1 deploy) Run `deploy/release.sh` and `deploy/restore.sh` once against real Docker on a throwaway host, never the shared box: the operator service writes nothing to the journal; `up` and `build` leave it alone; `docker exec` output stays out of the journal; the real `timeout` around a hung backup and the removal of `affiche-ia-backup`; a restore from a backup taken before migration 0013.
   - verify: the commands and their output, kept in `docs/project/reviews/`.
