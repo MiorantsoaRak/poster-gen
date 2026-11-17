@@ -200,21 +200,23 @@ could not be removed.` and starts nothing: run `sudo docker rm -f affiche-ia-bac
 If the release prints `THE SERVICE IS DOWN: the previous container did not start again`, start it at once with
 `sudo docker start affiche-ia-affiche-ia-1`, then do steps 1 to 3.
 
-### Release 1 (migrations 0013 and 0014: several shops, credits)
+### Release 1 (migrations 0013 to 0015: several shops, credits)
 
-The first release with migrations 0013 and 0014 (designs: `docs/project/designs/multi-shop.md` and
-`prepaid-balance.md`, "Release gate"). Do also the credit steps of the next section. In this order:
+The first release with migrations 0013, 0014 and 0015 (designs: `docs/project/designs/multi-shop.md` and
+`prepaid-balance.md`, "Release gate"; 0015 only adds the two triggers that stop a shop's row being replaced). Do
+also the credit steps of the next section. In this order:
 1. On mx1, run `sudo sh /opt/affiche-ia/daily.sh`. Check that `/opt/affiche-ia/backups/last-backup.json` has
    today's time.
 2. Optional, the day before: copy that backup's `db/affiche-<stamp>.db` to the development machine. From
    `backend/`, run `uv run python -m affiche.rehearse <copy>`. It shows the counts early, with the development SQLite.
-3. Run the release command as usual. Its rehearsal runs 0013 and 0014 on a fresh copy of the live database, in
+3. Run the release command as usual. Its rehearsal runs 0013 to 0015 on a fresh copy of the live database, in
    the release image, before anything is stopped.
 4. Read the report. Its first line must show SQLite 3.40.1 (the image's Debian) and the release's revision.
 5. Check the report: each table that existed before has the same rows and hash before and after (a table the
    migrations add shows `None` before; a line that ends with `(over …)` compares only the columns it names); the
-   version goes from `0012` to `0014`; each `0013 ADDED` and `0014 ADDED` line says `as expected`; each of the
-   eleven `guard …` lines says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
+   version goes from `0012` to `0015`; each `0013 ADDED`, `0014 ADDED` and `0015 ADDED` line says `as expected`
+   (0015 checks the shop's triggers in place of 0013, so 0013 has no line for them); each of the fourteen
+   `guard …` lines says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
 6. Check that the three ledger sums are the same before and after. Save the whole report as
    `docs/project/reviews/release-1-rehearsal-<date>.md`.
 7. If the report says `FAILED`, the release stopped before the stop and the old version still serves.
@@ -257,9 +259,9 @@ Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH`
   (step 9 above). Change a password with `set-password` ("Shops").
 
 **If the new container does not start after the migration** (the release prints "THE SERVICE IS DOWN" and the
-container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 and 0014 run in
+container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 to 0015 run in
 one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migrations, as
-below, leaves it at 0014: fix forward.
+below, leaves it at 0015: fix forward.
 - The log says "Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set". Give shop 1 a password with
   the new image, through the operator service (no container log: "Shops"), then start it:
 

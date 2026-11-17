@@ -6,9 +6,9 @@ The file is only read: SQLite's online backup copies it into a temporary folder,
 deleted. On the copy, before and after: each data table's row count and SHA-256 of its rows, the three ledgers'
 sums, foreign_key_check and integrity_check. A table that a pending migration rebuilds or widens is hashed over the
 columns it had before (the migration's PRESERVED); what the migration changes on purpose is checked apart (its
-ADDED), and so is the schema version. On every rehearsal, pending migrations or not, the migrated copy must still hold
-the GUARDS. Prints REHEARSAL OK, or REHEARSAL FAILED and every difference; exits 0, 1, or
-2 for a wrong command line. Reads no settings and no .env.
+ADDED, less the checks a later pending one names in its SUPERSEDES), and so is the schema version. On every rehearsal, pending
+migrations or not, the migrated copy must still hold the GUARDS. Prints REHEARSAL OK, or REHEARSAL FAILED and every
+difference; exits 0, 1, or 2 for a wrong command line. Reads no settings and no .env.
 """
 import hashlib
 import json
@@ -31,7 +31,7 @@ from affiche.db import make_engine, migrate
 LEDGERS = ("provider_calls", "poster_calls", "chat_reads")
 # Schema objects every later migration must keep, checked after every rehearsal whatever is pending: rebuilding a
 # table by SQLite's procedure drops its triggers without a word. A migration that changes one updates it here.
-GUARDS = {  # (type, name): the CREATE statement as 0014 wrote it
+GUARDS = {  # (type, name): the CREATE statement as its migration (0013, 0014, 0015) wrote it
     ("table", "credit_grants"): """CREATE TABLE credit_grants (
   id INTEGER PRIMARY KEY,
   shop_id INTEGER NOT NULL REFERENCES shop_profile(id),
@@ -90,6 +90,15 @@ GUARDS = {  # (type, name): the CREATE statement as 0014 wrote it
   WHEN NEW.rowid IS NOT OLD.rowid OR NEW.id IS NOT OLD.id OR NEW.shop_id IS NOT OLD.shop_id
     OR NEW.creation_id IS NOT OLD.creation_id OR NEW.kind IS NOT OLD.kind
   BEGIN SELECT RAISE(ABORT, 'a job stays the same job: its id, shop, poster and kind never change'); END""",
+    ("trigger", "keep_shop"):
+        "CREATE TRIGGER keep_shop BEFORE DELETE ON shop_profile BEGIN SELECT RAISE(ABORT,'shop cannot be deleted'); END",
+    ("trigger", "shop_profile_never_replaced"): """CREATE TRIGGER shop_profile_never_replaced BEFORE INSERT ON shop_profile
+  WHEN EXISTS (SELECT 1 FROM shop_profile WHERE id = NEW.id OR identifier = NEW.identifier)
+  BEGIN SELECT RAISE(ABORT, 'a shop is never replaced'); END""",
+    ("trigger", "shop_profile_same_shop"): """CREATE TRIGGER shop_profile_same_shop BEFORE UPDATE ON shop_profile
+  WHEN NEW.id IS NOT OLD.id
+    OR (NEW.identifier IS NOT OLD.identifier AND EXISTS (SELECT 1 FROM shop_profile WHERE identifier = NEW.identifier))
+  BEGIN SELECT RAISE(ABORT, 'a shop stays the same shop: its id never changes and it never takes another shop''s identifier'); END""",
 }
 # A column's text inside its table's statement: ALTER TABLE ADD COLUMN writes it there, and a rebuild must keep it.
 GUARDED_COLUMNS = {"poster_jobs": "takes_credit INTEGER NOT NULL DEFAULT 0 CHECK (takes_credit IN (0, 1))"}
@@ -193,8 +202,12 @@ def rehearse(source: Path) -> tuple[list[str], list[str]]:
         finally:
             engine.dispose()
         after = _open(copy, lambda db: snapshot(db, projections))
+        # Checked on the copy at head: a later pending migration that changes what an earlier one checked names that
+        # check, by revision and name, in its SUPERSEDES. Nothing else removes a check: not a shared name.
+        superseded = {check for module in pending for check in getattr(module, "SUPERSEDES", ())}
         added = {(module.revision, name): (expected, _open(copy, lambda db: [tuple(row) for row in db.execute(query)]))
-                 for module in pending for name, (query, expected) in module.ADDED.items()}
+                 for module in pending for name, (query, expected) in module.ADDED.items()
+                 if (module.revision, name) not in superseded}
         guarded = _open(copy, guards)  # also when nothing is pending: a database changed by hand
 
     differences = []

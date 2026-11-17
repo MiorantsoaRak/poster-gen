@@ -108,7 +108,7 @@ def test_migration_0012_on_a_0011_database(tmp_path, monkeypatch):
         migrate(engine)
         migrate(engine)  # start-up replay
         with engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0015"
             assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='planner_mode'").scalar_one() == "stub"
             columns = {row[1]: row[3] for row in conn.exec_driver_sql("PRAGMA table_info(chat_reads)")}
             assert conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name='chat_reads_created'").scalar_one() \

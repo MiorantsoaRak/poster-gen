@@ -1,5 +1,5 @@
-"""The prepaid balance (D-BALANCE-001, 002, 005): migration 0014's rules, each proven by a statement the database itself
-refuses, the module's functions, and the guards on a fresh database."""
+"""The prepaid balance (D-BALANCE-001, 002, 005): migration 0014's rules and 0015's (a shop is never replaced), each
+proven by a statement the database itself refuses, the module's functions, and the guards on a fresh database."""
 import sqlite3
 from types import SimpleNamespace
 
@@ -71,7 +71,8 @@ def rows(engine, sql):
 # A writer outside the application, on a connection of its own: the sqlite3 shell's defaults, the application's foreign
 # keys, and recursive triggers (with which a REPLACE's implicit delete fires the DELETE triggers).
 WRITERS = {"shell": (), "foreign keys": ("PRAGMA foreign_keys = ON",),
-           "recursive triggers": ("PRAGMA foreign_keys = ON", "PRAGMA recursive_triggers = ON")}
+           "recursive triggers": ("PRAGMA foreign_keys = ON", "PRAGMA recursive_triggers = ON"),
+           "recursive triggers alone": ("PRAGMA recursive_triggers = ON",)}
 
 
 def outside(engine, writer, statement):
@@ -242,16 +243,93 @@ def test_a_job_is_never_removed_replaced_or_made_another_whatever_the_writer(db,
                                                                     {"available": 0, "pending": 0}]
 
 
-def test_the_replacement_guards_cover_every_unique_key_of_both_tables(engine):
+def shops_with_credits(engine):
+    with write_tx(engine) as conn:
+        line(conn, shop=1, ref="welcome")
+        job(conn, "one", "succeeded")
+        line(conn, shop=2, credits=5, ref="welcome")
+        job(conn, "two", "succeeded", shop=2)
+
+
+def shop_state(engine):
+    with engine.connect() as conn:
+        return (conn.exec_driver_sql("SELECT rowid, * FROM shop_profile ORDER BY rowid").all(),
+                [credits.balance(conn, shop) for shop in (1, 2, 3)])
+
+
+SHOP_COLUMNS = "revision,updated_at,identifier,state,created_at"
+NEVER_REPLACED = "a shop is never replaced"
+SAME_SHOP = "a shop stays the same shop"
+
+
+@pytest.mark.parametrize("writer", WRITERS)
+@pytest.mark.parametrize("statement, rule", [
+    # The bypass reproduced in review: a new identifier at shop 1's id takes its posters, jobs and credits.
+    (f"INSERT OR REPLACE INTO shop_profile (id,{SHOP_COLUMNS}) VALUES (1,1,'{T}','intrus','active','{T}')", NEVER_REPLACED),
+    (f"REPLACE INTO shop_profile (id,{SHOP_COLUMNS}) VALUES (2,1,'{T}','shopdeux','active','{T}')",
+     NEVER_REPLACED),  # the same shop written again: its password and name gone
+    (f"INSERT OR REPLACE INTO shop_profile (rowid,{SHOP_COLUMNS}) VALUES (2,1,'{T}','intrus','active','{T}')",
+     NEVER_REPLACED),  # by its rowid
+    (f"INSERT OR REPLACE INTO shop_profile ({SHOP_COLUMNS}) VALUES (1,'{T}','shopdeux','active','{T}')",
+     NEVER_REPLACED),  # by its identifier: shop 2's row goes, its jobs and lines belong to no shop
+    (f"INSERT OR REPLACE INTO shop_profile (id,{SHOP_COLUMNS}) VALUES (3,1,'{T}','shopdeux','active','{T}')",
+     NEVER_REPLACED),  # the id of one, the identifier of another: both rows go
+    (f"INSERT OR REPLACE INTO shop_profile ({SHOP_COLUMNS}) VALUES (1,'{T}','neuf','active','{T}'),"
+     f" (1,'{T}','neuf','suspended','{T}')", NEVER_REPLACED),  # two rows of one statement: the second sees the first
+    (f"INSERT INTO shop_profile (id,{SHOP_COLUMNS}) VALUES (1,1,'{T}','intrus','active','{T}')"
+     " ON CONFLICT (id) DO UPDATE SET identifier=excluded.identifier", NEVER_REPLACED),
+    (f"INSERT INTO shop_profile ({SHOP_COLUMNS}) VALUES (1,'{T}','shopdeux','active','{T}')"
+     " ON CONFLICT (identifier) DO UPDATE SET id=9", NEVER_REPLACED),
+    (f"INSERT OR REPLACE INTO shop_profile (id,{SHOP_COLUMNS}) SELECT 1,revision,updated_at,'intrus',state,created_at"
+     " FROM shop_profile WHERE id=2", NEVER_REPLACED),  # from a SELECT
+    ("UPDATE shop_profile SET id=-1 WHERE id=2", SAME_SHOP),
+    ("UPDATE shop_profile SET id=9 WHERE id=2", SAME_SHOP),  # with foreign keys off, its jobs and lines stay behind
+    ("UPDATE shop_profile SET rowid=9 WHERE id=2", SAME_SHOP),
+    ("UPDATE OR REPLACE shop_profile SET id=1 WHERE id=2", SAME_SHOP),  # shop 1's row goes, its credits are shop 2's
+    ("UPDATE OR REPLACE shop_profile SET identifier='originalphone' WHERE id=2", SAME_SHOP),  # shop 1's row goes
+    ("UPDATE shop_profile SET identifier='originalphone' WHERE id=2", SAME_SHOP),  # before the UNIQUE key's refusal
+    ("DELETE FROM shop_profile WHERE id=2", "shop cannot be deleted"),  # 0013's keep_shop
+])
+def test_a_shop_is_never_removed_replaced_or_made_another_whatever_the_writer(db, statement, rule, writer):
+    shops_with_credits(db)
+    before = shop_state(db)
+    assert before[1] == [{"available": 9, "pending": 0}, {"available": 4, "pending": 0}, {"available": 0, "pending": 0}]
+    with pytest.raises(sqlite3.IntegrityError, match=rule):
+        outside(db, writer, statement)
+    assert shop_state(db) == before
+
+
+def test_a_shop_written_by_hand_at_id_minus_one_refuses_every_later_creation(db):
+    """The accepted boundary: an automatic id reads -1 in a BEFORE INSERT trigger. Failed closed, never a replacement."""
+    outside(db, "shell", f"INSERT INTO shop_profile (id,{SHOP_COLUMNS}) VALUES (-1,1,'{T}','moinsun','active','{T}')")
+    with pytest.raises(sqlite3.IntegrityError, match=NEVER_REPLACED):
+        outside(db, "shell", f"INSERT INTO shop_profile ({SHOP_COLUMNS}) VALUES (1,'{T}','suivant','active','{T}')")
+
+
+def test_a_shop_may_take_a_free_identifier_and_stays_the_same_shop(db):
+    # The multi-shop design leaves the pilot's identifier to a later migration: a rename keeps its id and credits.
+    shops_with_credits(db)
+    before = shop_state(db)
+    with write_tx(db) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET identifier='shopdeux' WHERE id=2")  # unchanged
+        conn.exec_driver_sql("UPDATE shop_profile SET identifier='boutiquedeux' WHERE id=2")
+    after = shop_state(db)
+    assert [row[:5] for row in after[0]] == [row[:5] for row in before[0]]  # rowid, id, revision, name, contact
+    assert [row.identifier for row in after[0]] == ["originalphone", "boutiquedeux", "shoptrois"]
+    assert after[1] == before[1]
+
+
+def test_the_replacement_guards_cover_every_unique_key_of_their_tables(engine):
     # REPLACE deletes the row that collides on any unique key: a later one must join its table's never_replaced trigger.
     with engine.connect() as conn:
         keys = {table: sorted((tuple(conn.exec_driver_sql(f"SELECT name FROM pragma_index_info('{index}')").scalars()), partial)
                               for index, partial in conn.exec_driver_sql(
                                   f"SELECT name, partial FROM pragma_index_list('{table}') WHERE \"unique\"").all())
-                for table in ("credit_grants", "poster_jobs")}
+                for table in ("credit_grants", "poster_jobs", "shop_profile")}
         one_image = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name='poster_one_image'").scalar_one()
     assert keys == {"credit_grants": [(("job_id",), 0), (("shop_id", "kind", "ref"), 0)],  # and id, the rowid
-                    "poster_jobs": [(("creation_id",), 1), (("id",), 0)]}  # and the rowid
+                    "poster_jobs": [(("creation_id",), 1), (("id",), 0)],  # and the rowid
+                    "shop_profile": [(("identifier",), 0)]}  # and id, the rowid
     assert " ".join(one_image.split()).endswith(  # the predicate poster_jobs_never_replaced repeats
         "WHERE kind IN ('scene','refine','text_texture','background') AND status IN ('queued','running')")
 
@@ -581,7 +659,7 @@ def test_the_purchase_text_is_never_empty(db):
 
 # --- The guards --------------------------------------------------------------------------------------------------
 
-def test_a_fresh_database_holds_every_guard_as_0014_wrote_it(engine):
+def test_a_fresh_database_holds_every_guard_as_its_migration_wrote_it(engine):
     with engine.connect() as conn:
         raw = conn.connection.dbapi_connection
         assert rehearse.guard_differences(raw) == []
@@ -590,5 +668,6 @@ def test_a_fresh_database_holds_every_guard_as_0014_wrote_it(engine):
             "guard trigger credit_grants_never_removed", "guard trigger credit_grants_never_replaced",
             "guard trigger credit_grants_one_payment", "guard trigger credit_grants_payment_total",
             "guard trigger poster_jobs_final", "guard trigger poster_jobs_never_removed",
-            "guard trigger poster_jobs_never_replaced", "guard trigger poster_jobs_same_job",
+            "guard trigger poster_jobs_never_replaced", "guard trigger poster_jobs_same_job", "guard trigger keep_shop",
+            "guard trigger shop_profile_never_replaced", "guard trigger shop_profile_same_shop",
             "guard column poster_jobs.takes_credit"]

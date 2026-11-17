@@ -94,7 +94,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0015"
     finally:
         engine.dispose()
 
@@ -292,7 +292,7 @@ def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, mo
 
 def test_a_fresh_database_starts_with_shop_1_without_password(engine):
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0014"
+        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0015"
         assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at FROM shop_profile"
                                     ).all() == [("originalphone", None, "active", 1)]
         assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
@@ -344,8 +344,9 @@ def test_0013_keeps_the_pilot_whole_and_makes_room_for_other_shops(tmp_path, mon
 
 @pytest.mark.parametrize("statement", ["CREATE TABLE chat_reads_new",  # between the two rebuilds
                                        "CREATE INDEX chat_reads_created",  # right after the read ledger's swap
-                                       "CREATE TRIGGER poster_jobs_final"])  # 0014's last: the release is one transaction
-def test_a_failure_inside_0013_or_0014_leaves_the_database_exactly_as_before(tmp_path, monkeypatch, statement):
+                                       "CREATE TRIGGER poster_jobs_final",  # 0014's last
+                                       "CREATE TRIGGER shop_profile_same_shop"])  # 0015's: the release is one transaction
+def test_a_failure_inside_0013_0014_or_0015_leaves_the_database_exactly_as_before(tmp_path, monkeypatch, statement):
     path = pilot_0012(tmp_path, monkeypatch)
     before = read(path)
     engine = make_engine(tmp_path)
@@ -374,15 +375,18 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
     assert out.endswith("REHEARSAL OK\n") and f"environment: SQLite {sqlite3.sqlite_version}, Python " in out
-    assert "pending migrations: 0013, 0014" in out and "schema version: 0012 -> 0014" in out
+    assert "pending migrations: 0013, 0014, 0015" in out and "schema version: 0012 -> 0015" in out
     assert "ledger provider_calls: 512881 -> 512881" in out and "(over id, ip, attempted_at)" in out
     assert "(over id, shop_id, creation_id, origin_revision, input_id, kind," in out  # poster_jobs without takes_credit
     lines = out.splitlines()
     assert {line for line in lines if line.startswith("0014 ADDED")} == {
         "0014 ADDED poster_jobs: no job from before 0014 takes a credit: as expected",
         "0014 ADDED credit_grants: empty; no shop has a credit before the operator grants one: as expected"}
+    # 0013's check of the shop's triggers is 0015's: it states it again with the two it adds.
+    assert [line for line in lines if "ADDED shop_profile: its rows" in line] == [  # 0013's own is retired by name
+        "0015 ADDED shop_profile: its rows cannot be deleted, replaced or made another shop: as expected"]
     guards = [line for line in lines if line.startswith("guard ")]
-    assert len(guards) == 11 and all(line.endswith(": as expected") for line in guards)  # a table, 9 triggers, a column
+    assert len(guards) == 14 and all(line.endswith(": as expected") for line in guards)  # a table, 12 triggers, a column
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and read(path)[0]["version"] == "0012"
     assert rehearse.main(["rehearse", str(tmp_path / "missing.db")]) == 1
     assert "REHEARSAL FAILED" in capsys.readouterr().out and not (tmp_path / "missing.db").exists()
@@ -433,7 +437,7 @@ def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(t
         after, _ = read(path, preserved)
         assert after["tables"].pop("credit_grants")[0] == 0
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"]
-        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0014", 0, "ok")
+        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0015", 0, "ok")
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT kind, takes_credit FROM poster_jobs ORDER BY id").all() == [
                 ("plan", 0), ("scene", 0), ("text_patch", 0), ("text_texture", 0), ("render", 0), ("plan", 0)]
@@ -498,10 +502,48 @@ def test_a_later_migration_that_loses_or_weakens_a_guard_fails_the_rehearsal(tmp
     assert capsys.readouterr().out.splitlines()[-1] == last  # nothing else differs
 
 
-def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pending(engine, capsys):
+STATEMENTS_0015 = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0015").module.STATEMENTS
+SHOP_TRIGGERS = ("keep_shop", *(statement.split()[2] for statement in STATEMENTS_0015))
+WEAKER_SAME_SHOP = """CREATE TRIGGER shop_profile_same_shop BEFORE UPDATE ON shop_profile
+  WHEN NEW.id IS NOT OLD.id
+  BEGIN SELECT RAISE(ABORT, 'a shop stays the same shop: its id never changes'); END"""
+
+
+@pytest.mark.parametrize("statements, guard", [
+    (["DROP TRIGGER poster_jobs_final"], "guard trigger poster_jobs_final: missing"),
+    *(([f"DROP TRIGGER {name}"], f"guard trigger {name}: missing") for name in SHOP_TRIGGERS),
+    (["DROP TRIGGER shop_profile_same_shop", WEAKER_SAME_SHOP], "guard trigger shop_profile_same_shop: different"),
+])
+def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pending(engine, capsys, statements, guard):
     with write_tx(engine) as conn:
-        conn.exec_driver_sql("DROP TRIGGER poster_jobs_final")
+        for statement in statements:
+            conn.exec_driver_sql(statement)
     assert rehearse.main(["rehearse", engine.url.database]) == 1
     out = capsys.readouterr().out
-    assert "pending migrations: none (code head 0014)" in out
-    assert out.splitlines()[-1] == "REHEARSAL FAILED: guard trigger poster_jobs_final: missing"
+    assert "pending migrations: none (code head 0015)" in out
+    assert out.splitlines()[-1] == f"REHEARSAL FAILED: {guard}"
+
+
+def test_0015_on_a_database_at_0014_keeps_every_row_and_adds_only_its_two_triggers(tmp_path, monkeypatch):
+    path = pilot_0012(tmp_path, monkeypatch)
+    engine = make_engine(tmp_path)
+    try:
+        migrate_to(engine, "0014", monkeypatch)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO shop_profile (revision,updated_at,identifier,state,created_at) "
+                                 f"VALUES (1,'{T}','shopdeux','suspended','{T}')")
+            credits.grant(conn, 1, 5, origin="offered", ref="welcome", actor="tests")
+            credits.grant(conn, 2, 3, origin="offered", ref="welcome", actor="tests")
+        before, schema_before = read(path)
+        migrate(engine)
+        after, schema = read(path)
+        assert after["tables"] == before["tables"] and after["sums"] == before["sums"]  # every column of every row
+        assert (before["version"], after["version"], after["foreign_key_check"], after["integrity_check"]) == (
+            "0014", "0015", 0, "ok")
+        assert {name: schema[name] for name in schema_before} == schema_before
+        assert schema.keys() - schema_before.keys() == {"shop_profile_never_replaced", "shop_profile_same_shop"}
+        with engine.connect() as conn:
+            assert [credits.balance(conn, shop)["available"] for shop in (1, 2)] == [5, 3]
+            assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+    finally:
+        engine.dispose()
