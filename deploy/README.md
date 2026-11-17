@@ -334,6 +334,9 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops enable <ide
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops end-sessions <identifier>   # or --all, or --operator
 ```
 
+The operator dashboard ("Operator dashboard") does the same from a phone: « New shop » on its Shops screen;
+« Set a new password », « End its sessions », « Suspend » and « Enable » under « Access » on a shop's screen.
+
 - **create** makes an active shop and prints its password once. In the same step it grants the shop 5 offered
   welcome credits (reference `welcome`); `--welcome 10` grants 10, `--welcome 0` none. Give the identifier and the
   password to the owner in person. An identifier has 3 to 32 letters or digits; case, accents, spaces and punctuation do not
@@ -388,6 +391,12 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops resume
 sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-text "…"
 ```
 
+On the dashboard, a shop's screen has the same money actions: « Grant credits », « Correction » and « Move a
+payment ». « Repay » on an image of its history fills in the repayment. The Money screen lists the payments of a
+period and their total. When a money request gets no definite answer (a lost connection, a server error), the shop's
+screen keeps it, also after a reload, with « Send again » and « Discard ». « Send again » writes it once: the same
+reference is never written twice. Do not type the request again under a new reference: that writes a second line.
+
 - **A line is never changed or removed.** To undo a line, write a correction.
 - **grant** adds credits: `--offered` is a gift; `--bought` is a payment, with its amount in whole ariary, its method
   and its reference. It prints the line, the shop's balance and the cap's headroom (below).
@@ -412,9 +421,9 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
   plain correction under a payment's reference, a move or an amount fix of that payment is refused. Give the
   correction its own reference, for example `geste-2026-11-20`.
 - **A defective image:** `correct <identifier> +1 --ref <short reason> --job <job id> --note "<what was wrong>"`. Only
-  for an image of that shop that was made and took a credit, and only once. The job's id comes from the
-  administration dashboard. Until it exists, take it from the database: `/api/status` lists only failed jobs, and a
-  failed job has its credit back already.
+  for an image of that shop that was made and took a credit, and only once. The job's id is in the shop's history
+  on the dashboard, where « Repay » fills in this correction. (`/api/status` lists only failed jobs, and a failed job
+  has its credit back already.)
 - **Numbers.** A credit count or an amount in ariary is a whole number from -1,000,000,000 to 1,000,000,000. The
   command refuses any other number as a wrong command line (exit 2).
 - **A mistyped amount:** `correct <identifier> 0 --ref <payment reference> --amount-ar <±ariary> --note "…"`, in the
@@ -439,7 +448,8 @@ sudo docker exec -it affiche-ia-affiche-ia-1 python -m affiche.shops purchase-te
 this section exist, and so do the dashboard's sign-in, sign-out and « End all operator sessions » over HTTP, their
 journal lines and the checks of `verify.sh`, and its shop actions over HTTP (list, create, new password, end
 sessions, suspend, enable), its money actions (grant, correct, move a payment) with each shop's history and the payments
-of a period. The page and the dashboard's other actions come with the rest of the release.
+of a period. The page at `/admin/` has the sign-in, the shops, each shop's access actions, money forms and history,
+and the Money screen (the payments of a period). The Service screen comes with the rest of the release.
 
 The dashboard is at `https://affiches.miorantsoa.app/admin/`. It does what `python -m affiche.shops` does, from a
 phone or a laptop, with one operator password and sessions of its own: a shop's session never opens it, and an

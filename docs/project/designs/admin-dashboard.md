@@ -490,7 +490,7 @@ Pure-function tests: two references made in the same second differ (a fixed rand
 ### Requests kept until they are resolved (round 1 P2-1; round 2 P2-2)
 
 - **Frozen.** When the operator presses « Grant… », « Correct… » or « Move… », the request (shop, path, values, reference) is frozen. The confirmation shows exactly it; sending sends exactly it; while it is in flight the button is disabled. « Cancel » at the confirmation returns to the form with the same reference: nothing was sent.
-- **Kept before it leaves.** On confirmation, before the request is sent, the page records it as **unresolved**: in memory, and in `localStorage` under `affiche.admin.pending`, one entry per shop (`{shop, form, path, body, at}`).
+- **Kept before it leaves.** On confirmation, before the request is sent, the page records it as **unresolved**: in memory, and in `localStorage` under one key per shop, `affiche.admin.pending.<shop id>` (`{shop, form, path, body, at}`). *(Amended after T-ADMIN-006's review, 2026-11-17: one key per shop, not one shared map, so that no write for one shop can rewrite or remove another shop's request.)*
   - **Why `localStorage`:** an uncertain answer matters most when the phone's browser drops the tab or the operator reopens the dashboard in a new tab. `sessionStorage` is lost in both cases and is not shared between tabs. `localStorage` survives a reload, a dropped tab and a restart, and is shared by every tab of this browser, which reads it on start and on its `storage` event.
   - **What it holds:** a shop id, a path, the reference and the figures. No secret, no token.
   - **What touches it:** a resolution or a discard clears it; nothing else does, sign-out included, because an unresolved request must survive a new sign-in. The shops' sign-out cleanup deletes only `affiche.shop<id>.` keys and the legacy ones (api.ts:126-127, :226-234), never this key.
@@ -827,7 +827,7 @@ Ten tasks, each one session, each leaving the whole suite and the smokes runnabl
 - Several operators, roles, two-factor sign-in; a global sign-in limit.
 - A separate origin for the dashboard (owner decision 6); a Content-Security-Policy.
 - Replacing `/api/status`'s loopback rule.
-- `mutation_keys` for operator writes (the reference does it); polling; a cross-tab lock.
+- `mutation_keys` for operator writes (the reference does it); polling; a cross-tab lock (the owner accepted its one known cost on 2026-11-17, after T-ADMIN-006's third review: a tab that clears a resolved request can remove the kept copy of a new request another tab admitted for the same shop between its read and its removal; the fix would be a per-shop Web Lock around `keep()` and `release()`).
 - Per-shop limits; a settings table; welcome credits as a stored setting.
 - Signing in as a shop; seeing a shop's images; deleting or renaming a shop.
 - Cancelling a payment that never arrived (owner decision 5).

@@ -6,6 +6,8 @@ import re
 import subprocess
 import tempfile
 import time
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, expect
@@ -13,7 +15,8 @@ from sqlalchemy import text
 
 import browser_smoke as smoke
 from affiche import shops
-from affiche.db import make_engine, write_tx
+from affiche.db import make_engine, utc_now, write_tx
+from affiche.posters import credits
 from affiche.posters.auth import PASSWORDS
 
 OUTPUT = smoke.ROOT / "outputs" / "admin-browser"
@@ -29,6 +32,14 @@ SMALL_TARGETS_JS = r"""() => [...document.querySelectorAll('button, a[href], inp
   .map(e => [e, e.getBoundingClientRect()]).filter(([, box]) => box.width < 44 || box.height < 44)
   .map(([e, box]) => `${Math.round(box.width)} x ${Math.round(box.height)} <${e.tagName.toLowerCase()}> ${(e.textContent || e.id).trim().slice(0, 40)}`)"""
 STORED_JS = "JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)])"
+# Money (T-ADMIN-006): the widest values the fields accept, unbroken; the kept request's key and the page's sentences.
+REF100, METHOD40, NOTE500 = "R" * 100, "M" * 40, "n" * 500
+PENDING_JS = ("JSON.stringify(Object.fromEntries(Object.entries(localStorage).filter(([key]) => key.startsWith('affiche.admin.pending.'))"
+              ".map(([key, value]) => [key.slice(22), JSON.parse(value)])))")
+UNCERTAIN = "It may have been recorded: the history is read again below. Sending the same request again is safe: it is written once."
+CAP_WARNING = "Warning: the outstanding credits would cost more than what is left of the cap. Raise SPEND_CAP_USD (deploy/README.md)."
+OFFERED_REF = re.compile(r"^offered-\d{8}-\d{6}-[a-z2-9]{6}$")
+APOSTROPHE = "’"
 
 
 def wait_for(page, url):
@@ -252,8 +263,9 @@ def walk(browser, playwright, engine, errors):
         route, response = held.pop()
         route.fulfill(response=response)
         expect(page.get_by_role("button", name="Suspend", exact=True)).to_be_enabled()  # the answer came: nothing in flight
-        expect(page.locator("details.fold [role=status]")).to_have_text("")
-        expect(page.locator("details.fold [role=alert]")).to_have_text("")
+        access = page.locator("details.fold", has=page.locator("summary", has_text="Access"))
+        expect(access.locator("[role=status]")).to_have_text("")
+        expect(access.locator("[role=alert]")).to_have_text("")
         page.unroute("**/api/admin/shops/*/suspend")
         page.get_by_role("link", name="← Shops", exact=True).click()
         page.get_by_role("link", name=WIDE_ID, exact=True).click()
@@ -439,6 +451,518 @@ def walk(browser, playwright, engine, errors):
         context.close()
 
 
+def shop_ids(engine):
+    with engine.connect() as conn:
+        return dict(conn.execute(text("SELECT identifier, id FROM shop_profile")).all())
+
+
+def lines_of(engine, ref):
+    """The credit lines written under one reference, whatever wrote them."""
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT id, shop_id, kind, origin, credits, amount_ar, method FROM credit_grants WHERE ref = :ref"
+                                 " ORDER BY id"), {"ref": ref}).all()
+
+
+def succeeded_jobs(engine, shop, count):
+    """Images the shop made, written by hand as test_admin.py writes them: each took a credit and can be repaid."""
+    made, at = [], utc_now()
+    with write_tx(engine) as conn:
+        conn.exec_driver_sql("INSERT OR IGNORE INTO product_inputs VALUES (?,?,'P1','JBL','Bleu','[]','{}',NULL,?)", (f"in-{shop}", shop, at))
+        for _ in range(count):
+            id = str(uuid.uuid4())
+            conn.exec_driver_sql("INSERT INTO creations VALUES (?,?,NULL,1,'active',?,?)", (id, shop, at, at))
+            conn.exec_driver_sql("INSERT INTO creation_versions VALUES (?,1,'{}','h',?)", (id, at))
+            conn.exec_driver_sql("INSERT INTO poster_jobs (id,shop_id,creation_id,origin_revision,input_id,kind,input_json,input_hash,"
+                                 "status,created_at,started_at,finished_at,takes_credit) VALUES (?,?,?,1,?,'background','{}','h',"
+                                 "'succeeded',?,?,?,1)", (id, shop, id, f"in-{shop}", at, at, at))
+            made.append(id)
+    return made
+
+
+def pending(page):
+    """What the page keeps in localStorage for unresolved money requests, read as the page reads it."""
+    return json.loads(page.evaluate(PENDING_JS)) or None
+
+
+def open_shop(page, id, identifier):
+    if page.evaluate("location.hash") == f"#/shops/{id}":
+        page.evaluate("location.hash = '#/shops'")
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+    page.evaluate(f"location.hash = '#/shops/{id}'")
+    expect(page.get_by_role("heading", name=identifier, level=1)).to_be_focused()
+
+
+def money_form(page, button):
+    return page.locator("form", has=page.get_by_role("button", name=button, exact=True))
+
+
+def unfold(page, title):
+    """Opens a folded section when it is closed (a fold keeps its state across shops)."""
+    fold = page.locator("details", has=page.locator("summary", has_text=title))
+    if not fold.evaluate("e => e.open"):
+        page.locator("summary", has_text=title).click()
+
+
+def answers(page, title):
+    """The (status, alert) regions under a money form: « Grant credits », « Correction » or « Move a payment »."""
+    box = (page.locator("section", has=page.get_by_role("heading", name=title, exact=True)) if title == "Grant credits"
+           else page.locator("details.fold", has=page.locator("summary", has_text=title)))
+    return box.locator(":scope > [role=status]"), box.locator(":scope > [role=alert]")
+
+
+def fill_grant(page, credits_, origin="bought", amount=None, method=None, ref=None, note=None):
+    form = money_form(page, "Grant…")
+    form.get_by_label("Credits", exact=True).fill(credits_)
+    form.get_by_label("Bought or offered", exact=True).select_option(origin)
+    if origin == "bought":
+        form.get_by_label("Amount received, in ariary", exact=True).fill(amount)
+        form.get_by_label("Method", exact=True).fill(method)
+        form.get_by_label(f"The payment{APOSTROPHE}s reference", exact=True).fill(ref)
+    elif ref is not None:
+        form.get_by_label("Reference", exact=True).fill(ref)
+    if note is not None:
+        form.get_by_label("Note (optional)", exact=True).fill(note)
+    return form
+
+
+def grant(page, summary):
+    """« Grant… », then the confirmation, which must say exactly `summary` (figures grouped), then « Grant »."""
+    dialog, confirm = ask(page, page.get_by_role("button", name="Grant…", exact=True), "Grant credits?", "Grant")
+    expect(dialog.locator("#confirm-text")).to_have_text(summary)
+    return dialog, confirm
+
+
+def unanswered_503(route):
+    if route.request.method != "POST":
+        return route.fallback()
+    route.fulfill(status=503, json={"error": {"code": "storage_unavailable", "message_fr": "Stockage indisponible.", "retryable": True},
+                                    "request_id": "r"})
+
+
+def walk_money(browser, engine, errors):
+    """T-ADMIN-006 at 360 × 640, the operator's phone on a bad connection: grants, corrections, moves and their kept
+    requests (an answer lost after the commit, a 503 then a reload, a 401 mid-send, an answer dropped by a new session,
+    two tabs, double taps), the comparisons of already_recorded, the history, the payments, the worst-case content."""
+    context = browser.new_context(viewport={"width": 360, "height": 640}, is_mobile=True, has_touch=True, color_scheme="light")
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    posts = []  # every money request that left the page: (path, body)
+    money = re.compile(r"/api/admin/(shops/\d+/(grants|corrections)|payments/move)$")
+    context.on("request", lambda request: posts.append((request.url.split("/api/admin/")[-1], request.post_data_json))
+               if request.method == "POST" and money.search(request.url) else None)
+    grants = "**/api/admin/shops/*/grants"
+    ids = shop_ids(engine)
+    wide, deux, pilot = ids[WIDE_ID], ids["boutiquedeux"], ids[smoke.IDENTIFIER]
+    with write_tx(engine) as conn:  # a shop whose payment is partly spent, and a payment to move
+        six, _ = shops.open_shop(conn, "boutiquesix", None, PASSWORDS.hash(os.urandom(8).hex()), 0, "tests")
+        credits.grant(conn, six, 10, origin="bought", ref="MV-SPENT", actor="tests", amount_ar=20000, method="mvola")
+        credits.grant(conn, deux, 3, origin="bought", ref="MV-MOVE", actor="tests", amount_ar=6000, method="orange")
+    spent = succeeded_jobs(engine, six, 2)
+    try:
+        page.goto(ADMIN)
+        sign_in(page)
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+
+        # The grant comes first on a shop's screen, before the history and the access actions.
+        open_shop(page, wide, WIDE_ID)
+        tops = [page.get_by_role("heading", name=name, exact=True).bounding_box()["y"] for name in ("Grant credits", "History")]
+        tops.append(page.locator("summary", has_text="Access").bounding_box()["y"])
+        assert tops == sorted(tops), tops
+
+        # A bought grant with the widest values; its answer is lost after the server wrote it, and the history read
+        # that follows fails too: kept, the forms wait, « Send again » is written once and reads « as sent ».
+        fill_grant(page, "10", amount="20000", method=METHOD40, ref=REF100, note=NOTE500)
+        expect(money_form(page, "Grant…").get_by_label("Bought or offered", exact=True)).to_have_value("bought")
+        lost, history_failed = [], []
+        def lose(route):
+            if route.request.method != "POST":
+                return route.fallback()
+            route.fetch()  # the server writes the line...
+            lost.append(route.request.post_data_json)
+            route.abort()  # ...and its answer never arrives
+        def fail_history_once(route):
+            if history_failed:
+                return route.fallback()
+            history_failed.append(route.request.url)
+            route.abort()
+        page.route(grants, lose)
+        page.route("**/api/admin/shops/*/history*", fail_history_once)
+        dialog, confirm = grant(page, f"Grant 10 bought credits to {WIDE_ID} ({WIDE_NAME})? 20 000 Ar by {METHOD40.lower()}, reference {REF100}.")
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            page.wait_for_function(NO_SIDEWAYS)
+            for button in (dialog.get_by_role("button", name="Cancel"), confirm):
+                expect(button).to_be_in_viewport(ratio=1)
+            page.screenshot(path=str(OUTPUT / f"grant-confirm-360-{scheme}.png"))
+        page.emulate_media(color_scheme="light")
+        # The request was frozen when « Grant… » was pressed: a change to the form behind the dialog is not sent.
+        page.locator("#grant-credits").evaluate("field => { field.value = '99'; field.dispatchEvent(new Event('input')) }")
+        confirm.evaluate("button => { button.click(); button.click() }")  # a double tap
+        wait_until(page, lambda: lost and history_failed)
+        sent = {"credits": 10, "origin": "bought", "ref": REF100, "note": NOTE500, "amount_ar": 20000, "method": METHOD40.lower()}
+        assert lost == [sent], lost
+        kept = page.locator(".kept")
+        expect(kept).to_contain_text(f"No answer from the server: the connection was lost. {UNCERTAIN}")
+        expect(kept).to_contain_text(f"Grant 10 bought credits to {WIDE_ID}")
+        expect(page.locator("section", has=page.get_by_role("heading", name="History")).get_by_role("alert")).to_have_text(
+            "No answer from the server: the connection was lost.")
+        for button in ("Grant…", "Correct…", "Move…"):
+            expect(page.get_by_role("button", name=button, exact=True)).to_have_count(0)
+        expect(page.get_by_text("Waiting for the request above: send it again or discard it.")).to_have_count(3)
+        held = pending(page)
+        assert list(held) == [str(wide)] and held[str(wide)]["body"] == sent, held
+        assert set(held[str(wide)]) == {"shop", "form", "path", "at", "body"}
+        assert held[str(wide)]["path"] == f"/api/admin/shops/{wide}/grants" and held[str(wide)]["form"] == "grant"
+        [written] = lines_of(engine, REF100)
+        page.unroute(grants, lose)
+        page.unroute("**/api/admin/shops/*/history*", fail_history_once)
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            check_layout(page, f"a kept request with a 100-character reference at 360 px, {scheme}")
+            page.screenshot(path=str(OUTPUT / f"kept-360-{scheme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+        page.get_by_role("button", name="Send again", exact=True).evaluate("button => { button.click(); button.click() }")
+        status, alert = answers(page, "Grant credits")
+        expect(status).to_have_text(f"Already recorded as line {written.id}, as sent. Nothing more to do.")
+        expect(alert).to_have_text("")
+        assert len(lines_of(engine, REF100)) == 1 and len([path for path, body in posts if body.get("ref") == REF100]) == 2, posts
+        assert pending(page) is None, "a resolved request left in localStorage"
+        expect(kept).to_have_count(0)
+        expect(money_form(page, "Grant…").get_by_label("Credits", exact=True)).to_have_value("")  # a new request now
+        # The history holds the widest line; nothing scrolls sideways.
+        widest = page.locator(".lines li", has_text=REF100)
+        expect(widest).to_contain_text(f"+10 credits · grant bought · line {written.id}")
+        expect(widest).to_contain_text(f"+20 000 Ar by {METHOD40.lower()}")
+        expect(widest).to_contain_text(NOTE500)
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            check_layout(page, f"the history with the widest values at 360 px, {scheme}")
+            page.screenshot(path=str(OUTPUT / f"history-360-{scheme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+
+        # The same reference with other credits only: no second line; the way out is a correction, never another reference.
+        fill_grant(page, "7", amount="20000", method=METHOD40, ref=REF100)
+        dialog, confirm = grant(page, f"Grant 7 bought credits to {WIDE_ID} ({WIDE_NAME})? 20 000 Ar by {METHOD40.lower()}, reference {REF100}.")
+        confirm.click()
+        expect(alert).to_have_text(f"Line {written.id} already holds this reference with other values. To change them, write a "
+                                   "correction (or fix the amount). Do not use another reference.")
+        # The same payment in another shop: it is recorded where it is; the way out is a move.
+        open_shop(page, deux, "boutiquedeux")
+        fill_grant(page, "10", amount="20000", method="mvola", ref=REF100)
+        dialog, confirm = grant(page, f"Grant 10 bought credits to boutiquedeux (Boutique Deux)? 20 000 Ar by mvola, reference {REF100}.")
+        confirm.click()
+        expect(alert).to_have_text(f"This payment is recorded for {WIDE_ID}, line {written.id}. If it belongs here, move it.")
+        assert len(lines_of(engine, REF100)) == 1 and pending(page) is None
+
+        # A long refusal under the form, both themes.
+        page.route(grants, lambda route: route.fulfill(status=409, json={"error": {"code": "operator_refused", "message_fr": "Refusé.",
+                   "retryable": False, "detail": WIDE_REFUSAL}, "request_id": "r"}))
+        fill_grant(page, "1", amount="1", method="cash", ref="REFUSED-1")
+        dialog, confirm = grant(page, "Grant 1 bought credit to boutiquedeux (Boutique Deux)? 1 Ar by cash, reference REFUSED-1.")
+        confirm.click()
+        expect(alert).to_have_text(WIDE_REFUSAL)
+        expect(money_form(page, "Grant…").get_by_label("Credits", exact=True)).to_have_value("1")  # what was typed stays
+        assert pending(page) is None  # a refusal is definite
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            check_layout(page, f"a 300-character money refusal at 360 px, {scheme}")
+        page.emulate_media(color_scheme="light")
+        page.unroute(grants)
+
+        # An offered grant answered 503, then the page reloaded: the shop's money forms reopen on the same request, no
+        # new one starts, the list marks it; « Send again » writes it once, with the balance and the cap's headroom.
+        fill_grant(page, "3", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        assert OFFERED_REF.match(made), made
+        page.route(grants, unanswered_503)
+        dialog, confirm = grant(page, f"Grant 3 offered credits to boutiquedeux (Boutique Deux)? Reference {made}.")
+        confirm.click()
+        expect(kept).to_contain_text(f"The server{APOSTROPHE}s storage is busy or unavailable. {UNCERTAIN}")
+        page.unroute(grants, unanswered_503)
+        page.reload()
+        expect(page.get_by_role("heading", name="boutiquedeux", level=1)).to_be_visible()
+        expect(kept).to_contain_text(f"Grant 3 offered credits to boutiquedeux (Boutique Deux)? Reference {made}.")
+        expect(kept).to_contain_text("No definite answer has reached this page. It may have been recorded. Sending the same request again is safe: it is written once.")
+        expect(page.get_by_role("button", name="Grant…", exact=True)).to_have_count(0)
+        assert pending(page)[str(deux)]["body"]["ref"] == made
+        page.get_by_role("link", name="← Shops", exact=True).click()
+        expect(page.locator("tr", has=page.get_by_role("link", name="boutiquedeux", exact=True))).to_contain_text("unresolved request")
+        expect(page.locator("tr", has=page.get_by_role("link", name=WIDE_ID, exact=True))).not_to_contain_text("unresolved request")
+        page.get_by_role("link", name="boutiquedeux", exact=True).click()
+        page.get_by_role("button", name="Send again", exact=True).click()
+        expect(status).to_contain_text("Granted: line ")
+        [line] = lines_of(engine, made)
+        expect(status).to_contain_text(f"Granted: line {line.id}. Balance: available ")
+        expect(status).to_contain_text(re.compile(r"Service cap \$20\.00: \$\d+\.\d\d spent, \$\d+\.\d\d left\. Credits outstanding in all shops: "))
+        expect(status.locator("strong")).to_have_text(CAP_WARNING)
+        assert pending(page) is None and (line.shop_id, line.kind, line.origin, line.credits) == (deux, "grant", "offered", 3)
+
+        # « Discard » warns, Esc keeps the request; confirmed, the forms start new requests again. Nothing was written.
+        fill_grant(page, "2", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        page.route(grants, unanswered_503)
+        dialog, confirm = grant(page, f"Grant 2 offered credits to boutiquedeux (Boutique Deux)? Reference {made}.")
+        confirm.click()
+        page.unroute(grants, unanswered_503)
+        discard = page.get_by_role("button", name="Discard", exact=True)
+        dialog, confirm = ask(page, discard, "Discard this request?", "Discard")
+        expect(dialog).to_have_accessible_description("If the first send was recorded, a new one writes a second line. Read the history first.")
+        page.keyboard.press("Escape")
+        expect(discard).to_be_focused()
+        assert pending(page)[str(deux)]["body"]["ref"] == made
+        dialog, confirm = ask(page, discard, "Discard this request?", "Discard")
+        confirm.click()
+        expect(kept).to_have_count(0)
+        expect(page.get_by_role("button", name="Grant…", exact=True)).to_be_visible()
+        assert pending(page) is None and lines_of(engine, made) == []
+
+        # The session ended while the grant was on its way (401: nothing written): kept through the sign-in, then sent.
+        fill_grant(page, "2", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        held = []
+        page.route(grants, lambda route: held.append(route))
+        dialog, confirm = grant(page, f"Grant 2 offered credits to boutiquedeux (Boutique Deux)? Reference {made}.")
+        confirm.click()
+        wait_until(page, lambda: held)
+        with write_tx(engine) as conn:
+            assert shops.end_operator_sessions(conn) == 1
+        held.pop().continue_()
+        expect(password_field(page)).to_be_focused()
+        expect(page.locator("form", has=password_field(page)).get_by_role("alert")).to_have_text("Your session has ended. Sign in again.")
+        assert pending(page)[str(deux)]["body"]["ref"] == made and lines_of(engine, made) == []
+        page.unroute(grants)
+        sign_in(page)
+        expect(kept).to_contain_text("Not sent: your session had ended. Send it again.")
+        page.get_by_role("button", name="Send again", exact=True).click()
+        expect(status).to_contain_text("Granted: line ")
+        assert len(lines_of(engine, made)) == 1 and pending(page) is None
+
+        # Written, but its answer arrives after the session ended and a new one began: dropped (adminApi's epoch), the
+        # request stays kept, and after the sign-in the history resolves it as recorded, once.
+        fill_grant(page, "4", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        held = []
+        page.route(grants, lambda route: held.append((route, route.fetch())))
+        dialog, confirm = grant(page, f"Grant 4 offered credits to boutiquedeux (Boutique Deux)? Reference {made}.")
+        confirm.click()
+        wait_until(page, lambda: held)
+        with write_tx(engine) as conn:
+            assert shops.end_operator_sessions(conn) == 1
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")  # a read: 401, a new epoch
+        expect(password_field(page)).to_be_focused()
+        route, response = held.pop()
+        route.fulfill(response=response)
+        page.wait_for_timeout(500)  # an absence: the dropped answer gets its chance to land
+        assert ((pending(page) or {}).get(str(deux)) or {}).get("body", {}).get("ref") == made, "a dropped answer forgot its request"
+        page.unroute(grants)
+        sign_in(page)
+        [line] = lines_of(engine, made)
+        expect(status).to_have_text(f"Already recorded as line {line.id}, as sent. Nothing more to do.")
+        assert pending(page) is None and len(lines_of(engine, made)) == 1
+
+        # Two tabs of this browser: a request kept in one shows in the other at once and locks its forms, even under a
+        # confirmation already open there (nothing is sent); sent from the second, it frees the first. A tab opened
+        # later reads it at its start.
+        other = context.new_page()
+        other.on("pageerror", lambda error: errors.append(str(error)))
+        other.goto(f"{ADMIN}#/shops/{deux}")
+        expect(other.get_by_role("button", name="Grant…", exact=True)).to_be_visible()
+        fill_grant(other, "6", origin="offered")
+        raced = other.get_by_role("alertdialog")
+        other.get_by_role("button", name="Grant…", exact=True).click()
+        expect(raced).to_be_visible()
+        fill_grant(page, "1", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        page.route(grants, unanswered_503)
+        dialog, confirm = grant(page, f"Grant 1 offered credit to boutiquedeux (Boutique Deux)? Reference {made}.")
+        before = len(posts)
+        confirm.click()
+        expect(kept).to_be_visible()
+        expect(other.locator(".kept")).to_contain_text(f"Reference {made}.")
+        expect(other.get_by_role("button", name="Grant…", exact=True)).to_have_count(0)
+        raced.get_by_role("button", name="Grant", exact=True).click()
+        expect(other.locator("section", has=other.get_by_role("heading", name="Grant credits")).get_by_role("alert")).to_have_text(
+            "This shop already has a request with no definite answer: nothing was sent. Send that one again or discard it first.")
+        assert len(posts) == before + 1, posts[before:]  # the first tab's only
+        assert pending(page)[str(deux)]["body"]["ref"] == made, "the other tab's request replaced the kept one"
+        later = context.new_page()
+        later.goto(f"{ADMIN}#/shops/{deux}")
+        expect(later.locator(".kept")).to_contain_text(f"Reference {made}.")
+        later.close()  # a tab the phone dropped
+        other.get_by_role("button", name="Send again", exact=True).click()
+        expect(other.locator("section", has=other.get_by_role("heading", name="Grant credits")).get_by_role("status")).to_contain_text("Granted: line ")
+        expect(kept).to_have_count(0)
+        expect(page.get_by_role("button", name="Grant…", exact=True)).to_be_visible()
+        assert len(lines_of(engine, made)) == 1, lines_of(engine, made)
+        assert pending(page) is None, "a resolved request left in localStorage"
+        page.unroute(grants, unanswered_503)
+        other.close()
+
+        # A correction that would take the balance below zero: refused, nothing kept, what was typed stays.
+        unfold(page, "Correction")
+        form = money_form(page, "Correct…")
+        form.get_by_label("Add or take back", exact=True).select_option(label="Take back")
+        form.get_by_label("Credits", exact=True).fill("100000")
+        form.get_by_label("Reason", exact=True).fill("too many")
+        dialog, confirm = ask(page, form.get_by_role("button", name="Correct…"), "Write this correction?", "Correct")
+        expect(dialog.locator("#confirm-text")).to_have_text(re.compile(r"^Take back 100\s000 credits from boutiquedeux \(Boutique Deux\)\? Reference correction-\d{8}-\d{6}-[a-z2-9]{6}\.$"))
+        confirm.click()
+        status_c, alert_c = answers(page, "Correction")
+        expect(alert_c).to_have_text(re.compile(r"^the balance would go below zero \(available \d+\)$"))
+        expect(form.get_by_label("Credits", exact=True)).to_have_value("100000")
+        assert pending(page) is None
+
+        # A move: written, then sent again from a new form: « already moved to … as sent ».
+        open_shop(page, deux, "boutiquedeux")
+        def move(page, ref, to, to_name):
+            unfold(page, "Move a payment")
+            form = money_form(page, "Move…")
+            form.get_by_label(f"The payment{APOSTROPHE}s reference", exact=True).fill(ref)
+            form.get_by_label("To the shop", exact=True).select_option(str(to))
+            form.get_by_label("Reason", exact=True).fill("paid to the wrong shop")
+            dialog, confirm = ask(page, form.get_by_role("button", name="Move…"), "Move this payment?", "Move")
+            expect(dialog.locator("#confirm-text")).to_have_text(f"Move the payment {ref} from boutiquedeux (Boutique Deux) to {to_name}? "
+                                                                 "Its credits and its ariary leave the first shop for the second.")
+            confirm.click()
+        with engine.connect() as conn:
+            pilot_name = next(shop.name for shop in shops.list_shops(conn) if shop.id == pilot)
+        pilot_called = f"{smoke.IDENTIFIER} ({pilot_name})" if pilot_name else smoke.IDENTIFIER
+        move(page, "MV-MOVE", pilot, pilot_called)
+        status_m, alert_m = answers(page, "Move a payment")
+        expect(status_m).to_contain_text("Moved: line ")
+        reversal, moved = lines_of(engine, "MV-MOVE")[1:]
+        expect(status_m).to_contain_text(f"Moved: line {reversal.id} takes the payment back from boutiquedeux, line {moved.id} grants it to {smoke.IDENTIFIER}.")
+        assert (moved.shop_id, moved.credits, moved.amount_ar) == (pilot, 3, 6000)
+        move(page, "mv-move", pilot, pilot_called)
+        expect(status_m).to_have_text(f"Already moved to {smoke.IDENTIFIER}, line {moved.id}, as sent.")
+        assert len(lines_of(engine, "MV-MOVE")) == 3
+
+        # A move refused because the source spent part of the payment: the right shop's grant form opens, filled with an
+        # offered grant under the concession reference and no note, for the operator to read and confirm.
+        open_shop(page, six, "boutiquesix")
+        unfold(page, "Move a payment")
+        form = money_form(page, "Move…")
+        form.get_by_label(f"The payment{APOSTROPHE}s reference", exact=True).fill("MV-SPENT")
+        form.get_by_label("To the shop", exact=True).select_option(str(deux))
+        form.get_by_label("Reason", exact=True).fill("paid to the wrong shop")
+        dialog, confirm = ask(page, form.get_by_role("button", name="Move…"), "Move this payment?", "Move")
+        confirm.click()
+        expect(page.get_by_role("heading", name="boutiquedeux", level=1)).to_be_focused()
+        expect(alert).to_have_text("The move from boutiquesix was refused: the source shop has 8 credits left of the payment's 10: it stays "
+                                   "where it is. To serve boutiquedeux anyway, the form below holds an offered grant under the reference "
+                                   "MV-SPENT-geste, with no note: type the credits, read it, then grant it.", use_inner_text=True)
+        form = money_form(page, "Grant…")
+        expect(form.get_by_label("Bought or offered", exact=True)).to_have_value("offered")
+        expect(form.get_by_label("Reference", exact=True)).to_have_value("MV-SPENT-geste")
+        expect(form.get_by_label("Note (optional)", exact=True)).to_have_value("")
+        expect(form.get_by_label("Credits", exact=True)).to_have_value("")
+        form.get_by_label("Credits", exact=True).fill("10")
+        dialog, confirm = grant(page, "Grant 10 offered credits to boutiquedeux (Boutique Deux)? Reference MV-SPENT-geste.")
+        confirm.click()
+        expect(status).to_contain_text("Granted: line ")
+        assert [line.kind for line in lines_of(engine, "MV-SPENT")] == ["grant"]  # the payment stayed where it was
+
+        # « Repay » on an image of the history fills the correction from its job, never typed by hand; once.
+        open_shop(page, six, "boutiquesix")
+        def image(id):  # an image of the history (a repayment line names its job too)
+            return page.locator(".lines li", has=page.locator("code.copyable", has_text=id))
+        job = image(spent[0])
+        job.get_by_role("button", name="Repay", exact=True).click()
+        form = money_form(page, "Correct…")
+        expect(form).to_contain_text(f"Repay the job {spent[0]}: +1 credit, reference repay-{spent[0]}.")
+        expect(form.get_by_label("Reason", exact=True)).to_be_focused()
+        page.keyboard.type("image floue")
+        dialog, confirm = ask(page, form.get_by_role("button", name="Correct…"), "Write this correction?", "Correct")
+        expect(dialog.locator("#confirm-text")).to_have_text(f"Repay 1 credit to boutiquesix for the job {spent[0]}? Reference repay-{spent[0]}.")
+        confirm.click()
+        expect(status_c).to_contain_text("Corrected: line ")
+        [repaid] = lines_of(engine, f"repay-{spent[0]}")
+        expect(status_c).to_contain_text(f"Corrected: line {repaid.id}. Balance: available 9 · en attente 0.")
+        expect(job).to_contain_text(f"repaid by line {repaid.id}")
+        expect(job.get_by_role("button", name="Repay")).to_have_count(0)
+        expect(image(spent[1]).get_by_role("button", name="Repay")).to_have_count(1)
+
+        # The history 50 at a time, newest first; « Older » follows the cursor to the end.
+        with write_tx(engine) as conn:
+            for n in range(50):
+                credits.grant(conn, six, 1, origin="offered", ref=f"PAGE-{n:02}", actor="tests")
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        history = page.locator(".lines li")
+        expect(history.first).to_contain_text("PAGE-49")
+        expect(history).to_have_count(50)
+        page.get_by_role("button", name="Older", exact=True).click()
+        expect(history).to_have_count(54)  # the payment, its two images and the repayment
+        expect(history.last).to_contain_text("MV-SPENT")
+        expect(page.get_by_role("button", name="Older", exact=True)).to_have_count(0)
+
+        # The payments of a period: every line that carries ariary this UTC month, and the total received; an empty
+        # period shows its zero.
+        page.evaluate("location.hash = '#/money'")
+        expect(page.get_by_role("heading", name="Money", level=1)).to_be_focused()
+        now = datetime.now(UTC)
+        first = now.date().replace(day=1)
+        last = (first + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+        with engine.connect() as conn:
+            received = conn.execute(text("SELECT SUM(amount_ar), COUNT(*) FROM credit_grants WHERE amount_ar IS NOT NULL AND created_at >= :start"
+                                         " AND created_at < :end"), {"start": first.isoformat(), "end": (last + timedelta(days=1)).isoformat()}).one()
+        expect(page.get_by_label("First day (UTC)", exact=True)).to_have_value(first.isoformat())
+        expect(page.get_by_label("Last day, included", exact=True)).to_have_value(last.isoformat())
+        expect(page.get_by_text(re.compile(r"^Received: "))).to_have_text(f"Received: {received[0]:,} Ar".replace(",", " "))
+        expect(page.locator(".lines li")).to_have_count(received[1])
+        expect(page.locator(".lines li", has_text="MV-MOVE")).to_have_count(3)  # moved: +A, −A, +A, counted once
+        expect(page.locator(".lines li", has_text="MV-SPENT")).to_contain_text("+20 000 Ar · boutiquesix · grant bought · line ")
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            check_layout(page, f"the payments at 360 px, {scheme}")
+            page.screenshot(path=str(OUTPUT / f"payments-360-{scheme}.png"), full_page=True)
+        page.emulate_media(color_scheme="light")
+        page.get_by_label("First day (UTC)", exact=True).fill("2020-01-01")
+        page.get_by_label("Last day, included", exact=True).fill("2020-01-31")
+        page.get_by_role("button", name="Show", exact=True).click()
+        expect(page.get_by_role("heading", name="Payments from 2020-01-01 to 2020-01-31")).to_be_visible()
+        expect(page.get_by_text(re.compile(r"^Received: "))).to_have_text("Received: 0 Ar")
+        expect(page.get_by_text("No payment in this period.", exact=True)).to_be_visible()
+
+        # Nothing of a resolved request is left behind; nothing else was ever kept.
+        assert pending(page) is None
+        stored = page.evaluate(STORED_JS)
+        assert OPERATOR not in stored and "affiche_operator" not in stored, stored
+    finally:
+        context.close()
+
+
+def walk_no_storage(browser, engine, errors):
+    """A browser that refuses storage (some private modes): the form says so; a kept request lives in the page alone,
+    and is still sent again once."""
+    context = browser.new_context(viewport={"width": 360, "height": 640}, is_mobile=True, has_touch=True)
+    context.add_init_script("Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('The operation is insecure.', 'SecurityError') } })")
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    unstored = "This browser cannot keep an unanswered request across a reload."
+    grants = "**/api/admin/shops/*/grants"
+    try:
+        page.goto(ADMIN)
+        sign_in(page)
+        open_shop(page, shop_ids(engine)["boutiquedeux"], "boutiquedeux")
+        section = page.locator("section", has=page.get_by_role("heading", name="Grant credits"))
+        expect(section).to_contain_text(unstored)
+        fill_grant(page, "1", origin="offered")
+        made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
+        page.route(grants, unanswered_503)
+        dialog, confirm = grant(page, f"Grant 1 offered credit to boutiquedeux (Boutique Deux)? Reference {made}.")
+        confirm.click()
+        expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
+        expect(page.locator(".kept .note")).to_have_text(unstored)  # its own line, shown from before the request left
+        page.unroute(grants, unanswered_503)
+        page.get_by_role("button", name="Send again", exact=True).click()
+        expect(section.get_by_role("status")).to_contain_text("Granted: line ")
+        assert len(lines_of(engine, made)) == 1
+    finally:
+        context.close()
+
+
 def walk_keyboard(browser, errors):
     """The whole flow with the keyboard alone, at 1280 px: sign in, create a shop, its password closed, suspend with Esc
     first, enable, sign out."""
@@ -494,6 +1018,33 @@ def walk_keyboard(browser, errors):
         page.keyboard.press("Tab")
         page.keyboard.press("Enter")
         expect(page.get_by_text("active · 0 live sessions", exact=True)).to_be_visible()
+
+        # A grant with the keyboard alone: its fields in order, the reference made when the form opened, Cancel first in
+        # the confirmation, then Grant; the answer with the cap's warning in bold.
+        credits_field = page.locator("#grant-credits")
+        tab_to(page, credits_field, back=True)
+        page.keyboard.type("100000")
+        page.keyboard.press("Tab")
+        origin = page.locator("#grant-origin")
+        expect(origin).to_be_focused()
+        page.keyboard.press("ArrowDown")
+        expect(origin).to_have_value("offered")
+        page.keyboard.press("Tab")
+        expect(page.locator("#grant-ref")).to_be_focused()
+        expect(page.locator("#grant-ref")).to_have_value(OFFERED_REF)
+        page.keyboard.press("Tab")
+        page.keyboard.type("au clavier")
+        tab_to(page, page.get_by_role("button", name="Grant…", exact=True))
+        page.keyboard.press("Enter")
+        dialog = page.get_by_role("alertdialog")
+        expect(dialog).to_have_accessible_name("Grant credits?")
+        expect(dialog.get_by_role("button", name="Cancel", exact=True)).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(dialog.get_by_role("button", name="Grant", exact=True)).to_be_focused()
+        page.keyboard.press("Enter")
+        status = page.locator("section", has=page.get_by_role("heading", name="Grant credits")).get_by_role("status")
+        expect(status).to_contain_text(re.compile(r"Granted: line \d+\. Balance: available 100\s005 · en attente 0\."))  # its 5 welcome credits
+        expect(status.locator("strong")).to_have_text(CAP_WARNING)
         tab_to(page, page.get_by_role("button", name="Sign out", exact=True), back=True)
         page.keyboard.press("Enter")
         expect(password_field(page)).to_be_focused()
@@ -529,6 +1080,8 @@ def run():
                     browser = playwright.chromium.launch(headless=True)
                     try:
                         walk(browser, playwright, engine, errors)
+                        walk_money(browser, engine, errors)
+                        walk_no_storage(browser, engine, errors)
                         walk_keyboard(browser, errors)
                         walk_shops_page(browser, errors)
                         assert not errors, errors
@@ -548,7 +1101,11 @@ def run():
           "a new password, its sessions ended, suspend (Esc and Cancel send nothing) and enable, a 401 and a reload kept in "
           "place, 360 px in both themes with the widest values, 1280 px, the keyboard alone, the shops' page apart; a 401 "
           "with a password shown or a question open, late answers after a sign-out and a new sign-in, a lost sign-out, an "
-          "answer after moving to another shop.")
+          "answer after moving to another shop. Money: a bought grant with the widest values at 360 px, its answer lost "
+          "after the commit and sent again (as sent, once), the request frozen behind the confirmation, double taps, other "
+          "values and another shop's payment, a 503 then a reload, a discard, a 401 mid-send, an answer dropped by a new "
+          "session, two tabs (one with a confirmation open), a correction refused, a move and its repeat, a move refused "
+          "with the concession, a repayment, « Older », the payments of a period, storage refused, a grant by keyboard.")
 
 
 if __name__ == "__main__":

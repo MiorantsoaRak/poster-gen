@@ -21,11 +21,12 @@ code { font-family: ui-monospace, monospace }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px }
 [tabindex='-1']:focus { outline: none }
 
-button, input { font: inherit; color: inherit }
+button, input, select, textarea { font: inherit; color: inherit }
 button { min-height: 44px; padding: 0 16px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface); font-weight: 700; cursor: pointer }
 button.primary { background: var(--signal); border-color: var(--signal); color: var(--charcoal) }
 button[aria-disabled='true'] { opacity: .6; cursor: progress }
-input { min-height: 44px; width: 100%; padding: 8px 12px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface) }
+input, select, textarea { min-height: 44px; width: 100%; padding: 8px 12px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface) }
+textarea { min-height: 88px; resize: vertical }
 label { font-weight: 700 }
 summary { min-height: 44px; padding: 10px 0; font-weight: 700; cursor: pointer }
 nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; font-weight: 700 }
@@ -46,6 +47,12 @@ nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px;
 .shown { width: min(928px, calc(100% - 32px)); margin: 16px auto; padding: 12px 16px; border: 2px solid var(--signal); border-radius: 8px; background: var(--surface) }
 .secret { font-size: 20px; letter-spacing: .05em; user-select: all }
 .name { font-size: 18px }
+.kept { margin: 16px 0; padding: 12px 16px; border: 2px solid var(--signal); border-radius: 8px; background: var(--surface) }
+.kept h2 { margin-top: 0 }
+.lines { list-style: none; margin: 0 0 8px; padding: 0 }
+.lines li { padding: 8px 0; border-bottom: 1px solid var(--line) }
+.lines p { margin: 0 0 4px }
+.copyable { user-select: all }
 
 table { width: 100%; border-collapse: collapse }
 th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line) }
