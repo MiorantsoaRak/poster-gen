@@ -6,9 +6,9 @@
 
 **Done, committed locally, nothing pushed, nothing deployed:** the multi-shop feature (T-MULTI-SHOP-001 to 006, ADR-108) and the prepaid balance (T-PENDING-KINDS, T-BALANCE-001 to 006, ADR-109; design `designs/prepaid-balance.md` v4 with its two amendments of 2026-11-17 at the top). TODO.md holds each task's detail and review reports. `main` is ahead of `origin/main`; push and deploy only on the user's word, and no deploy before Release 1 is complete.
 
-**Last verified on this Linux machine (stub, zero spend, SQLite 3.53.1):** backend `uv run pytest -q -rf` 1346 passed, 3 deselected; `tests/mutant_two_shops.py` killed; frontend 227 tests and build; `browser_smoke.py`, `chat_browser.py`, `editor_refinements_browser.py` passed.
+**Last verified on this Linux machine (stub, zero spend, SQLite 3.53.1):** backend `uv run pytest -q -rf` 1437 passed, 3 deselected; `tests/mutant_two_shops.py` killed; frontend 227 tests and build; `browser_smoke.py`, `chat_browser.py`, `editor_refinements_browser.py` passed.
 
-**Exact next step:** T-SHOP-REPLACE (forward migration 0015; required before the Release 1 deploy). Then the admin dashboard (requirements exist; its design must include the Reka UI trial the user agreed to), the conditions of use, the shop dashboard, « Partager ».
+**Exact next step:** the admin dashboard's design (`requirements/admin-dashboard.md`; the design must include the Reka UI trial the user agreed to), then its tasks; then the conditions of use, the shop dashboard, « Partager ». T-SHOP-REPLACE is done (migration 0015, backend 1437 passed); T-SESSION-REPLACE is proposed, not confirmed.
 
 **Waiting for the user's yes (defaults in force until then):**
 - French sentences: the sign-out confirmation, the pause sentence, the cleanup-failure sentence (multi-shop); « 1 crédit · il vous en reste N. Bientôt à court : … », the zero sentence followed by the purchase text on the chat card, « 1 crédit, une seule fois pour cette demande » in the editor's dialog for a lost answer (T-BALANCE-006).
