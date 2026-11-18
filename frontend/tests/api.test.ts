@@ -492,3 +492,87 @@ it('forgets every key of a shop by its prefix, with no exception, and shop 1’s
   expect(api.forgetShop(unlisted, 1)).toBe(false)  // not listed: unfinished, never an empty success
   expect(api.forgetShop(null, 1)).toBe(false)
 })
+
+// D-TERMS-004: a refusal for want of the conditions, whatever request it answers, has the page read and show them.
+it('moves termsAsked on a terms_required refusal only', async () => {
+  vi.resetModules()
+  const refusal = (status: number, code: string) => async () => new Response(JSON.stringify({ error: { code, message_fr: 'Refusé.' } }), { status })
+  vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(refusal(403, 'terms_required')).mockImplementationOnce(refusal(403, 'forbidden_origin'))
+    .mockImplementationOnce(refusal(402, 'no_credit')).mockImplementationOnce(answer()).mockImplementationOnce(refusal(403, 'terms_required')))
+  const { api, mutation, read, termsAsked } = await opened()
+  expect(termsAsked.value).toBe(0)
+  await expect(mutation('/api/creations/c/scenes', {}, 1)).rejects.toThrow('Refusé.')
+  expect(termsAsked.value).toBe(1)
+  await expect(api('/api/terms', { method: 'POST', body: '{}' })).rejects.toThrow('Refusé.')
+  await expect(api('/api/creations/c/scenes', { method: 'POST' })).rejects.toThrow('Refusé.')
+  await api('/api/balance')
+  expect(termsAsked.value).toBe(1)
+  await expect(read({ key: 'r', body: '{}' })).rejects.toThrow('Refusé.')  // a chat message too
+  expect(termsAsked.value).toBe(2)
+})
+// The turn rule: among reads only the latest counts; a confirmed acceptance always counts and voids every read started
+// before it, whichever answers first; « Plus tard » voids the reads on their way.
+it('lets a confirmed acceptance win over every read started before it, and keeps the order among reads', async () => {
+  vi.resetModules()
+  const release: Array<(body: unknown, status?: number) => void> = []
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(done => release.push((body, status = 200) => done(new Response(JSON.stringify(body), { status }))))))
+  const { acceptConditions, conditions, voidReads } = await opened()
+  const unaccepted = { version: '2026-11-17', paragraphs_fr: ['…'], accepted_at: null, changed: false }
+  const accepted = { version: '2026-11-17', accepted_at: 'now' }
+  // « J’accepte », « Plus tard », « Lire les conditions »: the read reaches the server before the acceptance commits.
+  const accepting = acceptConditions('2026-11-17'), overlapping = conditions()
+  release[0](accepted)
+  expect(await accepting).toEqual(accepted)
+  release[1](unaccepted)
+  expect(await overlapping).toBeUndefined()  // answered after the confirmation: it never reopens the dialog
+  // The other order: the read answers first and counts (the dialog shows it); the confirmation still counts after it.
+  const second = acceptConditions('2026-11-17'), first = conditions()
+  release[3](unaccepted)
+  expect(await first).toEqual(unaccepted)
+  release[2](accepted)
+  expect(await second).toEqual(accepted)
+  const after = conditions()  // a read started after the confirmation counts
+  release[4]({ ...unaccepted, accepted_at: 'now' })
+  expect((await after as { accepted_at: string }).accepted_at).toBe('now')
+  // Among reads, the latest: an older answer arriving last is ignored, and an overtaken failure is not thrown.
+  const older = conditions(), latest = conditions()
+  release[6](unaccepted); release[5]({ error: { code: 'storage_unavailable', message_fr: 'Indisponible.' } }, 503)
+  expect([await latest, await older]).toEqual([unaccepted, undefined])
+  const failing = conditions()
+  release[7]({ error: { code: 'storage_unavailable', message_fr: 'Indisponible.' } }, 503)
+  await expect(failing).rejects.toThrow('Indisponible.')
+  // « Plus tard »: the reads on their way count no more, success or failure; the next one does.
+  const retry = conditions(), reread = conditions()
+  voidReads()
+  release[8](unaccepted); release[9]({ error: { code: 'timeout', message_fr: 'Trop long.' } }, 503)
+  expect([await retry, await reread]).toEqual([undefined, undefined])
+  const next = conditions()
+  release[10](unaccepted)
+  expect(await next).toEqual(unaccepted)
+  const sent = vi.mocked(fetch).mock.calls.map(call => [call[0], (call[1] as RequestInit).method ?? 'GET', (call[1] as RequestInit).body])
+  expect(sent[0]).toEqual(['/api/terms', 'POST', JSON.stringify({ version: '2026-11-17' })])
+  expect(sent[1]).toEqual(['/api/terms', 'GET', undefined])
+})
+// Neither request waits for ever: « J’accepte » is enabled again, and a read asked by a control ends in « Réessayer ».
+// The page's own read at opening is quiet: no progress line for a shop that has accepted.
+it('gives up both conditions requests after TERMS_TIMEOUT_MS, and reads quietly at opening', async () => {
+  vi.useFakeTimers(); vi.resetModules()
+  vi.stubGlobal('fetch', vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_done, fail) => {
+    init.signal?.addEventListener('abort', () => fail(new DOMException('aborted', 'AbortError')))
+  })))
+  const { acceptConditions, conditions, progress, TERMS_TIMEOUT_MS } = await opened()
+  const opening = conditions(true).catch(reason => reason)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(progress.value).toBe(false)
+  await vi.advanceTimersByTimeAsync(TERMS_TIMEOUT_MS - 1000)
+  expect(await opening).toMatchObject({ code: 'timeout' })
+  let ended = false
+  const accept = acceptConditions('2026-11-17').catch(reason => reason), read = conditions().catch(reason => reason)
+  void Promise.race([accept, read]).then(() => { ended = true })
+  await vi.advanceTimersByTimeAsync(300)
+  expect(progress.value).toBe(true)  // asked by a control: the owner waits for it
+  await vi.advanceTimersByTimeAsync(TERMS_TIMEOUT_MS - 301)
+  expect(ended).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  expect([await accept, await read]).toEqual([expect.objectContaining({ code: 'timeout' }), expect.objectContaining({ code: 'timeout' })])
+})

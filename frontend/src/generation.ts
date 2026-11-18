@@ -55,12 +55,22 @@ export const ONCE = '1 crédit, une seule fois pour cette demande'
 export type Charged = 'scene' | 'text_texture'
 export interface Balance { available: number; pending: number; purchase_fr: string; blocked: Record<Charged, { reason: string; message_fr: string } | null> }
 /** What a button that makes a new image says, and whether it may send (D-BALANCE-006), in the server's order: what blocks
- *  this operation, then no credit, then few left. `stop`: nothing is sent, the dialog only closes. Unknown: the server decides. */
-export function credit(balance: Balance | null, kind: Charged): { stop: boolean; text: string } {
+ *  this operation, then no credit, then few left. `stop`: nothing is sent, the dialog only closes. Unknown: the server decides.
+ *  `terms`: what stops it is the conditions of use, not accepted: the control offers to read them (D-TERMS-004). */
+export function credit(balance: Balance | null, kind: Charged): { stop: boolean; text: string; terms?: boolean } {
   if (!balance) return { stop: false, text: '1 crédit · solde indisponible pour le moment' }
   const blocked = balance.blocked[kind]
-  if (blocked) return { stop: true, text: blocked.message_fr }
+  if (blocked) return { stop: true, text: blocked.message_fr, ...(blocked.reason === 'terms' ? { terms: true } : {}) }
   if (balance.available <= 0) return { stop: true, text: `Il ne vous reste plus de crédit : rien ne sera envoyé. Vos affiches restent disponibles. ${balance.purchase_fr}` }
   const left = `1 crédit · il vous en reste ${balance.available}${balance.pending > 0 ? `, ${balance.pending} en attente` : ''}`
   return { stop: false, text: balance.available <= 3 ? `${left}. Bientôt à court : ${balance.purchase_fr}` : left }
+}
+
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+/** The conditions' version, an ISO date (D-TERMS-001), as the dialog says it: « 17 novembre 2026 », « 1er mai 2027 ».
+ *  Written by hand: Intl says « 1 mai ». A version of another shape is shown as it is. */
+export function termsDate(version: string) {
+  const [, year, month, day] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(version) ?? []
+  const name = MONTHS[Number(month) - 1]
+  return name ? `${Number(day) === 1 ? '1er' : Number(day)} ${name} ${year}` : version
 }

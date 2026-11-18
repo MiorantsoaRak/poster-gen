@@ -200,22 +200,23 @@ could not be removed.` and starts nothing: run `sudo docker rm -f affiche-ia-bac
 If the release prints `THE SERVICE IS DOWN: the previous container did not start again`, start it at once with
 `sudo docker start affiche-ia-affiche-ia-1`, then do steps 1 to 3.
 
-### Release 1 (migrations 0013 to 0016: several shops, credits, the operator dashboard)
+### Release 1 (migrations 0013 to 0017: several shops, credits, the operator dashboard, the conditions of use)
 
-The first release with migrations 0013, 0014, 0015 and 0016 (designs: `docs/project/designs/multi-shop.md` and
+The first release with migrations 0013, 0014, 0015, 0016 and 0017 (designs: `docs/project/designs/multi-shop.md` and
 `prepaid-balance.md`, "Release gate"; 0015 only adds the two triggers that stop a shop's row being replaced; 0016
-only adds the empty table of the operator's sessions, `admin-dashboard.md`). Do also the credit steps and the
-dashboard steps of the next two sections. In this order:
+only adds the empty table of the operator's sessions, `admin-dashboard.md`; 0017 only adds the two columns of a
+shop's acceptance, `service-terms.md`). Do also the credit steps, the dashboard steps and the conditions steps of the
+next three sections. In this order:
 1. On mx1, run `sudo sh /opt/affiche-ia/daily.sh`. Check that `/opt/affiche-ia/backups/last-backup.json` has
    today's time.
 2. Optional, the day before: copy that backup's `db/affiche-<stamp>.db` to the development machine. From
    `backend/`, run `uv run python -m affiche.rehearse <copy>`. It shows the counts early, with the development SQLite.
-3. Run the release command as usual. Its rehearsal runs 0013 to 0016 on a fresh copy of the live database, in
+3. Run the release command as usual. Its rehearsal runs 0013 to 0017 on a fresh copy of the live database, in
    the release image, before anything is stopped.
 4. Read the report. Its first line must show SQLite 3.40.1 (the image's Debian) and the release's revision.
 5. Check the report: each table that existed before has the same rows and hash before and after (a table the
    migrations add shows `None` before; a line that ends with `(over …)` compares only the columns it names); the
-   version goes from `0012` to `0016`; each `0013 ADDED`, `0014 ADDED`, `0015 ADDED` and `0016 ADDED` line says
+   version goes from `0012` to `0017`; each `0013 ADDED`, `0014 ADDED`, `0015 ADDED`, `0016 ADDED` and `0017 ADDED` line says
    `as expected` (0015 checks the shop's triggers in place of 0013, so 0013 has no line for them); each of the fourteen
    `guard …` lines says `as expected`; `integrity_check` is `ok`; `foreign_key_check` is 0.
 6. Check that the three ledger sums are the same before and after. Save the whole report as
@@ -267,6 +268,20 @@ the first deploy takes four steps:
 The pilot's opening grant stays the command line's (step 3 of the previous section). Then check that the dashboard
 shows 30 credits available for `originalphone`.
 
+### Release 1: the conditions of use (migration 0017)
+
+Release 1 also asks each shop to accept the conditions of use (`docs/project/designs/service-terms.md`, D-TERMS-004).
+Migration 0017 accepts nothing, for the pilot too: the application shows the conditions at his first opening after
+the release, on the session he already has if it lasted (a changed `SHOP_PASSWORD_HASH` at 0013 ends every session:
+"The first start after migration 0013"), else right after he signs in. Until he taps « J’accepte », every new request to the AI is refused before
+anything is sent or any credit taken; « Plus tard » lets him edit, check and download as before. Around the steps
+above:
+1. **Before the release**, set `SUPPORT_CONTACT_FR` ("Secrets"): the last paragraph of the conditions gives it as the
+   contact. Without it they say « l’opérateur qui vous a remis votre identifiant ».
+2. **Before the release**, tell the pilot in French, for example: « Après la mise à jour de ce soir, Doka Studio vous
+   montrera ses conditions d’utilisation. Lisez-les, puis appuyez sur « J’accepte » : sans cela, toute nouvelle
+   demande à l’IA sera refusée. « Plus tard » vous laisse modifier et télécharger vos affiches. »
+
 ### The first start after migration 0013
 
 Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH` is read at one start only:
@@ -277,9 +292,9 @@ Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH`
   (step 9 above). Change a password with `set-password` ("Shops").
 
 **If the new container does not start after the migration** (the release prints "THE SERVICE IS DOWN" and the
-container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 to 0016 run in
+container's last lines): a failure inside the migrations leaves the database at 0012, because 0013 to 0017 run in
 one transaction; the previous commit can then be deployed again ("Rollback"). A failure after the migrations, as
-below, leaves it at 0016: fix forward.
+below, leaves it at 0017: fix forward.
 - The log says "Shop 1 has data but no password and SHOP_PASSWORD_HASH is not set". Give shop 1 a password with
   the new image, through the operator service (no container log: "Shops"), then start it:
 
@@ -517,7 +532,7 @@ password is set, and fails when it is not (for example after a restore of an old
 
 `/opt/affiche-ia/secrets/app.env` (root, 600): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SPEND_CAP_USD`,
 `SPEND_CAP_SINCE`; `SHOP_PASSWORD_HASH` until step 9 of Release 1 removes it. Optional: `SUPPORT_CONTACT_FR`
-(the contact shown under the sign-in form for a forgotten password) and `SHOP_DAILY_SPEND_USD` (each shop's
+(the contact shown under the sign-in form for a forgotten password, and in the conditions of use) and `SHOP_DAILY_SPEND_USD` (each shop's
 provider spend per UTC day, default 2.00). Every value in single quotes.
 
 - Edit with `sudo nano /opt/affiche-ia/secrets/app.env`, then run the recreate command above.

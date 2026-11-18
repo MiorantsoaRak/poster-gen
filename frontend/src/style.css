@@ -436,6 +436,10 @@ button.version.new small { font-size: 12px; font-weight: 500 }
 .confirm { width: min(100%, 440px); background: var(--glass); border: 1px solid var(--glass-line); border-radius: 28px; padding: 24px; display: grid; gap: 10px; box-shadow: var(--glass-shadow) }  /* its sheet already blurs the page behind */
 .confirm p { margin: 0; color: var(--muted) }
 .confirm .cost { color: var(--text); font-weight: 700 }
+/* The conditions of use: over the panels and the messages, under a confirmation (the sign-out's keeps the front). Their
+   long text starts at its top and scrolls: centred, a phone could not scroll to its first lines. */
+.terms-sheet { z-index: 45; place-items: start center }
+.terms-sheet .confirm { width: min(100%, 560px); margin-block: auto; overflow-wrap: anywhere }  /* a long contact breaks too */
 .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px }
 /* A panel in front: its own ground and patches (the page behind would show through glass); on a phone it holds a fixed
    decision bar, so it never blurs itself (part A). */

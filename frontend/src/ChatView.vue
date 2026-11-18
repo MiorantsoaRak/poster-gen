@@ -74,7 +74,7 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…'
 const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
 const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
-const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value, !free(item) && state.credit.stop); return button === 'resume' && starting.value ? null : button }
+const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value, !free(item) && (state.credit.terms ? 'terms' : state.credit.stop)); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
 // An untapped change card can be taken back: « Annuler ».
 const untapped = (item: Item) => changes(item.card) && !item.spent && !item.done
@@ -253,9 +253,9 @@ async function ask() {
     const sentence = code === 'validation_error' ? 'Ce message ne peut pas être lu tel quel. Écrivez-le plus court : le produit et son prix, ou le changement voulu.'
       : reason instanceof Error ? reason.message : 'La demande a échoué.'
     if (reason instanceof ApiError && settled(code)) clearPending(record.key)
-    // Refused before anything was read or reserved, until the service, the shop's day or its other reads allow it:
-    // the text goes back to the field, to be sent again as it is.
-    if (['budget_exhausted', 'shop_daily_limit', 'reads_busy'].includes(code)) {
+    // Refused before anything was read or reserved, until the service, the shop's day, its other reads or the conditions
+    // of use (D-TERMS-004) allow it: the text goes back to the field, to be sent again as it is.
+    if (['budget_exhausted', 'shop_daily_limit', 'reads_busy', 'terms_required'].includes(code)) {
       const at = items.value.map(item => item.role === 'owner' && item.text === record.text).lastIndexOf(true)
       if (at >= 0) items.value.splice(at, 1)
       text.value = record.text; app(sentence)
@@ -530,6 +530,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
             <button v-if="button === 'create'" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
             <button v-else-if="button === 'retry' || button === 'resume'" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>

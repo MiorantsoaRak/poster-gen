@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, type Balance } from '../src/generation'
+import { credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, termsDate, type Balance } from '../src/generation'
 
 describe('phase of a generation, from the job and the image', () => {
   it.each([['queued', false, 'queued'], ['running', false, 'running'], ['succeeded', false, 'receiving'], ['succeeded', true, 'ready'],
@@ -75,6 +75,22 @@ describe('what a new image says it costs, and what stops it (D-BALANCE-006)', ()
   it('unknown (unread or failed): never 0, the server decides', () => {
     expect(credit(null, 'scene')).toEqual({ stop: false, text: '1 crédit · solde indisponible pour le moment' })
   })
+  // D-TERMS-004: the conditions not accepted stop a new image as any block does, and say so, so that the control offers
+  // to read them instead of a dead end; no other reason does.
+  it('says when what stops it is the conditions of use', () => {
+    const TERMS = { reason: 'terms', message_fr: 'Acceptez d’abord les conditions d’utilisation.' }
+    for (const available of [0, 50]) expect(credit(balance(available, 0, { scene: TERMS, text_texture: TERMS }), 'scene')).toEqual({ stop: true, text: TERMS.message_fr, terms: true })
+    expect(credit(balance(5, 0, { scene: DAY }), 'scene').terms).toBeUndefined()
+    expect(credit(balance(0), 'scene').terms).toBeUndefined()
+    expect(credit(null, 'scene').terms).toBeUndefined()
+  })
+})
+
+describe('the version of the conditions, as the dialog says it (D-TERMS-004)', () => {
+  it.each([['2026-11-17', '17 novembre 2026'], ['2027-05-01', '1er mai 2027'], ['2027-08-09', '9 août 2027'], ['2028-02-29', '29 février 2028']])('%s reads « %s »', (version, said) => {
+    expect(termsDate(version)).toBe(said)
+  })
+  it.each(['2026-13-01', '2026-00-10', 'v2', ''])('shows %j as it is', version => expect(termsDate(version)).toBe(version))
 })
 
 describe('what a followed job that made nothing says', () => {

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import { announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, thumbnailUrl, upload, verify, type SessionAnswer } from './api'
+import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
-import { credit, elapsedLabel, ended, localTime, ONCE, overdue, phase, retryDelay, type Balance, type Charged, type Phase } from './generation'
+import { credit, elapsedLabel, ended, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
@@ -613,7 +613,7 @@ async function route() {
     if (id) { if (creation.value?.id !== id) await openCreation(id); return }
     if (doc.value) await fresh()
     view.value = VIEWS[hash] ?? 'create'
-    nextTick(() => document.querySelector('main')?.focus())
+    nextTick(() => { if (!termsOpen.value) document.querySelector('main')?.focus() })  // the conditions keep it at opening
   } catch (reason) { chatting.value = was; window.history.replaceState(null, '', `#${here()}`); throw reason }
   // « Mes affiches » is read again each time it opens: an image may have come since (after a sign-in, the only way back
   // to it, ADR-108). The list shown stays until the new one is in; a refusal is said and keeps it. Outside the catch
@@ -638,7 +638,7 @@ const vModal = {
 // request to its route lost its answer and keeps its key (api.ts retained): sent again, the server answers what it
 // stored, whatever the balance says now; a request it never took is refused there with its own sentence.
 const paid = ref<{ title: string; text: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void> } | null>(null)
-const paidCost = computed(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
+const paidCost = computed<ReturnType<typeof credit>>(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
   : paid.value.again ? { stop: false, text: ONCE } : credit(balance.value, paid.value.charged))
 const unanswered = (route: string) => retained(`/api/creations/${creation.value?.id}/${route}`)
 function askScene() {
@@ -669,7 +669,65 @@ function askDiscard() {
   paid.value = { title: 'Abandonner vos modifications ?', label: 'Abandonner et recharger', cost: '',
     text: 'Les modifications non enregistrées de cette affiche seront perdues. La version enregistrée est rechargée.', run: discardAndReload }
 }
-const modalOpen = computed(() => !!(paid.value || review.value || finalPreview.value || opened.value))
+// The conditions of use (D-TERMS-004): read when the shop's page opens, and again when a paid control or a refusal asks
+// for them. « Plus tard » stores nothing and keeps every free action; without acceptance the server refuses anything new
+// asked of the AI, before any credit. No sign-out here: it deletes the device's chat threads.
+interface Terms { version: string; paragraphs_fr: string[]; accepted_at: string | null; changed: boolean }
+const terms = ref<Terms | null>(null), termsOpen = ref(false), termsLine = ref(''), accepting = ref(false)
+// opening: the page's own read, quiet, whose failure shows nothing (the server still refuses). Asked by a control or a
+// refusal, a failure (its timeout included) shows the dialog with « Réessayer », and a shop that has accepted meanwhile
+// gets its credits read again. Nothing applies once the session is gone for good: the next shop is a new page.
+async function readTerms(opening = false) {
+  let read: Terms | undefined
+  try { read = await conditions<Terms>(opening) } catch {
+    if (!opening && state.value !== 'out') { terms.value = null; termsOpen.value = true }
+    return
+  }
+  if (!read || state.value === 'out') return  // overtaken, voided (« Plus tard », a confirmed acceptance), or gone
+  terms.value = read
+  if (!read.accepted_at) termsOpen.value = true
+  else if (termsOpen.value || !opening) { termsOpen.value = false; termsLine.value = ''; void readBalance() }
+}
+// The dialog itself takes the focus before its focused button is disabled (« J’accepte » on its way) or replaced
+// (« Réessayer » by the text): the browser would drop it to the page, out of reach of the dialog's Tab.
+const holdFocus = () => document.querySelector<HTMLElement>('[aria-labelledby="titre-conditions"]')?.focus()
+function retryTerms() { holdFocus(); void readTerms() }
+// One request at a time: a second tap while it is on its way sends nothing, and it always ends (TERMS_TIMEOUT_MS).
+async function acceptTerms() {
+  if (accepting.value || !terms.value) return
+  holdFocus()
+  accepting.value = true; termsLine.value = ''
+  try {
+    await acceptConditions(terms.value.version)
+    // Confirmed: it counts over every read started before it, after « Plus tard » too.
+    if (state.value === 'out') return
+    termsOpen.value = false; termsLine.value = ''; void readBalance()
+  } catch (reason) {
+    if (!termsOpen.value || state.value === 'out') return  // dismissed meanwhile, or the session gone: nothing reopens
+    // A refusal says why; terms_outdated: the new text is read, to be read before it is accepted. Anything else (a
+    // timeout included) may hide an acceptance the server made: the state is read again, and if accepted it closes.
+    const refused = reason instanceof ApiError && reason.status >= 400 && reason.status < 500 && reason.code !== 'invalid_response' ? reason : null
+    termsLine.value = refused ? refused.message : 'L’acceptation n’a pas pu être confirmée.'
+    if (!refused || refused.code === 'terms_outdated') void readTerms()
+  } finally { accepting.value = false }
+}
+// « Plus tard »: nothing stored, and the reads on their way stop counting, so that none reopens the dialog (an acceptance
+// on its way still counts when confirmed).
+function later() { voidReads(); termsOpen.value = false; termsLine.value = '' }
+// « Lire les conditions » on a paid sheet stopped by them: the sheet closes at once (the focus goes back to its control)
+// and never comes back; the read shows its progress line, then the dialog. A shop found accepted meanwhile only gets its
+// credits read again: the owner taps the paid control again, now free.
+function readConditions() { paid.value = null; void readTerms() }
+// A refusal for want of acceptance, from any request (api.ts termsAsked): the balance, which said otherwise, is read
+// again, and the dialog opens unless it is already open.
+watch(termsAsked, () => { void readBalance(); if (!termsOpen.value) void readTerms() })
+// Tab and Shift+Tab go round inside the conditions: the page behind is inert, but the skip link and the messages are not.
+function keepTab(event: KeyboardEvent) {
+  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')]
+  const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
+  if (to) { event.preventDefault(); to.focus() }
+}
+const modalOpen = computed(() => !!(paid.value || termsOpen.value || review.value || finalPreview.value || opened.value))
 // "Styles": a style opens in a panel; one made by the shop can be renamed or removed there.
 const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
 const opened = computed(() => {
@@ -678,6 +736,15 @@ const opened = computed(() => {
   const given = LOOKS.find(item => item.id === openedId.value && item.image)
   return given ? { id: given.id as string, name: given.label as string, image: given.image as string, direction: given.direction as string, brief: null, own: false } : null
 })
+// The panel in front takes the focus whenever it changes: a confirmation, then the conditions, then the other panels.
+// v-modal focuses a panel only as it mounts, which an inert panel ignores: the conditions behind the sign-out
+// confirmation are focused when it closes. After the render and v-modal's own focus, so that it has the last word.
+// Only while the shop is shown: back from another tab, the panel that was in front takes the focus again.
+const front = computed(() => !shown.value ? '' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
+watch(front, id => nextTick(() => {
+  const panel = id ? document.querySelector<HTMLElement>(`[aria-labelledby="${id}"]`) : null
+  if (panel && !panel.contains(document.activeElement)) (panel.querySelector<HTMLElement>('[data-focus]') ?? panel).focus()
+}))
 function openLook(id: string) { openedId.value = id; renameText.value = opened.value?.name ?? ''; renameError.value = '' }
 function useLook(id: string) { pickLook(id); rememberStyle(); openedId.value = null; leave('') }
 const reloadLooks = async () => { savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items }
@@ -1492,6 +1559,7 @@ const chat: ChatAdapter = {
   recount: () => void readBalance(),
   review: visual => { review.value = visual; resetChecks() },
   download: () => { void perform(renderFinal) },
+  conditions: () => { void readTerms() },
 }
 function zoomScene(event: Event) {
   if (!currentVisual.value) return
@@ -1556,6 +1624,8 @@ watch(state, now => {
   if (now === 'out') {
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
+    // Its conditions too (signed out, session ended, another shop): no late answer opens them again (readTerms).
+    voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
     if (typeof bound.value === 'number' && location.hash) window.history.replaceState(null, '', location.pathname + location.search)
   }
   if (now === 'shown' && !loaded.value) void openShop()
@@ -1564,6 +1634,7 @@ watch(state, now => {
 async function openShop() {
   open()
   readStyle()
+  void readTerms(true)  // apart, as the balance: after a sign-in or on a session that lasts (D-TERMS-004)
   // A failed load is a failed answer: hidden, with « Réessayer », which asks and opens again (a 401 or 409 is out anyway).
   try { await loadShop() } catch (reason) { failed.value = failureOf(reason); return }
   loaded.value = true
@@ -1664,7 +1735,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
   <button class="skip" type="button" @click="skip">Aller au contenu</button>
-  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="modalOpen || peeking"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
+  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
     <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
     <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
     <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
@@ -1682,7 +1753,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <section v-if="pickStart" class="start" aria-labelledby="titre-depart">
+    <section v-if="pickStart" class="start" aria-labelledby="titre-depart" :inert="termsOpen">
       <h1 id="titre-depart">Comment voulez-vous créer vos affiches ?</h1>
       <div class="start-choices">
         <button type="button" class="start-choice" @click="switchTo('chat')"><span class="sketch talk" aria-hidden="true"><i /><i /><i /></span><span><b>Par message</b>Écrivez le produit et le prix, ajoutez vos photos.</span></button>
@@ -1694,7 +1765,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
     </template>
-    <div v-if="!doc && view === 'create' && !chatting && !pickStart" class="intake-layout">
+    <div v-if="!doc && view === 'create' && !chatting && !pickStart" class="intake-layout" :inert="termsOpen">
       <form class="intake" @submit.prevent="perform(createPoster)">
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
@@ -1708,7 +1779,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         <button class="primary wide" :disabled="busy">{{ busy ? 'Préparation…' : 'Préparer mon affiche' }}</button><p v-if="whyNoDraft" class="why" role="status">{{ whyNoDraft }}</p>
       </form>
     </div>
-    <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches">
+    <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
       <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
@@ -1717,7 +1788,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div></div>
       <p v-if="libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
-    <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles">
+    <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles" :inert="termsOpen">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
@@ -1872,9 +1943,17 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" @keydown.esc="paid = null"><div class="confirm">
       <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
       <label v-if="smallPhoto && paid.run === createScene && !paidCost.stop" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-      <div class="row"><button v-if="!paidCost.stop" class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
+      <div class="row"><button v-if="!paidCost.stop" class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
     </div></div>
-    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid" @keydown.esc="finalPreview = null">
+    <!-- The conditions of use (D-TERMS-004): under the confirmation above, which keeps the front; server text as text only. -->
+    <div v-if="termsOpen" v-modal class="confirm-sheet terms-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-conditions" :inert="!!paid" @keydown.esc="later" @keydown.tab="keepTab"><div class="confirm">
+      <h2 id="titre-conditions">{{ terms?.changed ? 'Les conditions d’utilisation ont changé' : 'Conditions d’utilisation' }}</h2>
+      <template v-if="terms"><p class="cost">Version du {{ termsDate(terms.version) }}</p><p v-for="(paragraph, index) in terms.paragraphs_fr" :key="index">{{ paragraph }}</p></template>
+      <p v-else class="cost" role="alert">Les conditions n’ont pas pu être chargées.</p>
+      <p v-if="termsLine" class="cost" role="alert">{{ termsLine }}</p>
+      <div class="row"><button v-if="terms" class="primary" :disabled="accepting" @click="acceptTerms">J’accepte</button><button v-else class="primary" @click="retryTerms">Réessayer</button><button class="secondary" @click="later">Plus tard</button></div>
+    </div></div>
+    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ confirmedDownload ? 'Votre affiche est prête' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ confirmedDownload ? 'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
         <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoaded = true" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'; previewLoaded = false" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
@@ -1889,7 +1968,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         </div>
       </div>
     </section>
-    <section v-if="opened" v-modal class="review-panel look-panel" role="dialog" aria-modal="true" aria-labelledby="titre-style-ouvert" :inert="!!paid" @keydown.esc="openedId = null">
+    <section v-if="opened" v-modal class="review-panel look-panel" role="dialog" aria-modal="true" aria-labelledby="titre-style-ouvert" :inert="!!paid || termsOpen" @keydown.esc="openedId = null">
       <div class="section-heading"><div><h2 id="titre-style-ouvert" translate="no">{{ opened.name }}</h2><p class="lede">{{ opened.own ? 'Style créé depuis une de vos affiches modèles.' : 'Style fourni : il ne peut pas être renommé ni retiré.' }}</p></div><button class="ghost" @click="openedId = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
         <div class="shot"><img :src="opened.image" alt="Affiche modèle de ce style" /></div>
@@ -1900,7 +1979,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         </div>
       </div>
     </section>
-    <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid" @keydown.esc="review = null">
+    <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid || termsOpen" @keydown.esc="review = null">
       <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
       <div class="side-choice" role="group" aria-label="Image affichée"><button type="button" :aria-pressed="compareSide === 'photo'" @click="compareSide = 'photo'">Votre photo</button><button type="button" :aria-pressed="compareSide === 'version'" @click="compareSide = 'version'">La version</button></div>
       <div class="comparison" :class="[{ zoomed }, `side-${compareSide}`]"><figure><a v-for="(url, index) in review.original_urls" :key="url" :href="url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="url" width="540" height="380" :alt="`Photo originale ${index + 1} à comparer`" /></a><figcaption>Votre photo<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure><figure><a :href="review.image_url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="review.image_url" width="540" height="380" alt="Version générée à vérifier" /></a><figcaption>Version générée<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure></div>

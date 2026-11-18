@@ -206,6 +206,23 @@ it('stops only a new paid tap at zero credits or while blocked; « Reprendre » 
   expect(cardButton(item({ card: { kind: 'ask_photo' } }), undefined, undefined, null, true)).toBe('photo')
   expect(cardButton(item({ card: { kind: 'result', visual_id: 'v' } }), 'approved', 'v', null, true)).toBe('download')
 })
+it('offers the conditions on a fresh paid card they stop, and keeps the same-key action of a retained one (D-TERMS-004)', () => {
+  const kept = { path: '/api/creations/c/scenes', body: {}, revision: 2 }
+  for (const card of [{ kind: 'recap' }, { kind: 'change', effect: 'refine' as const }, { kind: 'change', effect: 'scene' as const }, { kind: 'restyle', style: 'sombre' as const }]) {
+    expect(cardButton(item({ card }), undefined, undefined, null, 'terms')).toBe('conditions')  // never a dead end
+    expect(cardButton(item({ card }), undefined, undefined, 3, 'terms')).toBe('conditions')
+    // Retained: sent again as it is; the server replays an admitted key, or refuses a new one with 403 (the dialog).
+    expect(cardButton(item({ card, spent: true, request: kept }), undefined, undefined, null, 'terms')).toBe('resume')
+    expect(cardButton(item({ card: { ...card, error: 'Acceptez d’abord les conditions' }, spent: true, request: kept }), undefined, undefined, null, 'terms')).toBe('retry')
+    expect(cardButton(item({ card, spent: true, request: kept, job: 'j' }), undefined, undefined, null, 'terms')).toBeNull()  // followed
+    expect(cardButton(item({ card, done: true }), undefined, undefined, null, 'terms')).toBeNull()
+    expect(cardButton(item({ card, spent: true }), undefined, undefined, null, 'terms')).toBeNull()
+  }
+  // Cards that pay for nothing are as they were.
+  expect(cardButton(item({ card: { kind: 'ask_photo' } }), undefined, undefined, null, 'terms')).toBe('photo')
+  expect(cardButton(item({ card: { kind: 'result', visual_id: 'v' } }), 'pending_review', undefined, null, 'terms')).toBe('review')
+  expect(cardButton(item({ card: { kind: 'failed', retry: 'Sony' } }), undefined, undefined, null, 'terms')).toBe('resend')
+})
 it('converts a card from before D-005 at both entries, and leaves the server\'s cards as they are', () => {
   const said = 'prix 650 000 Ar'
   // An old price card sets its price alone and has no effect of its own; the price the image showed is no longer kept.

@@ -179,10 +179,43 @@ async function request<T>(path: string, { quiet = false, timeout, as, ...options
     if (!response.ok) {
       const failure = new ApiError(data.error?.code ?? 'server_error', data.error?.message_fr ?? 'La demande a échoué.', response.status, data.error?.current_revision, data.error?.field)
       if (failure.code === 'shop_changed') seen.value = 'other'
+      if (failure.code === 'terms_required') termsAsked.value++
       throw failure
     }
     return data as T
   } finally { clearTimeout(timer); if (!quiet) end() }
+}
+
+// ── the conditions of use (D-TERMS-004) ────────────────────────────────────────────────────────────────────
+/** Moves at every `terms_required` refusal, whatever request it answers (a Claude button, a chat message, a stale
+ *  balance, a retained request the server never took): the page reads the conditions again and shows them. */
+export const termsAsked = ref(0)
+/** Both requests give up after this (ApiError 'timeout'), body included: « J’accepte » and « Réessayer » are never
+ *  left waiting for ever. An expired acceptance may have been made: it is treated as a lost answer. */
+export const TERMS_TIMEOUT_MS = 20_000
+// Reads are numbered as they leave. One counts only if it is the latest read and left after `voided`, the last read
+// started before a confirmed acceptance or a « Plus tard »: a read that may predate the acceptance, or that the owner
+// dismissed, never opens or keeps the dialog. A confirmed acceptance itself always counts.
+let readTurn = 0, voided = 0
+/** Every read on its way stops counting (« Plus tard », a confirmed acceptance, a session gone). */
+export function voidReads() { voided = readTurn }
+/** GET /api/terms; quiet: no progress line (the page's own read at opening). undefined: overtaken or voided. */
+export async function conditions<T>(quiet = false): Promise<T | undefined> {
+  const turn = ++readTurn, counts = () => turn === readTurn && turn > voided
+  try {
+    const answer = await api<T>('/api/terms', { quiet, timeout: TERMS_TIMEOUT_MS })
+    return counts() ? answer : undefined
+  } catch (reason) {
+    if (counts()) throw reason
+    return undefined
+  }
+}
+/** POST /api/terms. Its success voids every read started before it. */
+export async function acceptConditions<T>(version: string): Promise<T> {
+  const answer = await api<T>('/api/terms', { method: 'POST', timeout: TERMS_TIMEOUT_MS,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version }) })
+  voidReads()
+  return answer
 }
 
 // Sign-in sets the cookie and sign-out deletes it; a late answer's Set-Cookie applies even when its body is dropped. So
