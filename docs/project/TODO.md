@@ -73,8 +73,8 @@
   - verify: the design's T-TERMS-003 rows (Vitest, `terms_browser.py`).
 - [x] T-TERMS-004 Scene-adjustment warning with accessible description, revised review and confirmation wording, public « Vos données » page and links. 258 frontend tests, build, admin checksums, 57 API tests and five browser smokes passed on final code. Full backend 1521 passed / 3 deselected before frontend-only fixes. Codex r2 approved. Owner French reading remains a release gate.
   - verify: the design's T-TERMS-004 rows; the French texts read by the user before any second shop signs in.
-- [~] T-SHOP-DASH-001 Shop summary, attention groups and 30-day metrics from one snapshot. Verify API boundaries, cancelled/superseded jobs, empty and isolated shops.
-- [ ] T-SHOP-DASH-002 Shop-facing credit history and cursor. Verify event dates, exact field allowlists, repayments, isolation and pagination.
+- [x] T-SHOP-DASH-001 Shop summary, attention groups and 30-day metrics from one snapshot. Verify API boundaries, cancelled/superseded jobs, empty and isolated shops. Independent review r3 approved. Backend 1527 passed / 3 deselected; final targeted 11 passed, and 7 summary tests passed after fixing the grant timestamp.
+- [~] T-SHOP-DASH-002 Shop-facing credit history and cursor. Verify event dates, exact field allowlists, repayments, isolation and pagination.
 - [ ] T-SHOP-DASH-003 Home, independent loads, navigation and creator entry. Verify partial failures, deep links, default and saved views, recent posters and attention actions.
 - [ ] T-SHOP-DASH-004 Credits view and in-creator panel. Verify history, pagination/retry, balance refresh, keyboard return, uploads and preservation of creator state.
 - [ ] T-SHOP-DASH-005 Account, profile recovery, password, terms and support. Verify errors, no password replay, shop isolation, mobile UI and existing browser regressions.

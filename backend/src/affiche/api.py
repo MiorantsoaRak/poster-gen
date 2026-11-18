@@ -30,6 +30,7 @@ from starlette.staticfiles import StaticFiles
 
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
+from affiche.db import utc_now
 from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, terms, typography, visuals
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
@@ -482,6 +483,41 @@ def status_view(conn, settings: Settings, started_at: str) -> dict:
                 {"since": since}).scalar_one()}
 
 
+# The library's « À vérifier » (c: a creation, v: its current version), counted by the shop's dashboard too
+# (D-SHOP-DASH-001): the scene its primary format shows waits for review, or a later version waits outside the document
+# until it is chosen. Every join keeps to the creation's shop. The shown scene is one lookup by id; the posters with a
+# waiting version are found once per query, not once per poster: :shop is the caller's, whose c.shop_id it is.
+SCENE = ("s.shop_id=c.shop_id AND s.id=json_extract(v.document_json,'$.formats.'"
+         "||json_extract(v.document_json,'$.primary_format')||'.scene.visual_id')")
+TO_REVIEW = (f"(EXISTS(SELECT 1 FROM poster_visuals s WHERE {SCENE} AND s.status='pending_review') OR"
+             " c.id IN (SELECT j.creation_id FROM poster_visuals w JOIN poster_jobs j ON j.id=w.job_id"
+             " WHERE w.shop_id=:shop AND j.shop_id=:shop AND w.status='pending_review'))")
+IMAGE_KINDS_SQL = ",".join(f"'{kind}'" for kind in sorted(jobs.IMAGE_KINDS))
+# The poster's latest image generation (by admission, then id) ended without an image. Any later one supersedes it, a
+# cancelled one included, and a cancelled one is no failure (D-SHOP-DASH-001). One pass over the shop's image jobs
+# (:shop is attention's), not one per poster: no index orders a poster's finished jobs.
+FAILED = ("c.id IN (SELECT creation_id FROM (SELECT creation_id,status,ROW_NUMBER() OVER (PARTITION BY creation_id"
+          f" ORDER BY created_at DESC,id DESC) AS n FROM poster_jobs WHERE shop_id=:shop AND kind IN ({IMAGE_KINDS_SQL}))"
+          " WHERE n=1 AND status IN ('failed','interrupted'))")
+# [since, as_of) (D-SHOP-DASH-002): posters by creation, whatever became of them; images and credits by completion, a
+# success from before credits included in images, credits gross of any repayment (its own line in the history).
+USAGE = text(
+    "SELECT (SELECT COUNT(*) FROM creations WHERE shop_id=:shop AND created_at>=:since AND created_at<:as_of) AS posters_created,"
+    f" (SELECT COUNT(*) FROM poster_jobs WHERE shop_id=:shop AND status='succeeded' AND kind IN ({IMAGE_KINDS_SQL})"
+    " AND finished_at>=:since AND finished_at<:as_of) AS images_generated,"
+    " (SELECT COUNT(*) FROM poster_jobs WHERE shop_id=:shop AND status='succeeded' AND takes_credit=1"
+    " AND finished_at>=:since AND finished_at<:as_of) AS credits_spent")
+
+
+def attention(conn, shop: int, predicate: str) -> dict:
+    """How many of the shop's active posters match, and the newest of them by created_at then id (None: none)."""
+    row = conn.execute(text(
+        "SELECT c.id,COUNT(*) OVER () AS total FROM creations c JOIN creation_versions v ON v.creation_id=c.id"
+        f" AND v.revision=c.current_revision WHERE c.shop_id=:shop AND c.status='active' AND {predicate}"
+        " ORDER BY c.created_at DESC,c.id DESC LIMIT 1"), {"shop": shop}).first()
+    return {"total": row.total if row else 0, "first_creation_id": row.id if row else None}
+
+
 def create_app(settings: Settings | None = None, prepare: Callable[[Engine], None] | None = None) -> FastAPI:
     """`prepare(engine)` runs once at start, under the API's lock and after the migrations, before anything else
     (deploy/phone_session.py sets its one-off password there): a folder another process holds is left untouched."""
@@ -541,6 +577,16 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                 blocked[kind] = None if refused is None else {"reason": BLOCKED[refused.code],
                                                               "message_fr": MESSAGES[refused.code]}
             return credits.balance(conn, shop) | {"purchase_fr": credits.purchase_text(conn, settings), "blocked": blocked}
+
+    @protected.get("/api/shop-dashboard")
+    def shop_dashboard(request: Request):
+        """What needs the owner, and the last 30 × 24 hours (D-SHOP-DASH-001, 002). as_of is taken before any read, so
+        whatever was written before it is counted. One connection, one deferred BEGIN (db._on_begin): one snapshot."""
+        as_of, shop = utc_now(), request.state.shop
+        since = (datetime.fromisoformat(as_of) - timedelta(days=30)).isoformat(timespec="microseconds")
+        with app.state.engine.connect() as conn:
+            return {"as_of": as_of, "review": attention(conn, shop, TO_REVIEW), "failed": attention(conn, shop, FAILED),
+                    "usage": dict(conn.execute(USAGE, {"shop": shop, "since": since, "as_of": as_of}).mappings().one())}
 
     @protected.get("/api/terms")
     def conditions(request: Request):
@@ -859,14 +905,11 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                 raise store.Refused("invalid_cursor") from None
         with app.state.engine.connect() as conn:
             # Thumbnail: the last final preview of the poster, else the current scene of its format.
-            scene = "s.id=json_extract(v.document_json,'$.formats.'||json_extract(v.document_json,'$.primary_format')||'.scene.visual_id')"
             rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"
                 "(SELECT r.png_sha256 FROM poster_renders r WHERE r.creation_id=c.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1) AS render_sha,"
-                f"(SELECT s.image_asset FROM poster_visuals s WHERE s.shop_id=c.shop_id AND {scene}) AS scene_asset,"
-                f"(SELECT s.status FROM poster_visuals s WHERE s.shop_id=c.shop_id AND {scene}) AS scene_status,"
-                # A later version waits outside the document until it is chosen: look at the creation's own jobs too.
-                "EXISTS(SELECT 1 FROM poster_visuals w JOIN poster_jobs j ON j.id=w.job_id "
-                "WHERE j.creation_id=c.id AND w.status='pending_review') AS waiting,"
+                f"(SELECT s.image_asset FROM poster_visuals s WHERE {SCENE}) AS scene_asset,"
+                f"(SELECT s.status FROM poster_visuals s WHERE {SCENE}) AS scene_status,"
+                f"{TO_REVIEW} AS to_review,"
                 "EXISTS(SELECT 1 FROM confirmations k WHERE k.creation_id=c.id "
                 "AND k.confirmed_revision=c.current_revision) AS confirmed "
                 "FROM creations c JOIN creation_versions v "
@@ -879,7 +922,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         items = [{"id": r["id"], "revision": r["current_revision"], "status": r["status"], "created_at": r["created_at"],
                   "name": r["name"], "variant": r["variant"],
                   # The one state that asks the owner to act comes first; "confirmed" means the file is this revision.
-                  "state": "to_review" if r["waiting"] or r["scene_status"] == "pending_review" else
+                  "state": "to_review" if r["to_review"] else
                            "confirmed" if r["confirmed"] else "approved" if r["scene_status"] == "approved" else "draft",
                   "thumbnail_url": f'/api/thumbnails/{r["render_sha"] or r["scene_asset"]}?v={THUMBNAIL_VERSION}'
                   if r["render_sha"] or r["scene_asset"] else None,

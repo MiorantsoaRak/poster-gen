@@ -33,7 +33,7 @@ EXEMPT = {
 }
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
 OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/balance"),
-       ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms")}
+       ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms"), ("GET", "/api/shop-dashboard")}
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 
@@ -319,7 +319,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     # Lists and the profile hold the shop's own items only.
     leaked = lambda answer: [name for name, value in theirs.items() if value in answer.text]  # noqa: E731
     for path in ("/api/creations", "/api/creations?status=abandoned", "/api/looks", "/api/shop-profile",
-                 f"/api/creations/{bid}/jobs", f"/api/creations/{bid}/visuals", f"/api/creations/{bid}/versions"):
+                 f"/api/creations/{bid}/jobs", f"/api/creations/{bid}/visuals", f"/api/creations/{bid}/versions",
+                 "/api/shop-dashboard"):
         answer = b.get(path)
         assert answer.status_code == 200 and leaked(answer) == [], (path, leaked(answer))
     assert [item["id"] for item in b.get("/api/creations").json()["items"]] == [bid]
@@ -434,7 +435,10 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert b.delete("/api/session").json() == {"authenticated": False}  # B's last request: its session ends
     schema ={(method.upper(), path) for path, methods in a.get("/api/openapi.json").json()["paths"].items() for method in methods}
     json_answers = [answer for answer in answers if answer.headers.get("content-type", "").startswith("application/json")]
-    walked = [answer.json() for answer in json_answers]
+    # The dashboard's design names its 30-day counts `usage` (D-SHOP-DASH-001): that key alone is let through, and what
+    # it holds is walked with the rest.
+    walked = [[body.pop("usage"), body] if answer.request.url.path == "/api/shop-dashboard" else body
+              for answer, body in ((answer, answer.json()) for answer in json_answers)]
     dollars = {name for body in walked for name in json_keys(body) if re.search("micros|usage|cost|estimate|usd", name, re.I)}
     assert len(walked) > 100 and dollars == set(), (len(walked), dollars)
     # The walk sees a successful answer of every route a shop reads, apart from the refusals of the attempts above: a
