@@ -11,6 +11,9 @@ from playwright.sync_api import sync_playwright, expect
 
 import browser_smoke as smoke
 
+# Before the paid button of « Ajuster la scène » (D-TERMS-005, generation.ts FEATURES_WARNING).
+WARNING = 'Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier.'
+
 
 def run():
     out = smoke.ROOT / 'outputs/editor-refinements'
@@ -21,7 +24,7 @@ def run():
     logo = Image.new('RGBA', (240, 120), (0, 0, 0, 0))
     ImageDraw.Draw(logo).rectangle((15, 15, 225, 105), fill='#1266cc')
     logo.save(out / 'logo.png')
-    errors, requests = [], []
+    errors, requests, refinements = [], [], []
     with tempfile.TemporaryDirectory(prefix='affiche-refinements-') as data:
         server, thread = smoke.serve(data)
         with (out / 'preview.log').open('w') as log:
@@ -35,6 +38,7 @@ def run():
                     page.set_default_timeout(10000)
                     page.on('pageerror', lambda e: errors.append(str(e)))
                     page.on('response', lambda r: print(r.status, r.url, r.text(), flush=True) if r.status >= 400 and '/api/' in r.url else None)
+                    page.on('request', lambda r: refinements.append(r.url) if r.method == 'POST' and r.url.endswith('/refinements') else None)
                     page.on('request', lambda r: requests.append(r.post_data_json) if r.method == 'POST' and r.url.endswith('/scenes') else None)
                     for attempt in range(40):
                         try:
@@ -142,6 +146,17 @@ def run():
                     for name in ('Zoom', 'Position horizontale', 'Position verticale'):
                         expect(page.get_by_label(name, exact=True)).to_be_disabled()
                     expect(page.get_by_text('Le cadrage est verrouillé', exact=False)).to_be_visible()
+                    # « Ajuster la scène » warns before its paid button, the chat's words (D-TERMS-005); closed, nothing is sent.
+                    page.get_by_label('Ajustement de la scène', exact=True).fill('Ajoute ses caractéristiques')
+                    page.get_by_role('button', name='Ajuster la scène', exact=True).click()
+                    sheet = page.get_by_role('dialog', name='Ajuster la scène ?')
+                    expect(sheet.get_by_text(WARNING, exact=True)).to_be_visible()
+                    expect(sheet).to_have_accessible_description(WARNING)
+                    expect(sheet.get_by_role('button', name='Lancer l’ajustement')).to_have_accessible_description(WARNING)
+                    assert sheet.evaluate("(e, warning) => { const line = [...e.querySelectorAll('p')].find(p => p.textContent === warning), button = [...e.querySelectorAll('button')].find(b => b.textContent === 'Lancer l’ajustement'); return !!(line.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) }", WARNING)
+                    sheet.get_by_role('button', name='Annuler').click()
+                    expect(sheet).to_have_count(0)
+                    assert not refinements, refinements
                     page.reload()
                     page.get_by_role('tab', name='Boutique', exact=True).click()
                     expect(page.get_by_role('button', name='En haut à gauche', exact=True)).to_have_attribute('aria-pressed', 'true')

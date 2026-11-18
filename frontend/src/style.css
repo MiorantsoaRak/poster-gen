@@ -440,6 +440,8 @@ button.version.new small { font-size: 12px; font-weight: 500 }
    long text starts at its top and scrolls: centred, a phone could not scroll to its first lines. */
 .terms-sheet { z-index: 45; place-items: start center }
 .terms-sheet .confirm { width: min(100%, 560px); margin-block: auto; overflow-wrap: anywhere }  /* a long contact breaks too */
+/* « Vos données » (D-TERMS-007), from the sign-in form and the conditions: a finger's height to tap. */
+.data-link { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px }
 /* A panel in front: its own ground and patches (the page behind would show through glass); on a phone it holds a fixed
    decision bar, so it never blurs itself (part A). */

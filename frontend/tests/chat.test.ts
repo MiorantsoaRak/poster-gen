@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { bind, open } from '../src/api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 import { memory } from './fixture'
 
@@ -188,6 +188,26 @@ it('gives a change card the paid button of a recap, and none once the poster has
   expect(cardButton({ ...change, spent: true, request: kept }, undefined, undefined, 0)).toBe('resume')  // its request may have left: the limit does not hide it
   expect(cardButton({ ...change, spent: true, request: kept, card: { ...change.card!, error: 'x' } })).toBe('retry')
   expect(cardButton({ ...change, spent: true, request: kept, job: 'j' })).toBeNull()
+})
+it('warns about unlisted features on a scene adjustment until it has its outcome, never on another card (D-TERMS-005)', () => {
+  const offered = item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'ajoute ses caractéristiques', visual_id: 'v' } })
+  expect(warns(offered)).toBe(true)
+  // Restored from the device, in today's shape and in the shape from before `effect` (normal makes it a refinement).
+  const stored = readThread(JSON.stringify({ items: [offered, { ...offered, id: 'old', card: { kind: 'change', change: 'scene', instruction_fr: 'fond bleu' } }] })).items
+  expect(stored.map(warns)).toEqual([true, true])
+  // Tapped and kept for « Réessayer » or « Reprendre »: still a request for an adjustment.
+  const kept = { path: '/api/creations/c/refinements', body: {}, revision: 2 }
+  expect(warns({ ...offered, spent: true, request: kept })).toBe(true)
+  expect(warns({ ...offered, spent: true, request: kept, card: { ...offered.card!, error: 'Connexion interrompue' } })).toBe(true)
+  // Refused, then offered again as a new card (ChatView again): the old one is done, the new one warns.
+  expect(warns({ ...offered, spent: true, done: true, card: { ...offered.card!, error: 'x' } })).toBe(false)
+  expect(warns({ ...offered, id: 'again' })).toBe(true)
+  expect(warns({ ...offered, done: true })).toBe(false)  // its version came, or a later card replaced it
+  // A new scene, a free change, a restyle, a card from before that sets the price, the recap and a result send no adjustment.
+  for (const card of [{ kind: 'change', effect: 'scene' as const, words: { title: 'Sony' } }, { kind: 'change', effect: 'free' as const, words: { price_ar: 650000 } },
+    { kind: 'restyle', style: 'sombre' as const }, { kind: 'change', words: { price_ar: 550000 } }, { kind: 'recap' }, { kind: 'result', visual_id: 'v' }])
+    expect(warns(item({ card })), card.kind).toBe(false)
+  expect(warns(item())).toBe(false)
 })
 it('stops only a new paid tap at zero credits or while blocked; « Reprendre » and « Réessayer » stay (D-BALANCE-006)', () => {
   const kept = { path: '/api/creations/c/scenes', body: {}, revision: 2 }

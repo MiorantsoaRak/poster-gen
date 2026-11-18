@@ -56,7 +56,7 @@ def stored(engine):
         return conn.exec_driver_sql("SELECT terms_version FROM shop_profile WHERE id=1").scalar()
 
 
-def sign_in(page):
+def open_atelier(page):
     for attempt in range(60):
         try:
             page.goto(smoke.ORIGIN, timeout=2000)
@@ -65,6 +65,10 @@ def sign_in(page):
             if attempt == 59:
                 raise
             time.sleep(.25)
+
+
+def sign_in(page):
+    open_atelier(page)
     page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
@@ -111,6 +115,9 @@ def shows_conditions(page, heading="Conditions d’utilisation", version=None):
     for paragraph in terms.PARAGRAPHS_FR:
         assert paragraph.replace("{contact}", CONTACT[0]) in texts, (paragraph, texts)
     assert dialog.get_by_role("button").all_inner_texts() == ["J’accepte", "Plus tard"], dialog.get_by_role("button").all_inner_texts()
+    data = dialog.get_by_role("link", name="Vos données", exact=True)  # D-TERMS-007: in a new tab, the dialog stays
+    expect(data).to_have_attribute("href", "/donnees.html")
+    expect(data).to_have_attribute("target", "_blank")
     expect(dialog.get_by_role("button", name="Se déconnecter")).to_have_count(0)
     page.wait_for_function(FOCUS_IN, arg=TERMS)
     expect(page.locator(".app-header")).to_have_attribute("inert", "")
@@ -462,11 +469,34 @@ def focus_button(page, name, presses=6):
     raise AssertionError(f"« {name} » not reached by Tab")
 
 
+def data_page(page):
+    """« Vos données » from the sign-in screen, signed out (T-TERMS-004, D-TERMS-007): the static page in the same tab, in
+    both themes (it follows the device: no script reads the atelier's choice), nothing wider than the phone; back to the
+    sign-in."""
+    open_atelier(page)
+    link = page.locator("form.sign-in").get_by_role("link", name="Vos données", exact=True)
+    expect(link).not_to_have_attribute("target", "_blank")
+    link.click()
+    page.wait_for_url(f"{smoke.ORIGIN}/donnees.html")
+    expect(page.get_by_role("heading", name="Vos données", level=1)).to_be_visible()
+    expect(page.locator("script")).to_have_count(0)
+    for scheme, ground in (("dark", "rgb(16, 15, 14)"), ("light", "rgb(244, 241, 236)")):
+        page.emulate_media(color_scheme=scheme)
+        assert page.evaluate("getComputedStyle(document.documentElement).backgroundColor") == ground, scheme
+        assert page.evaluate(smoke.NO_SIDEWAYS), f"the data page scrolls sideways, {scheme}"
+        smoke.check_contrast(page, f"data page 360, {scheme}")
+        page.screenshot(path=str(OUT / f"data-page-360-{scheme}.png"), full_page=True)
+    page.emulate_media(color_scheme="dark")  # the context's own, for what follows
+    page.get_by_role("link", name="Retour à l’atelier", exact=True).click()
+    expect(page.get_by_label("Identifiant de la boutique", exact=True)).to_be_visible()
+
+
 def walk_keyboard(browser, engine, errors, product, model, first):
     """The keyboard at 360 × 640, both themes, without repeating the races (the design's second T-TERMS-003 row)."""
     context = browser.new_context(viewport={"width": 360, "height": 640}, color_scheme="dark")
     context.add_init_script(STEPS_FIRST)
     page, posts = watch(context, errors)
+    data_page(page)
     # The widest contact: one unbroken word in the last paragraph, as the server would give it (SUPPORT_CONTACT_FR).
     terms.paragraphs = lambda settings: [paragraph.replace("{contact}", LONG_CONTACT) for paragraph in terms.PARAGRAPHS_FR]
     CONTACT[0] = LONG_CONTACT
@@ -610,7 +640,7 @@ def run():
           "stale balance; a held opening read answered after the acceptance; a double tap sent once; a scene admitted "
           "after it; a new version (409) shown; a lost acceptance found by the read. At 360 × 640 in both themes by "
           "keyboard: from an open review, and behind the sign-out confirmation; a never-admitted request's first "
-          "admission after acceptance.")
+          "admission after acceptance. « Vos données » from the sign-in screen, signed out, in both themes at 360.")
 
 
 if __name__ == "__main__":

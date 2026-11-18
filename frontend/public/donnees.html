@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- « Vos données » (D-TERMS-007, R-TERMS-003): public, no session, no script, nothing from another site. Vite copies it
+     to dist/; the API's static mount serves it, revalidated. What it says comes from the code that keeps or sends each
+     thing (the design's table). The theme follows the device: without a script, the atelier's own choice is not read. -->
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f1ec" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#100f0e" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/icons/icon-192.png" />
+    <title>Vos données</title>
+    <style>
+      @font-face { font-family: Figtree; src: url('/fonts/Figtree-Variable.woff2') format('woff2'); font-weight: 300 900; font-display: swap }
+      :root { --ground: #100f0e; --surface: #1b1a18; --line: #302d2a; --text: #f5f2ee; --muted: #bdb6ad; color-scheme: dark }
+      @media (prefers-color-scheme: light) {
+        :root { --ground: #f4f1ec; --surface: #ffffff; --line: #e2dacf; --text: #1b1815; --muted: #5c554d; color-scheme: light }
+      }
+      html { background: var(--ground); color: var(--text); font: 15px/22px Figtree, system-ui, sans-serif; -webkit-text-size-adjust: 100% }
+      body { margin: 0; padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)) }
+      main { max-width: 680px; margin: 0 auto; overflow-wrap: anywhere }
+      h1 { margin: 0 0 16px; font-size: 26px; line-height: 32px }
+      section { margin: 0 0 16px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface) }
+      h2 { margin: 0 0 8px; font-size: 17px; line-height: 24px }
+      p { margin: 0 0 8px }
+      ul { margin: 0 0 8px; padding-left: 20px }
+      li + li { margin-top: 6px }
+      .muted { color: var(--muted) }
+      a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text); font-weight: 600 }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Vos données</h1>
+      <section>
+        <h2>Ce que le service garde, tant que la boutique existe</h2>
+        <ul>
+          <li>La boutique : son identifiant, son nom, son logo, son contact, la version des conditions acceptée et sa date. Le mot de passe est gardé sous une forme qui ne permet pas de le relire.</li>
+          <li>Les photos que vous envoyez, telles que vous les envoyez, avec les informations que le téléphone y a mises (parfois le lieu de la prise de vue).</li>
+          <li>Les affiches : leurs textes, chaque version faite par l’IA et les fichiers finaux.</li>
+          <li>Chaque demande faite à l’IA et son coût. Une demande d’image garde les textes de l’affiche, le nom et le contact de la boutique quand ils y figurent, et vos demandes d’ajustement mot pour mot.</li>
+          <li>Chaque message lu dans « Par message » : son coût et la réponse de l’application, qui peut reprendre vos mots, jusqu’à votre demande entière.</li>
+          <li>Les crédits : chaque crédit reçu, dépensé ou rendu ; pour un paiement, son montant, son moyen et sa référence.</li>
+          <li>Pour la sécurité : la connexion de chaque appareil, pour une durée limitée ; pour une connexion manquée, l’identifiant saisi, l’adresse IP (ou son début) et l’heure. Le journal du serveur garde des traces techniques, dont les actions de l’opérateur avec l’identifiant de la boutique.</li>
+          <li>Des copies de secours de la base et des images, sur le même serveur, loué par l’opérateur (Hetzner).</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Sur votre appareil</h2>
+        <p>La conversation de « Par message » et vos textes en cours restent dans ce navigateur ; « Se déconnecter » les efface de cet appareil. Si l’effacement échoue, l’atelier vous le signale. Les affiches téléchargées et les images gardées par le navigateur restent sur l’appareil.</p>
+      </section>
+      <section>
+        <h2>Ce qui part vers d’autres services</h2>
+        <p>Les images envoyées sont des copies, sans les informations du téléphone.</p>
+        <ul>
+          <li>« Générer l’affiche », « Nouvelle version », « Créer l’affiche » : OpenAI reçoit les photos du produit, l’image d’inspiration s’il y en a une, et une demande écrite : le nom du produit, le style, les textes à dessiner (dont le contact de la boutique s’il est dessiné) et les ajustements de scène demandés avant, s’il y en a.</li>
+          <li>« Ajuster la scène », ou un changement de la scène par message : OpenAI reçoit aussi la version de départ et votre demande, mot pour mot.</li>
+          <li>« Générer la matière du texte » : OpenAI reçoit la description d’une matière et ses couleurs.</li>
+          <li>Un message dans « Par message » : Anthropic (Claude) reçoit le message, les dernières lignes de la conversation, et le produit, le prix et le style en cours, ou les textes de l’affiche.</li>
+          <li>« Créer un style » : Anthropic reçoit l’affiche modèle.</li>
+          <li>« Proposer un ajustement » : Anthropic reçoit le texte choisi, son réglage et votre consigne.</li>
+          <li>Si la composition est demandée à Claude, Anthropic reçoit aussi les photos du produit et les indications de composition.</li>
+        </ul>
+        <p class="muted">Ces services traitent ce qu’ils reçoivent selon leurs propres conditions.</p>
+      </section>
+      <section>
+        <h2>Effacer vos données</h2>
+        <p>Dès votre demande, l’opérateur suspend la boutique : plus personne ne peut s’y connecter. La suspension bloque les nouvelles demandes. Une demande déjà lancée peut encore aboutir. Il vous dit ensuite ce qui peut être effacé, et quand. Pour le joindre : l’opérateur qui vous a remis votre identifiant.</p>
+      </section>
+      <a href="/">Retour à l’atelier</a>
+    </main>
+  </body>
+</html>

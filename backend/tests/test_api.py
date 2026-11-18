@@ -510,6 +510,25 @@ def test_the_built_frontend_is_public_and_everything_under_api_stays_closed(sett
         assert client.get("/api/shop-profile").status_code == 200
 
 
+def test_the_data_page_is_served_without_a_session_and_revalidated(settings, tmp_path, monkeypatch):
+    """D-TERMS-007: frontend/public/donnees.html, copied by Vite into dist, is public like the page itself: no session,
+    no-cache. It holds no data and runs nothing, and loads nothing from another site."""
+    source = Path(__file__).resolve().parents[2] / "frontend/public/donnees.html"
+    build = tmp_path / "dist"
+    build.mkdir()
+    (build / "index.html").write_text("<!doctype html><title>Atelier</title>", encoding="utf-8")
+    (build / "donnees.html").write_bytes(source.read_bytes())
+    monkeypatch.setattr(rendering, "BUILD_DIR", build)
+    settings.serve_frontend = True
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        page = client.get("/donnees.html")
+        assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+        assert page.headers["cache-control"] == "no-cache" and page.headers["x-content-type-options"] == "nosniff"
+        assert "<h1>Vos données</h1>" in page.text and "Retour à l’atelier" in page.text
+        assert "<script" not in page.text.lower() and not re.search(r"(https?:)?//[a-z]", page.text, re.I)
+        assert "set-cookie" not in page.headers
+
+
 def test_the_operators_page_is_served_at_admin_by_the_same_mount(settings, tmp_path, monkeypatch):
     """D-ADMIN-005: the second build pass writes dist/admin/; the one static mount serves it, public like the shops' page."""
     build = tmp_path / "dist"

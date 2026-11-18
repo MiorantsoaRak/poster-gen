@@ -4,7 +4,7 @@ import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere,
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
-import { credit, elapsedLabel, ended, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
+import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
@@ -18,7 +18,7 @@ interface Listing { items: LibraryItem[]; total: number; next_cursor: string | n
 const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
-const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Aucun objet ni texte ajouté par l’IA', integration: 'Intégration naturelle dans la scène' }
+const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Rien d’ajouté par l’IA sans votre demande, et ce qu’elle a ajouté est exact pour ce produit', integration: 'Intégration naturelle dans la scène' }
 const identifier = ref(''), password = ref(''), error = ref(''), notice = ref(''), busy = ref(false), priceError = ref('')
 // The identity gate (D-MULTI-SHOP-007): its state and its one function are api.ts's. `loaded`: the bound shop was loaded
 // once in this page's life. Its content is only ever hidden, never reset by hand: showing another shop is a fresh page.
@@ -330,7 +330,7 @@ let keptFrom: string | null = null
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
-const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Le titre et le prix sont exacts', identity: 'Le logo et les détails de la boutique sont corrects, sans chevauchement avec le titre, le produit ou le prix', readability: 'Tous les éléments sont lisibles' }
+const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Tous les textes sont exacts : le titre, le prix, et chaque mot, chiffre ou caractéristique ajouté par l’IA', identity: 'Le logo et les détails de la boutique sont corrects, sans chevauchement avec le titre, le produit ou le prix', readability: 'Tous les éléments sont lisibles' }
 const proposal = ref<any>(null), effect = ref<any>(null), polish = ref(''), acknowledgeContent = ref(false), previewPolish = ref(false)
 const effectSources = ref<Record<string, string>>({})
 const previewDoc = computed(() => {
@@ -637,7 +637,7 @@ const vModal = {
 // its credit, read again as the dialog opens, and what stops it, with « Fermer » alone (D-BALANCE-006). `again`: a
 // request to its route lost its answer and keeps its key (api.ts retained): sent again, the server answers what it
 // stored, whatever the balance says now; a request it never took is refused there with its own sentence.
-const paid = ref<{ title: string; text: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void> } | null>(null)
+const paid = ref<{ title: string; text: string; warning?: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void> } | null>(null)
 const paidCost = computed<ReturnType<typeof credit>>(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
   : paid.value.again ? { stop: false, text: ONCE } : credit(balance.value, paid.value.charged))
 const unanswered = (route: string) => retained(`/api/creations/${creation.value?.id}/${route}`)
@@ -654,7 +654,7 @@ function askLook() {
 function askRefine() {
   void readBalance()
   paid.value = { title: 'Ajuster la scène ?', label: 'Lancer l’ajustement', cost: '', charged: 'scene', again: unanswered('refinements'),
-    text: 'L’IA refait la scène selon votre consigne. C’est une nouvelle version : les autres sont conservées.', run: refineScene }
+    text: 'L’IA refait la scène selon votre consigne. C’est une nouvelle version : les autres sont conservées.', warning: FEATURES_WARNING, run: refineScene }
 }
 function askText() {
   paid.value = { title: 'Proposer un ajustement du texte ?', label: 'Lancer la proposition', cost: 'Sans crédit.',
@@ -1747,7 +1747,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <section v-if="state === 'hidden' && failed === 'down'" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
     <section v-else-if="state === 'hidden' && failed" class="sign-in" role="alert"><p>Connexion au serveur impossible.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
     <p v-else-if="state !== 'out'" role="status">Ouverture de l’atelier…</p>
-    <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p></form>
+    <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p><p class="help"><a href="/donnees.html" class="data-link">Vos données</a></p></form>
   </main>
   <main v-if="loaded" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }">
     <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
@@ -1940,15 +1940,15 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         </aside>
       </div>
     </div>
-    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" @keydown.esc="paid = null"><div class="confirm">
-      <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
+    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" @keydown.esc="paid = null"><div class="confirm">
+      <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paid.warning" id="avertissement-ajustement" class="why">{{ paid.warning }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
       <label v-if="smallPhoto && paid.run === createScene && !paidCost.stop" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-      <div class="row"><button v-if="!paidCost.stop" class="primary" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
+      <div class="row"><button v-if="!paidCost.stop" class="primary" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
     </div></div>
     <!-- The conditions of use (D-TERMS-004): under the confirmation above, which keeps the front; server text as text only. -->
     <div v-if="termsOpen" v-modal class="confirm-sheet terms-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-conditions" :inert="!!paid" @keydown.esc="later" @keydown.tab="keepTab"><div class="confirm">
       <h2 id="titre-conditions">{{ terms?.changed ? 'Les conditions d’utilisation ont changé' : 'Conditions d’utilisation' }}</h2>
-      <template v-if="terms"><p class="cost">Version du {{ termsDate(terms.version) }}</p><p v-for="(paragraph, index) in terms.paragraphs_fr" :key="index">{{ paragraph }}</p></template>
+      <template v-if="terms"><p class="cost">Version du {{ termsDate(terms.version) }}</p><p v-for="(paragraph, index) in terms.paragraphs_fr" :key="index">{{ paragraph }}</p><p><a href="/donnees.html" class="data-link" target="_blank" rel="noopener">Vos données</a></p></template>
       <p v-else class="cost" role="alert">Les conditions n’ont pas pu être chargées.</p>
       <p v-if="termsLine" class="cost" role="alert">{{ termsLine }}</p>
       <div class="row"><button v-if="terms" class="primary" :disabled="accepting" @click="acceptTerms">J’accepte</button><button v-else class="primary" @click="retryTerms">Réessayer</button><button class="secondary" @click="later">Plus tard</button></div>
@@ -1986,7 +1986,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <template v-if="review.status === 'pending_review'">
         <div class="review-checks groups">
           <div class="group"><h3><Icon n="box" />Le produit</h3><p class="help">Comparé à votre photo.</p><ul class="points"><li v-for="check in (['colour', 'shape', 'hardware', 'markings'] as const)" :key="check">{{ checkNames[check] }}</li></ul></div>
-          <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small translate="no">{{ item.value }}</small></li><li>Aucun autre texte que ceux ci-dessus</li></ul></div>
+          <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small translate="no">{{ item.value }}</small></li><li>Aucun autre texte, sauf ceux que vous avez demandés à l’IA</li></ul></div>
           <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li><li v-if="review.logo_disc">Un disque blanc vide est prévu pour le logo : rien ne doit être dessiné dedans</li><li v-if="review.logo_disc === null" class="warn">Le disque du logo n’a pas été trouvé dans l’image : le logo a été retiré de cette affiche. Activez « Logo » dans « Boutique » pour le placer vous-même, ou générez une nouvelle version.</li></ul></div>
         </div>
         <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="primary" :disabled="busy" @click="perform(() => decide('approve'))"><Icon n="check" />Tout est conforme, approuver</button></div>

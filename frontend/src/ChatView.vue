@@ -7,10 +7,10 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from './api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, wireDraft,
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
-import { ended, ONCE } from './generation'
+import { ended, FEATURES_WARNING, ONCE } from './generation'
 
 const props = defineProps<{ adapter: ChatAdapter }>()
 const emit = defineEmits<{ steps: [] }>()
@@ -527,11 +527,12 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <p v-if="button === 'resume'">L’affiche n’a peut-être pas été lancée.</p>
           <p v-if="limitOf(item)" class="chat-limit">{{ limitOf(item) }}</p>
           <p v-if="costs(item) && state.credit.stop" class="why" role="status">{{ state.credit.text }}</p>
+          <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-if="button === 'create'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
-            <button v-else-if="button === 'retry' || button === 'resume'" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
+            <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>

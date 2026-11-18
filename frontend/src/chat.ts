@@ -236,6 +236,10 @@ export function normal({ change, previous, ...card }: Card & { change?: unknown;
  *  scene; a price that is a layer changes without a new image, nothing to pay. */
 export const effectOf = (card: Card, selected?: Pick<Visual, 'headline'>): Effect => card.kind === 'restyle' ? 'scene' : card.effect ?? (card.whole || Number.isInteger(selected?.headline?.price_ar) ? 'scene' : 'free')
 export const CHANGE_BUTTONS: Record<Effect, string> = { refine: 'Créer', scene: 'Refaire l’affiche', free: 'Changer' }
+/** Whether a card shows the features warning (generation.ts FEATURES_WARNING, D-TERMS-005): a scene adjustment until it
+ *  has its outcome, whether offered, restored from the device, re-offered after a refusal or kept for « Réessayer » /
+ *  « Reprendre ». A new scene or a free change sends no adjustment. */
+export const warns = (item: Item) => changes(item.card) && effectOf(item.card!) === 'refine' && !item.done
 /** A new message or card replaces the open questions and recaps before it: only the latest may be tapped. */
 export function supersede(items: Item[]) {
   for (const item of items) if (item.card && item.card.kind !== 'result' && !item.spent) item.done = true

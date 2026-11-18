@@ -29,6 +29,11 @@ UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cett
 # What a card that pays for an image says (D-BALANCE-006): its credit and what is left (the smokes' shop has 100), and under
 # « Reprendre » or « Réessayer » that the kept request is paid once.
 COST, ONCE = re.compile(r"1 crédit · il vous en reste \d+"), "1 crédit, une seule fois pour cette demande"
+# Above the button of every scene adjustment still to be had, whatever brought the card (D-TERMS-005, generation.ts).
+WARNING = "Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier."
+# The check's wording, true for every version, made with or without features asked of the AI (D-TERMS-006).
+EXTRAS, OTHER_TEXT = "Rien d’ajouté par l’IA sans votre demande, et ce qu’elle a ajouté est exact pour ce produit", "Aucun autre texte, sauf ceux que vous avez demandés à l’IA"
+CONTENT = "Tous les textes sont exacts : le titre, le prix, et chaque mot, chiffre ou caractéristique ajouté par l’IA"
 
 
 def sign_in(page):
@@ -207,12 +212,15 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
     assert chat.evaluate("e => e.inert")
     expect(page.get_by_alt_text("Photo originale 1 à comparer")).to_be_visible()
+    for line in (EXTRAS, OTHER_TEXT):
+        expect(page.locator(".review-checks .points li", has_text=line)).to_have_count(1)
     page.get_by_role("button", name="Tout est conforme, approuver").click()
     expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
     expect(thread.locator(".chat-state")).to_have_text("Approuvée")
     expect(verify).to_have_count(0)
     page.get_by_role("button", name="Télécharger", exact=True).click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    expect(page.locator(".final-preview .points li", has_text=CONTENT)).to_have_count(1)
     page.get_by_role("button", name="Tout est conforme, confirmer").click()
     expect(page.get_by_role("heading", name="Votre affiche est prête")).to_be_visible()
     expect(page.get_by_role("link", name="Télécharger le PNG confirmé")).to_be_visible()
@@ -501,6 +509,8 @@ def walk_changes(browser, errors, session, data):
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text("Scène : « fond plus sombre »")
     expect(card).to_contain_text(COST)
+    expect(create).to_have_accessible_description(WARNING)
+    expect(card.get_by_text(WARNING, exact=True)).to_be_visible()  # a fresh scene adjustment warns
     first = versions()[0]["id"]
     assert len(reads) == 1 and bodies[-1]["visual_id"] == first, (reads, bodies)  # the read names the version shown
     both_themes(page, "change card, desktop", "chat-change-1366")
@@ -535,6 +545,8 @@ def walk_changes(browser, errors, session, data):
     resume = thread.get_by_role("button", name="Reprendre")
     expect(resume).to_be_visible()
     expect(resume.locator("xpath=../..")).to_contain_text(ONCE)
+    expect(resume).to_have_accessible_description(WARNING)
+    expect(resume.locator("xpath=../..").get_by_text(WARNING, exact=True)).to_be_visible()  # restored from the device
     expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()  # the waiting card comes first
     page.wait_for_timeout(500)
     assert sent["refinements"] == [kept["id"]], sent
@@ -755,6 +767,7 @@ def walk_changes(browser, errors, session, data):
     expect(card).to_contain_text("je refais l’affiche avec 550 000 Ar")
     expect(card.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler"])
     expect(card).to_contain_text(COST)
+    expect(card).not_to_contain_text(WARNING)  # a whole new scene sends no adjustment
     assert items()[-1]["card"] == {"kind": "change", "words": {"price_ar": 550000}, "said": "prix 550 000 Ar"}, items()[-1]
     cancel.click()
     context.unroute("**/api/reads")
@@ -832,6 +845,8 @@ def walk_changes(browser, errors, session, data):
     other_tab.close()
     page.get_by_role("button", name="Continuer ici").click()
     expect(create).to_have_count(1)
+    expect(thread.get_by_text(WARNING, exact=True)).to_have_count(1)  # refused, offered again: the new card warns, the old one is done
+    expect(create.locator("xpath=../..").get_by_text(WARNING, exact=True)).to_be_visible()
     cancel.click()
     field.fill("")
 

@@ -50,6 +50,10 @@ export function ended(job: { status: string; kind: string; error_code: string | 
  *  what it stored, so the credit is taken once (D-BALANCE-006). */
 export const ONCE = '1 crédit, une seule fois pour cette demande'
 
+/** Before every paid scene adjustment, on the chat's card and in « Ajuster la scène » (D-TERMS-005, owner decision 2).
+ *  Always the page's: the server decides nothing about it, so a card read before it shows it too. */
+export const FEATURES_WARNING = 'Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier.'
+
 // The shop's credits as GET /api/balance gives them (D-BALANCE-004). The browser holds null while they are unread or
 // their read failed: unknown, never 0.
 export type Charged = 'scene' | 'text_texture'
