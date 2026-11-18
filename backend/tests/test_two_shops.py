@@ -16,7 +16,7 @@ from starlette.routing import Mount
 
 from affiche.api import create_app
 from affiche.db import write_tx
-from affiche.posters import credits, rendering, visuals
+from affiche.posters import credits, rendering, terms, visuals
 from test_api import (HEADERS, ORIGIN, PASSWORD, client, create_draft, credentials, login, old_cancellation,  # noqa: F401
                       password_hash, post, second_shop, settings)
 from test_config import env  # noqa: F401
@@ -32,7 +32,7 @@ EXEMPT = {
 }
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
 OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/balance"),
-       ("POST", "/api/assets")}
+       ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms")}
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 
@@ -116,7 +116,8 @@ def json_keys(value):
             yield from json_keys(item)
 
 
-def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothing(planner_stub, client, settings):
+def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothing(planner_stub, client, settings,
+                                                                                    monkeypatch):
     a, engine = client, client.app.state.engine
     answers = []  # every answer either shop receives, for the walk of dollar figures at the end
     a.event_hooks["response"].append(answers.append)
@@ -325,6 +326,14 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None}
     assert [item["id"] for item in a.get("/api/creations").json()["items"]] == [cid]
     assert [item["id"] for item in a.get("/api/looks").json()["items"]] == [look_a] and b.get("/api/looks").json()["items"] == []
+    # The conditions (D-TERMS-002) take no id: A's acceptance is A's alone, and B's accepts for B without touching A's.
+    accepted_a, accepted_b = "2026-11-18T08:00:00.000000+00:00", "2026-11-18T09:00:00.000000+00:00"  # the clock's
+    monkeypatch.setattr(terms, "utc_now", lambda: accepted_a)
+    assert a.post("/api/terms", json={"version": terms.VERSION}).json()["accepted_at"] == accepted_a
+    assert [shop.get("/api/terms").json()["accepted_at"] for shop in (a, b)] == [accepted_a, None]
+    monkeypatch.setattr(terms, "utc_now", lambda: accepted_b)
+    assert b.post("/api/terms", json={"version": terms.VERSION}).json()["accepted_at"] == accepted_b
+    assert [shop.get("/api/terms").json()["accepted_at"] for shop in (a, b)] == [accepted_a, accepted_b]
 
     # Credits (D-BALANCE-004): each shop reads its own. Both started with 100; A's scene and text material took two,
     # B's scene one. A's grant moves A's balance only; B at zero gets 402 while A has credits, and A's does not move.

@@ -65,7 +65,7 @@
 - [ ] T-ADMIN-008 (after Release 1: the user, 2026-11-17, ADR-111) The usage report.
 - [ ] T-ADMIN-009 (after Release 1: the user, 2026-11-17, ADR-111) Problems and queue.
 - [ ] T-ADMIN-010 (after Release 1: the user, 2026-11-17, ADR-111) The Reka UI trial (AlertDialog; kept only if it beats the native dialog on a measured point).
-- [ ] T-TERMS-001 (designs/service-terms.md v3, ADR-112) Migration 0017, `terms.py` (the text and its version), `GET`/`POST /api/terms`.
+- [x] T-TERMS-001 (done 2026-11-18: backend 1512 passed, 3 deselected on SQLite 3.53.1; Codex r1 APPROVE WITH FIXES, two test fixes applied, not seen again, reviews/t-terms-001-code-r1.md; SQLite 3.40.1 waits for the release rehearsal; an unaccepted shop can still generate until T-TERMS-002) (designs/service-terms.md v3, ADR-112) Migration 0017, `terms.py` (the text and its version), `GET`/`POST /api/terms`.
   - verify: the design's T-TERMS-001 rows (test_db.py, test_terms.py); `uv run pytest -q` from `backend/`.
 - [ ] T-TERMS-002 The acceptance check at admission (`jobs.enqueue`, `reads._admit`, `jobs.blocked`), `/api/balance`'s `terms` reason, the fixture sweep.
   - verify: the design's T-TERMS-002 rows; the four browser smokes still pass.

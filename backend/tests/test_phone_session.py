@@ -65,7 +65,7 @@ def test_a_folder_another_api_holds_is_left_exactly_as_it_was(settings, password
             pass
     settings.shop_password_hash = None  # as main() passes it
     before = folder_state(settings)
-    assert before[0]["version"] == ("0016" if adopted else "0012") and len(before[1]) == 1
+    assert before[0]["version"] == ("0017" if adopted else "0012") and len(before[1]) == 1
     held = acquire_lock(settings.data_dir, "api")  # another API serves this folder
     try:
         with pytest.raises(AlreadyRunning), TestClient(phone_session.application(settings, ONE_OFF)):
@@ -82,4 +82,4 @@ def test_the_one_off_password_is_set_at_start_and_ends_the_other_sessions(settin
         assert not client.get("/api/session", headers=phone).json()["authenticated"]
         assert client.post("/api/session", json=credentials(ONE_OFF)).status_code == 200
         with client.app.state.engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0016"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0017"

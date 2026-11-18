@@ -74,13 +74,20 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def live_shop(conn, token: str) -> int | None:
+    """The shop of a live session, else None. A suspended shop's sessions stop at once and work again when it is enabled.
+    A write calls it again inside its write_tx (terms.accept): the time is read now, so a session ended, or a shop
+    suspended, while the write waited is not live."""
+    return conn.execute(text("SELECT s.shop_id FROM sessions s JOIN shop_profile p ON p.id=s.shop_id "
+                             "WHERE s.token_hash=:hash AND s.expires_at>:now AND p.state='active'"),
+                        {"hash": token_hash(token), "now": utc_now()}).scalar()
+
+
 def session_shop(engine, token: str | None) -> int | None:
     if not token or len(token) > 128:
         return None
-    with engine.connect() as conn:  # a suspended shop's sessions stop at once and work again when it is enabled
-        return conn.execute(text("SELECT s.shop_id FROM sessions s JOIN shop_profile p ON p.id=s.shop_id "
-                                 "WHERE s.token_hash=:hash AND s.expires_at>:now AND p.state='active'"),
-                            {"hash": token_hash(token), "now": utc_now()}).scalar()
+    with engine.connect() as conn:
+        return live_shop(conn, token)
 
 
 def limit_key(ip: str) -> str:

@@ -94,7 +94,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0016"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0017"
     finally:
         engine.dispose()
 
@@ -292,7 +292,7 @@ def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, mo
 
 def test_a_fresh_database_starts_with_shop_1_without_password(engine):
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0016"
+        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0017"
         assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at FROM shop_profile"
                                     ).all() == [("originalphone", None, "active", 1)]
         assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
@@ -375,8 +375,10 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
     assert out.endswith("REHEARSAL OK\n") and f"environment: SQLite {sqlite3.sqlite_version}, Python " in out
-    assert "pending migrations: 0013, 0014, 0015, 0016" in out and "schema version: 0012 -> 0016" in out
+    assert "pending migrations: 0013, 0014, 0015, 0016, 0017" in out and "schema version: 0012 -> 0017" in out
     assert "ledger provider_calls: 512881 -> 512881" in out and "(over id, ip, attempted_at)" in out
+    # shop_profile from 0012: 0013's projection, the earliest pending one, over its six columns of then.
+    assert "(over id, revision, name, contact, logo_asset, updated_at)" in out
     assert "(over id, shop_id, creation_id, origin_revision, input_id, kind," in out  # poster_jobs without takes_credit
     lines = out.splitlines()
     assert {line for line in lines if line.startswith("0014 ADDED")} == {
@@ -386,6 +388,7 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert [line for line in lines if "ADDED shop_profile: its rows" in line] == [  # 0013's own is retired by name
         "0015 ADDED shop_profile: its rows cannot be deleted, replaced or made another shop: as expected"]
     assert [line for line in lines if line.startswith("0016 ")] == ["0016 ADDED operator_sessions: empty: as expected"]
+    assert [line for line in lines if line.startswith("0017 ")] == ["0017 ADDED shop_profile: nothing accepted: as expected"]
     guards = [line for line in lines if line.startswith("guard ")]
     assert len(guards) == 14 and all(line.endswith(": as expected") for line in guards)  # a table, 12 triggers, a column
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and read(path)[0]["version"] == "0012"
@@ -429,7 +432,9 @@ def test_the_rehearsal_refuses_a_pending_migration_without_its_contract(tmp_path
 
 def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(tmp_path, monkeypatch):
     path = pilot_0012(tmp_path, monkeypatch)
-    preserved = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0014").module.PRESERVED
+    script = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini"))
+    # As the rehearsal hashes them: poster_jobs over 0014's projection, shop_profile over 0017's (it widens it).
+    preserved = script.get_revision("0014").module.PRESERVED | script.get_revision("0017").module.PRESERVED
     engine = make_engine(tmp_path)
     try:
         migrate_to(engine, "0013", monkeypatch)
@@ -438,7 +443,7 @@ def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(t
         after, _ = read(path, preserved)
         assert after["tables"].pop("credit_grants")[0] == 0 and after["tables"].pop("operator_sessions")[0] == 0
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"]
-        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0016", 0, "ok")
+        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0017", 0, "ok")
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT kind, takes_credit FROM poster_jobs ORDER BY id").all() == [
                 ("plan", 0), ("scene", 0), ("text_patch", 0), ("text_texture", 0), ("render", 0), ("plan", 0)]
@@ -521,7 +526,7 @@ def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pen
             conn.exec_driver_sql(statement)
     assert rehearse.main(["rehearse", engine.url.database]) == 1
     out = capsys.readouterr().out
-    assert "pending migrations: none (code head 0016)" in out
+    assert "pending migrations: none (code head 0017)" in out
     assert out.splitlines()[-1] == f"REHEARSAL FAILED: {guard}"
 
 
@@ -546,5 +551,57 @@ def test_0015_on_a_database_at_0014_keeps_every_row_and_adds_only_its_two_trigge
         with engine.connect() as conn:
             assert [credits.balance(conn, shop)["available"] for shop in (1, 2)] == [5, 3]
             assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+    finally:
+        engine.dispose()
+
+
+STATEMENTS_0017 = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0017").module.STATEMENTS
+LATER = "2099-01-01T00:00:00.000000+00:00"
+
+
+def test_0017_on_a_populated_0016_database_keeps_every_shop_column_and_accepts_nothing(tmp_path, monkeypatch, capsys):
+    """D-TERMS-002: shops, sessions, an operator session, credit lines and jobs at 0016. The rehearsal hashes the ten
+    shop columns; 0017 keeps every row of every table and adds two columns, empty for every shop."""
+    path = pilot_0012(tmp_path, monkeypatch)
+    preserved = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0017").module.PRESERVED
+    engine = make_engine(tmp_path)
+    try:
+        migrate_to(engine, "0016", monkeypatch)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO shop_profile (revision,name,updated_at,identifier,password_hash,state,"
+                                 f"created_at) VALUES (1,'Boutique Deux','{T}','shopdeux','$argon2id$tests','suspended','{T}')")
+            conn.exec_driver_sql(f"INSERT INTO sessions VALUES ('t2',2,'{LATER}')")
+            conn.exec_driver_sql(f"INSERT INTO operator_sessions VALUES ('{'0' * 64}','{T}','{LATER}','127.0.0.1',NULL)")
+            credits.grant(conn, 1, 5, origin="offered", ref="welcome", actor="tests")
+            credits.grant(conn, 2, 3, origin="offered", ref="welcome", actor="tests")
+        assert rehearse.main(["rehearse", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "pending migrations: 0017 (code head 0017)" in out and out.endswith("REHEARSAL OK\n")
+        assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at)"
+                in out)
+        before, schema_before = read(path, preserved)
+        migrate(engine)
+        after, schema = read(path, preserved)
+        assert after["tables"] == before["tables"] and after["sums"] == before["sums"]  # every other table: every column
+        assert (before["version"], after["version"], after["foreign_key_check"], after["integrity_check"]) == (
+            "0016", "0017", 0, "ok")
+        assert schema.keys() == schema_before.keys()
+        assert {name: sql for name, sql in schema.items() if name != "shop_profile"} == {
+            name: sql for name, sql in schema_before.items() if name != "shop_profile"}
+        assert all(statement.split(" ADD COLUMN ", 1)[1] in schema["shop_profile"] for statement in STATEMENTS_0017)
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT id, terms_version, terms_accepted_at FROM shop_profile ORDER BY id").all() \
+                == [(1, None, None), (2, None, None)]
+            assert [credits.balance(conn, shop)["available"] for shop in (1, 2)] == [5, 3]
+            assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+        for refused in ("UPDATE shop_profile SET terms_version='2026-11-17' WHERE id=1",  # a half-NULL pair, both ways
+                        f"UPDATE shop_profile SET terms_accepted_at='{T}' WHERE id=1",
+                        f"UPDATE shop_profile SET terms_version='', terms_accepted_at='{T}' WHERE id=1",  # an empty version
+                        "UPDATE shop_profile SET terms_version='2026-11-17', terms_accepted_at='' WHERE id=1",  # empty date
+                        f"UPDATE shop_profile SET terms_version='{'9' * 33}', terms_accepted_at='{T}' WHERE id=1"):
+            with pytest.raises(exc.IntegrityError, match="CHECK"), write_tx(engine) as conn:
+                conn.exec_driver_sql(refused)
+        with write_tx(engine) as conn:  # both together, neither empty
+            conn.exec_driver_sql(f"UPDATE shop_profile SET terms_version='2026-11-17', terms_accepted_at='{T}' WHERE id=1")
     finally:
         engine.dispose()

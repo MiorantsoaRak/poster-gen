@@ -30,7 +30,7 @@ from starlette.staticfiles import StaticFiles
 
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
-from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, typography, visuals
+from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, terms, typography, visuals
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -132,6 +132,8 @@ MESSAGES = {
         "read_running": "Votre message est encore en cours de lecture. Patientez quelques secondes.",
         "read_limit": "Limite de messages atteinte pour aujourd’hui. Continuez dans Pas à pas.",
         "reads_busy": "Deux messages de la boutique sont déjà en cours de lecture. Patientez quelques secondes, puis renvoyez le vôtre.",
+        # The conditions of use (D-TERMS-002): the version the page showed is no longer the current one.
+        "terms_outdated": "Les conditions viennent de changer : lisez la nouvelle version avant de l'accepter.",
         # The chat's cards (posters/reads.py): the one place for their French sentences. {} is filled by the server.
         "card_ask_product": "Quel est le produit ? Marque et modèle.",
         "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
@@ -308,6 +310,10 @@ class Login(Model):
 class PasswordChange(Model):
     current_password: SecretStr = Field(min_length=1, max_length=1024)
     new_password: SecretStr = Field(min_length=1, max_length=1024)  # under 10 characters: password_too_short
+
+
+class Acceptance(Model):
+    version: str = Field(min_length=1, max_length=32)  # the version the page showed (terms.VERSION)
 
 
 class ProfileView(Profile):
@@ -532,6 +538,17 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                 blocked[kind] = None if refused is None else {"reason": BLOCKED[refused.code],
                                                               "message_fr": MESSAGES[refused.code]}
             return credits.balance(conn, shop) | {"purchase_fr": credits.purchase_text(conn, settings), "blocked": blocked}
+
+    @protected.get("/api/terms")
+    def conditions(request: Request):
+        """The conditions of use and the session's shop's acceptance of this version (D-TERMS-002). No id."""
+        with app.state.engine.connect() as conn:
+            return terms.view(conn, settings, request.state.shop)
+
+    # No Idempotency-Key: accepting again writes nothing and answers the first date.
+    @protected.post("/api/terms")
+    def accept_conditions(body: Acceptance, request: Request):
+        return terms.accept(app.state.engine, request.cookies.get(auth.COOKIE), request.state.shop, body.version)
 
     @protected.get("/api/status")
     def status():
