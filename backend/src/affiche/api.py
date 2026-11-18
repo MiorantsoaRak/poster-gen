@@ -134,6 +134,8 @@ MESSAGES = {
         "reads_busy": "Deux messages de la boutique sont déjà en cours de lecture. Patientez quelques secondes, puis renvoyez le vôtre.",
         # The conditions of use (D-TERMS-002): the version the page showed is no longer the current one.
         "terms_outdated": "Les conditions viennent de changer : lisez la nouvelle version avant de l'accepter.",
+        # The gate (D-TERMS-003): the current version not accepted; refused before anything is written, sent or taken.
+        "terms_required": "Acceptez d'abord les conditions d'utilisation : rien n'a été envoyé, et aucun crédit n'a été pris.",
         # The chat's cards (posters/reads.py): the one place for their French sentences. {} is filled by the server.
         "card_ask_product": "Quel est le produit ? Marque et modèle.",
         "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
@@ -161,7 +163,8 @@ MESSAGES = {
 
 
 # GET /api/balance: what blocks a charged operation whatever the shop's credits (D-BALANCE-003). Buying would not help.
-BLOCKED = {"budget_exhausted": "service", "provider_unavailable": "service", "shop_daily_limit": "day"}
+BLOCKED = {"budget_exhausted": "service", "provider_unavailable": "service", "shop_daily_limit": "day",
+           "terms_required": "terms"}
 
 
 def error_response(request: Request, error: store.Refused, message: str | None = None):

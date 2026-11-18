@@ -20,8 +20,8 @@ from uuid import uuid4
 from affiche import shops
 from affiche.api import BUNDLE, MESSAGES, create_app
 from affiche.config import Settings
-from affiche.db import make_engine, write_tx
-from affiche.posters import credits
+from affiche.db import make_engine, utc_now, write_tx
+from affiche.posters import credits, terms
 from affiche.posters.auth import PASSWORDS
 from affiche.visuals.gateway import StubProvider
 
@@ -1264,7 +1264,7 @@ def walk_two_shops(browser, errors, data):
     password_b = os.urandom(12).hex()
     hashed = PASSWORDS.hash(password_b)  # Argon2 outside the transaction, as the operator's command does
     with write_tx(engine) as conn:
-        shops.create_shop(conn, "Boutique Deux", "Boutique Deux", hashed)
+        accepted(conn, shops.create_shop(conn, "Boutique Deux", "Boutique Deux", hashed))
     a_title, b_title = "Alpha Porte 7", "Bravo Porte 9"
     a_words, b_words = [a_title, "Original Phone Mada", "Casque à garder"], [b_title, "Boutique Deux"]
     both = a_words + b_words
@@ -1994,6 +1994,7 @@ def walk_credits(browser, errors, data, app):
     with write_tx(engine) as conn:
         shop = shops.create_shop(conn, "Boutique Credits", "Boutique Credits", hashed)
         credits.grant(conn, shop, 5, origin="offered", ref="smoke", actor="tests")
+        accepted(conn, shop)
     purchase = f"Pour obtenir des crédits, contactez {SUPPORT}."
     zero = f"Il ne vous reste plus de crédit : rien ne sera envoyé. Vos affiches restent disponibles. {purchase}"
     once = "1 crédit, une seule fois pour cette demande"
@@ -2260,9 +2261,17 @@ def walk_credits(browser, errors, data, app):
 
 def credited(engine):
     """100 offered credits for the pilot shop, as the operator grants them: a shop starts at zero, and every image job
-    takes one (D-BALANCE-002)."""
+    takes one (D-BALANCE-002); and the conditions accepted."""
     with write_tx(engine) as conn:
         credits.grant(conn, 1, 100, origin="offered", ref="tests", actor="tests")
+        accepted(conn, 1)
+
+
+def accepted(conn, shop):
+    """The current conditions of use accepted, as POST /api/terms writes it (D-TERMS-002): without them nothing new is
+    asked of the AI (D-TERMS-003)."""
+    conn.exec_driver_sql("UPDATE shop_profile SET terms_version=?, terms_accepted_at=? WHERE id=?",
+                         (terms.VERSION, utc_now(), shop))
 
 
 def serve(data, **extra):

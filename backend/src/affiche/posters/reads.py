@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from affiche.db import utc_now, write_tx
 from affiche.visuals.gateway import usd_to_micros
-from . import jobs
+from . import jobs, terms
 from .models import MAX_PRICE, Id, Model, Name, Offer, canonical, format_price
 from .planner import ClaudePlanner, PlannerError
 from .plans import Headline, brand_in_title, name_words, screen_headline, wire_schema
@@ -568,6 +568,7 @@ def _admit(engine, settings, shop, key, request: ReadRequest):
                 if request.visual_id is None:
                     raise Refused("reload_required", 409)
                 poster = poster_words(conn, shop, creation["document"], request.visual_id)
+            terms.require(conn, shop)  # as in jobs.enqueue: after ownership, before every limit (D-TERMS-003)
             # The same lock as jobs.enqueue: stub and paid planner data never mix in one data folder.
             recorded = conn.execute(text("SELECT value FROM meta WHERE key='planner_mode'")).scalar()
             if recorded is None:

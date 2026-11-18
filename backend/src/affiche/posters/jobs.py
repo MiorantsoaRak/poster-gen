@@ -11,7 +11,7 @@ from sqlalchemy import bindparam, text
 from affiche.db import utc_now, write_tx
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import RATES, usd_to_micros
-from . import credits
+from . import credits, terms
 from .models import canonical
 from .planner import MODEL, RATE_CARD
 from .store import Refused, _owned, _revision, get_creation, mutate
@@ -81,9 +81,11 @@ CHARGED = ("scene", "text_texture")  # a refinement is costed as a scene (call_s
 
 
 def blocked(conn, settings, shop, kind) -> Refused | None:
-    """Why this charged operation would be refused now whatever the shop's credits (D-BALANCE-003): the admission's own
-    guard with that operation's own estimate, read-only. None: nothing but the credits decides."""
+    """Why this charged operation would be refused now whatever the shop's credits (D-BALANCE-003): the conditions of use
+    (D-TERMS-003), then the admission's own guard with that operation's own estimate, read-only. None: nothing but the
+    credits decides."""
     try:
+        terms.require(conn, shop)
         provider_guard(conn, settings, shop, call_spec(settings, kind).estimate_micros)
     except Refused as refused:
         return refused
@@ -106,6 +108,10 @@ def enqueue(conn, settings, shop, creation_id, revision, kind, payload) -> dict:
     _revision(creation["revision"], revision)
     if creation["status"] != "active":
         raise Refused("creation_abandoned", 409)
+    # Before every limit and the credit (D-TERMS-003): an unaccepted shop is told what it can do. mutate's replay of an
+    # admitted key came before, and a 429 retry reserves through _reserve alone: neither is a new request.
+    if spec:
+        terms.require(conn, shop)
     if kind in IMAGE_KINDS and conn.execute(text(
             "SELECT 1 FROM poster_jobs WHERE creation_id=:id AND kind IN ('scene','refine','text_texture','background')"
             " AND status IN ('queued','running')"), {"id": creation_id}).first():

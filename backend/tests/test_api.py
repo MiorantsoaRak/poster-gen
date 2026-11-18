@@ -30,7 +30,7 @@ from affiche.posters import auth, credits, jobs, rendering, store
 from affiche.posters.models import canonical
 from affiche.visuals.admission import spent_micros
 from test_config import env  # noqa: F401
-from test_db import credited, migrate_to
+from test_db import accepted, credited, migrate_to, unaccepted
 from test_poster_drafts import photo
 
 ORIGIN = "https://shop.example"
@@ -354,6 +354,46 @@ def test_balance_says_what_is_left_and_what_would_refuse_each_image_whatever_the
     balance(0, {"scene": unavailable, "text_texture": unavailable}, "Pack 10 : 10 000 Ar par MVola.")
 
 
+def test_the_conditions_not_accepted_are_a_balance_reason_and_a_403_that_writes_nothing(client):
+    """D-TERMS-003: a shop that has not accepted the current conditions still reads its balance (200), and each charged
+    operation says `terms`, before the service's pause, with the gate's sentence. Its scene is refused with 403 and that
+    sentence, not retryable, and writes nothing; accepted, the pause is told again, then nothing blocks."""
+    login(client)
+    creation, engine = create_draft(client), client.app.state.engine
+    plan = client.post(f'/api/creations/{creation["id"]}/plans', headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())},
+                       json={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
+    assert plan.status_code == 201, plan.text
+    sentence = "Acceptez d'abord les conditions d'utilisation : rien n'a été envoyé, et aucun crédit n'a été pris."
+    conditions = {"reason": "terms", "message_fr": sentence}
+
+    def blocked():
+        answer = client.get("/api/balance")
+        assert answer.status_code == 200 and answer.json()["available"] == 100, answer.text
+        return answer.json()["blocked"]
+
+    def written():
+        with engine.connect() as conn:
+            return [conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one() for table in ("poster_jobs", "poster_calls", "mutation_keys")]
+
+    unaccepted(engine)
+    assert blocked() == {"scene": conditions, "text_texture": conditions}
+    before = written()
+    answer = client.post(f'/api/creations/{creation["id"]}/scenes', json={"plan_id": plan.json()["id"],
+                         "acknowledged_warnings": ["low_resolution"]}, headers={"If-Match": '"1"', "Idempotency-Key": str(uuid4())})
+    assert answer.status_code == 403 and answer.json()["error"] == {
+        "code": "terms_required", "retryable": False, "message_fr": sentence}
+    assert written() == before
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    assert blocked() == {"scene": conditions, "text_texture": conditions}
+    accepted(engine)
+    service = {"reason": "service", "message_fr": affiche_api.MESSAGES["budget_exhausted"]}
+    assert blocked() == {"scene": service, "text_texture": service}
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    assert blocked() == {"scene": None, "text_texture": None}
+
+
 def test_origin_required_even_for_login_and_logout(client):
     for origin in ("", "https://evil.example", "null", ORIGIN+"/"):
         assert client.post("/api/session", json=credentials(PASSWORD), headers={"Origin": origin}).status_code == 403
@@ -509,7 +549,8 @@ def test_login_limit_counts_an_ipv6_64_as_one_client(client, settings):
 
 
 def second_shop(engine, identifier="Boutique Deux", name="Boutique Deux"):
-    """Another shop, made as the operator makes one (D-MULTI-SHOP-003), with credits; returns its id and its password."""
+    """Another shop, made as the operator makes one (D-MULTI-SHOP-003), with credits and the conditions accepted
+    (credited); returns its id and its password."""
     password = os.urandom(12).hex()
     password_hash = auth.PASSWORDS.hash(password)  # Argon2 outside the transaction, as the operator's command does
     with write_tx(engine) as conn:

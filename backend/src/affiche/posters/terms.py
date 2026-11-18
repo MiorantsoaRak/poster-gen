@@ -1,7 +1,8 @@
-"""The conditions of use (D-TERMS-001, D-TERMS-002): the French text, its version, and a shop's acceptance. The text is
-held here, not in the database (a restore could pair an older text with a newer version) nor in the bundle (the page
-shows the server's words of now). A word changed needs a new VERSION: tests/test_terms.py pins the text's hash to it.
-The contact is not part of the version: changing it asks nobody again."""
+"""The conditions of use (D-TERMS-001, D-TERMS-002, D-TERMS-003): the French text, its version, a shop's acceptance, and
+the gate that refuses a new AI request without it. The text is held here, not in the database (a restore could pair an
+older text with a newer version) nor in the bundle (the page shows the server's words of now). A word changed needs a
+new VERSION: tests/test_terms.py pins the text's hash to it. The contact is not part of the
+version: changing it asks nobody again."""
 from sqlalchemy import text
 
 from affiche.db import utc_now, write_tx
@@ -43,6 +44,14 @@ def view(conn, settings, shop: int) -> dict:
                                 {"shop": shop}).one()
     return {"version": VERSION, "paragraphs_fr": paragraphs(settings), "accepted_at": at if accepted == VERSION else None,
             "changed": accepted is not None and accepted != VERSION}
+
+
+def require(conn, shop: int) -> None:
+    """The gate (D-TERMS-003), the one comparison with the current version: in the caller's admission transaction, after
+    replay and ownership and before the limits and the credit, so a refusal writes, takes and sends nothing. Callers:
+    jobs.enqueue (a kind with a provider call), reads._admit (a new read) and jobs.blocked (GET /api/balance)."""
+    if conn.execute(text("SELECT terms_version FROM shop_profile WHERE id=:shop"), {"shop": shop}).scalar() != VERSION:
+        raise Refused("terms_required", 403)
 
 
 def accept(engine, token: str, shop: int, version: str) -> dict:

@@ -11,7 +11,7 @@ from sqlalchemy import text
 from affiche.config import load_settings
 from affiche.db import utc_now, write_tx
 from affiche import shops
-from affiche.posters import auth, credits, jobs, store, worker
+from affiche.posters import auth, credits, jobs, looks, store, terms, worker
 from affiche.posters.worker import Outcome, run_job
 from affiche.posters.models import Document, NewCreation, Offer, ProductInput
 from affiche.visuals import admission
@@ -19,7 +19,7 @@ from affiche.visuals.gateway import ProviderError
 from test_admission import _seed, _ledger_call
 from test_api import second_shop
 from test_config import env  # noqa: F401
-from test_db import engine  # noqa: F401
+from test_db import accepted, engine, unaccepted  # noqa: F401
 from test_poster_drafts import input_id, draft, key, photo  # noqa: F401
 
 
@@ -565,6 +565,144 @@ def test_blocked_asks_the_admissions_guard_with_each_charged_operations_own_esti
         shops.resume(conn)
     settings.openai_api_key = None
     assert codes() == {"scene": "provider_unavailable", "text_texture": "provider_unavailable"}
+    unaccepted(engine)  # the conditions first (D-TERMS-003), whatever else blocks
+    assert codes() == {"scene": "terms_required", "text_texture": "terms_required"}
+
+
+# --- The conditions of use at admission (D-TERMS-003). The engine fixture's shop 1 has accepted the current version. --
+
+def test_an_unaccepted_shop_gets_no_new_request_to_the_ai_and_nothing_is_taken(engine, settings, creation):
+    """R-TERMS-001: a scene, a refinement, a text's material, a background, a Claude plan, a style and a text proposal of
+    a shop that has not accepted the current conditions are each refused with 403 before anything is written: no job,
+    call, key, mode lock or credit line, the balance unchanged, nothing for a worker to send. A render asks no AI and is
+    admitted. Accepted, the same requests are admitted, the refused key included (a refusal stores nothing under it)."""
+    settings.planner_provider = "stub"
+    unaccepted(engine)
+
+    def state():
+        with engine.connect() as conn:
+            return [conn.execute(text(f"SELECT * FROM {table} ORDER BY 1")).all() for table in (
+                "meta", "credit_grants", "poster_jobs", "poster_calls", "mutation_keys")] + [credits.balance(conn, 1)]
+
+    before, operation = state(), key()
+    for kind, payload in (("scene", None), ("refine", None), ("text_texture", None), ("background", None),
+                          ("plan", None), ("plan", {"look": "Style"}), ("text_patch", None)):
+        with pytest.raises(store.Refused) as caught:
+            enqueue(engine, settings, creation, kind=kind, payload=payload, operation=operation if kind == "scene" else None)
+        assert (caught.value.code, caught.value.status) == ("terms_required", 403), kind
+    for item, revision, refusal in (({"id": key()}, 1, "not_found"), (creation, 2, "revision_conflict")):
+        with pytest.raises(store.Refused) as caught:  # ownership and the revision are checked before the gate
+            enqueue(engine, settings, item, revision=revision)
+        assert caught.value.code == refusal
+    assert state() == before and jobs.claim(engine, tuple(jobs.PROVIDER_KINDS)) is None
+    enqueue(engine, settings, creation, kind="render")
+    accepted(engine)
+    scene = enqueue(engine, settings, creation, operation=operation)
+    assert enqueue(engine, settings, creation, operation=operation) == scene
+    enqueue(engine, settings, creation, kind="plan")
+    assert balance(engine) == {"available": 99, "pending": 1}
+
+
+def test_the_conditions_are_told_before_every_limit_and_the_credit(engine, settings, creation, tmp_path, input_id,
+                                                                    monkeypatch):
+    """D-TERMS-003's order: a shop that has not accepted and also meets an image running, the twelve scenes, the pause,
+    the service's cap, its day or zero credit is told the conditions; accepted, the same request meets that limit.
+    Nothing is written either way. A style beyond the limit is refused by its route before the gate (accepted in
+    round 2), and nothing is written either."""
+    settings.shop_daily_spend_usd = Decimal("20")
+    full = draft(engine, tmp_path, input_id)
+    for _ in range(jobs.SCENE_LIMIT):
+        id = enqueue(engine, settings, full)
+        job = jobs.claim(engine, ("scene",))
+        jobs.dispatch(engine, id)
+        jobs.spool(tmp_path, job, {"visual": key()}, cost_micros=170000)
+        jobs.finish_spool(engine, tmp_path, id, lambda _conn, _job, result: result["visual"])
+    enqueue(engine, settings, creation)  # an image waiting on this poster
+    other = draft(engine, tmp_path, input_id)
+
+    def told(limit, item=other):
+        before = written(engine)
+        for answer, expected in ((unaccepted, "terms_required"), (accepted, limit)):
+            answer(engine)
+            with pytest.raises(store.Refused) as caught:
+                enqueue(engine, settings, item)
+            assert caught.value.code == expected and written(engine) == before
+
+    told("image_job_running", creation)
+    told("attempt_limit", full)
+    with write_tx(engine) as conn:
+        shops.pause(conn)
+    told("budget_exhausted")
+    with write_tx(engine) as conn:
+        shops.resume(conn)
+    left = Decimal(spent(engine, settings) + 300_000) / 1_000_000  # 0.30 USD more: a scene's 0.40 does not fit
+    settings.spend_cap_usd = left
+    told("budget_exhausted")
+    settings.spend_cap_usd, settings.shop_daily_spend_usd = Decimal("20"), left  # every call so far is shop 1's, today
+    told("shop_daily_limit")
+    settings.shop_daily_spend_usd = Decimal("20")
+    leave(engine, 0)
+    told("no_credit")
+
+    settings.planner_provider = "stub"
+    request = looks.LookRequest(name="Seul", reference_asset=store.upload(engine, tmp_path, 1, photo(), "style")["asset"])
+    unaccepted(engine)
+    before, limit = written(engine), looks.LOOK_LIMIT
+
+    def style():
+        with pytest.raises(store.Refused) as caught:
+            looks.request_look(engine, settings, 1, key(), other["id"], other["revision"], request)
+        assert written(engine) == before
+        return caught.value.code, caught.value.status
+
+    monkeypatch.setattr(looks, "LOOK_LIMIT", 0)
+    assert style() == ("look_limit", 409)
+    monkeypatch.setattr(looks, "LOOK_LIMIT", limit)
+    assert style() == ("terms_required", 403)
+
+
+def test_a_key_admitted_before_a_new_version_is_replayed_and_a_new_attempt_is_refused(engine, settings, creation,
+                                                                                      monkeypatch):
+    """D-TERMS-003's three cases, two of them: a key admitted before a new version of the conditions gets its stored 202
+    (store.mutate replays before apply), and no new job; once that job failed, a new attempt is a new key and a new
+    admission, refused until the shop accepts the new version, with nothing written and its credit back."""
+    operation = key()
+    id = enqueue(engine, settings, creation, operation=operation)
+    monkeypatch.setattr(terms, "VERSION", "2099-01-01")  # a release with a new text: shop 1 accepted the one before
+    assert enqueue(engine, settings, creation, operation=operation) == id and jobs_count(engine) == 1
+    jobs.claim(engine, ("scene",))
+    jobs.fail(engine, id, "provider_error", unsent=True)
+    before = written(engine)
+    assert before[3] == {"available": 100, "pending": 0}
+    with pytest.raises(store.Refused) as caught:
+        enqueue(engine, settings, creation)
+    assert (caught.value.code, caught.value.status) == ("terms_required", 403) and written(engine) == before
+    accepted(engine)  # the new version
+    enqueue(engine, settings, creation)
+    assert balance(engine) == {"available": 99, "pending": 1}
+
+
+def test_a_rate_limit_retry_of_a_job_admitted_before_a_new_version_is_reserved_and_sent(engine, settings, creation,
+                                                                                         monkeypatch):
+    """D-TERMS-003's third case: the gate admits new requests only. A job admitted before a new version of the
+    conditions gets its 429 retry reserved as call 2 (jobs._reserve: the provider's guard alone) and sent, and ends
+    with its version; a new request is refused."""
+    id = enqueue(engine, settings, creation)
+    job = jobs.claim(engine, ("scene",))
+    sent = []
+
+    async def send(_):
+        sent.append(1)
+        if len(sent) == 1:
+            monkeypatch.setattr(terms, "VERSION", "2099-01-01")
+            raise ProviderError("rate_limited", "secret provider body")
+        return Outcome({"visual": "saved"}, cost_micros=170000)
+
+    asyncio.run(run_job(engine, settings, job, prepare=lambda *_: {}, send=send, finalise=lambda *_: "saved"))
+    assert len(sent) == 2 and view(engine, id)["status"] == "succeeded"
+    assert [call[:2] for call in calls(engine, id)] == [(1, "failed"), (2, "succeeded")]
+    with pytest.raises(store.Refused, match="terms_required"):
+        enqueue(engine, settings, creation)
 
 
 def calls(engine, id):

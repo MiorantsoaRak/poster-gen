@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 from test_api import ORIGIN, PASSWORD, client, create_draft, credentials, login, password_hash, post, second_shop, settings  # noqa: F401
 from test_config import env  # noqa: F401
 from test_admission import _ledger_call, _seed
-from test_db import bare_engine, credited, engine  # noqa: F401
+from test_db import accepted, bare_engine, credited, engine, unaccepted  # noqa: F401
 from test_poster_drafts import draft, input_id, key, photo  # noqa: F401
 from test_poster_visuals import execute, fixed
 
@@ -667,7 +667,35 @@ def test_the_services_pause_stops_a_read_and_resume_lifts_it(engine, claude):
     assert result["card"]["kind"] == "ask_product" and len(requests) == 1
 
 
-@pytest.mark.parametrize("key", ["not-a-uuid", "-" * 36, "A" * 8 + "-0000-0000-0000-" + "0" * 12, uuid4().hex])
+def test_an_unaccepted_shop_gets_no_new_read_and_is_told_before_the_read_limits(engine, claude, monkeypatch):
+    """D-TERMS-003: a new read of a shop that has not accepted the current conditions is refused before any row or
+    reservation, and nothing is sent; it is told before the day's read limit and before its reads in progress, which
+    the same read meets once accepted. A read admitted before is still answered from its row, free."""
+    admitted = str(uuid4())
+    first, sent = ask(engine, claude, reply(), key=admitted)
+    assert len(sent) == 1
+    unaccepted(engine)
+
+    def told(limit):
+        before = rows(engine)
+        result, sent = ask(engine, claude, reply())
+        assert (result.code, result.status, sent, rows(engine)) == ("terms_required", 403, [], before)
+        accepted(engine)
+        result, sent = ask(engine, claude, reply())
+        assert (getattr(result, "code", result), sent, rows(engine)) == (limit, [], before)
+        unaccepted(engine)
+
+    again, sent = ask(engine, claude, reply(), key=admitted)
+    assert again == first and sent == [] and len(rows(engine)) == 1
+    monkeypatch.setattr(reads, "DAILY_LIMIT", 1)  # the read above is today's one
+    told("read_limit")
+    monkeypatch.setattr(reads, "DAILY_LIMIT", 10)
+    for _ in range(2):
+        insert(engine, utc_now(), "running", ESTIMATE)
+    told("reads_busy")
+
+
+@pytest.mark.parametrize("key",["not-a-uuid", "-" * 36, "A" * 8 + "-0000-0000-0000-" + "0" * 12, uuid4().hex])
 def test_invalid_key_makes_no_call_and_no_reservation(engine, claude, key):
     result, requests = ask(engine, claude, reply(), key=key)
     assert (result.code, result.status, requests, rows(engine)) == ("invalid_idempotency_key", 422, [], [])
@@ -691,6 +719,7 @@ def test_a_key_is_the_shops_own(engine, claude):
     with write_tx(engine) as conn:
         conn.exec_driver_sql("INSERT INTO shop_profile (revision,updated_at,identifier,state,created_at) "
                              "VALUES (1,'now','shopdeux','active','now')")
+    accepted(engine, 2)
     key = str(uuid4())
     first, sent = ask(engine, claude, reply(), key=key)
     assert len(sent) == 1
@@ -1183,6 +1212,29 @@ def test_a_new_scene_keeps_the_adjustments_asked_by_message(poster, engine, sett
             patched.setattr(visuals, "kept_adjustments", lambda conn, shop, visual_id, notes=notes: notes)
             scene(keep_adjustments_of=first)
         assert refusal.value.code == code and queued() == before
+
+
+def test_a_chain_too_long_is_refused_before_the_conditions_are_told(poster, engine, settings):
+    """D-TERMS-003, accepted in round 2: adjustments_limit is the scene route's own check, before jobs.enqueue and its
+    gate; each refusal queues nothing. Within the limit, the unaccepted shop is told the conditions."""
+    creation_id, first = poster
+    unaccepted(engine)
+
+    def refused():
+        with engine.connect() as conn:
+            creation, before = store.get_creation(conn, 1, creation_id), conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one()
+        with pytest.raises(Refused) as refusal:
+            visuals.request_scene(engine, settings, 1, key(), creation_id, creation["revision"], visuals.SceneRequest(
+                plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"],
+                headline=Headline(brand="JBL", price=True), keep_adjustments_of=first))
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one() == before
+        return refusal.value.code, refusal.value.status
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(visuals, "kept_adjustments", lambda *_: ["fond bleu"] * 13)
+        assert refused() == ("adjustments_limit", 422)
+    assert refused() == ("terms_required", 403)
 
 
 def test_a_refinement_says_again_what_its_chain_was_asked(poster, engine, settings):

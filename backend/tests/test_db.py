@@ -14,8 +14,8 @@ from sqlalchemy import create_engine, event, exc, text
 
 from affiche import db, rehearse
 from affiche.config import BACKEND_DIR
-from affiche.db import make_engine, migrate, write_tx
-from affiche.posters import credits
+from affiche.db import make_engine, migrate, utc_now, write_tx
+from affiche.posters import credits, terms
 
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
                  "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
@@ -31,15 +31,31 @@ WORKER = Path(__file__).with_name("tx_worker.py")
 
 def credited(engine, shop=1):
     """100 offered credits, as the operator grants them: a shop starts at zero, and every image job takes one
-    (D-BALANCE-002). Once per shop: a test's `client` and `engine` share one database."""
+    (D-BALANCE-002); and the current conditions accepted, without which nothing new is asked of the AI (D-TERMS-003).
+    Once per shop: a test's `client` and `engine` share one database."""
     with write_tx(engine) as conn:
         if conn.execute(text("SELECT 1 FROM credit_grants WHERE shop_id=:shop AND ref='tests'"), {"shop": shop}).first() is None:
             credits.grant(conn, shop, 100, origin="offered", ref="tests", actor="tests")
+    accepted(engine, shop)
+
+
+def accepted(engine, shop=1):
+    """The current conditions of use accepted, as POST /api/terms writes it (D-TERMS-002)."""
+    with write_tx(engine) as conn:
+        conn.execute(text("UPDATE shop_profile SET terms_version=:version, terms_accepted_at=:now WHERE id=:shop"),
+                     {"version": terms.VERSION, "now": utc_now(), "shop": shop})
+
+
+def unaccepted(engine, shop=1):
+    """Nothing accepted, as migration 0017 leaves every shop: the shop of the gate's refusal tests (D-TERMS-003)."""
+    with write_tx(engine) as conn:
+        conn.execute(text("UPDATE shop_profile SET terms_version=NULL, terms_accepted_at=NULL WHERE id=:shop"),
+                     {"shop": shop})
 
 
 @pytest.fixture
 def engine(tmp_path):
-    """Migrated, shop 1 funded."""
+    """Migrated, shop 1 funded and the conditions accepted."""
     engine = make_engine(tmp_path)
     migrate(engine)
     credited(engine)
@@ -49,9 +65,10 @@ def engine(tmp_path):
 
 @pytest.fixture
 def bare_engine(tmp_path):
-    """Migrated, shop 1 at zero credits: the balance's own tests."""
+    """Migrated, shop 1 at zero credits, the conditions accepted: the balance's own tests."""
     engine = make_engine(tmp_path)
     migrate(engine)
+    accepted(engine)
     yield engine
     engine.dispose()
 

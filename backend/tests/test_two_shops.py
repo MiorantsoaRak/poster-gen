@@ -20,6 +20,7 @@ from affiche.posters import credits, rendering, terms, visuals
 from test_api import (HEADERS, ORIGIN, PASSWORD, client, create_draft, credentials, login, old_cancellation,  # noqa: F401
                       password_hash, post, second_shop, settings)
 from test_config import env  # noqa: F401
+from test_db import unaccepted
 from test_poster_drafts import key, photo
 
 # Routes that hold no shop's objects. Every other route of the schema must be attempted below.
@@ -327,6 +328,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert [item["id"] for item in a.get("/api/creations").json()["items"]] == [cid]
     assert [item["id"] for item in a.get("/api/looks").json()["items"]] == [look_a] and b.get("/api/looks").json()["items"] == []
     # The conditions (D-TERMS-002) take no id: A's acceptance is A's alone, and B's accepts for B without touching A's.
+    for shop in (1, shop_b):  # both as migration 0017 leaves them (credited() accepted for each)
+        unaccepted(engine, shop)
     accepted_a, accepted_b = "2026-11-18T08:00:00.000000+00:00", "2026-11-18T09:00:00.000000+00:00"  # the clock's
     monkeypatch.setattr(terms, "utc_now", lambda: accepted_a)
     assert a.post("/api/terms", json={"version": terms.VERSION}).json()["accepted_at"] == accepted_a
@@ -445,6 +448,41 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     # without its check, which only a reader of those two sets can catch.
     covered = {(method, template) for method, template, _ in attempts + after_scene} | OWN | EXEMPT | operator
     assert covered == schema, f"not covered: {sorted(schema - covered)}; not in the schema: {sorted(covered - schema)}"
+
+
+def test_one_shops_acceptance_admits_that_shop_alone(planner_stub, client):
+    """D-TERMS-003 (Security): A has accepted the current conditions, B has not. B's scene and B's read are refused with
+    403 and nothing of B's written or sent; A's same requests are admitted beside them."""
+    a, engine = client, client.app.state.engine
+    b, shop_b = sign_in_second_shop(a)
+    unaccepted(engine, shop_b)
+    read = {"text": "JBL Flip 7, 700 000 Ar", "draft": {"product_photos": 1, "inspiration": False}, "history": []}
+
+    def planned(shop):
+        creation = create_draft(shop)
+        plan = send(shop, "POST", f"/api/creations/{creation['id']}/plans", PLAN, 1)
+        assert plan.status_code == 201, plan.text
+        return creation["id"], plan.json()["id"]
+
+    def scene(shop, poster):
+        return send(shop, "POST", f"/api/creations/{poster[0]}/scenes",
+                    {"plan_id": poster[1], "acknowledged_warnings": ["low_resolution"]}, 1)
+
+    def written():
+        with engine.connect() as conn:
+            return [conn.execute(text(f"SELECT COUNT(*) FROM {table} WHERE shop_id=:shop"), {"shop": shop_b}).scalar_one()
+                    for table in ("poster_jobs", "chat_reads", "mutation_keys")] + [credits.balance(conn, shop_b)]
+
+    poster_a, poster_b = planned(a), planned(b)
+    before = written()
+    for answer in (scene(b, poster_b), post(b, "/api/reads", read)):
+        assert (answer.status_code, answer.json()["error"]["code"]) == (403, "terms_required"), answer.text
+    assert written() == before and before[:2] == [0, 0]
+    admitted = scene(a, poster_a)
+    assert admitted.status_code == 202, admitted.text
+    assert post(a, "/api/reads", read).status_code == 201
+    wait(a, admitted.json()["status_url"])
+    assert written() == before
 
 
 def test_every_route_the_application_answers_is_in_the_schema(settings, tmp_path, monkeypatch):

@@ -1,6 +1,7 @@
 """The conditions of use (D-TERMS-001, D-TERMS-002, T-TERMS-001): the text pinned to its version, the contact, GET and
 POST /api/terms through the real boundary, the session checked again inside the acceptance's write, and one write for
-two acceptances at once. The gate at admission is T-TERMS-002's: until then an unaccepted shop still generates."""
+two acceptances at once. The gate at admission (T-TERMS-002) is tested where each admission is: test_poster_jobs.py,
+test_reads.py, test_api.py (the balance) and test_two_shops.py."""
 import hashlib
 import threading
 from datetime import date
@@ -10,10 +11,18 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
 from affiche import api as affiche_api, shops
+from affiche.api import create_app
 from affiche.db import make_engine, write_tx
 from affiche.posters import auth, terms
-from test_api import HEADERS, ORIGIN, client, login, password_hash, settings  # noqa: F401
+from test_api import HEADERS, ORIGIN, login, password_hash, settings  # noqa: F401
 from test_config import env  # noqa: F401
+
+
+@pytest.fixture
+def client(settings):
+    """test_api's client with shop 1 as migration 0017 leaves it, nothing accepted (credited() accepts)."""
+    with TestClient(create_app(settings), base_url=ORIGIN, headers=HEADERS) as client:
+        yield client
 
 
 def stored(engine, shop=1):
