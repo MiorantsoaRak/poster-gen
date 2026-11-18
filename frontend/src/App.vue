@@ -5,6 +5,7 @@ import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
+import ShopCredits from './ShopCredits.vue'
 import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
@@ -31,6 +32,10 @@ const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const funds = sectionRead<Balance>('/api/balance')
 const balance = computed(() => funds.error.value ? null : funds.data.value)
 const readBalance = funds.read
+const creditView = ref<InstanceType<typeof ShopCredits> | null>(null), creditButton = ref<HTMLElement | null>(null)
+const creditsPanel = ref(false)
+let beforeCredits = ''
+const balanceLabel = computed(() => balance.value ? balance.value.available + ' crédit' + (Math.abs(balance.value.available) === 1 ? '' : 's') : 'Mes crédits')
 const home = ref<InstanceType<typeof ShopHome> | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -426,6 +431,7 @@ function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | '
 // One outline icon set, 16px, drawn in the text colour (ADR-050). Paths only: no icon dependency.
 const ICONS: Record<string, string> = {
   plus: 'M8 3v10M3 8h10', check: 'M3.5 8.5l3 3 6-7', close: 'M4 4l8 8M12 4l-8 8', chevron: 'M6 3.5l4.5 4.5L6 12.5',
+  credits: 'M2 3.5h12v9H2zM2 6.5h12M4 10h3',
   grid: 'M2.5 2.5h4.5v6h-4.5zM9 2.5h4.5v6H9zM2.5 11h4.5M9 11h4.5M2.5 13.5h3', text: 'M3 4V3h10v1M8 3v10M6 13h4',
   palette: 'M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.3-.7.9-1.4-.5-.9.1-1.8 1.1-1.8h1.2a2.3 2.3 0 0 0 2.3-2.4A5.5 5.5 0 0 0 8 2.5zM5.5 7h.01M8 5h.01M10.5 7h.01',
   image: 'M2.5 3h11v10h-11zM2.5 10.5l3.5-3 3 2.5 2-1.5 2.5 2', download: 'M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10',
@@ -604,6 +610,31 @@ function switchTo(to: Start, confirmed = false) {
 const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message'
   : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : view.value === 'create' ? 'etapes' : view.value === 'opening' ? 'accueil' : view.value
 let routeDue = false, discardedFor: string | null = null
+function windowBack() { window.history.back() }
+function openCredits() {
+  if (creditsPanel.value || location.hash.slice(1) !== here()) return
+  beforeCredits = here()
+  window.history.pushState({ creditsFrom: beforeCredits }, '', '#credits')
+  creditsPanel.value = true
+}
+function openCreditPoster(id: string) {
+  if (creditsPanel.value && creation.value?.id === id) { windowBack(); return }
+  const open = async () => {
+    try { await openFromList(id) }
+    catch (reason) {
+      if (location.hash !== '#credits' || !creditView.value) throw reason
+      creditView.value.unavailable(reason instanceof Error ? reason.message : 'Cette affiche ne peut pas être ouverte.')
+    }
+  }
+  if (creditsPanel.value && chatting.value && chat.hasUnsentPhotos?.()) askToDiscardPhotos(open)
+  else void perform(open)
+}
+const vCreditsDialog = (el: HTMLElement, { value }: { value: boolean }) => {
+  if (!(el instanceof HTMLDialogElement)) return
+  if (value && !el.open) el.showModal()
+  else if (!value && el.open) el.close()
+}
+function refreshCredits() { if (creditView.value) creditView.value.refresh(); else void readBalance() }
 async function route() {
   const hash = window.location.hash.slice(1), was = chatting.value
   routeRetry.value = null
@@ -648,13 +679,26 @@ async function openFromList(id: string) {
   if (!creatorReady) await loadShop()
   if (window.location.hash.slice(1) !== origin) return
   try { await openCreation(id, origin, preferChat.value) } catch (reason) {
-    chatting.value = false
+    if (origin !== 'credits') chatting.value = false
     if (reason instanceof ApiError && reason.status === 404) { home.value?.refresh(); throw new Error('Cette affiche n’est plus disponible.') }
     throw reason
   }
 }
 // No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
-function onHash() { if (loaded.value && window.location.hash.slice(1) !== here()) { if (busy.value) routeDue = true; else perform(route) } }
+function onHash() {
+  if (!loaded.value) return
+  const hash = location.hash.slice(1)
+  if (hash === 'credits' && window.history.state?.creditsFrom === here() && view.value === 'create') { beforeCredits = here(); creditsPanel.value = true; return }
+  if (creditsPanel.value) {
+    creditsPanel.value = false
+    if (hash === beforeCredits || hash === here()) {
+      if (hash !== here()) window.history.replaceState(null, '', `#${here()}`)
+      nextTick(() => { if (front.value) focusFront(front.value); else creditButton.value?.focus() })
+      return
+    }
+  }
+  if (hash !== here()) { if (busy.value) routeDue = true; else perform(route) }
+}
 function leave(hash: string) { window.location.hash = hash }
 // A panel in front of the page takes the focus and gives it back; the page behind is inert meanwhile.
 const vModal = {
@@ -769,10 +813,11 @@ const opened = computed(() => {
 // confirmation are focused when it closes. After the render and v-modal's own focus, so that it has the last word.
 // Only while the shop is shown: back from another tab, the panel that was in front takes the focus again.
 const front = computed(() => !shown.value ? '' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
-watch(front, id => nextTick(() => {
+function focusFront(id: string) {
   const panel = id ? document.querySelector<HTMLElement>(`[aria-labelledby="${id}"]`) : null
   if (panel && !panel.contains(document.activeElement)) (panel.querySelector<HTMLElement>('[data-focus]') ?? panel).focus()
-}))
+}
+watch(front, id => nextTick(() => focusFront(id)))
 function openLook(id: string) { openedId.value = id; renameText.value = opened.value?.name ?? ''; renameError.value = '' }
 function useLook(id: string) { pickLook(id); rememberStyle(); openedId.value = null; leave('creer') }
 const reloadLooks = async () => { savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items }
@@ -1027,6 +1072,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value)
   const opening = creation.value?.id !== result.id
   const known = opening ? (await api<{ items: Visual[] }>(`/api/creations/${result.id}/visuals`)).items : visuals.value
   if (origin !== undefined && window.location.hash.slice(1) !== origin) return
+  if (opening && origin === 'credits') chat.discardUnsentPhotos?.()
   chatting.value = asChat; view.value = 'create'
   // Another product starts from blank words: the last poster's brand, subtitle and accent word would be drawn on it unseen
   // (user, 2026-11-14), and its instructions sent with it. The accent colour (it goes with the look) and the plain-brand
@@ -1051,7 +1097,10 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value)
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
     throw reason
   }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
-  window.location.hash = chatting.value ? `message-${result.id}` : result.id
+  // A creator can finish its first poster while Credits is open. Back must return to its newly assigned address.
+  const address = chatting.value ? `message-${result.id}` : result.id
+  if (creditsPanel.value && origin === undefined) window.history.replaceState({ creditsFrom: address }, '', '#credits')
+  else window.location.hash = address
   if (!opening) await refreshVisuals()
   styleReference.value = currentVisual.value?.style_reference_asset ?? null
   keptLook.value = null
@@ -1081,6 +1130,7 @@ async function openCreation(id: string, origin: string, asChat = chatting.value)
   const found = await api<Creation>(`/api/creations/${id}`)
   if (window.location.hash.slice(1) !== origin) return
   if (found.status === 'active') return adopt(found, origin, asChat)
+  if (origin === 'credits') throw new Error('Cette affiche a été retirée de la liste.')
   // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
   if (doc.value) await fresh()
   chatting.value = false; view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
@@ -1320,7 +1370,7 @@ async function poll() {
     offline.value = false
     if (response.status === 'running' && runningSince.value === null) runningSince.value = localTime(response.started_at, clockSkew, Date.now())
     job.value = response
-    if (!['queued', 'running'].includes(response.status)) void readBalance()  // an image's credit is spent or back
+    if (!['queued', 'running'].includes(response.status)) refreshCredits()  // an image's credit is spent or back
     if (job.value.status === 'succeeded') {
       const completed = job.value
       if (completed.kind === 'render') {
@@ -1393,7 +1443,7 @@ async function cancelJob() {
   job.value = null; clearTimeout(pollTimer)
   // Its credit is back at once (D-BALANCE-002): said as poll() says it, and read again.
   if (cancelled.credit === 'given_back') notice.value = ended(cancelled)
-  void readBalance()
+  refreshCredits()
 }
 // The new version fades in once drawn, not while its image was still on its way.
 function canvasDrawn(ready: boolean) {
@@ -1664,7 +1714,7 @@ watch(state, now => {
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
     // Its conditions too (signed out, session ended, another shop): no late answer opens them again (readTerms).
-    funds.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
+    creditsPanel.value = false; funds.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
     if (typeof bound.value === 'number' && location.hash) window.history.replaceState(null, '', location.pathname + location.search)
   }
   if (now === 'shown' && !loaded.value) void openShop()
@@ -1775,7 +1825,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
   <header ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#accueil" aria-label="Accueil" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
     <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
     <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
-    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
+    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a><a v-if="view === 'create' && !editing" ref="creditButton" class="creator-credits" href="#credits" aria-haspopup="dialog" @click.exact.prevent="openCredits"><Icon n="credits" /><span>{{ balanceLabel }}</span></a></nav>
     <div v-if="chatOn && (doc || view === 'create')" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
   <!-- Everything but the shop: the session awaited or failed, and the signed-out screen. -->
@@ -1791,7 +1841,10 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
-    <section v-if="!doc && (view === 'compte' || view === 'credits')" class="gallery" :inert="modalOpen"><h1 tabindex="-1">{{ view === 'compte' ? 'Mon compte' : 'Mes crédits' }}</h1><a href="#accueil">Retour à l’accueil</a></section>
+    <section v-if="!doc && view === 'compte'" class="gallery" :inert="modalOpen"><h1 tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></section>
+    <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
+      <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
+    </component>
     <template v-if="chatting">
       <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
@@ -1839,6 +1892,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
+          <button ref="creditButton" type="button" class="text-button creator-credits" aria-haspopup="dialog" @click="openCredits">{{ balanceLabel }}</button>
           <div ref="toolsRow" class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
           <div class="tabs"><span v-if="stepping" class="tab done"><Icon n="check" />Produit</span>
             <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name, icon], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span><Icon v-else :n="icon" class="tool" />{{ name }}</button></div></div></div>

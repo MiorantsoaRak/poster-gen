@@ -794,3 +794,11 @@ main.chatting:not(.editing) { padding-bottom: 0 }
   :root:root { --glass: var(--surface); --glass-panel: var(--surface); --glass-hi: var(--surface); --glass-field: var(--ground); --glass-strong: var(--surface); --warn-glass: var(--warn-bg); --glass-line: var(--line); --blur-panel: none; --blur-field: none }
   .confirm-sheet { -webkit-backdrop-filter: none; backdrop-filter: none }
 }
+
+.rail .creator-credits { display: block; margin-inline-start: auto; min-height: 44px }
+@media (max-width: 720px) {
+  .nav:has(.creator-credits) { grid-template-columns: repeat(5, minmax(0, 1fr)) }
+  .nav .creator-credits span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+}
+dialog.credits-container { width: min(680px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 4px 20px 16px; color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: var(--radius); overscroll-behavior: contain }
+dialog.credits-container::backdrop { background: var(--scrim) }

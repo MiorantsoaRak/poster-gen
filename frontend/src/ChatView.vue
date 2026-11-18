@@ -427,7 +427,7 @@ async function reconcile() {
 function measure() {
   if (!root.value) return
   const nav = document.querySelector<HTMLElement>('.nav'), fixed = nav && getComputedStyle(nav).position === 'fixed' ? nav.offsetHeight : 0
-  height.value = Math.max(240, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - fixed - 12))
+  height.value = Math.max(0, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - fixed - 12))
 }
 function focused() { typing.value = matchMedia('(pointer: coarse)').matches }
 // A tap elsewhere takes the focus before its click lands: the layout stays as it is until the tap is over, otherwise the
@@ -457,6 +457,7 @@ const hold = (options: LockOptions, takenOver = false) => navigator.locks.reques
 function takeOver() { void hold({ steal: true }, true) }
 if (!lockless) void hold({ ifAvailable: true })
 props.adapter.hasUnsentPhotos = () => !closed && tray.value.length > 0
+props.adapter.discardUnsentPhotos = () => { if (!closed) tray.value.forEach(drop) }
 props.adapter.waiting = () => mine() ? !!openCard() : undefined
 // The agreement to a small photo is for one product and its photos.
 watch(() => [draft.name, products().map(item => item.asset).join()], () => { smallAccepted.value = false })

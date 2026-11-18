@@ -1057,3 +1057,7 @@ The owner directs Codex to use GPT for implementation when Codex orchestrates. I
 ## ADR-116 — Home review closure (2026-11-18)
 
 After three rounds the owner chose to fix both outstanding navigation cases and close T-SHOP-DASH-003 after passing checks.
+
+## ADR-117 — Credits review closure (2026-11-18)
+
+The owner approved closing T-SHOP-DASH-004 after fixing the current-poster history action and checking that the creator retains its attachment, undo history and focus.

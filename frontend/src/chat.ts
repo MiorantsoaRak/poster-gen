@@ -84,6 +84,7 @@ export interface ChatAdapter {
    *  out, ADR-108); undefined when this tab does not hold the chat (then the stored threads say, `waitingIn`). */
   waiting?: () => boolean | undefined
   hasUnsentPhotos?: () => boolean
+  discardUnsentPhotos?: () => void
 }
 
 /** The role of the next attached image: the first is the product, the second the inspiration, later ones product photos
