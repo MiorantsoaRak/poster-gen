@@ -7,14 +7,26 @@ defineProps<{ terms: Terms | null; termsUnavailable: boolean; support: string }>
 const emit = defineEmits<{ saved: [profile: Profile]; terms: []; signOut: [] }>()
 const baseline = ref<Profile>(), draft = ref<Profile>(), conflict = ref(false), uncertain = ref(false)
 const working = ref(false), profileError = ref(''), profileNotice = ref('')
-const fieldNames = { name: 'Nom de la boutique', contact: 'Contact', logo_asset: 'Logo' } as const
+const fieldNames = { name: 'Nom de la boutique', contact: 'Contact de la boutique', logo_asset: 'Logo' } as const
 type ProfileField = keyof typeof fieldNames
 const overlaps = ref<ProfileField[]>([])
 function choose(field: ProfileField, saved: boolean) {
   if (saved && draft.value && baseline.value) draft.value[field] = baseline.value[field]
   overlaps.value = overlaps.value.filter(key => key !== field)
 }
-const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(baseline.value))
+const fields = Object.keys(fieldNames) as ProfileField[]
+const dirty = computed(() => fields.some(key => (draft.value?.[key] || '') !== (baseline.value?.[key] || '')))
+const pending = computed(() => working.value && !!draft.value)
+const profileHeading = ref<HTMLElement>()
+let lastEdit: HTMLElement | null = null
+function rememberEdit(event: Event) {
+  if (event.target instanceof HTMLElement) lastEdit = event.target
+}
+function focusEdit() {
+  if (lastEdit?.isConnected && !lastEdit.matches(':disabled')) lastEdit.focus()
+  else profileHeading.value?.focus()
+}
+defineExpose({ dirty, pending, focusEdit })
 const current = ref(''), replacement = ref(''), changing = ref(false), passwordError = ref(''), passwordNotice = ref('')
 const message = (reason: unknown) => reason instanceof Error ? reason.message : 'La demande a échoué.'
 
@@ -25,7 +37,7 @@ async function readProfile() {
     const saved = await api<Profile>('/api/shop-profile', { timeout: 20_000 })
     const merged = { ...saved }
     if (conflict.value && baseline.value && draft.value) {
-      for (const field of Object.keys(fieldNames) as ProfileField[]) {
+      for (const field of fields) {
         const local = draft.value[field]?.trim() || null
         if (local === baseline.value[field]) continue
         merged[field] = local
@@ -76,14 +88,15 @@ onMounted(readProfile)
 <template>
   <section class="shop-account" aria-labelledby="titre-compte">
     <header><h1 id="titre-compte" tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></header>
-    <form aria-labelledby="titre-profil" @submit.prevent="save">
-      <h2 id="titre-profil">Ma boutique</h2>
+    <form aria-labelledby="titre-profil" @input="rememberEdit" @submit.prevent="save">
+      <h2 id="titre-profil" ref="profileHeading" tabindex="-1">Ma boutique</h2>
       <fieldset v-if="draft" :disabled="working || conflict || uncertain || !!overlaps.length">
         <label>Nom de la boutique<input v-model="draft.name" autocomplete="organization" maxlength="160" /></label>
-        <label>Contact<textarea v-model="draft.contact" rows="2" maxlength="500" /></label>
+        <label>{{ fieldNames.contact }}<textarea v-model="draft.contact" rows="2" maxlength="500" aria-describedby="aide-contact-boutique" /></label>
+        <small id="aide-contact-boutique">Ces coordonnées peuvent apparaître sur vos affiches si vous choisissez de les inclure.</small>
         <label class="file-pick">Logo<input type="file" accept="image/jpeg,image/png,image/webp" @change="logo" /><span class="pick-button">{{ draft.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label>
         <div v-if="draft.logo_asset" class="row"><img class="logo-preview" :src="'/api/assets/' + draft.logo_asset" width="100" height="64" alt="Logo de la boutique" />
-          <button type="button" class="text-button" @click="draft.logo_asset = null">Retirer le logo</button></div>
+          <button type="button" class="text-button" @click="rememberEdit($event); draft.logo_asset = null">Retirer le logo</button></div>
       </fieldset>
       <p v-else-if="working" role="status">Lecture du profil…</p>
       <template v-if="draft && baseline">
@@ -117,7 +130,7 @@ onMounted(readProfile)
       <button v-if="termsUnavailable || (terms && !terms.accepted_at)" class="secondary" @click="emit('terms')">{{ termsUnavailable ? 'Réessayer la lecture des conditions' : 'Lire les conditions' }}</button>
       <a href="/donnees.html">Vos données</a>
     </section>
-    <section><h2>Assistance</h2><p>Contactez {{ support || 'l’opérateur qui vous a remis votre identifiant' }}.</p>
+    <section aria-labelledby="titre-assistance"><h2 id="titre-assistance">Assistance Doka Studio</h2><p>Contactez {{ support || 'l’opérateur qui vous a remis votre identifiant' }}.</p>
       <button class="secondary" @click="emit('signOut')">Se déconnecter</button></section>
   </section>
 </template>

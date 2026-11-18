@@ -42,3 +42,49 @@ Authenticated data comes only from the live shop session. Apply the existing sta
 | History cursor refused | Keep displayed lines, offer refresh from page one. An empty final page hides « Voir plus ». |
 
 Verify counts with two shops, empty data, identical timestamps, boundary instants, a pre-credit success, refunds, a cancelled request, a removed poster, and a failure older than five recent posters. Test a charge admitted before the 30-day boundary and completed inside it, with a grant between admission and completion. Across every history page assert the exact keys and shop-specific titles, no operator notes or foreign rows; switch shops during a delayed thumbnail/list fetch. Return a confirmed shop_changed and then a session read for B. Neither shop’s rows nor thumbnails may appear before explicit sign-in. Block saved looks or stall recent posters and verify Home still renders other sections, with no duplicate library fetch. Visit Credits and Back with a photo uploading. Check both a cancelled job after a failure and a zero balance during terms/service blocks. Exercise protected reads while signed out and with a stale tab. Check the response allowlist and missing-record behavior. Test real browser navigation at 360 px in both themes, with keyboard, long French labels and the on-screen keyboard. Confirm focus returns after dialogs and resets to the new view heading on navigation. Check heading order, announced loading/errors, readable numbers, accessible names and contrast; do one screen-reader pass before release. Run existing chat, editor, admin and terms regressions.
+
+## Approved v4 mobile amendment · 2026-11-18 (ADR-119)
+
+R-SHOP-DASH-005 through 009 are approved requirements. The following sections amend v3. The only wire change is one nullable response field per attention group. Storage, pricing and authentication use the existing model.
+
+### D-SHOP-DASH-005 — Leaving an edited shop profile
+
+ShopAccount owns the draft and saved baseline. Compare its editable name, contact and logo reference against that baseline. Expose the resulting dirty flag to App. Passwords stay inside the password form. Keep the Account instance mounted until the navigation decision is settled.
+
+| Event | Transition |
+|---|---|
+| Leave a clean or successfully saved profile | Follow the destination normally. Restoring the original values makes the profile clean. |
+| Follow an app link, select a tab or use Back/Forward with edits | Before switching view, retain the intended destination and show one modal. Keep the initiating control for focus recovery. Intercept ordinary link activation before changing history where possible. For history traversal, reconcile the URL and visible view on either decision. |
+| Continue editing or press Escape | Keep the draft, stay at Account and focus the last edited profile field, with the profile heading as fallback. |
+| Choose « Abandonner » | Release the draft and follow the intended destination exactly once. Returning to Account reads the saved profile. Repeated taps must neither stack dialogs nor replay a destination. |
+| A save or logo upload is in flight | Hold the attempted departure until the bounded operation settles, then reassess. A confirmed save can proceed. A failed or uncertain save preserves the draft and existing retry/conflict recovery. Discarding local edits cannot undo a write already accepted by the server. |
+| Session ends or is replaced | The existing session gate takes precedence. Clear the draft, password fields, pending destination and dialog. An explicit sign-out confirmation should disclose pending shop edits before ending the session. |
+
+Use the existing modal focus and inert-background behavior. « Continuer la modification » receives initial focus. Protect same-tab departures such as the data-page link and full-document Back with the browser’s native unload warning when supported. Browsers control that wording. Never restore a discarded form from persistent browser storage.
+
+### D-SHOP-DASH-006 — Reading the balance
+
+Use the same ShopCredits rendering for the standalone view and creator panel. Show signed available and pending counts from the same balance response. For pending above zero add « Les crédits en attente sont déjà déduits du solde disponible. » With available ≤ 0 add « Un crédit disponible est nécessaire pour générer une nouvelle image. Vos affiches restent accessibles. » Then display the operator’s existing purchase instructions once. Use the existing blocker priority for paused service and outstanding terms. A positive amount alone does not guarantee generation.
+
+On initial read failure show the error and retry. After refresh failure, label the retained figures with their last successful read time and avoid presenting a current generation decision from stale figures. The server continues to decide admission.
+
+### D-SHOP-DASH-007 — Identifying the poster in Home alerts
+
+Extend both review and failed in the authenticated GET /api/shop-dashboard response. Example group: `{"total":2,"first_creation_id":"p1","first_creation_title":"Galaxy A15"}`. An empty group returns 0 and two nulls. Select the saved offer title from the current version already joined by attention(), on the same shop-filtered row as the selected ID. A missing or blank title becomes null. Keep the existing ordering, counts, scope and transaction. A client reading an older response treats an absent title as null. This also works when the separate recent-posters request fails.
+
+Show the title in the action, for example « Vérifier Galaxy A15 » or « Génération échouée · Galaxy A15 ». Render it as text, allow wrapping, retain the remaining count and navigate by ID. With an unidentified title, use the existing generic action. On a settled successful summary with both counts zero, show « Aucune affiche à vérifier ». While refreshing or after failure, distinguish the previous result from a current all-clear. Place the check time after the outcome. Keep independent terms, pause and credit alerts visible and preserve one-tap access to creation. If the linked poster disappears, use the existing unavailable-poster recovery.
+
+### D-SHOP-DASH-008 — Shared shop header
+
+Use one home link in App’s existing header, with the accessible name « Doka Studio — Accueil » and decorative artwork. At narrow widths use the approved compact D symbol with the visible product name as ordinary interface text. Use the approved horizontal artwork only where its 220 px minimum and clear space fit alongside the controls. Follow the [Signal asset guide](../brand/doka-studio-signal/USAGE.md) for both themes. The header is shared across shop routes, including the creator and sign-in. Check those layouts as well as the three dashboard views. Keep the separately supplied shop logo in its existing profile role.
+
+### D-SHOP-DASH-009 — Shop contact and support
+
+Label the profile textarea « Contact de la boutique ». Associate visible help text with it: « Ces coordonnées peuvent apparaître sur vos affiches si vous choisissez de les inclure. » Label the service contact « Assistance Doka Studio » and reuse the session’s operator contact or existing fallback. Saving a profile remains a profile-only operation. French wording in this amendment is proposed for the owner’s copy reading.
+
+### Verification for the amendment
+
+- Exercise a changed name, contact and logo, clean/reverted values, failed save, uncertain save, delayed upload and session replacement. Test both dialog choices via touch and keyboard, Back/Forward followed by another Back, repeated taps, and the data-page link. Confirm the URL, focused element, actual view, saved profile and number of writes after each decision.
+- Run credit fixtures with available/pending of 2/1, 0/0 and −2/1, plus paused service, outstanding terms and failed reads with and without prior data. Check both standalone and creator-panel rendering.
+- Verify the exact attention response keys on an empty shop, a title outside the five most recent, an untitled poster, tied timestamps and a second shop. Stall the recent list, fail a refresh after an empty success and remove a linked poster before tapping.
+- At 360 px in both themes check long poster and shop names, visible creation action, header controls, the home link’s accessible name, and contact help announced with the field. Include a real phone and screen reader in release verification.

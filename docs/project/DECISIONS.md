@@ -1065,3 +1065,15 @@ The owner approved closing T-SHOP-DASH-004 after fixing the current-poster histo
 ## ADR-118 — Account review closure (2026-11-18)
 
 The owner approved fixing the delayed terms read on a verified return to Account and closing T-SHOP-DASH-005 after its two-device regression and Account checks pass.
+
+## Mobile dashboard follow-up — 2026-11-18
+
+Owner selected all five mobile critique findings for the next design. Leaving edited shop details should prompt to keep editing or discard.
+
+Owner approved R-SHOP-DASH-005 through 009 for design. Proposed contract choice: return the linked title in the existing summary snapshot so Home can identify older posters even when the recent list fails.
+
+## ADR-119 — Mobile dashboard design approval (2026-11-18)
+
+The owner approved the v4 shop dashboard amendment covering D-SHOP-DASH-005 through 009, including the keep-editing/discard choice and the nullable title in each attention group.
+
+The owner authorized closing T-SHOP-DASH-006 after fixing the round-three history issue and passing its regression and dashboard checks. Codex may resolve subsequent routine implementation and review decisions autonomously within the approved dashboard design.

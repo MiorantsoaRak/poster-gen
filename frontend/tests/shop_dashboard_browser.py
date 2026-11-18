@@ -10,6 +10,81 @@ import browser_smoke as smoke
 from terms_browser import open_atelier, set_terms
 
 
+def set_theme(page, scheme):
+    page.emulate_media(color_scheme=scheme)
+    page.wait_for_function("theme => document.documentElement.dataset.theme === theme", arg="clair" if scheme == "light" else "sombre")
+
+
+def walk_header(browser):
+    context = browser.new_context()
+    try:
+        page = context.new_page()
+        open_atelier(page, "#accueil")
+        header = page.locator(".app-header")
+        brand = header.get_by_role("link", name="Doka Studio — Accueil", exact=True)
+        def check():
+            for width in (360, 1440):
+                page.set_viewport_size({"width": width, "height": 740})
+                for scheme in ("light", "dark"):
+                    set_theme(page, scheme)
+                    expect(brand).to_be_visible()
+                    expect(brand).to_have_attribute("href", "#accueil")
+                    expect(brand.get_by_role("img")).to_have_count(0)
+                    image = brand.locator("img:visible")
+                    expect(image).to_have_count(1)
+                    expect(image).to_have_js_property("complete", True)
+                    assert image.evaluate("e => e.naturalWidth > 0")
+                    box = image.bounding_box()
+                    if width == 360:
+                        expect(brand.get_by_text("Doka Studio", exact=True)).to_be_visible()
+                        assert box["width"] == 32 and image.evaluate("e => getComputedStyle(e).paddingLeft") == "6px"
+                    else:
+                        assert box["width"] >= 220 and box["height"] > 0
+                        assert ("reverse" in image.get_attribute("src")) == (scheme == "dark")
+                    page.wait_for_function(smoke.NO_SIDEWAYS)
+                    brand.focus()
+                    expect(brand).to_be_focused()
+                    page.keyboard.press("Tab")
+                    assert header.evaluate("e => e.contains(document.activeElement)") and not brand.evaluate("e => e === document.activeElement")
+                    last_mode = header.locator(".seg button").last
+                    if width == 360 and last_mode.is_visible():
+                        assert header.bounding_box()["height"] <= 64
+                        controls = [brand, header.locator(".sign-out"), *header.locator(".seg button").all(), header.locator(".theme-toggle")]
+                        boxes = [control.bounding_box() for control in controls]
+                        assert all(box["height"] >= 44 and box["width"] >= 44 for box in boxes)
+                        assert all(left["x"] + left["width"] <= right["x"] + 1 for left, right in zip(boxes, boxes[1:]))
+                        theme_button = header.locator(".theme-toggle")
+                        last_mode.focus()
+                        page.keyboard.press("Tab")
+                        expect(theme_button).to_be_focused()
+                        mode_box, theme_box = last_mode.bounding_box(), theme_button.bounding_box()
+                        assert mode_box["x"] + mode_box["width"] <= theme_box["x"]
+                        assert abs(mode_box["y"] + mode_box["height"]/2 - theme_box["y"] - theme_box["height"]/2) < 2
+        expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
+        check()
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        check()
+        for route, heading in (("credits", "Mes crédits"), ("compte", "Mon compte")):
+            page.goto(smoke.ORIGIN + "/#" + route)
+            expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
+            check()
+        def long_name(route):
+            response = route.fetch()
+            profile = response.json()
+            profile["name"] = "Boutique " * 17
+            route.fulfill(json=profile)
+        page.route("**/api/shop-profile", long_name)
+        page.goto(smoke.ORIGIN + "/#etapes")
+        expect(page.get_by_label("Photos du produit")).to_be_enabled()
+        check()
+        assert header.locator(".shop-label").evaluate("e => e.scrollWidth > e.clientWidth")
+    finally:
+        context.close()
+
+
 def walk(browser, out):
     context = browser.new_context(viewport={"width": 360, "height": 640}, color_scheme="light", timezone_id="UTC")
     try:
@@ -26,17 +101,31 @@ def walk(browser, out):
         home = page.get_by_role("region", name="Accueil", exact=True)
         expect(home.get_by_text("Disponibles", exact=True)).to_be_visible()
         expect(home.get_by_text("Lecture des affiches…")).to_be_visible()
+        all_clear = home.get_by_text("Aucune affiche à vérifier.", exact=True)
+        expect(all_clear).to_be_visible()
+        pending_summary = []
+        page.route("**/api/shop-dashboard", lambda route: pending_summary.append(route))
+        with page.expect_request("**/api/shop-dashboard"):
+            home.get_by_role("button", name="Actualiser").click()
+        expect(all_clear).to_have_count(0)
+        expect(home.get_by_text("Dernier suivi connu à", exact=False)).to_be_visible()
+        pending_summary.pop().abort()
+        expect(home.get_by_role("button", name="Réessayer le suivi")).to_be_visible()
+        expect(all_clear).to_have_count(0)
+        page.unroute("**/api/shop-dashboard")
+        home.get_by_role("button", name="Réessayer le suivi").click()
+        expect(all_clear).to_be_visible()
         assert "shop-dashboard" in reads and "creations?limit=5" in reads
         assert not any(path.startswith(("looks", "capabilities", "shop-profile", "creations?limit=50")) for path in reads), reads
-        held.pop().abort()
+        while held:
+            held.pop().abort()
         expect(home.get_by_text("Affiches indisponibles.", exact=False)).to_be_visible()
         assert home.get_by_text("Aucune affiche pour le moment.").count() == 0
         page.unroute("**/api/creations?limit=5")
         home.get_by_role("button", name="Réessayer les affiches").click()
         expect(home.get_by_text("Aucune affiche pour le moment.")).to_be_visible()
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
-            page.wait_for_function("theme => document.documentElement.dataset.theme === theme", arg="clair" if scheme == "light" else "sombre")
+            set_theme(page, scheme)
             page.wait_for_function(smoke.NO_SIDEWAYS)
             smoke.check_contrast(page, f"Accueil 360, {scheme}")
             page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
@@ -50,7 +139,7 @@ def walk(browser, out):
         page.route("**/api/balance", lambda route: route.abort())
         home.get_by_role("button", name="Actualiser").click()
         expect(home.get_by_role("button", name="Réessayer le solde")).to_be_visible()
-        expect(stamp).to_have_text("Solde vérifié à 10:30.")
+        expect(stamp).to_have_text("Dernier solde connu à 10:30.")
         expect(home.get_by_text("Disponibles", exact=True)).to_be_visible()
         page.unroute("**/api/balance")
         home.get_by_role("button", name="Réessayer le solde").click()
@@ -118,18 +207,21 @@ def walk(browser, out):
                              "brand_selection": {"logo": False, "shop_name": False, "contact": False}})["id"]
         poster_session = context.storage_state()
         summary = page.request.get(smoke.ORIGIN + "/api/shop-dashboard").json()
-        summary["review"] = {"total": 3, "first_creation_id": made["id"]}
-        summary["failed"] = {"total": 1, "first_creation_id": made["id"]}
+        summary["review"] = {"total": 3, "first_creation_id": made["id"], "first_creation_title": made["document"]["offer"]["title"]}
+        summary["failed"] = {"total": 1, "first_creation_id": recent_id}  # dashboard response from an older build
         page.route("**/api/shop-dashboard", lambda route: route.fulfill(json=summary))
         page.locator("nav").get_by_role("link", name="Accueil").click()
+        review_action = home.get_by_role("button", name="Vérifier Casque de la boutique")
+        expect(review_action).to_be_visible()
+        expect(all_clear).to_have_count(0)
         expect(home.get_by_text("+ 2 à vérifier")).to_be_visible()
         expect(home.get_by_role("button", name="Génération échouée")).to_be_visible()
         poster = home.get_by_role("button", name="Affiche 5 Brouillon")
         expect(poster).to_be_visible()
         expect(home.locator(".home-recent button")).to_have_count(5)
         expect(home.locator(".home-recent")).not_to_contain_text("Casque de la boutique")
-        for button, target, title in ((home.get_by_role("button", name="Affiche à vérifier"), made["id"], "Casque de la boutique"),
-                                      (home.get_by_role("button", name="Génération échouée"), made["id"], "Casque de la boutique"),
+        for button, target, title in ((review_action, made["id"], "Casque de la boutique"),
+                                      (home.get_by_role("button", name="Génération échouée"), recent_id, "Affiche 5"),
                                       (poster, recent_id, "Affiche 5")):
             button.click()
             page.wait_for_url(f"**/#{target}")
@@ -139,6 +231,23 @@ def walk(browser, out):
                 page.evaluate(smoke.VISIBILITY, False)
             page.go_back()
             expect(home).to_be_visible()
+        # Summary titles remain available independently of recent posters, including a wrapping long title.
+        title = "Offre " + "A" * 140
+        summary["failed"]["first_creation_title"] = title
+        page.route("**/api/creations?limit=5", lambda route: held.append(route))
+        with page.expect_request("**/api/creations?limit=5"):
+            home.get_by_role("button", name="Actualiser").click()
+        expect(home.get_by_role("button", name="Génération échouée · " + title)).to_be_visible()
+        page.wait_for_function(smoke.NO_SIDEWAYS)
+        expect(home.get_by_role("link", name="Créer une affiche")).to_be_visible()
+        held.pop().continue_()
+        page.unroute("**/api/creations?limit=5")
+        removed_url = "**/api/creations/" + made["id"]
+        page.route(removed_url, lambda route: route.fulfill(status=404, json={"error": {"code": "not_found"}}))
+        with page.expect_request("**/api/shop-dashboard"):
+            review_action.click()
+        expect(page.get_by_role("alert").filter(has_text="Cette affiche n’est plus disponible.")).to_be_visible()
+        page.unroute(removed_url)
         # A slow opening poster cannot replace the account address selected while its read was held.
         detail_url = "**/api/creations/" + recent_id
         delayed = []
@@ -150,6 +259,14 @@ def walk(browser, out):
         expect(page.get_by_role("heading", name="Mon compte")).to_be_visible()
         page.wait_for_url("**/#compte")
         page.unroute(detail_url)
+        # Updating contact details in Account never applies them retroactively to a saved poster.
+        poster_url = smoke.ORIGIN + "/api/creations/" + made["id"]
+        before_contact = page.request.get(poster_url).json()
+        page.get_by_role("textbox", name="Contact de la boutique", exact=True).fill("Coordonnées actualisées")
+        page.get_by_role("button", name="Enregistrer le profil").click()
+        expect(page.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
+        after_contact = page.request.get(poster_url).json()
+        assert after_contact["document"] == before_contact["document"] and after_contact["revision"] == before_contact["revision"]
         page.locator("nav").get_by_role("link", name="Accueil").click()
         # A stalled or failed first gallery read must never present zeros or a fictitious empty library.
         gallery_url = "**/api/creations?limit=50&status=active"
@@ -186,6 +303,24 @@ def walk(browser, out):
         home.get_by_role("button", name="Actualiser").click()
         expect(home.get_by_role("button", name="Lire les conditions")).to_be_visible()
         expect(home.get_by_role("link", name="Obtenir des crédits")).to_have_count(0)
+        page.route("**/api/balance", lambda route: route.abort(), times=1)
+        home.get_by_role("button", name="Actualiser").click()
+        retry = home.get_by_role("button", name="Réessayer le solde")
+        expect(retry).to_be_visible()
+        expect(home.get_by_role("button", name="Lire les conditions")).to_have_count(0)
+        pending_balance = []
+        page.route("**/api/balance", lambda route: pending_balance.append(route), times=1)
+        with page.expect_request("**/api/balance"):
+            retry.click()
+        expect(stamp).to_have_text("Dernier solde connu à 10:40.")
+        expect(home.locator(".home-numbers strong").first).to_have_text("0")
+        expect(home.get_by_role("button", name="Lire les conditions")).to_have_count(0)
+        expect(home.get_by_role("link", name="Obtenir des crédits")).to_have_count(0)
+        balance["blocked"]["scene"] = None
+        balance["available"] = 3
+        pending_balance.pop().fulfill(json=balance)
+        expect(home.locator(".home-numbers strong").first).to_have_text("3")
+        expect(stamp).to_have_text("Solde vérifié à 10:40.")
         page.unroute("**/api/balance")
         page.unroute("**/api/shop-dashboard")
         home.get_by_role("link", name="Créer une affiche").click()
@@ -355,6 +490,32 @@ def current_credit_poster(browser, session, poster_id):
         context.close()
 
 
+def check_balance_explanation(page, view, balance):
+    reserved = view.get_by_text("Les crédits en attente sont déjà déduits du solde disponible.")
+    empty = view.get_by_text("Un crédit disponible est nécessaire", exact=False)
+    for available, pending, reason in [(2, 1, None), (0, 0, "terms"), (-2, 1, "service")]:
+        balance.update(available=available, pending=pending)
+        restriction = "Acceptez les conditions." if reason == "terms" else "La génération est en pause."
+        balance["blocked"]["scene"] = {"reason": reason, "message_fr": restriction} if reason else None
+        with page.expect_response("**/api/balance"):
+            view.get_by_role("button", name="Actualiser").click()
+        expect(view.locator("dd")).to_have_text([str(available), str(pending)])
+        expect(reserved).to_have_count(int(pending > 0))
+        expect(empty).to_have_count(int(available <= 0))
+        expect(view.get_by_text(restriction, exact=True)).to_have_count(int(bool(reason)))
+        expect(view.get_by_text(balance["purchase_fr"], exact=True)).to_have_count(1)
+    checked = view.locator(".credit-balance .meta").inner_text().split(" à ")[-1]
+    page.route("**/api/balance", lambda route: route.abort(), times=1)
+    view.get_by_role("button", name="Actualiser").click()
+    expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
+    expect(view.get_by_text("Dernier solde connu à " + checked)).to_be_visible()
+    expect(view.locator("dd")).to_have_text(["-2", "1"])
+    expect(empty).to_have_count(0)
+    expect(view.get_by_text(restriction, exact=True)).to_have_count(0)
+    view.get_by_role("button", name="Réessayer le solde").click()
+    expect(empty).to_be_visible()
+
+
 def walk_credits(browser, out):
     """Visit Credits during a real pending upload, page through history, then expire the session during a late read."""
     context = browser.new_context(viewport={"width": 360, "height": 640})
@@ -396,6 +557,10 @@ def walk_credits(browser, out):
         balance = page.request.get(smoke.ORIGIN + "/api/balance").json()
         balance.update(available=-2, pending=1, purchase_fr="Appelez la boutique pour acheter des crédits.")
         page.route("**/api/balance", lambda route: route.fulfill(json=balance))
+        opener.click()
+        check_balance_explanation(page, panel, balance)
+        panel.get_by_role("button", name="Fermer").click()
+        expect(opener).to_be_focused()
         base = {"at": "2026-11-01T10:00:00Z", "creation_id": None, "title": None, "removed": None}
         line = dict(base, type="line", id=11, kind="grant", origin="bought", credits=3)
         old = dict(base, type="job", id="abandoned", kind="scene", credit="given_back", creation_id="abandoned", title="Annonce retirée", removed=True)
@@ -407,8 +572,12 @@ def walk_credits(browser, out):
                 route.fulfill(json={"items": [line], "next_cursor": "cursor"})
         page.route("**/api/shop-credit-history?*", history)
         page.goto("about:blank")
+        page.route("**/api/balance", lambda route: route.abort(), times=1)
         page.goto(smoke.ORIGIN + "/#credits")
         view = page.get_by_role("region", name="Mes crédits")
+        expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
+        expect(view.locator("dd")).to_have_count(0)
+        check_balance_explanation(page, view, balance)
         expect(view.get_by_text("-2", exact=True)).to_be_visible()
         expect(view.get_by_text(balance["purchase_fr"])).to_be_visible()
         expect(view.get_by_text("Achat de crédits")).to_be_visible()
@@ -423,7 +592,7 @@ def walk_credits(browser, out):
         expect(view.get_by_text("Annonce retirée · Affiche retirée")).to_be_visible()
         expect(view.get_by_role("button", name="Annonce retirée")).to_have_count(0)
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            set_theme(page, scheme)
             page.wait_for_function(smoke.NO_SIDEWAYS)
             smoke.check_contrast(page, "Crédits, " + scheme)
             page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
@@ -459,7 +628,7 @@ def walk_account(browser, out, data):
         page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
         page.get_by_role("button", name="Ouvrir l’atelier").click()
         account = page.get_by_role("region", name="Mon compte", exact=True)
-        name, contact = account.get_by_label("Nom de la boutique"), account.get_by_label("Contact", exact=True)
+        name, contact = account.get_by_label("Nom de la boutique"), account.get_by_role("textbox", name="Contact de la boutique", exact=True)
         save = account.get_by_role("button", name="Enregistrer le profil")
         expect(name).to_be_visible()
         # Postponing is respected on Account entry. Another device accepts while this tab is away.
@@ -469,6 +638,19 @@ def walk_account(browser, out, data):
         page.get_by_role("link", name="Mon compte").click()
         expect(account.get_by_text("Conditions à accepter.")).to_be_visible()
         expect(page.get_by_role("dialog")).to_have_count(0)
+        # Back during the conditions keeps that dialog in charge of a dirty Account.
+        before_terms = name.input_value()
+        name.fill("Saisie pendant les conditions")
+        account.get_by_role("button", name="Lire les conditions").click()
+        conditions = page.get_by_role("dialog", name="Conditions d’utilisation")
+        expect(conditions).to_be_visible()
+        page.evaluate("() => new Promise(done => { addEventListener('hashchange', () => done(true), {once: true}); history.back() })")
+        page.wait_for_function("location.hash === '#compte'")
+        expect(page.get_by_role("dialog")).to_have_count(1)
+        expect(conditions).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(name).to_have_value("Saisie pendant les conditions")
+        name.fill(before_terms)
         session = other.request.post(smoke.ORIGIN + "/api/session", headers=headers, data={"identifier": smoke.IDENTIFIER, "password": smoke.PASSWORD})
         assert session.ok
         version = other.request.get(smoke.ORIGIN + "/api/terms").json()["version"]
@@ -507,13 +689,162 @@ def walk_account(browser, out, data):
         expect(account.get_by_text("Version du", exact=False)).to_be_visible()
         assert not accepted
         expect(account.get_by_role("link", name="Vos données")).to_have_attribute("href", "/donnees.html")
-        expect(account.get_by_text(f"Contactez {smoke.SUPPORT}.", exact=True)).to_be_visible()
+        expect(contact).to_have_accessible_description("Ces coordonnées peuvent apparaître sur vos affiches si vous choisissez de les inclure.")
+        support = account.get_by_role("region", name="Assistance Doka Studio")
+        expect(support.get_by_text(f"Contactez {smoke.SUPPORT}.", exact=True)).to_be_visible()
+        def without_operator(route):
+            response = route.fetch()
+            session = response.json()
+            session.pop("support_fr", None)
+            route.fulfill(json=session)
+        page.route("**/api/session", without_operator)
+        page.evaluate(smoke.VISIBILITY, True)
+        page.evaluate(smoke.VISIBILITY, False)
+        expect(support.get_by_text("Contactez l’opérateur qui vous a remis votre identifiant.", exact=True)).to_be_visible()
+        page.unroute("**/api/session")
+        page.evaluate(smoke.VISIBILITY, True)
+        page.evaluate(smoke.VISIBILITY, False)
+        expect(support.get_by_text(f"Contactez {smoke.SUPPORT}.", exact=True)).to_be_visible()
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            set_theme(page, scheme)
             page.wait_for_function(smoke.NO_SIDEWAYS)
             smoke.check_contrast(page, f"Compte 360, {scheme}")
             page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
             page.screenshot(path=str(out / f"compte-{scheme}.png"), full_page=True)
+
+        home_link = account.get_by_role("link", name="Retour à l’accueil")
+        keep = page.get_by_role("button", name="Continuer la modification")
+        discard = page.get_by_role("button", name="Abandonner", exact=True)
+        original_name, original_contact = name.input_value(), contact.input_value()
+        profile_writes = []
+        page.on("request", lambda r: profile_writes.append(r) if r.method == "PUT" and r.url.endswith("/shop-profile") else None)
+
+        contact.fill("Saisie à garder")
+        home_link.click()
+        expect(keep).to_be_focused()
+        page.wait_for_url("**/#compte")
+        page.keyboard.press("Escape")
+        expect(contact).to_be_focused()
+        expect(contact).to_have_value("Saisie à garder")
+        # Reaching an older Account hash is still a different entry: keep must return to the editing one.
+        position = page.evaluate("history.state.position")
+        page.evaluate("history.back()")
+        expect(keep).to_be_focused()
+        page.evaluate("history.back()")
+        page.wait_for_function("p => history.state.position === p - 2 && location.hash === '#compte'", arg=position)
+        expect(keep).to_be_focused()
+        keep.click()
+        page.wait_for_function("p => history.state.position === p", arg=position)
+        expect(contact).to_be_focused()
+        expect(contact).to_have_value("Saisie à garder")
+        account.get_by_role("button", name="Se déconnecter").click()
+        sign_out = page.get_by_role("dialog", name="Se déconnecter ?")
+        expect(sign_out).to_be_visible()
+        page.evaluate("() => new Promise(done => { addEventListener('hashchange', () => done(true), {once: true}); history.back() })")
+        page.wait_for_function("p => history.state.position === p", arg=position)
+        expect(page.get_by_role("dialog")).to_have_count(1)
+        cancel = sign_out.get_by_role("button", name="Annuler")
+        expect(cancel).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(sign_out.get_by_role("button", name="Se déconnecter quand même")).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        expect(cancel).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        expect(contact).to_have_value("Saisie à garder")
+        # The browser's warning protects full-document navigation without copying the form to storage.
+        warnings = []
+        def stay(dialog):
+            warnings.append(dialog.type)
+            dialog.dismiss()
+        page.once("dialog", stay)
+        account.get_by_role("link", name="Vos données").click()
+        assert warnings == ["beforeunload"]
+        expect(contact).to_have_value("Saisie à garder")
+
+        # Cancel Back, then Back again to the original Home entry. Forward returns to saved details.
+        page.evaluate("history.back()")
+        expect(keep).to_be_focused()
+        keep.click()
+        page.wait_for_url("**/#compte")
+        expect(contact).to_be_focused()
+        page.evaluate("history.back()")
+        discard.click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.evaluate("history.forward()")
+        expect(contact).to_have_value(original_contact)
+        # Visit Home through a normal link, go Back to Account, then cancel and repeat Forward.
+        name.fill("Nom provisoire")
+        name.fill(original_name)
+        home_link.click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.evaluate("history.back()")
+        expect(contact).to_be_visible()
+        name.fill("Nom abandonné")
+        page.evaluate("history.forward()")
+        keep.click()
+        page.wait_for_url("**/#compte")
+        expect(name).to_be_focused()
+        page.evaluate("history.forward()")
+        discard.click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.get_by_role("link", name="Mon compte").click()
+        expect(name).to_have_value(original_name)
+        assert not profile_writes
+
+        # A committed save with a lost answer is read back if the intended destination fails.
+        page.route("**/api/capabilities", lambda route: route.abort())
+        lost = []
+        def lose_committed_profile(route):
+            if route.request.method == "PUT":
+                assert route.fetch().ok
+                lost.append(route)
+            else:
+                route.continue_()
+        page.route("**/api/shop-profile", lose_committed_profile)
+        name.fill("Nom déjà enregistré")
+        with page.expect_request("**/api/shop-profile"):
+            save.click()
+        page.locator("nav").get_by_role("link", name="Styles").click()
+        expect(keep).to_have_count(0)
+        lost.pop().abort()
+        expect(discard).to_be_visible()
+        discard.click()
+        expect(name).to_be_enabled()
+        expect(name).to_have_value("Nom déjà enregistré")
+        expect(save).to_be_disabled()
+        expect(page.get_by_role("button", name="Réessayer l’enregistrement")).to_have_count(0)
+        page.wait_for_url("**/#compte")
+        page.unroute("**/api/shop-profile")
+        page.unroute("**/api/capabilities")
+
+        # Failed Styles left adjacent #compte entries. Back between them fires only popstate.
+        recovered = page.evaluate("history.state.position")
+        page.evaluate("history.back()")
+        page.wait_for_function("p => location.hash === '#compte' && history.state.position === p - 1", arg=recovered)
+        contact.fill("Saisie sur l’entrée précédente")
+        page.evaluate("history.back()")
+        expect(keep).to_be_focused()
+        keep.click()
+        page.wait_for_function("p => location.hash === '#compte' && history.state.position === p - 1", arg=recovered)
+        expect(contact).to_have_value("Saisie sur l’entrée précédente")
+        contact.fill(original_contact)
+
+        # A clean departure can also fail. Start editing on the recovered entry before pressing Back.
+        clean_position = page.evaluate("history.state.position")
+        page.route("**/api/capabilities", lambda route: route.abort())
+        with page.expect_request("**/api/capabilities"):
+            page.locator("nav").get_by_role("link", name="Styles").click()
+        page.wait_for_function("p => location.hash === '#compte' && history.state.position === p + 1", arg=clean_position)
+        contact.fill("Saisie après retour sur erreur")
+        page.evaluate("history.back()")
+        expect(keep).to_be_focused()
+        keep.click()
+        page.wait_for_function("p => location.hash === '#compte' && history.state.position === p + 1", arg=clean_position)
+        expect(contact).to_be_focused()
+        expect(contact).to_have_value("Saisie après retour sur erreur")
+        contact.fill(original_contact)
+        page.unroute("**/api/capabilities")
 
         # Another device updates contact while this owner is editing the name.
         url = smoke.ORIGIN + "/api/shop-profile"
@@ -530,7 +861,17 @@ def walk_account(browser, out, data):
         reload_profile.click()
         expect(contact).to_have_value("Contact modifié ailleurs")
         expect(name).to_have_value("Mon nouveau nom")
-        account.locator("input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        # The requested departure waits until the selected logo finishes uploading.
+        uploads = []
+        page.route("**/api/assets", lambda route: uploads.append(route))
+        with page.expect_request("**/api/assets"):
+            account.locator("input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        home_link.click()
+        expect(keep).to_have_count(0)
+        uploads.pop().continue_()
+        expect(keep).to_be_focused()
+        keep.click()
+        page.unroute("**/api/assets")
         expect(account.get_by_alt_text("Logo de la boutique")).to_be_visible()
         # An unreadable 409 asks for identity verification and keeps the draft editable.
         page.route("**/api/shop-profile", lambda route: route.fulfill(status=409, body="broken"))
@@ -539,6 +880,9 @@ def walk_account(browser, out, data):
         expect(name).to_be_enabled()
         expect(name).to_have_value("Mon nouveau nom")
         expect(account.get_by_role("button", name="Réessayer l’enregistrement")).to_have_count(0)
+        home_link.click()
+        keep.click()
+        expect(name).to_have_value("Mon nouveau nom")
         page.unroute("**/api/shop-profile")
         # Commit the first save and lose only its answer. Explicit retry must replay the same payload and key.
         writes = []
@@ -554,6 +898,9 @@ def walk_account(browser, out, data):
                 route.continue_()
         page.route("**/api/shop-profile", lose_save)
         save.click()
+        expect(account.get_by_role("button", name="Réessayer l’enregistrement")).to_be_visible()
+        home_link.click()
+        keep.click()
         account.get_by_role("button", name="Réessayer l’enregistrement").click()
         expect(account.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
         assert len(writes) == 2 and writes[0] == writes[1]
@@ -580,7 +927,7 @@ def walk_account(browser, out, data):
         expect(save).to_be_disabled()
         fields = (
             ("Nom de la boutique", "Mon choix local", "Nom de l’autre appareil", "Garder ma saisie"),
-            ("Contact", "Mon numéro", "Autre numéro", "Garder la version enregistrée"))
+            ("Contact de la boutique", "Mon numéro", "Autre numéro", "Garder la version enregistrée"))
         for label, before, after, choice in fields:
             field = account.get_by_role("group", name=f"{label} modifié sur les deux appareils")
             expect(field.get_by_text(before, exact=True)).to_be_visible()
@@ -637,7 +984,25 @@ def walk_account(browser, out, data):
         change.click()
         expect(current).to_be_empty()
         assert len(passwords) == 6
+        # A successful in-flight save completes the requested departure exactly once.
+        page.unroute("**/api/shop-profile")
+        pending_saves = []
+        page.route("**/api/shop-profile", lambda route: pending_saves.append(route) if route.request.method == "PUT" else route.continue_())
+        contact.fill("Contact de départ")
+        with page.expect_request("**/api/shop-profile"):
+            save.click()
+        home_link.click()
+        expect(account).to_be_visible()
+        expect(keep).to_have_count(0)
+        pending_saves.pop().continue_()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.unroute("**/api/shop-profile")
+        page.get_by_role("link", name="Mon compte").click()
+        expect(contact).to_have_value("Contact de départ")
+        name.fill("Nom avant déconnexion")
         account.get_by_role("button", name="Se déconnecter").click()
+        expect(page.get_by_role("dialog").get_by_text("Les modifications non enregistrées", exact=False)).to_be_visible()
+        page.get_by_role("button", name="Se déconnecter quand même").click()
         expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
         expect(account).to_have_count(0)
         # One cookie switches to a distinct shop while an old tab still awaits shop A's profile.
@@ -649,6 +1014,12 @@ def walk_account(browser, out, data):
         with page.expect_request("**/api/shop-profile"):
             page.get_by_role("link", name="Mon compte").click()
         page.wait_for_function("location.hash === '#compte'")
+        dirty_tab = context.new_page()
+        open_atelier(dirty_tab, "#compte")
+        dirty_tab.get_by_label("Nom de la boutique").fill("Saisie privée")
+        dirty_tab.get_by_label("Mot de passe actuel").fill("secret local")
+        dirty_tab.get_by_role("link", name="Retour à l’accueil").click()
+        expect(dirty_tab.get_by_role("button", name="Continuer la modification")).to_be_focused()
         new_secret = uuid4().hex
         hashed = smoke.PASSWORDS.hash(new_secret)
         with smoke.write_tx(engine) as conn:
@@ -658,6 +1029,10 @@ def walk_account(browser, out, data):
         page.evaluate("Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))")
         page.evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))")
         expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
+        dirty_tab.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        expect(dirty_tab.get_by_label("Identifiant de la boutique")).to_be_visible()
+        expect(dirty_tab.get_by_role("region", name="Mon compte", include_hidden=True)).to_have_count(0)
+        expect(dirty_tab.get_by_role("dialog", include_hidden=True)).to_have_count(0)
         old, result = held.pop()
         old.fulfill(response=result)
         expect(account).to_have_count(0)
@@ -683,6 +1058,7 @@ def run():
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch()
                     try:
+                        walk_header(browser)
                         walk_credits(browser, out)
                         walk(browser, out)
                         walk_account(browser, out, data)

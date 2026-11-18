@@ -512,10 +512,12 @@ USAGE = text(
 def attention(conn, shop: int, predicate: str) -> dict:
     """How many of the shop's active posters match, and the newest of them by created_at then id (None: none)."""
     row = conn.execute(text(
-        "SELECT c.id,COUNT(*) OVER () AS total FROM creations c JOIN creation_versions v ON v.creation_id=c.id"
+        "SELECT c.id,json_extract(v.document_json,'$.offer.title') AS title,COUNT(*) OVER () AS total"
+        " FROM creations c JOIN creation_versions v ON v.creation_id=c.id"
         f" AND v.revision=c.current_revision WHERE c.shop_id=:shop AND c.status='active' AND {predicate}"
         " ORDER BY c.created_at DESC,c.id DESC LIMIT 1"), {"shop": shop}).first()
-    return {"total": row.total if row else 0, "first_creation_id": row.id if row else None}
+    title = row.title.strip() if row and isinstance(row.title, str) else None
+    return {"total": row.total if row else 0, "first_creation_id": row.id if row else None, "first_creation_title": title or None}
 
 
 def create_app(settings: Settings | None = None, prepare: Callable[[Engine], None] | None = None) -> FastAPI:

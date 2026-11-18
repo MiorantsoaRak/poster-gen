@@ -4,7 +4,7 @@ import { api, ApiError } from './api'
 export interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 export interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 export const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
-interface Attention { total: number; first_creation_id: string | null }
+interface Attention { total: number; first_creation_id: string | null; first_creation_title?: string | null }
 export interface Summary {
   as_of: string; review: Attention; failed: Attention
   usage: { posters_created: number; images_generated: number; credits_spent: number }

@@ -23,7 +23,12 @@ defineExpose({ refresh, unavailable })
       <dl v-if="funds.data"><div><dt>Disponibles</dt><dd>{{ funds.data.available }}</dd></div><div><dt>En attente</dt><dd>{{ funds.data.pending }}</dd></div></dl>
       <p v-if="funds.loading && !funds.data" role="status">Lecture du solde…</p>
       <p v-if="funds.error" role="status">Solde indisponible. {{ funds.error }} <button class="text-button" @click="funds.read">Réessayer le solde</button></p>
-      <p v-if="funds.checked" class="meta">Solde vérifié à {{ funds.checked }}.</p>
+      <p v-if="funds.checked" class="meta">{{ funds.loading || funds.error ? 'Dernier solde connu à' : 'Solde vérifié à' }} {{ funds.checked }}.</p>
+      <p v-if="funds.data && funds.data.pending > 0">Les crédits en attente sont déjà déduits du solde disponible.</p>
+      <template v-if="funds.data && !funds.loading && !funds.error">
+        <p v-if="funds.data.blocked.scene" class="why">{{ funds.data.blocked.scene.message_fr }}</p>
+        <p v-if="funds.data.available <= 0">Un crédit disponible est nécessaire pour générer une nouvelle image. Vos affiches restent accessibles.</p>
+      </template>
       <template v-if="funds.data"><h3>Obtenir des crédits</h3><p class="instructions">{{ funds.data.purchase_fr }}</p></template>
     </section>
     <section aria-labelledby="titre-usage"><h2 id="titre-usage">Ces 30 derniers jours</h2>

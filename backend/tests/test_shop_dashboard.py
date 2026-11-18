@@ -17,7 +17,11 @@ SINCE = "2026-10-19T12:00:00.000000+00:00"  # 30 × 24 hours before NOW: the win
 BEFORE = "2026-10-19T11:59:59.999999+00:00"  # the last instant outside it
 LAST = "2026-11-18T11:59:59.999999+00:00"  # the window's last instant; NOW itself is outside
 INSIDE = "2026-11-10T08:00:00.000000+00:00"
-EMPTY = {"total": 0, "first_creation_id": None}
+EMPTY = {"total": 0, "first_creation_id": None, "first_creation_title": None}
+
+
+def attention(total, creation):
+    return {"total": total, "first_creation_id": creation["id"], "first_creation_title": creation["document"]["offer"]["title"]}
 
 
 def at(hour, minute=0):
@@ -89,7 +93,7 @@ def test_a_failure_counts_while_it_is_the_posters_latest_image_generation(client
     for _ in range(5):
         poster(client, at(9))
     assert old["id"] not in {item["id"] for item in client.get("/api/creations?limit=5").json()["items"]}
-    assert read(client)["failed"] == {"total": 1, "first_creation_id": old["id"]}  # older than the five recent posters
+    assert read(client)["failed"] == attention(1, old)  # older than the five recent posters
 
     def failing(*history):
         """A poster at 10:00 whose image jobs ended so, one minute apart: (status, kind) pairs."""
@@ -112,15 +116,30 @@ def test_a_failure_counts_while_it_is_the_posters_latest_image_generation(client
             job(engine, creation, status, at(10), id=f"{creation['id'][:-1]}{last}")
     # Two posters created at one instant, the newest of all: the greater id is linked.
     tied = [poster(client, at(11)) for _ in range(2)]
-    for creation in tied:
+    for index, creation in enumerate(tied):
+        creation["document"]["offer"]["title"] = f"Offre {index}"
+        saved = send(client, "PUT", f"/api/creations/{creation['id']}", creation["document"], creation["revision"])
+        assert saved.status_code == 200, saved.text
         job(engine, creation, "failed", at(11))
     # old, interrupted, material, rendered, same[1] and both tied: not the five newer clean ones, nor the others
     newest, other = sorted(tied, key=lambda creation: creation["id"], reverse=True)
     summary = read(client)
-    assert (summary["review"], summary["failed"]) == (EMPTY, {"total": 7, "first_creation_id": newest["id"]})
+    assert (summary["review"], summary["failed"]) == (EMPTY, attention(7, newest))
     # The linked one fixed by a later image: the other one is linked, the rest still counted.
     job(engine, newest, "succeeded", at(11, 30))
-    assert read(client)["failed"] == {"total": 6, "first_creation_id": other["id"]}
+    assert read(client)["failed"] == attention(6, other)
+
+
+@pytest.mark.parametrize("title", [None, "  \t "])
+def test_legacy_blank_title_keeps_the_link(client, title):
+    login(client)
+    engine = client.app.state.engine
+    creation = poster(client, INSIDE)
+    job(engine, creation, "failed", INSIDE)
+    with write_tx(engine) as conn:
+        conn.execute(text("UPDATE creation_versions SET document_json=json_set(document_json,'$.offer.title',:title)"
+                          " WHERE creation_id=:id"), {"id": creation["id"], "title": title})
+    assert read(client)["failed"] == {"total": 1, "first_creation_id": creation["id"], "first_creation_title": None}
 
 
 def scene(client, creation):
@@ -150,17 +169,17 @@ def test_review_counts_what_the_library_shows_to_review(client, at_now):
 
     first, second = create_draft(client), create_draft(client)
     shown = scene(client, first)
-    assert read(client)["review"] == {"total": 1, "first_creation_id": first["id"]} and to_review() == {first["id"]}
+    assert read(client)["review"] == attention(1, first) and to_review() == {first["id"]}
     decided = send(client, "POST", f"/api/visuals/{shown}/decision", {"action": "approve", "checks": {c: True for c in visuals.CHECKS}})
     assert decided.json()["status"] == "approved", decided.text
     assert read(client)["review"] == EMPTY and to_review() == set()
     waiting = scene(client, first)
     assert client.get(f"/api/creations/{first['id']}").json()["document"]["formats"]["feed"]["scene"]["visual_id"] == shown != waiting
     scene(client, second)
-    assert read(client)["review"] == {"total": 2, "first_creation_id": second["id"]}
+    assert read(client)["review"] == attention(2, second)
     assert to_review() == {first["id"], second["id"]}
     abandon(client, second)
-    assert read(client)["review"] == {"total": 1, "first_creation_id": first["id"]} and to_review() == {first["id"]}
+    assert read(client)["review"] == attention(1, first) and to_review() == {first["id"]}
 
 
 def test_a_copy_showing_a_pending_scene_needs_review_through_that_scene_alone(client, at_now):
@@ -177,7 +196,7 @@ def test_a_copy_showing_a_pending_scene_needs_review_through_that_scene_alone(cl
     copy = copied.json()
     assert copy["document"]["formats"]["feed"]["scene"]["visual_id"] == shown and copy["parent_creation_id"] == original["id"]
     assert client.get(f"/api/creations/{copy['id']}/jobs").json()["items"] == []  # the job is the original's alone
-    assert read(client)["review"] == {"total": 2, "first_creation_id": copy["id"]}  # the copy is the newer
+    assert read(client)["review"] == attention(2, copy)  # the copy is the newer
     assert states(client) == {original["id"]: "to_review", copy["id"]: "to_review"}
     decided = send(client, "POST", f"/api/visuals/{shown}/decision", {"action": "approve", "checks": {c: True for c in visuals.CHECKS}})
     assert decided.json()["status"] == "approved", decided.text
@@ -230,15 +249,18 @@ def test_each_shop_reads_its_own_posters_jobs_and_counts(client, at_now):
     b, shop_b = sign_in_second_shop(client)
     engine = client.app.state.engine
     failed_a, clean_a = poster(client, INSIDE), poster(client, INSIDE)
+    failed_a["document"]["offer"]["title"] = "Offre privée A"
+    saved = send(client, "PUT", f"/api/creations/{failed_a['id']}", failed_a["document"], failed_a["revision"])
+    assert saved.status_code == 200, saved.text
     job(engine, failed_a, "failed", INSIDE)
     job(engine, clean_a, "succeeded", INSIDE)
     job(engine, clean_a, "failed", at(9), shop=shop_b)
     job(engine, poster(b, INSIDE), "succeeded", INSIDE, shop=shop_b)
-    assert read(client) == {"as_of": NOW, "review": EMPTY, "failed": {"total": 1, "first_creation_id": failed_a["id"]},
+    assert read(client) == {"as_of": NOW, "review": EMPTY, "failed": attention(1, failed_a),
                             "usage": usage(posters=2, images=1, spent=1)}
     answer = b.get("/api/shop-dashboard")
     assert answer.json() == {"as_of": NOW, "review": EMPTY, "failed": EMPTY, "usage": usage(posters=1, images=1, spent=1)}
-    assert failed_a["id"] not in answer.text and clean_a["id"] not in answer.text
+    assert failed_a["id"] not in answer.text and clean_a["id"] not in answer.text and "Offre privée A" not in answer.text
 
 
 def test_every_figure_is_read_from_one_snapshot(client, at_now):
@@ -258,7 +280,7 @@ def test_every_figure_is_read_from_one_snapshot(client, at_now):
         first = read(client)
     finally:
         event.remove(engine, "before_cursor_execute", between)
-    assert written and (first["failed"], first["usage"]) == ({"total": 1, "first_creation_id": creation["id"]}, usage(posters=1))
+    assert written and (first["failed"], first["usage"]) == (attention(1, creation), usage(posters=1))
     second = read(client)
     assert (second["failed"], second["usage"]) == (EMPTY, usage(posters=1, images=1, spent=1))
 

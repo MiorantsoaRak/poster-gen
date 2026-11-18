@@ -3115,8 +3115,16 @@ def run():
                         agree = page.get_by_role("dialog").get_by_label("J’accepte une qualité réduite", exact=False)
                         page.get_by_role("button", name="Générer l’affiche").click()
                         expect(agree).to_be_visible()
-                        expect(page.get_by_role("button", name="Lancer la génération")).to_be_disabled()
-                        page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
+                        confirm = page.get_by_role("button", name="Lancer la génération")
+                        expect(confirm).to_be_disabled()
+                        expect(page.get_by_role("dialog").get_by_role("button", name="Annuler")).to_be_focused()
+                        page.keyboard.press("Tab")
+                        expect(agree).to_be_focused()
+                        page.keyboard.press("Space")
+                        expect(agree).to_be_checked()
+                        page.keyboard.press("Tab")
+                        expect(confirm).to_be_focused()
+                        page.keyboard.press("Escape")
                         # After a reload the editor no longer knows the photo is small: the server refuses, and the same dialog
                         # comes back with the agreement. No generation starts without it.
                         page.reload()

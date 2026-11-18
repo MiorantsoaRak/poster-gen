@@ -184,11 +184,14 @@ details[open] > summary { color: var(--text) }
 /* Shell: a glass top bar over the patches, real destinations */
 .app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left));
   background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
-.wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
-.mark { width: 20px; height: 24px }
-.mark path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round }
-.mark .hue { fill: var(--hue) }
-.mark .ink { fill: currentColor }
+.wordmark { display: inline-flex; align-items: center; flex: none; min-height: 44px; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
+.signal-symbol { width: 32px; height: 32px; padding: 6px; background: #f2c744 }
+.signal-horizontal { display: none }
+@media (min-width: 1440px) {
+  .wordmark { padding-inline: 4px }
+  .wordmark .signal-symbol, .wordmark span { display: none }
+  .signal-horizontal { display: block; width: 220px; height: auto }
+}
 .shop-label { color: var(--muted); font-size: 13px; font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .nav { display: flex; gap: 4px; margin-right: auto; flex-wrap: wrap }
 .nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px; color: var(--muted); font-weight: 650; text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
@@ -763,8 +766,12 @@ main.chatting:not(.editing) { padding-bottom: 0 }
   .chat.typing .style-row, body:has(.chat.typing) .nav { display: none }
   .chat.typing .tray { flex-wrap: nowrap; overflow-x: auto }
 }
-/* At 360 px the mark, the switch and the theme button share one line: the name leaves. */
-@media (max-width: 420px) { .app-header:has(.seg) .wordmark { font-size: 0; gap: 0 } }
+@media (max-width: 420px) {
+  .app-header:has(.seg) { column-gap: 4px }
+  .app-header:has(.seg) .wordmark { gap: 4px }
+  .app-header:has(.seg) .wordmark span { width: min-content; line-height: 17px }
+  .app-header:has(.seg) .sign-out, .app-header .seg button { min-height: 44px; padding-inline: 6px }
+}
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
   .gen-pill i { animation: none }

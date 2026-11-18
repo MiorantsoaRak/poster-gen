@@ -78,6 +78,25 @@
 - [x] T-SHOP-DASH-003 Home, independent loads, navigation and creator entry. Verify partial failures, deep links, default and saved views, recent posters and attention actions. Owner approved closure after both r3 fixes; post-fix Home, lockless Chromium, admin, build and 259 Vitest passed. Full editor and chat passed before final routing fixes.
 - [x] T-SHOP-DASH-004 Credits view and in-creator panel. Verify history, pagination/retry, balance refresh, keyboard return, uploads and preservation of creator state. Owner-approved final fix passed real-browser same-poster attachment, undo, focus and no-reload checks. Production build and 261 Vitest passed; full editor and chat passed before the final guard.
 - [x] T-SHOP-DASH-005 Account, profile recovery, password, terms and support. Verify errors, no password replay, shop isolation, mobile UI and existing browser regressions. ADR-118 final fix verified: previous build failed the new two-device regression. Final production build, 262 frontend tests, full dashboard and terms Chromium checks passed.
+- [x] T-SHOP-DASH-006 (D-SHOP-DASH-005) Protect unsaved shop details on links, tab changes and browser navigation. Coordinate the leave decision with save/upload completion, sign-out and session replacement.
+  - Closed under owner authorization. The old build failed the clean Account → failed Styles → edit → Back case. Final build, 262 Vitest tests and full dashboard Chromium passed.
+  - Verify with shop_dashboard_browser.py: edit name, contact or logo, then exercise keep/discard using a link and Back/Forward. Check destination, draft values, focus and write count. Cover reverted edits, failed and uncertain saves, a delayed upload, the data-page link and forced session expiry.
+- [x] T-SHOP-DASH-007 (D-SHOP-DASH-006) Explain reservations, signed balances and access to existing posters in standalone Credits and the creator panel.
+  - Implemented and independently approved. Production build and dashboard Chromium passed.
+  - Verify both views with 2 available/1 pending, 0/0 and −2/1. Check purchase instructions appear once, higher-priority restrictions still surface and failed refreshes identify retained data as stale. Run the dashboard browser smoke.
+- [x] T-SHOP-DASH-008 (D-SHOP-DASH-007) Return the current shop-visible title alongside each linked attention ID in the existing summary query.
+  - Implemented and independently approved. All 10 dashboard backend tests passed.
+  - Verify from backend with `uv run pytest tests/test_shop_dashboard.py -q`. Assert exact fields, nulls, tie ordering, a qualifying poster outside the latest five and isolation between shops.
+- [x] T-SHOP-DASH-009 (D-SHOP-DASH-007, after T-SHOP-DASH-008) Show the linked title in Home’s review and failure actions and state the outcome before the check time.
+  - Implemented and independently approved. Production build and full dashboard Chromium passed.
+  - Verify in the dashboard browser smoke with missing and long titles, a stalled recent list, multiple matches, a removed poster, and refresh failure after a successful empty result. Check the linked ID, remaining count, independent alerts and one-tap creation at 360 px.
+- [x] T-SHOP-DASH-010 (D-SHOP-DASH-008, shop-header portion of T-BRAND-DOKA) Apply the approved Signal artwork to the existing shared header.
+  - Final chat regression caught a 105 px creator header at 360 px. The compact layout restores one row, visible name, controls ≥44 px and header height ≤64 px. Final build, 262 unit tests, dashboard and full chat Chromium passed.
+  - Verify at 360 px and a wider viewport in both themes across dashboard, sign-in and creator. Check artwork size and clear space, long shop names, keyboard access to controls and one accessible product name on the Home link.
+- [x] T-SHOP-DASH-011 (D-SHOP-DASH-009) Label the poster contact, associate its French hint with the field and distinguish the operator’s support details.
+  - Implemented and independently approved. Production build, all 262 frontend unit tests and full dashboard Chromium passed.
+  - Verify the field’s accessible name and description, configured support and fallback in the dashboard browser smoke. Save a contact and check a previously saved poster retains its existing details.
+
 - [ ] T-SESSION-REPLACE (proposed by Claude 2026-11-17 from the T-SHOP-REPLACE review, not confirmed by the user) A `sessions` row can be rewritten by `INSERT OR REPLACE` on its token hash and so change shop, with foreign keys on (migration 0005). No code does it. Decide whether it needs the same guards before Release 1.
 - [ ] T-DEPLOY-DOCKER-RUN (proposed by Claude 2026-11-16, not yet confirmed by the user; before the Release 1 deploy) Run `deploy/release.sh` and `deploy/restore.sh` once against real Docker on a throwaway host, never the shared box: the operator service writes nothing to the journal; `up` and `build` leave it alone; `docker exec` output stays out of the journal; the real `timeout` around a hung backup and the removal of `affiche-ia-backup`; a restore from a backup taken before migration 0013.
   - verify: the commands and their output, kept in `docs/project/reviews/`.
@@ -534,6 +553,8 @@
 
 ## Completed review work
 
+- [x] T-SHOP-DASH-MOBILE-DESIGN Record requirements approval and draft the mobile design amendment for owner review.
+- [x] T-SHOP-DASH-AMEND Draft acceptance criteria for the five mobile dashboard findings and verify the requirements index.
 - [x] T-FIX-001 (D-PV-002 / R-PRODUCT-VISUALS-003) Screen commercial descriptions in shared admission before reserving spend.
   - note: User authorised review fixes on 2026-11-09. Reuse the existing screen; preserve idempotent replays.
   - verify: direct scene/background/revision regressions, no request or cost on refusal; full backend suite.

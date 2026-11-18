@@ -7,6 +7,8 @@ import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
 import ShopCredits from './ShopCredits.vue'
 import ShopAccount from './ShopAccount.vue'
+import signalHorizontal from './assets/doka-horizontal.svg'
+import signalReverse from './assets/doka-horizontal-reverse.svg'
 import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
@@ -36,6 +38,8 @@ const creditView = ref<InstanceType<typeof ShopCredits> | null>(null), creditBut
 const creditsPanel = ref(false)
 let beforeCredits = ''
 const balanceLabel = computed(() => balance.value ? balance.value.available + ' crédit' + (Math.abs(balance.value.available) === 1 ? '' : 's') : 'Mes crédits')
+const accountVisit = ref(0)
+const account = ref<InstanceType<typeof ShopAccount> | null>(null)
 const home = ref<InstanceType<typeof ShopHome> | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -610,11 +614,69 @@ function switchTo(to: Start, confirmed = false) {
 const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message'
   : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : view.value === 'create' ? 'etapes' : view.value === 'opening' ? 'accueil' : view.value
 let routeDue = false, discardedFor: string | null = null
+// A cancelled Back/Forward returns to the original entry without erasing either history branch.
+let position = Number(window.history.state?.position) || 0
+let accountPosition = position
+let trackedHash = location.hash
+function replaceAddress(url: string, state = {}) { window.history.replaceState({ ...state, position }, '', url); trackedHash = location.hash }
+function pushAddress(url: string, state = {}) { window.history.pushState({ ...state, position: ++position }, '', url); trackedHash = location.hash }
+// Traversing two identical URLs has no hashchange. Changed hashes use the ordinary router once.
+function onPopState() { if (location.hash === trackedHash && window.history.state?.position !== position) onHash() }
+function trackAddress() {
+  trackedHash = location.hash
+  if (typeof window.history.state?.position === 'number') position = window.history.state.position
+  else { position++; replaceAddress(location.href, window.history.state ?? {}) }
+}
+type ProfileDeparture = { kind: 'link' | 'traversal' | 'document' | 'signOut'; url: string }
+const departure = shallowRef<ProfileDeparture | null>(null)
+const needsProfileDecision = computed(() => !!departure.value && account.value?.dirty && !account.value.pending
+  && (departure.value.kind === 'link' || departure.value.kind === 'traversal'))
+const profilePrompt = computed(() => needsProfileDecision.value && !paid.value && !termsOpen.value)
+function finishDeparture() {
+  const next = departure.value
+  if (!next || !shown.value || !account.value || account.value.pending) return
+  if (needsProfileDecision.value) return
+  departure.value = null
+  if (next.kind === 'document') location.assign(next.url)
+  else if (next.kind === 'signOut') void perform(askSignOut)
+  else if (next.kind === 'traversal') onHash()
+  else leave(next.url)
+}
+function keepProfile() {
+  const traversed = departure.value?.kind === 'traversal'
+  departure.value = null
+  if (traversed && accountPosition !== position) window.history.go(accountPosition - position)
+  nextTick(() => account.value?.focusEdit())
+}
+function discardProfile() {
+  const next = departure.value
+  if (!next || busy.value) return
+  departure.value = null
+  if (next.kind === 'link') pushAddress(`#${next.url}`)
+  void perform(async () => {
+    try { await route() }
+    finally {
+      // A failed destination or a different Account entry still needs a fresh server baseline.
+      if (view.value === 'compte') { accountPosition = position; accountVisit.value++ }
+    }
+  })
+}
+function accountLink(event: MouseEvent) {
+  if (!account.value || !(account.value.dirty || account.value.pending) || event.defaultPrevented || event.button
+    || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  const link = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]')
+  if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) return
+  const samePage = link.origin === location.origin && link.pathname === location.pathname && link.search === location.search && !!link.hash
+  if ((!samePage && !account.value.pending) || (samePage && link.hash === '#compte')) return
+  event.preventDefault()
+  departure.value ??= { kind: samePage ? 'link' : 'document', url: samePage ? link.hash.slice(1) : link.href }
+}
+watch([() => account.value?.pending, shown], () => finishDeparture(), { flush: 'post' })
 function windowBack() { window.history.back() }
 function openCredits() {
   if (creditsPanel.value || location.hash.slice(1) !== here()) return
   beforeCredits = here()
-  window.history.pushState({ creditsFrom: beforeCredits }, '', '#credits')
+  pushAddress('#credits', { creditsFrom: beforeCredits })
   creditsPanel.value = true
 }
 function openCreditPoster(id: string) {
@@ -645,7 +707,7 @@ async function route() {
     const next = creator ? 'create' : VIEWS[hash] ?? 'accueil'
     const staysInChat = !!message || (hash === 'creer' && preferChat.value)
     if (!staysInChat && was && chat.hasUnsentPhotos?.() && discardedFor !== hash) {
-      window.history.pushState(null, '', `#${here()}`)
+      pushAddress(`#${here()}`)
       askToDiscardPhotos(async () => { discardedFor = hash; window.history.back() })
       return
     }
@@ -657,19 +719,21 @@ async function route() {
     chatting.value = creator && (chatOn.value && !!message || hash === 'creer' && preferChat.value)
     if (id) {
       if (creation.value?.id !== id) await openCreation(id, hash)
-      else if (message && !chatting.value) window.history.replaceState(null, '', `#${id}`)
+      else if (message && !chatting.value) replaceAddress(`#${id}`)
       return
     }
     view.value = next
+    if (next === 'compte') accountPosition = position
     const address = here()
-    if (address !== hash) window.history.replaceState(null, '', `#${address}`)
+    if (address !== hash) replaceAddress(`#${address}`)
     nextTick(() => { if (!modalOpen.value) (document.querySelector<HTMLElement>('main:not([hidden]) h1[tabindex]') ?? document.querySelector<HTMLElement>('main:not([hidden])'))?.focus() })
   } catch (reason) {
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     chatting.value = was
     if (view.value === 'opening') view.value = 'accueil'
     routeRetry.value = hash
-    window.history.replaceState(null, '', `#${here()}`)
+    replaceAddress(`#${here()}`)
+    if (view.value === 'compte') accountPosition = position
     throw reason
   }
   if (view.value === 'posters') await loadLibrary()
@@ -686,13 +750,22 @@ async function openFromList(id: string) {
 }
 // No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
 function onHash() {
+  trackAddress()
   if (!loaded.value) return
   const hash = location.hash.slice(1)
+  if (account.value && (account.value.dirty || account.value.pending)) {
+    if (position !== accountPosition) {
+      if (paid.value || termsOpen.value) window.history.go(accountPosition - position)
+      else departure.value = { kind: 'traversal', url: hash }
+      return
+    }
+    if (departure.value?.kind === 'traversal') keepProfile()
+  } else if (hash === 'compte') accountPosition = position
   if (hash === 'credits' && window.history.state?.creditsFrom === here() && view.value === 'create') { beforeCredits = here(); creditsPanel.value = true; return }
   if (creditsPanel.value) {
     creditsPanel.value = false
     if (hash === beforeCredits || hash === here()) {
-      if (hash !== here()) window.history.replaceState(null, '', `#${here()}`)
+      if (hash !== here()) replaceAddress(`#${here()}`)
       nextTick(() => { if (front.value) focusFront(front.value); else creditButton.value?.focus() })
       return
     }
@@ -798,11 +871,11 @@ function readConditions() { paid.value = null; void readTerms() }
 watch(termsAsked, () => { void readBalance(); if (!termsOpen.value) void readTerms() })
 // Tab and Shift+Tab go round inside the conditions: the page behind is inert, but the skip link and the messages are not.
 function keepTab(event: KeyboardEvent) {
-  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')]
+  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled)')]
   const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
-const modalOpen = computed(() => !!(paid.value || termsOpen.value || review.value || finalPreview.value || opened.value))
+const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || review.value || finalPreview.value || opened.value))
 // "Styles": a style opens in a panel; one made by the shop can be renamed or removed there.
 const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
 const opened = computed(() => {
@@ -815,7 +888,7 @@ const opened = computed(() => {
 // v-modal focuses a panel only as it mounts, which an inert panel ignores: the conditions behind the sign-out
 // confirmation are focused when it closes. After the render and v-modal's own focus, so that it has the last word.
 // Only while the shop is shown: back from another tab, the panel that was in front takes the focus again.
-const front = computed(() => !shown.value ? '' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
+const front = computed(() => !shown.value ? '' : profilePrompt.value ? 'titre-quitter-profil' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
 function focusFront(id: string) {
   const panel = id ? document.querySelector<HTMLElement>(`[aria-labelledby="${id}"]`) : null
   if (panel && !panel.contains(document.activeElement)) (panel.querySelector<HTMLElement>('[data-focus]') ?? panel).focus()
@@ -1102,7 +1175,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value)
   }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
   // A creator can finish its first poster while Credits is open. Back must return to its newly assigned address.
   const address = chatting.value ? `message-${result.id}` : result.id
-  if (creditsPanel.value && origin === undefined) window.history.replaceState({ creditsFrom: address }, '', '#credits')
+  if (creditsPanel.value && origin === undefined) replaceAddress('#credits', { creditsFrom: address })
   else window.location.hash = address
   if (!opening) await refreshVisuals()
   styleReference.value = currentVisual.value?.style_reference_asset ?? null
@@ -1136,7 +1209,7 @@ async function openCreation(id: string, origin: string, asChat = chatting.value)
   if (origin === 'credits') throw new Error('Cette affiche a été retirée de la liste.')
   // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
   if (doc.value) await fresh()
-  chatting.value = false; view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
+  chatting.value = false; view.value = 'posters'; showRemoved.value = true; replaceAddress('#affiches')
   await loadLibrary()
   notice.value = 'Cette affiche a été retirée de la liste. Remettez-la dans la liste pour l’ouvrir.'
 }
@@ -1705,7 +1778,7 @@ function toggleTheme() {
 }
 // leaving: the page is replaced on purpose (a change of identity), and what it holds unsaved is the shop's no more.
 let leaving = false
-function warnUnload(event: BeforeUnloadEvent) { if (saver?.unsaved && !leaving) { event.preventDefault(); event.returnValue = '' } }
+function warnUnload(event: BeforeUnloadEvent) { if (!leaving && (saver?.unsaved || account.value?.dirty || account.value?.pending)) { event.preventDefault(); event.returnValue = '' } }
 
 // ── the identity gate (D-MULTI-SHOP-007) ─────────────────────────────────────────────────────────────────
 // Before anything reads: what the pilot's phone kept before the shops becomes shop 1's.
@@ -1714,11 +1787,12 @@ try { moveLegacy(localStorage) } catch { /* storage refused: nothing was kept */
 // 502 to 504, or nothing): the gate says so with a retry (api.ts ask, settle), instead of a sign-in form that cannot work.
 watch(state, now => {
   if (now === 'out') {
+    departure.value = null; paid.value = null
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
     // Its conditions too (signed out, session ended, another shop): no late answer opens them again (readTerms).
     creditsPanel.value = false; funds.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
-    if (typeof bound.value === 'number' && location.hash) window.history.replaceState(null, '', location.pathname + location.search)
+    if (typeof bound.value === 'number' && location.hash) replaceAddress(location.pathname + location.search)
   }
   if (now === 'shown' && !loaded.value) void openShop()
 })
@@ -1762,10 +1836,12 @@ const UNSAVED_LINE = 'Des modifications de l’affiche n’ont pas pu être enre
 const WAITING_LINE = 'Une image demandée attend encore sa réponse. Si le serveur a reçu la demande, l’image se fait quand même et vous la trouverez dans « Mes affiches », sur cet appareil ou un autre ; sinon, rien n’est payé. Rien de cette conversation ne reste sur cet appareil.'
 const device = () => { try { return localStorage } catch { return null } }
 async function askSignOut() {
+  if (account.value?.pending) { departure.value ??= { kind: 'signOut', url: '' }; return }
   let lost = false
   try { await flush() } catch { lost = true }  // a failed or conflicting save never traps anyone in a shop
   // This tab's chat when it holds it; otherwise the stored threads, read only (review r5 P2-3).
   const lines = [...(lost ? [UNSAVED_LINE] : []), ...((chat.waiting?.() ?? waitingIn(device())) ? [WAITING_LINE] : [])]
+  if (account.value?.dirty) lines.unshift('Les modifications non enregistrées de votre boutique seront perdues.')
   if (!lines.length) return signOut()
   paid.value = { title: 'Se déconnecter ?', text: lines.join(' '), cost: '', label: 'Se déconnecter quand même', run: signOut }
 }
@@ -1777,7 +1853,7 @@ async function signOut() {
   loaded.value = false
   announce()
   leaving = true
-  window.history.replaceState(null, '', location.pathname + location.search)  // no poster's address for the next shop
+  replaceAddress(location.pathname + location.search)  // no poster's address for the next shop
   forget(shop)
 }
 // The shop's keys go, by its prefix (api.ts forgetShop), then the page is loaded fresh. Unfinished (a key refused, or the
@@ -1817,7 +1893,8 @@ function skip() { document.querySelector<HTMLElement>('main:not([hidden])')?.foc
 // so that a session gone reaches the gate (review r2 P1-3).
 function onImageError(event: Event) { if (event.target instanceof HTMLImageElement && new URL(event.target.src, location.href).pathname.startsWith('/api/')) verify() }
 onMounted(() => {
-  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.visualViewport?.addEventListener('resize', resized); window.addEventListener('hashchange', onHash)
+  trackAddress()
+  window.addEventListener('beforeunload', warnUnload); window.addEventListener('resize', resized); window.visualViewport?.addEventListener('resize', resized); window.addEventListener('hashchange', onHash); window.addEventListener('popstate', onPopState)
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, starter, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
@@ -1825,13 +1902,16 @@ onMounted(() => {
   window.addEventListener('pagehide', close); window.addEventListener('pageshow', onPageShow); window.addEventListener('storage', onStorage); window.addEventListener('error', onImageError, true)
   return ask()
 })
-onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', close); window.removeEventListener('error', onImageError, true); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('storage', onStorage); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash) })
+onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', close); window.removeEventListener('error', onImageError, true); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('storage', onStorage); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash); window.removeEventListener('popstate', onPopState) })
 </script>
 
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
   <button class="skip" type="button" @click="skip">Aller au contenu</button>
-  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#accueil" aria-label="Accueil" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
+  <header @click="accountLink" ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#accueil" aria-label="Doka Studio — Accueil" class="wordmark" translate="no">
+      <img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="32" height="32" alt=""><span>Doka Studio</span>
+      <img class="signal-horizontal" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt="">
+    </a><template v-if="loaded">
     <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
     <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
     <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a><a v-if="view === 'create' && !editing" ref="creditButton" class="creator-credits" href="#credits" aria-haspopup="dialog" @click.exact.prevent="openCredits"><Icon n="credits" /><span>{{ balanceLabel }}</span></a></nav>
@@ -1850,7 +1930,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
-    <ShopAccount v-if="state !== 'out' && !doc && view === 'compte'" :inert="modalOpen" :terms="terms" :terms-unavailable="termsUnavailable"
+    <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="state !== 'out' && !doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
       :support="support" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
     <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
       <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
@@ -2037,7 +2117,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         </aside>
       </div>
     </div>
-    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" @keydown.esc="paid = null"><div class="confirm">
+    <div v-if="profilePrompt" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-quitter-profil" @keydown.esc="keepProfile" @keydown.tab="keepTab"><div class="confirm">
+      <h2 id="titre-quitter-profil">Quitter la modification de la boutique ?</h2><p>Vos modifications ne sont pas enregistrées.</p>
+      <div class="row"><button class="primary" data-focus @click="keepProfile">Continuer la modification</button><button class="secondary" :disabled="busy" @click="discardProfile">Abandonner</button></div>
+    </div></div>
+    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" @keydown.esc="paid = null" @keydown.tab="keepTab"><div class="confirm">
       <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paid.warning" id="avertissement-ajustement" class="why">{{ paid.warning }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
       <label v-if="smallPhoto && paid.run === createScene && !paidCost.stop" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
       <div class="row"><button v-if="!paidCost.stop" class="primary" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
