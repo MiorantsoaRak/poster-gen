@@ -1,0 +1,15 @@
+**Verdict — Request changes.** One P2 issue remains in T-SHOP-DASH-005. The profile-conflict fix and the browser-regression evidence close both round‑2 findings.
+
+**P2 — Account can still show outdated terms after a verified tab return.** If the initial `GET /api/terms` is delayed, another device can accept the terms before the owner returns to `#compte`. The return watcher skips its refresh while `openingTerms` is true. When the old response arrives, it can show « Conditions à accepter » and reopen the acceptance dialog. Clearing `openingTerms` does not trigger another read. Distinguish the first Account mount from a subsequent verified return so the return can supersede the older read. A regression test can hold the initial unaccepted response, accept on the second device, return to Account, then release the held response. The acceptance date should remain visible with no dialog or Account-side acceptance POST. [Account refresh watcher](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/App.vue:1726) · [Terms response handling](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/App.vue:759)
+
+| Prior finding | Round‑3 ruling |
+|---|---|
+| R1 — Profile retry after an unreadable 4xx | **Closed.** A refused save leaves the draft editable. A lost successful save reuses its key and payload. |
+| R1 — Stale terms status | **Partial.** The tested return after dismissal works. The delayed opening read can still win on return. |
+| R1 — Ambiguous support assertion and missing isolation check | **Closed.** The passing smoke checks the exact support sentence and releases a delayed profile response after a switch to a distinct shop. |
+| R2 — Concurrent edits to the same profile field | **Closed.** The owner sees both values and chooses explicitly for name, contact, and logo. Save stays disabled until every collision is resolved. |
+| R2 — Missing browser regression evidence | **Closed.** The saved editor, editor-refinements, chat, admin, and terms logs all contain pass results. Those runs precede the final Account-only collision change. |
+
+I reviewed the complete tracked diff against `HEAD` and the untracked `ShopAccount.vue`. On the final change, the saved logs report **262 frontend tests passed**, successful shop and admin builds, and a passing dashboard browser smoke at 360 px in both themes. [Unit results](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/outputs/shop-dash/005-vitest-r2.log) · [Build results](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/outputs/shop-dash/005-build-r2.log) · [Dashboard smoke](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/outputs/shop-dash/005-browser-r2.log)
+
+Verification used source and existing logs only. Physical on-screen keyboard and screen-reader behavior remain unverified.

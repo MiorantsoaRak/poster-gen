@@ -1,8 +1,8 @@
 # REQUIREMENTS — The shop's dashboard
 
-**Status:** Approved for design by the owner, 2026-11-18 (ADR-113). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105; the user asked for it as a condition of the next deploy). Depends on [multi-shop](multi-shop.md) and [prepaid-balance](prepaid-balance.md). See the [draft design](../designs/shop-dashboard.md).
+**Status:** Approved for design by the owner, 2026-11-18 (ADR-113). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105; the user asked for it as a condition of the next deploy). Depends on [multi-shop](multi-shop.md) and [prepaid-balance](prepaid-balance.md). See the [approved design](../designs/shop-dashboard.md).
 
-**What exists:** a choice screen (« Par message » / « Pas à pas »), « Mes affiches », the shop's profile inside the editor. A prepaid balance API and generation checks now exist. The home and account screens are still to build.
+**At requirements approval:** a choice screen (« Par message » / « Pas à pas »), « Mes affiches », the shop's profile inside the editor. The prepaid balance API and generation checks already existed. Home and Account were new screens.
 
 ## Index
 

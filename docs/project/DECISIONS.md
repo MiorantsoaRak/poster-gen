@@ -1061,3 +1061,7 @@ After three rounds the owner chose to fix both outstanding navigation cases and 
 ## ADR-117 — Credits review closure (2026-11-18)
 
 The owner approved closing T-SHOP-DASH-004 after fixing the current-poster history action and checking that the creator retains its attachment, undo history and focus.
+
+## ADR-118 — Account review closure (2026-11-18)
+
+The owner approved fixing the delayed terms read on a verified return to Account and closing T-SHOP-DASH-005 after its two-device regression and Account checks pass.

@@ -7,7 +7,7 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 import browser_smoke as smoke
-from terms_browser import open_atelier
+from terms_browser import open_atelier, set_terms
 
 
 def walk(browser, out):
@@ -442,6 +442,235 @@ def walk_credits(browser, out):
         context.close()
 
 
+def walk_account(browser, out, data):
+    context = browser.new_context(viewport={"width": 360, "height": 640}, color_scheme="light")
+    other = browser.new_context()
+    engine = smoke.make_engine(Path(data))
+    headers = {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)}
+    set_terms(engine, None)
+    try:
+        page = context.new_page()
+        errors, accepted, passwords = [], [], []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.on("request", lambda r: accepted.append(r.url) if r.method == "POST" and r.url.endswith("/terms") else None)
+        page.on("request", lambda r: passwords.append(r.url) if r.url.endswith("/session/password") else None)
+        open_atelier(page, "#compte")
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        account = page.get_by_role("region", name="Mon compte", exact=True)
+        name, contact = account.get_by_label("Nom de la boutique"), account.get_by_label("Contact", exact=True)
+        save = account.get_by_role("button", name="Enregistrer le profil")
+        expect(name).to_be_visible()
+        # Postponing is respected on Account entry. Another device accepts while this tab is away.
+        page.get_by_role("button", name="Plus tard").click()
+        expect(account.get_by_text("Conditions à accepter.")).to_be_visible()
+        page.locator("nav").get_by_role("link", name="Accueil").click()
+        page.get_by_role("link", name="Mon compte").click()
+        expect(account.get_by_text("Conditions à accepter.")).to_be_visible()
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        session = other.request.post(smoke.ORIGIN + "/api/session", headers=headers, data={"identifier": smoke.IDENTIFIER, "password": smoke.PASSWORD})
+        assert session.ok
+        version = other.request.get(smoke.ORIGIN + "/api/terms").json()["version"]
+        assert other.request.post(smoke.ORIGIN + "/api/terms", headers=headers, data={"version": version}).ok
+        page.evaluate("Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))")
+        page.evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))")
+        expect(account.get_by_text("Conditions acceptées le", exact=False)).to_be_visible()
+        # The first response is already unaccepted on the wire when a different device accepts.
+        set_terms(engine, None)
+        held_opening = []
+        def hold_opening(route):
+            if not held_opening:
+                answer = route.fetch()
+                assert answer.json()["accepted_at"] is None
+                held_opening.append((route, answer))
+            else:
+                route.continue_()
+        page.route("**/api/terms", hold_opening)
+        with page.expect_request("**/api/terms"):
+            page.reload()
+        expect(name).to_be_visible()
+        page.evaluate("Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))")
+        second_acceptance = other.request.post(smoke.ORIGIN + "/api/terms", headers=headers, data={"version": version})
+        assert second_acceptance.ok
+        at = second_acceptance.json()["accepted_at"]
+        page.evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))")
+        expect(account.locator("time")).to_have_attribute("datetime", at)
+        old, snapshot = held_opening[0]
+        with page.expect_response("**/api/terms"):
+            old.fulfill(response=snapshot)
+        expect(account.locator("time")).to_have_attribute("datetime", at)
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        assert not accepted
+        page.unroute("**/api/terms")
+        account.get_by_text("Lire les conditions", exact=True).click()
+        expect(account.get_by_text("Version du", exact=False)).to_be_visible()
+        assert not accepted
+        expect(account.get_by_role("link", name="Vos données")).to_have_attribute("href", "/donnees.html")
+        expect(account.get_by_text(f"Contactez {smoke.SUPPORT}.", exact=True)).to_be_visible()
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            page.wait_for_function(smoke.NO_SIDEWAYS)
+            smoke.check_contrast(page, f"Compte 360, {scheme}")
+            page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
+            page.screenshot(path=str(out / f"compte-{scheme}.png"), full_page=True)
+
+        # Another device updates contact while this owner is editing the name.
+        url = smoke.ORIGIN + "/api/shop-profile"
+        original = page.request.get(url).json()
+        headers = {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)}
+        name.fill("Mon nouveau nom")
+        changed = page.request.put(url, headers={**headers, "If-Match": f'"{original["revision"]}"', "Idempotency-Key": str(uuid4())},
+                                   data={"name": original["name"], "contact": "Contact modifié ailleurs", "logo_asset": original["logo_asset"]})
+        assert changed.ok, changed.status
+        save.click()
+        reload_profile = account.get_by_role("button", name="Relire le profil enregistré")
+        expect(reload_profile).to_be_visible()
+        expect(name).to_have_value("Mon nouveau nom")
+        reload_profile.click()
+        expect(contact).to_have_value("Contact modifié ailleurs")
+        expect(name).to_have_value("Mon nouveau nom")
+        account.locator("input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        expect(account.get_by_alt_text("Logo de la boutique")).to_be_visible()
+        # An unreadable 409 asks for identity verification and keeps the draft editable.
+        page.route("**/api/shop-profile", lambda route: route.fulfill(status=409, body="broken"))
+        save.click()
+        expect(account.get_by_role("alert").filter(has_text="illisible")).to_be_visible()
+        expect(name).to_be_enabled()
+        expect(name).to_have_value("Mon nouveau nom")
+        expect(account.get_by_role("button", name="Réessayer l’enregistrement")).to_have_count(0)
+        page.unroute("**/api/shop-profile")
+        # Commit the first save and lose only its answer. Explicit retry must replay the same payload and key.
+        writes = []
+        def lose_save(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            writes.append((route.request.headers["idempotency-key"], route.request.post_data_json))
+            if len(writes) == 1:
+                assert route.fetch().ok
+                route.abort()
+            else:
+                route.continue_()
+        page.route("**/api/shop-profile", lose_save)
+        save.click()
+        account.get_by_role("button", name="Réessayer l’enregistrement").click()
+        expect(account.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
+        assert len(writes) == 2 and writes[0] == writes[1]
+        actual = page.request.get(url).json()
+        assert actual["name"] == "Mon nouveau nom" and actual["contact"] == "Contact modifié ailleurs" and actual["logo_asset"]
+        assert actual["revision"] == original["revision"] + 2
+        assert not accepted
+
+        # Two edits to the same field need an explicit choice, including a removed logo versus its replacement.
+        name.fill("Mon choix local")
+        contact.fill("Mon numéro")
+        account.get_by_role("button", name="Retirer le logo").click()
+        new_logo = page.request.post(smoke.ORIGIN + "/api/assets", headers=headers,
+            multipart={"role": "logo", "file": {"name": "logo.jpg", "mimeType": "image/jpeg", "buffer": (smoke.ROOT / "backend/fixtures/examples/phone-bleu.jpg").read_bytes()}})
+        assert new_logo.ok, new_logo.status
+        new_logo_id = new_logo.json()["asset"]
+        assert new_logo_id != actual["logo_asset"]
+        changed = page.request.put(url, headers={**headers, "If-Match": f'"{actual["revision"]}"', "Idempotency-Key": str(uuid4())},
+                                   data={"name": "Nom de l’autre appareil", "contact": "Autre numéro", "logo_asset": new_logo_id})
+        assert changed.ok
+        page.unroute("**/api/shop-profile")
+        save.click()
+        reload_profile.click()
+        expect(save).to_be_disabled()
+        fields = (
+            ("Nom de la boutique", "Mon choix local", "Nom de l’autre appareil", "Garder ma saisie"),
+            ("Contact", "Mon numéro", "Autre numéro", "Garder la version enregistrée"))
+        for label, before, after, choice in fields:
+            field = account.get_by_role("group", name=f"{label} modifié sur les deux appareils")
+            expect(field.get_by_text(before, exact=True)).to_be_visible()
+            expect(field.get_by_text(after, exact=True)).to_be_visible()
+            field.get_by_role("button", name=choice).click()
+            expect(save).to_be_disabled()
+        logo_choice = account.get_by_role("group", name="Logo modifié sur les deux appareils")
+        expect(logo_choice.get_by_text("Aucun logo")).to_be_visible()
+        expect(logo_choice.get_by_alt_text("Logo enregistré")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
+        logo_choice.get_by_role("button", name="Garder la version enregistrée").click()
+        expect(name).to_have_value("Mon choix local")
+        expect(contact).to_have_value("Autre numéro")
+        expect(account.get_by_alt_text("Logo de la boutique")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
+        save.click()
+        expect(account.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
+        assert page.request.get(url).json()["name"] == "Mon choix local"
+        # The transparent file input on the French picker remains keyboard accessible.
+        contact.focus()
+        page.keyboard.press("Tab")
+        expect(account.locator("input[type=file]")).to_be_focused()
+
+        # Each known refusal is the server's own message. A lost password answer is never replayed.
+        change = account.get_by_role("button", name="Modifier le mot de passe")
+        current = account.get_by_label("Mot de passe actuel")
+        replacement = account.get_by_label("Nouveau mot de passe")
+        for status, code, text in ((403, "wrong_password", "Mot de passe actuel incorrect."),
+                                   (422, "password_too_short", "Le nouveau mot de passe est trop court."),
+                                   (429, "rate_limited", "Attendez avant de réessayer.")):
+            page.route("**/api/session/password", lambda route: route.fulfill(status=status, json={"error": {"code": code, "message_fr": text}}))
+            current.fill(smoke.PASSWORD)
+            replacement.fill("remplacement-local")
+            change.click()
+            expect(account.get_by_role("alert").filter(has_text=text)).to_be_visible()
+            expect(current).to_be_empty()
+            page.unroute("**/api/session/password")
+        page.route("**/api/session/password", lambda route: route.abort())
+        current.fill(smoke.PASSWORD)
+        replacement.fill("remplacement-local")
+        change.click()
+        expect(account.get_by_role("alert").filter(has_text="n’a pas pu être confirmée")).to_be_visible()
+        expect(replacement).to_be_empty()
+        assert len(passwords) == 4
+        page.unroute("**/api/session/password")
+        auth = other.request.post(smoke.ORIGIN + "/api/session", headers=headers, data={"identifier": smoke.IDENTIFIER, "password": smoke.PASSWORD})
+        assert auth.ok
+        current.fill(smoke.PASSWORD)
+        replacement.fill("remplacement-local")
+        change.click()
+        expect(account.get_by_text("Mot de passe modifié.", exact=False)).to_be_visible()
+        assert page.request.get(url).ok and other.request.get(url).status == 401
+        # Leave the common fixture ready for any later visitor.
+        current.fill("remplacement-local")
+        replacement.fill(smoke.PASSWORD)
+        change.click()
+        expect(current).to_be_empty()
+        assert len(passwords) == 6
+        account.get_by_role("button", name="Se déconnecter").click()
+        expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
+        expect(account).to_have_count(0)
+        # One cookie switches to a distinct shop while an old tab still awaits shop A's profile.
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        held = []
+        page.route("**/api/shop-profile", lambda route: held.append((route, route.fetch())))
+        with page.expect_request("**/api/shop-profile"):
+            page.get_by_role("link", name="Mon compte").click()
+        page.wait_for_function("location.hash === '#compte'")
+        new_secret = uuid4().hex
+        hashed = smoke.PASSWORDS.hash(new_secret)
+        with smoke.write_tx(engine) as conn:
+            smoke.accepted(conn, smoke.shops.create_shop(conn, "Deuxieme", "Autre boutique", hashed))
+        signed = context.request.post(smoke.ORIGIN + "/api/session", headers=headers, data={"identifier": "Deuxieme", "password": new_secret})
+        assert signed.ok
+        page.evaluate("Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))")
+        page.evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))")
+        expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
+        old, result = held.pop()
+        old.fulfill(response=result)
+        expect(account).to_have_count(0)
+        expect(page.get_by_alt_text("Logo de la boutique")).to_have_count(0)
+        assert "Mon choix local" not in page.locator("body").inner_text()
+        assert "Autre boutique" not in page.locator("body").inner_text()
+        assert not errors, errors
+    finally:
+        engine.dispose()
+        other.close()
+        context.close()
+
+
 def run():
     out = smoke.ROOT / "outputs" / "shop-dash"
     out.mkdir(exist_ok=True, parents=True)
@@ -456,6 +685,7 @@ def run():
                     try:
                         walk_credits(browser, out)
                         walk(browser, out)
+                        walk_account(browser, out, data)
                     finally:
                         browser.close()
             finally:

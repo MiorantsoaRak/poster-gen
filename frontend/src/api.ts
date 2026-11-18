@@ -273,13 +273,13 @@ export const read = <T>(pending: { key: string; body: string }) => api<T>('/api/
   headers: { 'Content-Type': 'application/json', 'Idempotency-Key': pending.key }, body: pending.body })
 
 const uncertain = new Map<string, string>()
-export async function mutation<T>(path: string, body: unknown, revision?: number, key?: string, method = 'POST', quiet = false) {
+export async function mutation<T>(path: string, body: unknown, revision?: number, key?: string, method = 'POST', quiet = false, timeout?: number) {
   const signature = JSON.stringify([path, body, revision, method])
   const operation = key ?? uncertain.get(signature) ?? crypto.randomUUID()
   if (!key) uncertain.set(signature, operation)
   let result: T
   try {
-    result = await api<T>(path, { method, quiet, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation,
+    result = await api<T>(path, { method, quiet, timeout, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation,
       ...(revision === undefined ? {} : { 'If-Match': `"${revision}"` }) }, body: JSON.stringify(body) })
   } catch (reason) {
     // A refusal (4xx) stored nothing under the key (the server stores only what it accepted): the key is not kept, so
@@ -302,7 +302,21 @@ export const preparedUrl = (url: string) => `${url}?prepared=true&v=${IMAGE_VERS
 export const displayUrl = (url: string) => `${url}?prepared=true&display=true&v=${IMAGE_VERSIONS.display}`
 export const thumbnailUrl = (url: string) => `${url.replace('/api/assets/', '/api/thumbnails/')}?v=${IMAGE_VERSIONS.thumbnail}`
 
-export async function upload(file: File, role: 'original' | 'logo' | 'style') {
+export async function upload(file: File, role: 'original' | 'logo' | 'style', timeout?: number) {
   const body = new FormData(); body.set('file', file); body.set('role', role)
-  return api<{ asset: string; width: number; height: number; warnings: string[] }>('/api/assets', { method: 'POST', body })
+  return api<{ asset: string; width: number; height: number; warnings: string[] }>('/api/assets', { method: 'POST', body, timeout })
+}
+
+export interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
+export interface Terms { version: string; paragraphs_fr: string[]; accepted_at: string | null; changed: boolean }
+export function writeProfile(profile: Profile) {
+  return mutation<Profile>('/api/shop-profile', { name: profile.name?.trim() || null, contact: profile.contact?.trim() || null,
+    logo_asset: profile.logo_asset }, profile.revision, undefined, 'PUT', false, 20_000)
+}
+
+export async function changePassword(current: string, replacement: string) {
+  // A password-bearing body must never enter mutation()'s retry signatures.
+  const answer = await api<{ changed: boolean }>('/api/session/password', { method: 'POST', timeout: 20_000,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_password: current, new_password: replacement }) })
+  if (answer?.changed !== true) throw new ApiError('invalid_response', 'Réponse du serveur illisible.', 200)
 }

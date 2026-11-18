@@ -576,3 +576,20 @@ it('gives up both conditions requests after TERMS_TIMEOUT_MS, and reads quietly 
   await vi.advanceTimersByTimeAsync(1)
   expect([await accept, await read]).toEqual([expect.objectContaining({ code: 'timeout' }), expect.objectContaining({ code: 'timeout' })])
 })
+
+it('times out a password change once and keeps no replay signature', async () => {
+  vi.useFakeTimers(); vi.resetModules()
+  const fetch = vi.fn((_path: string, init: RequestInit) => new Promise<Response>((_, fail) => {
+    init.signal?.addEventListener('abort', () => fail(new DOMException('aborted', 'AbortError')))
+  }))
+  vi.stubGlobal('fetch', fetch)
+  const { changePassword, retained } = await opened()
+  const outcome = changePassword('old', 'replacement').catch(reason => reason)
+  await vi.advanceTimersByTimeAsync(20_000)
+  expect(await outcome).toMatchObject({ code: 'timeout' })
+  expect(fetch).toHaveBeenCalledTimes(1)
+  const [url, init] = fetch.mock.calls[0]!
+  expect(url).toBe('/api/session/password')
+  expect(init.headers).not.toHaveProperty('Idempotency-Key')
+  expect(retained(url)).toBe(false)
+})

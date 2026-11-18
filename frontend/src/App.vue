@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, type SessionAnswer } from './api'
+import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
 import ShopCredits from './ShopCredits.vue'
+import ShopAccount from './ShopAccount.vue'
 import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
@@ -14,7 +15,6 @@ import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
 import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Words } from './chat'
 
-interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[] }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
@@ -744,19 +744,21 @@ function askDiscard() {
 // The conditions of use (D-TERMS-004): read when the shop's page opens, and again when a paid control or a refusal asks
 // for them. « Plus tard » stores nothing and keeps every free action; without acceptance the server refuses anything new
 // asked of the AI, before any credit. No sign-out here: it deletes the device's chat threads.
-interface Terms { version: string; paragraphs_fr: string[]; accepted_at: string | null; changed: boolean }
+const termsUnavailable = ref(false)
 const terms = ref<Terms | null>(null), termsOpen = ref(false), termsLine = ref(''), accepting = ref(false)
 // opening: the page's own read, quiet, whose failure shows nothing (the server still refuses). Asked by a control or a
 // refusal, a failure (its timeout included) shows the dialog with « Réessayer », and a shop that has accepted meanwhile
 // gets its credits read again. Nothing applies once the session is gone for good: the next shop is a new page.
-async function readTerms(opening = false) {
+async function readTerms(opening = false, statusOnly = false) {
   let read: Terms | undefined
   try { read = await conditions<Terms>(opening) } catch {
+    termsUnavailable.value = true
     if (!opening && state.value !== 'out') { terms.value = null; termsOpen.value = true }
     return
   }
   if (!read || state.value === 'out') return  // overtaken, voided (« Plus tard », a confirmed acceptance), or gone
-  terms.value = read
+  termsUnavailable.value = false; terms.value = read
+  if (statusOnly) return
   if (!read.accepted_at) termsOpen.value = true
   else if (termsOpen.value || !opening) { termsOpen.value = false; termsLine.value = ''; void readBalance() }
 }
@@ -770,10 +772,11 @@ async function acceptTerms() {
   holdFocus()
   accepting.value = true; termsLine.value = ''
   try {
-    await acceptConditions(terms.value.version)
+    const result = await acceptConditions<{ version: string; accepted_at: string }>(terms.value.version)
     // Confirmed: it counts over every read started before it, after « Plus tard » too.
     if (state.value === 'out') return
-    termsOpen.value = false; termsLine.value = ''; void readBalance()
+    if (terms.value?.version === result.version) terms.value = { ...terms.value, accepted_at: result.accepted_at, changed: false }
+    termsUnavailable.value = false; termsOpen.value = false; termsLine.value = ''; void readBalance()
   } catch (reason) {
     if (!termsOpen.value || state.value === 'out') return  // dismissed meanwhile, or the session gone: nothing reopens
     // A refusal says why; terms_outdated: the new text is read, to be read before it is accepted. Anything else (a
@@ -1008,16 +1011,16 @@ async function loadShop() {
   void readBalance()  // apart: its failure does not stop the page
   const options = { timeout: 20_000 }
   const [saved, capabilities, looks] = await Promise.all([api<Profile>('/api/shop-profile', options), api<Capabilities>('/api/capabilities', options), api<{ items: SavedLook[] }>('/api/looks', options)])
-  Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; creatorReady = true
+  adoptProfile(saved); caps.value = capabilities; creatorReady = true
   savedLooks.value = looks.items
   // The remembered style may be one of the shop's own looks, known only now.
   try { const remembered = JSON.parse(localStorage.getItem(styleKey()) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
   Object.assign(include, { logo: false, shop_name: false, contact: false })
 }
+function adoptProfile(saved: Profile) { Object.assign(profile, saved); profileSaved = JSON.stringify(saved) }
 async function saveProfile() {
   if (JSON.stringify(profile) === profileSaved) return
-  const result = await mutation<Profile>('/api/shop-profile', { name: profile.name?.trim() || null, contact: profile.contact?.trim() || null, logo_asset: profile.logo_asset }, profile.revision, undefined, 'PUT')
-  Object.assign(profile, result); profileSaved = JSON.stringify(result)
+  adoptProfile(await writeProfile(profile))
 }
 async function choosePhotos(event: Event) {
   const files = [...((event.target as HTMLInputElement).files ?? [])]
@@ -1719,6 +1722,12 @@ watch(state, now => {
   }
   if (now === 'shown' && !loaded.value) void openShop()
 })
+// Returning to Account refreshes its status after identity verification without reopening a postponed dialog.
+watch([shown, view], ([visible, page], [, previousPage]) => {
+  // The initial route already has openShop's read. A later visit must supersede it even if its response is delayed.
+  if (visible && page === 'compte' && previousPage !== 'opening' && !termsOpen.value && !accepting.value)
+    void readTerms(true, !!terms.value || termsUnavailable.value)
+}, { flush: 'post' })
 // The first time the gate opens in this page's life: the shop's keys, its style, then its data.
 async function openShop() {
   open()
@@ -1841,7 +1850,8 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
-    <section v-if="!doc && view === 'compte'" class="gallery" :inert="modalOpen"><h1 tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></section>
+    <ShopAccount v-if="state !== 'out' && !doc && view === 'compte'" :inert="modalOpen" :terms="terms" :terms-unavailable="termsUnavailable"
+      :support="support" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
     <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
       <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
     </component>
