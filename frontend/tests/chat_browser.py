@@ -108,29 +108,29 @@ def walk_desktop(browser, errors, product, inspiration):
             time.sleep(.25)
     sign_in(page)
 
-    # A device that never chose is asked once; no form, no switch yet.
-    choice = page.get_by_role("heading", name="Comment voulez-vous créer vos affiches ?")
-    expect(choice).to_be_visible()
+    home = page.get_by_role("heading", name="Accueil", exact=True)
+    expect(home).to_be_visible()
     expect(page.get_by_label("Photos du produit")).to_have_count(0)
     expect(page.locator(".seg")).to_have_count(0)
     assert page.evaluate(START) is None
-    looks_right(page, "start choice, desktop", "choice-1366.png")
-    page.get_by_role("button", name=re.compile("^Par message")).click()
+    page.get_by_role("link", name="Créer une affiche").click()
     chat = page.locator(".chat")
     expect(chat).to_be_visible()
-    assert page.url.endswith("#message") and page.evaluate(START) == "chat", page.url
+    assert page.url.endswith("#message") and page.evaluate(START) is None, page.url
     switch = page.get_by_role("group", name="Façon de créer")
     expect(switch.get_by_role("button", name="Message")).to_have_attribute("aria-pressed", "true")
     thread, field, send = page.get_by_role("log"), page.get_by_label("Votre message"), page.get_by_role("button", name="Envoyer")
     expect(thread).to_contain_text("Quel produit, à quel prix ?")
     expect(send).to_be_disabled()
-    # The start view is remembered: a reload, and the empty address, open the chat.
+    # The chat reloads in place. The empty address opens Home and its creator defaults to chat.
     page.reload()
     expect(chat).to_be_visible()
     page.goto(smoke.ORIGIN + "/#")
+    expect(home).to_be_visible()
+    page.get_by_role("link", name="Créer une affiche").click()
     expect(chat).to_be_visible()
     page.wait_for_url("**/#message")
-    expect(choice).to_have_count(0)
+    expect(home).to_have_count(0)
     both_themes(page, "empty chat, desktop", "chat-empty-1366")
 
     # The unsent text survives a reload.
@@ -300,7 +300,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(page.get_by_label("Nom du produit", exact=True)).to_have_value("Casque JBL Tune")
     expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("260000")
     expect(page.locator(".photo-strip img")).to_have_count(1)
-    assert page.url.endswith("#") or "#" not in page.url, page.url
+    assert page.url.endswith("#etapes"), page.url
     # Corrected in the form, the name comes back to the chat as a fresh recap, with no paid read.
     page.get_by_label("Nom du produit", exact=True).fill("Casque JBL Tune 520")
     switch.get_by_role("button", name="Message").click()
@@ -444,7 +444,7 @@ def walk_changes(browser, errors, session, data):
         page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
         page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
         page.get_by_role("button", name="Fermer").click()  # a confirmed poster opens on its file
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
     # Photos already used (D-TEXT-FIRST-004): the same product named again, in other letters and without a photo, is
@@ -1034,7 +1034,7 @@ def walk_changes(browser, errors, session, data):
     page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
-    page.wait_for_url("**/#message")
+    page.wait_for_url("**/#accueil")
     page.goto(f"{smoke.ORIGIN}/#message-{other}")
     expect(thread.locator(".bubble.bot").last).to_contain_text("Connectez-vous pour continuer.")
     thread.get_by_role("button", name="Réessayer", exact=True).click()
@@ -1047,7 +1047,7 @@ def walk_changes(browser, errors, session, data):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     page.get_by_role("link", name=re.compile("Mes affiches")).tap()
     page.get_by_role("button", name=re.compile("WH-1000XM6 Max")).first.tap()  # the title a message gave it
@@ -1088,7 +1088,7 @@ def walk_uploads(browser, errors, session, small, broken, animated):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     thread, picker, send = page.get_by_role("log"), page.locator(".composer input[type=file]"), page.get_by_role("button", name="Envoyer")
     pics, alert, notice = page.locator(".tray .pic"), page.locator(".composer .why"), page.locator(".message.notice")
@@ -1133,7 +1133,7 @@ def walk_phone(browser, errors, session):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     chat, nav, composer = page.locator(".chat"), page.locator(".nav"), page.locator(".composer")
     expect(chat).to_be_visible()
@@ -1198,7 +1198,7 @@ def walk_two_tabs(browser, errors, session, product):
         page.set_default_timeout(10000)
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on("request", lambda request, name=name: sent[name].append(request.url) if request.method == "POST" else None)
-        page.goto(smoke.ORIGIN)
+        page.goto(smoke.ORIGIN + "/#creer")
         page.wait_for_url("**/#message")
         pages.append(page)
     first, second = pages
@@ -1256,7 +1256,7 @@ def walk_guards(browser, errors, session):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     page.get_by_role("link", name=re.compile("^Mes affiches")).click()
     page.get_by_role("button", name=re.compile("Enceinte Sony XB100")).first.click()
@@ -1438,7 +1438,10 @@ def walk_lockless(browser, errors, session):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("request", lambda request: posts.append(request.url) if request.method == "POST" else None)
     page.goto(smoke.ORIGIN)
-    page.wait_for_url("**/#message")
+    page.get_by_role("link", name="Créer une affiche").tap()
+    page.wait_for_url("**/#etapes")
+    expect(page.get_by_label("Photos du produit")).to_be_enabled()
+    page.goto(smoke.ORIGIN + "/#message")  # a saved chat address still offers an explanation and a way out
     fallback = page.locator(".chat-elsewhere")
     expect(fallback).to_contain_text("Ce navigateur ne permet pas le chat.")
     expect(page.locator(".chat")).to_have_count(0)
@@ -1464,7 +1467,7 @@ def walk_slow_read(browser, errors, session):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(smoke.ORIGIN)
+    page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
     thread, switch = page.get_by_role("log"), page.get_by_role("group", name="Façon de créer")
     say(page, "Casque Marshall Major")
@@ -1506,7 +1509,7 @@ def walk_failed(browser, errors, product):
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
     sign_in(page)
-    page.get_by_role("button", name=re.compile("^Par message")).tap()
+    page.get_by_role("link", name="Créer une affiche").tap()
     expect(page.locator(".chat")).to_be_visible()
     looks_right(page, "start choice gone, 360 px")
     thread = page.get_by_role("log")
@@ -1604,7 +1607,8 @@ def walk_sign_out(browser, errors, product):
     sent = []
     page.on("request", lambda request: sent.append(f"{request.method} {request.url.split('/api/')[1]}") if "/api/" in request.url and request.method == "POST" else None)
     sign_in(page)
-    page.get_by_role("button", name=re.compile("^Pas à pas")).tap()
+    page.get_by_role("link", name="Créer une affiche").tap()
+    page.get_by_role("button", name="Pas à pas", exact=True).tap()
     thread = page.get_by_role("log")
     dialog = page.get_by_role("dialog")
     create = thread.get_by_role("button", name="Créer l’affiche")
@@ -1677,7 +1681,7 @@ def walk_sign_out(browser, errors, product):
     assert page.evaluate(SHOP_KEYS) == [], page.evaluate(SHOP_KEYS)
     # The shop loads its list before the version has come (the page's answers are served as they were then, until the
     # owner opens « Mes affiches »); opening it reads the list again, without a reload.
-    before, listing = {"on": True, "served": 0}, lambda url: "/api/creations?limit=50" in url
+    before, listing = {"on": True, "served": 0}, lambda url: "/api/creations?limit=5" in url
 
     def before_the_version(route):
         if not (before["on"] and route.request.headers.get("x-affiche-shop")):
@@ -1690,7 +1694,7 @@ def walk_sign_out(browser, errors, product):
         route.fulfill(json=body)
     page.route(listing, before_the_version)
     sign_in(page)
-    page.wait_for_url("**/#message")
+    expect(page.locator(".home-recent")).to_be_visible()
     page.screenshot(path=str(OUT / "signed-in-again-360.png"))
     end = time.monotonic() + 30
     while not page.evaluate("""id => fetch('/api/creations?limit=50').then(r => r.json())
@@ -1704,6 +1708,7 @@ def walk_sign_out(browser, errors, product):
     expect(item).to_contain_text("À vérifier")
     # Opened again while the list cannot be read: it says so, and the list shown stays.
     page.get_by_role("link", name=re.compile("^Créer")).click()
+    expect(page.get_by_label("Votre message")).to_be_visible()
     page.route(listing, lambda route: route.abort("failed"))
     page.get_by_role("link", name=re.compile("^Mes affiches")).click()
     expect(page.locator(".message.error")).to_contain_text("Connexion interrompue. Vos modifications restent dans cet onglet.")
@@ -1739,7 +1744,7 @@ def walk_sign_out(browser, errors, product):
         page.route("**/api/session", lambda route: checks.append(route) if route.request.method == "GET" else route.continue_())
         other = context.new_page()
         other.set_default_timeout(10000)
-        other.goto(smoke.ORIGIN)
+        other.goto(smoke.ORIGIN + "/#creer")
         expect(other.locator("main:not(.gate)")).to_be_visible()
         other.get_by_role("button", name="Se déconnecter").click()
         expect(other.get_by_role("dialog")).to_contain_text(WAITING_LINE)
@@ -1768,6 +1773,7 @@ def walk_sign_out(browser, errors, product):
         assert page.evaluate(SHOP_KEYS) == [], page.evaluate(SHOP_KEYS)
         other.close()
         sign_in(page)
+        page.get_by_role("link", name="Créer une affiche").click()
         page.wait_for_url("**/#message")
         assert page.evaluate(SCENE_JOBS, made) == (1 if admitted else 0)
 
@@ -1802,7 +1808,7 @@ def walk_rest(browser, errors, product, inspiration):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
     sign_in(page)
-    page.get_by_role("button", name=re.compile("^Par message")).click()
+    page.get_by_role("link", name="Créer une affiche").click()
     page.wait_for_url("**/#message")
     thread, field, side = page.get_by_role("log"), page.get_by_label("Votre message"), page.locator(".chat-side")
     switch = page.get_by_role("group", name="Façon de créer")
@@ -2015,11 +2021,12 @@ def walk_choice_phone(browser, errors):
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
     sign_in(page)
-    expect(page.get_by_role("heading", name="Comment voulez-vous créer vos affiches ?")).to_be_visible()
+    expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
     assert page.evaluate(smoke.NO_SIDEWAYS)
     smoke.check_contrast(page, "start choice, 360 px")
     smoke.check_one_blur(page, "start choice, 360 px")
     page.screenshot(path=str(OUT / "choice-360.png"))
+    page.get_by_role("link", name="Créer une affiche").tap()
     # « Pas à pas » is remembered too: the form, and the switch from then on.
     page.get_by_role("button", name=re.compile("^Pas à pas")).tap()
     expect(page.get_by_label("Photos du produit")).to_be_attached()

@@ -456,6 +456,7 @@ const hold = (options: LockOptions, takenOver = false) => navigator.locks.reques
 }).catch(() => { owner.value = false })  // taken over by another tab
 function takeOver() { void hold({ steal: true }, true) }
 if (!lockless) void hold({ ifAvailable: true })
+props.adapter.hasUnsentPhotos = () => !closed && tray.value.length > 0
 props.adapter.waiting = () => mine() ? !!openCard() : undefined
 // The agreement to a small photo is for one product and its photos.
 watch(() => [draft.name, products().map(item => item.asset).join()], () => { smallAccepted.value = false })

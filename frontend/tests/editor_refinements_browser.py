@@ -42,7 +42,7 @@ def run():
                     page.on('request', lambda r: requests.append(r.post_data_json) if r.method == 'POST' and r.url.endswith('/scenes') else None)
                     for attempt in range(40):
                         try:
-                            page.goto(smoke.ORIGIN)
+                            page.goto(smoke.ORIGIN + "/#etapes")
                             break
                         except Exception:
                             if attempt == 39 or vite.poll() is not None:
@@ -245,7 +245,7 @@ def run():
                     assert page.request.get(endpoint).json()['document']['include']['logo'] is False
                     page.unroute('**/api/creations/*/visuals')
                     # A populated profile does not opt in on either a new form or reload.
-                    page.goto(smoke.ORIGIN)
+                    page.goto(smoke.ORIGIN + "/#etapes")
                     expect(page.get_by_label('Photos du produit')).to_be_enabled()
                     for reload in (False, True):
                         if reload:

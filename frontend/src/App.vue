@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
-import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, failureOf, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, type SessionAnswer } from './api'
+import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
+import ShopHome from './ShopHome.vue'
+import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
@@ -13,9 +15,6 @@ import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Wor
 
 interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[] }
-interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
-interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
-const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Rien d’ajouté par l’IA sans votre demande, et ce qu’elle a ajouté est exact pour ce produit', integration: 'Intégration naturelle dans la scène' }
@@ -29,14 +28,10 @@ const elsewhere = computed(() => state.value === 'out' && (seen.value === 'other
 const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 // The shop's credits (D-BALANCE-006): read on their own, so that a failed read never stops the page; null while unread or
 // after a failed read, never 0. Only the latest read counts: an older answer may arrive last.
-const balance = ref<Balance | null>(null)
-let balanceTurn = 0
-async function readBalance() {
-  const turn = ++balanceTurn
-  let read: Balance | null = null
-  try { read = await api<Balance>('/api/balance', { quiet: true }) } catch { /* unknown: the server decides at the tap */ }
-  if (turn === balanceTurn) balance.value = read
-}
+const funds = sectionRead<Balance>('/api/balance')
+const balance = computed(() => funds.error.value ? null : funds.data.value)
+const readBalance = funds.read
+const home = ref<InstanceType<typeof ShopHome> | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -572,58 +567,91 @@ async function importMissingProfile() {
   await flush()
   notice.value = 'Informations ajoutées. Activez uniquement celles à afficher sur cette affiche.'
 }
-const view = ref<'create' | 'posters' | 'styles'>('create')
-// The address says where the owner is: '' new poster, 'affiches', 'styles', or an open poster's id. Reload,
-// back and a new tab then work, and the navigation is made of real links.
-const VIEWS: Record<string, 'create' | 'posters' | 'styles'> = { '': 'create', affiches: 'posters', styles: 'styles' }
-// Creation by message (D-TEXT-FIRST-001) is a second front door: 'message' is its new poster, 'message-<id>' an open
-// poster in it. The start view is this device's choice (affiche.start), asked once when the chat is available; without
-// storage the application opens on « Pas à pas » and the switch holds for the visit.
+type View = 'opening' | 'accueil' | 'create' | 'posters' | 'styles' | 'credits' | 'compte'
+const view = ref<View>('opening')
+const routeRetry = ref<string | null>(null)
+let creatorReady = false
+const VIEWS: Record<string, View> = { accueil: 'accueil', credits: 'credits', compte: 'compte', affiches: 'posters', styles: 'styles' }
 type Start = 'chat' | 'steps'
 const START_KEY = 'affiche.start', chatting = ref(false), chatRetry = shallowRef<(() => void) | null>(null)
-const startView = ref<Start | null>('steps')
-try { const saved = localStorage.getItem(START_KEY); startView.value = saved === 'chat' || saved === 'steps' ? saved : null } catch { /* stays on the steps */ }
+const startView = ref<Start | null>(null)
+try { const saved = localStorage.getItem(START_KEY); startView.value = saved === 'chat' || saved === 'steps' ? saved : null } catch { /* use the default creator for this visit */ }
 const chatOn = computed(() => !!caps.value?.chat_available)
+const preferChat = computed(() => chatOn.value && !!navigator.locks && startView.value !== 'steps')
 // Loaded on demand; it never mounts the canvas or the poster fonts. A failed load says so, with its retry.
 // The canvas (Konva, and the fonts' module with it) is loaded when the step editor first shows a poster, never for
 // the chat: a poster made by message costs a phone neither the download nor the parse (T-CHAT-CANVAS-LOAD).
 const canvasRetry = shallowRef<(() => void) | null>(null)
 const PosterCanvas = defineAsyncComponent({ loader: () => import('./PosterCanvas.vue'), onError: (_reason, retry) => { canvasRetry.value = retry } })
 const ChatView = defineAsyncComponent({ loader: () => import('./ChatView.vue'), onError: (_reason, retry) => { chatRetry.value = retry } })
-const pickStart = computed(() => loaded.value && chatOn.value && !startView.value && !doc.value && view.value === 'create' && !chatting.value)
 const editing = computed(() => !!doc.value && !chatting.value)
 const shownStart = computed<Start>(() => doc.value || view.value === 'create' ? (chatting.value ? 'chat' : 'steps') : startView.value ?? 'steps')
-function switchTo(to: Start) {
+function askToDiscardPhotos(run: () => Promise<void>) {
+  paid.value = { title: 'Quitter le message ?', text: 'Les photos jointes à ce message n’ont pas encore été envoyées avec lui.', cost: '',
+    label: 'Quitter sans les envoyer', run }
+}
+function switchTo(to: Start, confirmed = false) {
+  const id = creation.value?.id
+  const target = to === 'chat' ? (id ? `message-${id}` : 'message') : id ?? 'etapes'
+  if (chatting.value && to === 'steps' && chat.hasUnsentPhotos?.() && !confirmed) {
+    askToDiscardPhotos(async () => { discardedFor = target; switchTo(to, true) })
+    return
+  }
   startView.value = to
   try { localStorage.setItem(START_KEY, to) } catch { /* the choice holds for this visit */ }
-  const id = creation.value?.id
-  leave(to === 'chat' ? (id ? `message-${id}` : 'message') : id ?? '')
+  leave(target)
 }
-const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message' : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : ''
-let routeDue = false
+const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message'
+  : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : view.value === 'create' ? 'etapes' : view.value === 'opening' ? 'accueil' : view.value
+let routeDue = false, discardedFor: string | null = null
 async function route() {
   const hash = window.location.hash.slice(1), was = chatting.value
+  routeRetry.value = null
   try {
     const message = /^message(?:-([a-f0-9-]{36}))?$/.exec(hash)
     const id = message ? message[1] : /^[a-f0-9-]{36}$/.test(hash) ? hash : undefined
-    // Without the chat its addresses open the editor; with it as the start view, the empty address is the chat's.
-    chatting.value = chatOn.value && (!!message || (!hash && startView.value === 'chat'))
-    const address = chatting.value ? (id ? `message-${id}` : 'message') : message ? id ?? '' : hash
+    const creator = !!(id || message || hash === 'creer' || hash === 'etapes')
+    const next = creator ? 'create' : VIEWS[hash] ?? 'accueil'
+    const staysInChat = !!message || (hash === 'creer' && preferChat.value)
+    if (!staysInChat && was && chat.hasUnsentPhotos?.() && discardedFor !== hash) {
+      window.history.pushState(null, '', `#${here()}`)
+      askToDiscardPhotos(async () => { discardedFor = hash; window.history.back() })
+      return
+    }
+    discardedFor = null
+    if (doc.value && !id) await fresh()
+    if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
+    if ((creator || next === 'styles') && !creatorReady) await loadShop()
+    if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
+    chatting.value = creator && (chatOn.value && !!message || hash === 'creer' && preferChat.value)
+    if (id) {
+      if (creation.value?.id !== id) await openCreation(id, hash)
+      else if (message && !chatting.value) window.history.replaceState(null, '', `#${id}`)
+      return
+    }
+    view.value = next
+    const address = here()
     if (address !== hash) window.history.replaceState(null, '', `#${address}`)
-    if (id) { if (creation.value?.id !== id) await openCreation(id); return }
-    if (doc.value) await fresh()
-    view.value = VIEWS[hash] ?? 'create'
-    nextTick(() => { if (!termsOpen.value) document.querySelector('main')?.focus() })  // the conditions keep it at opening
-  } catch (reason) { chatting.value = was; window.history.replaceState(null, '', `#${here()}`); throw reason }
-  // « Mes affiches » is read again each time it opens: an image may have come since (after a sign-in, the only way back
-  // to it, ADR-108). The list shown stays until the new one is in; a refusal is said and keeps it. Outside the catch
-  // above: a refusal here is not a failed route, and the address stays as the gate left it.
+    nextTick(() => { if (!modalOpen.value) (document.querySelector<HTMLElement>('main:not([hidden]) h1[tabindex]') ?? document.querySelector<HTMLElement>('main:not([hidden])'))?.focus() })
+  } catch (reason) {
+    if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
+    chatting.value = was
+    if (view.value === 'opening') view.value = 'accueil'
+    routeRetry.value = hash
+    window.history.replaceState(null, '', `#${here()}`)
+    throw reason
+  }
   if (view.value === 'posters') await loadLibrary()
 }
-// « Mes affiches » opens a poster where the owner creates: in the chat when it is the start view.
 async function openFromList(id: string) {
-  chatting.value = chatOn.value && startView.value === 'chat'
-  try { await openCreation(id) } catch (reason) { chatting.value = false; throw reason }
+  const origin = window.location.hash.slice(1)
+  if (!creatorReady) await loadShop()
+  if (window.location.hash.slice(1) !== origin) return
+  try { await openCreation(id, origin, preferChat.value) } catch (reason) {
+    chatting.value = false
+    if (reason instanceof ApiError && reason.status === 404) { home.value?.refresh(); throw new Error('Cette affiche n’est plus disponible.') }
+    throw reason
+  }
 }
 // No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
 function onHash() { if (loaded.value && window.location.hash.slice(1) !== here()) { if (busy.value) routeDue = true; else perform(route) } }
@@ -746,7 +774,7 @@ watch(front, id => nextTick(() => {
   if (panel && !panel.contains(document.activeElement)) (panel.querySelector<HTMLElement>('[data-focus]') ?? panel).focus()
 }))
 function openLook(id: string) { openedId.value = id; renameText.value = opened.value?.name ?? ''; renameError.value = '' }
-function useLook(id: string) { pickLook(id); rememberStyle(); openedId.value = null; leave('') }
+function useLook(id: string) { pickLook(id); rememberStyle(); openedId.value = null; leave('creer') }
 const reloadLooks = async () => { savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items }
 // Renaming and removing are safe to repeat: each attempt has its own key.
 async function renameLook() {
@@ -933,9 +961,10 @@ async function perform(action: () => Promise<void>) {
 }
 async function loadShop() {
   void readBalance()  // apart: its failure does not stop the page
-  const [saved, capabilities, list] = await Promise.all([api<Profile>('/api/shop-profile'), api<Capabilities>('/api/capabilities'), api<Listing>('/api/creations?limit=50')])
-  Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; library.value = list.items; libraryNext.value = list.next_cursor; activeTotal.value = list.total; showRemoved.value = false
-  savedLooks.value = (await api<{ items: SavedLook[] }>('/api/looks')).items
+  const options = { timeout: 20_000 }
+  const [saved, capabilities, looks] = await Promise.all([api<Profile>('/api/shop-profile', options), api<Capabilities>('/api/capabilities', options), api<{ items: SavedLook[] }>('/api/looks', options)])
+  Object.assign(profile, saved); profileSaved = JSON.stringify(saved); caps.value = capabilities; creatorReady = true
+  savedLooks.value = looks.items
   // The remembered style may be one of the shop's own looks, known only now.
   try { const remembered = JSON.parse(localStorage.getItem(styleKey()) ?? 'null'); if (savedLooks.value.some(item => item.id === remembered?.look)) pickLook(remembered.look) } catch { /* convenience only */ }
   Object.assign(include, { logo: false, shop_name: false, contact: false })
@@ -993,10 +1022,12 @@ watch(() => [creation.value?.id, !!currentVisual.value?.headline, JSON.stringify
   const id = creation.value?.id
   if (id) currentVisual.value?.headline ? forgetWords(id) : keepWords(id)
 })
-async function adopt(result: Creation) {
+async function adopt(result: Creation, origin?: string, asChat = chatting.value) {
   // Steps or tabs depend on the versions: for another poster they are read before the editor shows it.
   const opening = creation.value?.id !== result.id
   const known = opening ? (await api<{ items: Visual[] }>(`/api/creations/${result.id}/visuals`)).items : visuals.value
+  if (origin !== undefined && window.location.hash.slice(1) !== origin) return
+  chatting.value = asChat; view.value = 'create'
   // Another product starts from blank words: the last poster's brand, subtitle and accent word would be drawn on it unseen
   // (user, 2026-11-14), and its instructions sent with it. The accent colour (it goes with the look) and the plain-brand
   // choice are style and stay. A copy of the same product keeps its words; a poster with a version gets its own back below.
@@ -1045,10 +1076,11 @@ async function adopt(result: Creation) {
     if (previousPlan) acceptPlan(await api(`/api/plans/${previousPlan.result_ref}`))
   }
 }
-async function openCreation(id: string) {
+async function openCreation(id: string, origin: string, asChat = chatting.value) {
   await flush()
   const found = await api<Creation>(`/api/creations/${id}`)
-  if (found.status === 'active') return adopt(found)
+  if (window.location.hash.slice(1) !== origin) return
+  if (found.status === 'active') return adopt(found, origin, asChat)
   // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
   if (doc.value) await fresh()
   chatting.value = false; view.value = 'posters'; showRemoved.value = true; window.history.replaceState(null, '', '#affiches')
@@ -1057,11 +1089,17 @@ async function openCreation(id: string) {
 }
 // "Mes affiches": the shown list (in use or removed), its next page, and the count for the navigation.
 const libraryNext = ref<string | null>(null), activeTotal = ref(0), shownTotal = ref(0), showRemoved = ref(false)
+const listKnown = ref(false), listedRemoved = ref<boolean | null>(null), listFailed = ref(false)
+const hasLibrary = computed(() => listedRemoved.value === showRemoved.value)
 const listUrl = (extra = '') => `/api/creations?limit=50&status=${showRemoved.value ? 'abandoned' : 'active'}${extra}`
 async function loadLibrary() {
-  const list = await api<Listing>(listUrl())
-  library.value = list.items; libraryNext.value = list.next_cursor; shownTotal.value = list.total
-  activeTotal.value = showRemoved.value ? (await api<Listing>('/api/creations?limit=1')).total : list.total
+  listFailed.value = false
+  try {
+    const list = await api<Listing>(listUrl(), { timeout: 20_000 })
+    const active = showRemoved.value ? (await api<Listing>('/api/creations?limit=1', { timeout: 20_000 })).total : list.total
+    library.value = list.items; libraryNext.value = list.next_cursor; shownTotal.value = list.total
+    activeTotal.value = active; listKnown.value = true; listedRemoved.value = showRemoved.value
+  } catch (reason) { listFailed.value = true; throw reason }
 }
 async function moreLibrary() {
   const list = await api<Listing>(listUrl(`&before=${encodeURIComponent(libraryNext.value!)}`))
@@ -1080,6 +1118,7 @@ async function onRow(action: () => Promise<unknown>) {
   await loadLibrary()
 }
 const duplicate = (item: LibraryItem) => perform(async () => {
+  if (!creatorReady) await loadShop()
   let copied: Creation | undefined
   await onRow(async () => { copied = await mutation<Creation>(`/api/creations/${item.id}/copies`, { source_revision: item.revision, reason: 'new_campaign' }) })
   if (copied) await adopt(copied)
@@ -1090,7 +1129,7 @@ function askRemove(item: LibraryItem) {
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
     run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
 }
-async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; await loadShop() }
+async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
 async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
@@ -1244,7 +1283,7 @@ function onVisibility() {
   visible.value = !document.hidden
   if (!visible.value) return close()
   void ask()
-  if (loaded.value) void readBalance()  // another tab or device may have spent credits meanwhile
+  if (loaded.value && (doc.value || view.value !== 'accueil')) void readBalance()  // another tab or device may have spent credits meanwhile
   if (job.value && !polling) { clearTimeout(pollTimer); poll() }
 }
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
@@ -1625,7 +1664,7 @@ watch(state, now => {
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
     // Its conditions too (signed out, session ended, another shop): no late answer opens them again (readTerms).
-    voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
+    funds.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
     if (typeof bound.value === 'number' && location.hash) window.history.replaceState(null, '', location.pathname + location.search)
   }
   if (now === 'shown' && !loaded.value) void openShop()
@@ -1635,8 +1674,6 @@ async function openShop() {
   open()
   readStyle()
   void readTerms(true)  // apart, as the balance: after a sign-in or on a session that lasts (D-TERMS-004)
-  // A failed load is a failed answer: hidden, with « Réessayer », which asks and opens again (a 401 or 409 is out anyway).
-  try { await loadShop() } catch (reason) { failed.value = failureOf(reason); return }
   loaded.value = true
   await perform(route)
 }
@@ -1735,11 +1772,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
   <button class="skip" type="button" @click="skip">Aller au contenu</button>
-  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
+  <header ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#accueil" aria-label="Accueil" class="wordmark" translate="no"><svg class="mark" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1h11l5 5v17H2z" /><path d="M13 1v5h5" /><rect class="hue" x="5.5" y="10" width="9" height="2" rx="1" /><rect class="ink" x="5.5" y="15" width="6" height="4" rx="2" /></svg>Affiche Gen</a><template v-if="loaded">
     <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
     <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
-    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
-    <div v-if="chatOn && startView" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
+    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a></nav>
+    <div v-if="chatOn && (doc || view === 'create')" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
   <!-- Everything but the shop: the session awaited or failed, and the signed-out screen. -->
   <main v-if="!shown" class="gate" tabindex="-1">
@@ -1750,22 +1787,16 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p><p class="help"><a href="/donnees.html" class="data-link">Vos données</a></p></form>
   </main>
   <main v-if="loaded" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }">
-    <div v-if="error" class="message error" role="alert">{{ error }}<button class="text-button" type="button" @click="error = ''">Fermer</button></div>
+    <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <section v-if="pickStart" class="start" aria-labelledby="titre-depart" :inert="termsOpen">
-      <h1 id="titre-depart">Comment voulez-vous créer vos affiches ?</h1>
-      <div class="start-choices">
-        <button type="button" class="start-choice" @click="switchTo('chat')"><span class="sketch talk" aria-hidden="true"><i /><i /><i /></span><span><b>Par message</b>Écrivez le produit et le prix, ajoutez vos photos.</span></button>
-        <button type="button" class="start-choice" @click="switchTo('steps')"><span class="sketch" aria-hidden="true"><i /><i /><i /></span><span><b>Pas à pas</b>Remplissez les champs, un écran à la fois.</span></button>
-      </div>
-      <p class="help">Ce choix devient votre écran de départ. Vous pouvez changer en haut de l’écran.</p>
-    </section>
+    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
+    <section v-if="!doc && (view === 'compte' || view === 'credits')" class="gallery" :inert="modalOpen"><h1 tabindex="-1">{{ view === 'compte' ? 'Mon compte' : 'Mes crédits' }}</h1><a href="#accueil">Retour à l’accueil</a></section>
     <template v-if="chatting">
       <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
     </template>
-    <div v-if="!doc && view === 'create' && !chatting && !pickStart" class="intake-layout" :inert="termsOpen">
+    <div v-if="!doc && view === 'create' && !chatting" class="intake-layout" :inert="termsOpen">
       <form class="intake" @submit.prevent="perform(createPoster)">
         <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
@@ -1780,13 +1811,15 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </form>
     </div>
     <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button></div>
-      <p v-if="!library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
-      <div class="rows"><div v-for="item in library" :key="item.id" class="library-row">
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <p v-if="listFailed"><button class="secondary" @click="perform(loadLibrary)">Réessayer la liste</button></p>
+      <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
+      <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
+      <div v-if="hasLibrary" class="rows"><div v-for="item in library" :key="item.id" class="library-row">
         <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
         <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
       </div></div>
-      <p v-if="libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
+      <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
     <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles" :inert="termsOpen">
       <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
@@ -1797,7 +1830,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
         <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
-        <button v-if="chatOn && startView" type="button" class="ghost icon to-chat" aria-label="Continuer par message" title="Continuer par message" @click="switchTo('chat')"><Icon n="chat" /></button>
+        <button v-if="chatOn && (doc || view === 'create')" type="button" class="ghost icon to-chat" aria-label="Continuer par message" title="Continuer par message" @click="switchTo('chat')"><Icon n="chat" /></button>
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
         <div class="undo"><button class="ghost icon" :disabled="busy || !history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
@@ -1964,7 +1997,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!previewLoaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
           </template>
-          <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="leave('')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+          <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>
     </section>

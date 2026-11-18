@@ -1053,3 +1053,7 @@ The owner approved v3 for implementation, including one linked poster plus the r
 ## ADR-115 — Implementation model follows the orchestrator (2026-11-18)
 
 The owner directs Codex to use GPT for implementation when Codex orchestrates. Independent code review and the existing workflow gates remain in force.
+
+## ADR-116 — Home review closure (2026-11-18)
+
+After three rounds the owner chose to fix both outstanding navigation cases and close T-SHOP-DASH-003 after passing checks.

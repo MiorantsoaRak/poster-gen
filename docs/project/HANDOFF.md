@@ -15,7 +15,7 @@ No work order or ClickUp ticket: the user's own project. Goal of the release: op
 
 **T-TERMS-004 complete, local commit 2553e49.** Scene-adjustment warnings in chat and editor, three French review labels, and public /donnees.html with sign-in and conditions links. Owner authorized Codex to apply three findings after Opus implementation. Codex r2 approved. Final: 258 frontend tests, build, identical admin bundle, 57 API tests and five serial Chromium suites passed. Full backend 1521 passed / 3 deselected before frontend-only fixes. The warning-state mutation failed its intended assertion.
 
-**Current: shop dashboard design v3 approved (ADR-114).** Completed through T-SHOP-DASH-002. R2 approved, 295 targeted passes, both mutations detected. Full suite had one unrelated queued-job cancellation failure; isolated retry passed, full rerun in progress. Next: T-SHOP-DASH-003 per TODO. No push or deployment. Earlier brand and research working-tree changes are listed below.
+**Current: shop dashboard design v3 approved (ADR-114).** Completed through T-SHOP-DASH-003. Owner approved closure after both r3 fixes; post-fix Home, lockless Chromium, admin, build and 259 Vitest passed. Full editor and chat passed before final routing fixes. Next: T-SHOP-DASH-004 per TODO. No push or deployment. Earlier brand and research working-tree changes are listed below.
 
 **How this session works (the user's standing rules):** the lead passes requirement and design gates himself, uses GPT implementers when Codex orchestrates (ADR-115); Claude-led work uses Opus, reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
 

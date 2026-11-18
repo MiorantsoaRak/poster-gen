@@ -56,10 +56,10 @@ def stored(engine):
         return conn.exec_driver_sql("SELECT terms_version FROM shop_profile WHERE id=1").scalar()
 
 
-def open_atelier(page):
+def open_atelier(page, path=""):
     for attempt in range(60):
         try:
-            page.goto(smoke.ORIGIN, timeout=2000)
+            page.goto(smoke.ORIGIN + path, timeout=2000)
             break
         except Exception:
             if attempt == 59:
@@ -68,7 +68,7 @@ def open_atelier(page):
 
 
 def sign_in(page):
-    open_atelier(page)
+    open_atelier(page, "/#etapes")
     page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
@@ -546,7 +546,7 @@ def walk_keyboard(browser, engine, errors, product, model, first):
     # sign-out confirmation opens; the late 403 opens the dialog behind it: the confirmation keeps the front and the
     # focus; closing it focuses the dialog. Accepted, the same « Réessayer » is the request's first admission.
     with page.expect_response("**/api/balance"):  # leaving the poster reads the credits again (fresh, loadShop)
-        page.evaluate("() => { location.hash = '' }")
+        page.evaluate("() => { location.hash = 'etapes' }")
     expect(page.get_by_label("Photos du produit")).to_be_enabled()  # not while the page is busy loading
     page.get_by_label("Photos du produit").set_input_files(product)
     expect(page.locator(".photo-strip img")).to_have_count(1)

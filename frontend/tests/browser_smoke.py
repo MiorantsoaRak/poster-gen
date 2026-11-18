@@ -287,7 +287,7 @@ def walk_look(browser, session, scheme, errors):
     device = context.new_page()
     device.set_default_timeout(10000)
     device.on("pageerror", lambda error: errors.append(str(error)))
-    device.goto(ORIGIN)
+    device.goto(ORIGIN + "/#etapes")
     expect(device.get_by_label("Photos du produit")).to_be_attached()
     assert theme_of(device) == theme and bar_colour(device) == GROUNDS[theme], (theme_of(device), bar_colour(device))
     assert device.evaluate("getComputedStyle(document.body).fontFamily").startswith("Figtree")
@@ -409,7 +409,7 @@ def walk_wait(browser, session, errors):
     device = context.new_page()
     device.set_default_timeout(10000)
     device.on("pageerror", lambda error: errors.append(str(error)))
-    device.goto(ORIGIN)
+    device.goto(ORIGIN + "/#etapes")
     expect(device.get_by_label("Photos du produit")).to_be_enabled()  # the page's opening is over
     device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
     expect(device.locator(".photo-strip img")).to_have_count(1)
@@ -678,14 +678,12 @@ def walk_tap(browser, session, errors):
     page.unroute("**/api/creations/*/copies")
     assert sum(url.endswith("/copies") for url in posts) == 1, posts
     expect(page.locator(".poster-canvas canvas").first).to_be_visible()
-    # The header's navigation link on a wide screen, from an open poster: the list's loading held, through the shop's
-    # capabilities asked with it. (At 360 px the bottom navigation shows only outside the editor, where changing screen
-    # asks the server nothing: there it is the press alone, checked below. The editor's back link leaves with the editor.)
+    # Leaving the editor asks for the gallery's active page. Hold that read to check the link's busy state.
     page.set_viewport_size({"width": 1366, "height": 768})
-    page.route("**/api/capabilities", lambda route: held.append(route))
-    # The link is marked current at once (bold, so wider) as before this change: its size is not compared.
+    listing = "**/api/creations?limit=50&status=active"
+    page.route(listing, lambda route: held.append(route))
     check_working(page, page.locator(".nav a", has_text="Mes affiches"), held, posts, "the header's navigation link at 1366 px", "tap-1366-sombre-navigation.png", sized=False)
-    page.unroute("**/api/capabilities")
+    page.unroute(listing)
     expect(rows).to_have_count(count + 1)
     page.set_viewport_size({"width": 360, "height": 740})
     # Opening a poster from « Mes affiches »: its GET held.
@@ -761,7 +759,7 @@ def walk_words(browser, session, errors):
 
     kept = "id => JSON.parse(localStorage.getItem('affiche.shop1.words.' + id))"
 
-    page.goto(ORIGIN)
+    page.goto(ORIGIN + "/#etapes")
     make("Casque Alpha", "120 000")
     brand.fill("MarqueAlpha")
     subtitle.fill("SOUS-TITRE ALPHA")
@@ -840,7 +838,7 @@ def walk_formats(browser, errors):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(ORIGIN)
+    page.goto(ORIGIN + "/#etapes")
     page.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
@@ -2006,7 +2004,7 @@ def walk_credits(browser, errors, data, app):
     page = context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(ORIGIN)
+    page.goto(ORIGIN + "/#etapes")
     page.get_by_label("Identifiant de la boutique", exact=True).fill("Boutique Credits")
     page.get_by_label("Mot de passe", exact=True).fill(password)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
@@ -2339,7 +2337,7 @@ def run():
                             if vite.poll() is not None:
                                 raise RuntimeError("Vite stopped; inspect outputs/editor-smoke/vite.log")
                             try:
-                                page.goto(ORIGIN, timeout=2000)
+                                page.goto(ORIGIN + "/#etapes", timeout=2000)
                                 break
                             except Exception:
                                 if attempt == 59:
@@ -3145,7 +3143,7 @@ def run():
                         mobile = phone.new_page()
                         mobile.set_default_timeout(10000)
                         mobile.on("pageerror", lambda error: errors.append(str(error)))
-                        mobile.goto(ORIGIN)
+                        mobile.goto(ORIGIN + "/#etapes")
                         no_sideways = "document.documentElement.scrollWidth <= innerWidth"
                         assert mobile.evaluate("matchMedia('(pointer: coarse)').matches")
                         # Outside the editor « Créer », « Mes affiches » and « Styles » are a bar at the bottom, the current
@@ -3322,7 +3320,7 @@ def run():
                         screen = desk.new_page()
                         screen.set_default_timeout(10000)
                         screen.on("pageerror", lambda error: errors.append(str(error)))
-                        for address, name in ((f"#{light_poster}", "editeur"), ("#", "creer")):
+                        for address, name in ((f"#{light_poster}", "editeur"), ("#etapes", "creer")):
                             screen.goto(f"{ORIGIN}/{address}")
                             if name == "editeur":
                                 expect(screen.get_by_role("tab", name="Textes", exact=True)).to_have_attribute("aria-selected", "true")
