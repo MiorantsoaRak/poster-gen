@@ -17,7 +17,7 @@ No work order or ClickUp ticket: the user's own project. Goal of the release: op
 
 **Current: shop dashboard design v3 approved by the owner (ADR-114).** Five implementation tasks are in TODO. Start with the shop summary and attention groups, then credit history, Home, Credits and Account. No deployment authorized.
 
-**How this session works (the user's standing rules):** the lead passes requirement and design gates himself, implements with Opus subagents (`model: "opus"` on every Agent call), reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
+**How this session works (the user's standing rules):** the lead passes requirement and design gates himself, uses GPT implementers when Codex orchestrates (ADR-115); Claude-led work uses Opus, reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
 
 **Waiting for the user's yes (defaults in force until then):**
 - French texts, all drafts: the conditions (`terms.PARAGRAPHS_FR`: any changed word needs a new `VERSION` and hash in `tests/test_terms.py`), the refusals `terms_required` and `terms_outdated`, the dialog's sentences, the warning's lead-in « Vous demandez des caractéristiques sans les lister ? », the draft message to the pilot in `deploy/README.md`, the « Vos données » page (built and browser-tested). Straight apostrophes in the server's drafts, typographic ones in the page's: to settle at the reading.

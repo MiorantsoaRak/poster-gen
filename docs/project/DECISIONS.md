@@ -1049,3 +1049,7 @@ The owner approved Home, Credits and Account, the 30-day usage line, and accessi
 ## ADR-114 — Shop dashboard design approved (2026-11-18)
 
 The owner approved v3 for implementation, including one linked poster plus the remaining count per attention group and gross credits spent by completion time alongside posters created and images generated over 30 days.
+
+## ADR-115 — Implementation model follows the orchestrator (2026-11-18)
+
+The owner directs Codex to use GPT for implementation when Codex orchestrates. Independent code review and the existing workflow gates remain in force.
