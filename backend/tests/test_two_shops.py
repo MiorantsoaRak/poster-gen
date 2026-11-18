@@ -33,7 +33,8 @@ EXEMPT = {
 }
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
 OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/balance"),
-       ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms"), ("GET", "/api/shop-dashboard")}
+       ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms"), ("GET", "/api/shop-dashboard"),
+       ("GET", "/api/shop-credit-history")}
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 
@@ -320,7 +321,7 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     leaked = lambda answer: [name for name, value in theirs.items() if value in answer.text]  # noqa: E731
     for path in ("/api/creations", "/api/creations?status=abandoned", "/api/looks", "/api/shop-profile",
                  f"/api/creations/{bid}/jobs", f"/api/creations/{bid}/visuals", f"/api/creations/{bid}/versions",
-                 "/api/shop-dashboard"):
+                 "/api/shop-dashboard", "/api/shop-credit-history"):
         answer = b.get(path)
         assert answer.status_code == 200 and leaked(answer) == [], (path, leaked(answer))
     assert [item["id"] for item in b.get("/api/creations").json()["items"]] == [bid]

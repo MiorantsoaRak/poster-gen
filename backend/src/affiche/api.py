@@ -578,6 +578,13 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                                                               "message_fr": MESSAGES[refused.code]}
             return credits.balance(conn, shop) | {"purchase_fr": credits.purchase_text(conn, settings), "blocked": blocked}
 
+    @protected.get("/api/shop-credit-history")
+    def shop_credit_history(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
+                            before: Annotated[str | None, Query(max_length=100)] = None):
+        with app.state.engine.connect() as conn:
+            items, cursor = credits.shop_history(conn, request.state.shop, limit=limit, before=before)
+        return {"items": items, "next_cursor": cursor}
+
     @protected.get("/api/shop-dashboard")
     def shop_dashboard(request: Request):
         """What needs the owner, and the last 30 × 24 hours (D-SHOP-DASH-001, 002). as_of is taken before any read, so

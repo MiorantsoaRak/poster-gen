@@ -234,22 +234,62 @@ LINE = ("id", "kind", "origin", "credits", "amount_ar", "method", "ref", "job_id
 JOB = ("id", "kind", "status", "creation_id", "result_ref", "error_code", "at", "finished_at", "repaid_by")
 
 
-def history(conn, shop: int, *, before: str | None = None, limit: int = 50) -> tuple[list[dict], str | None]:
-    """A page of the shop's history and the cursor of the next, "<at>|<line|job>|<id>" (None at the end). A job's
-    credit is jobs.CREDIT's (pending, spent, given_back); repaid_by is the line that repaid it."""
-    from .jobs import CREDIT  # jobs imports this module
+SHOP_HISTORY = text("""
+    WITH events AS (
+        SELECT 'line' AS type, g.id, g.kind, g.created_at AS at, g.origin, g.credits, NULL AS status, j.creation_id
+        FROM credit_grants g LEFT JOIN poster_jobs j ON j.id=g.job_id AND j.shop_id=g.shop_id
+        WHERE g.shop_id=:shop
+        UNION ALL
+        SELECT 'job', id, kind, CASE WHEN status IN ('queued','running') THEN created_at ELSE finished_at END,
+               NULL, NULL, status, creation_id
+        FROM poster_jobs WHERE shop_id=:shop AND takes_credit=1
+    ), page AS (
+        SELECT * FROM events WHERE (at,type,id)<(:at,:type,:id) ORDER BY at DESC,type DESC,id DESC LIMIT :limit
+    )
+    SELECT p.type,p.id,p.kind,p.at,p.origin,p.credits,p.status,c.id AS creation_id,
+           json_extract(v.document_json,'$.offer.title') AS title, c.status='abandoned' AS removed
+    FROM page p LEFT JOIN creations c ON c.id=p.creation_id AND c.shop_id=:shop
+    LEFT JOIN creation_versions v ON v.creation_id=c.id AND v.revision=c.current_revision
+    ORDER BY p.at DESC,p.type DESC,p.id DESC
+""")
+
+
+def _history_page(conn, query, shop, before, limit):
     at, type, id = "9999", "", 0  # after every instant
     if before is not None:
         match = re.fullmatch(r"([0-9T:+.\-]{20,40})\|(?:line\|([0-9]{1,18})|job\|([0-9a-f-]{36}))", before)
         if match is None:
             raise Refused("invalid_cursor")
         at, type, id = (match[1], "line", int(match[2])) if match[2] else (match[1], "job", match[3])
-    rows = conn.execute(HISTORY, {"shop": shop, "at": at, "type": type, "id": id, "limit": limit + 1}).mappings().all()
+    rows = conn.execute(query, {"shop": shop, "at": at, "type": type, "id": id, "limit": limit + 1}).mappings().all()
+    last = rows[limit - 1] if len(rows) > limit else None
+    return rows[:limit], None if last is None else f"{last['at']}|{last['type']}|{last['id']}"
+
+
+def history(conn, shop: int, *, before: str | None = None, limit: int = 50) -> tuple[list[dict], str | None]:
+    """A page of the shop's history and the cursor of the next, "<at>|<line|job>|<id>" (None at the end). A job's
+    credit is jobs.CREDIT's (pending, spent, given_back); repaid_by is the line that repaid it."""
+    from .jobs import CREDIT  # jobs imports this module
+    rows, cursor = _history_page(conn, HISTORY, shop, before, limit)
     items = [{"type": "line", **{key: row[key] for key in LINE}} if row["type"] == "line" else
              {"type": "job", **{key: row[key] for key in JOB}, "credit": CREDIT.get(row["status"], "given_back")}
-             for row in rows[:limit]]
-    last = rows[limit - 1] if len(rows) > limit else None
-    return items, None if last is None else f"{last['at']}|{last['type']}|{last['id']}"
+             for row in rows]
+    return items, cursor
+
+
+def shop_history(conn, shop: int, *, before: str | None = None, limit: int = 20) -> tuple[list[dict], str | None]:
+    from .jobs import CREDIT
+    rows, cursor = _history_page(conn, SHOP_HISTORY, shop, before, limit)
+    items = []
+    for row in rows:
+        item = {key: row[key] for key in ("type", "id", "at", "kind", "creation_id", "title")}
+        item["removed"] = bool(row["removed"]) if row["creation_id"] is not None else None
+        if row["type"] == "line":
+            item.update(origin=row["origin"], credits=row["credits"])
+        else:
+            item["credit"] = CREDIT.get(row["status"], "given_back")
+        items.append(item)
+    return items, cursor
 
 
 PAYMENTS = text("SELECT g.id AS line, g.shop_id, p.identifier, g.kind, g.origin, g.credits, g.amount_ar, g.method, g.ref,"

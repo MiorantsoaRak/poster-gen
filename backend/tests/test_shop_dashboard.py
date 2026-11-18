@@ -261,3 +261,92 @@ def test_every_figure_is_read_from_one_snapshot(client, at_now):
     assert written and (first["failed"], first["usage"]) == ({"total": 1, "first_creation_id": creation["id"]}, usage(posters=1))
     second = read(client)
     assert (second["failed"], second["usage"]) == (EMPTY, usage(posters=1, images=1, spent=1))
+
+
+def test_shop_credit_history_uses_completion_dates_and_shop_only_fields(client, monkeypatch):
+    route = "/api/shop-credit-history"
+    assert client.get(route).status_code == 401
+    other, shop_b = sign_in_second_shop(client)
+    assert client.get(route, headers={"X-Affiche-Shop": str(shop_b)}).status_code == 409
+    for params, code in (({"limit": 0}, "validation_error"), ({"limit": 51}, "validation_error"),
+                         ({"before": "broken"}, "invalid_cursor")):
+        invalid = client.get(route, params=params)
+        assert (invalid.status_code, invalid.json()["error"]["code"]) == (422, code)
+
+    a, b = create_draft(client), create_draft(other)
+    document = b["document"]
+    document["offer"]["title"] = "Titre privé B"
+    saved = send(other, "PUT", f"/api/creations/{b['id']}", document, b["revision"])
+    assert saved.status_code == 200, saved.text
+    engine = client.app.state.engine
+    spent = job(engine, a, "succeeded", BEFORE, finished=at(10))
+    released = job(engine, a, "failed", at(8), finished=at(10))
+    active = create_draft(client)
+    pending = job(engine, active, "running", at(9), finished=NOW)
+    free = job(engine, a, "succeeded", at(8), takes=0)
+    foreign = job(engine, b, "succeeded", at(9), shop=shop_b)
+    # A job whose creation belongs to B can contribute a credit entry to A, but no title or link.
+    malformed = job(engine, b, "succeeded", at(8), shop=1)
+    # A historical line pointing at B's job must never follow it, even when that job points back at A.
+    foreign_link = job(engine, a, "succeeded", at(8), shop=shop_b)
+    with write_tx(engine) as conn:
+        seeded_a = set(conn.exec_driver_sql("SELECT id FROM credit_grants WHERE shop_id=1").scalars())
+        seeded_b = set(conn.exec_driver_sql("SELECT id FROM credit_grants WHERE shop_id=?", (shop_b,)).scalars())
+        malformed_repay = conn.execute(text(
+            "INSERT INTO credit_grants(shop_id,kind,credits,ref,actor,note,job_id,created_at)"
+            " VALUES (1,'correction',1,'broken association','ops','legacy',:job,:at) RETURNING id"),
+            {"job": foreign_link, "at": at(8)}).scalar_one()
+        monkeypatch.setattr(credits, "utc_now", lambda: at(9))
+        grant = credits.grant(conn, 1, 3, origin="bought", ref="hidden reference", amount_ar=8000,
+                              method="mvola", actor="private operator", note="internal note")
+        grant_b = credits.grant(conn, shop_b, 4, origin="offered", ref="B opening", actor="ops")
+        monkeypatch.setattr(credits, "utc_now", lambda: at(11))
+        repayment = credits.correct(conn, 1, 1, ref="hidden repayment", job_id=spent, note="internal refund", actor="ops")
+        fix = credits.correct(conn, 1, 0, ref="hidden reference", amount_ar=1, note="internal amount", actor="ops")
+    abandon(client, a)
+
+    answer = client.get(route)
+    assert answer.status_code == 200 and answer.headers["cache-control"] == "no-store"
+    result = answer.json()
+    assert result.keys() == {"items", "next_cursor"} and result["next_cursor"] is None
+    items = result["items"]
+    by_id = {item["id"]: item for item in items}
+    common = {"id", "type", "kind", "at", "creation_id", "title", "removed"}
+    for item in items:
+        assert set(item) == common | ({"origin", "credits"} if item["type"] == "line" else {"credit"})
+    assert free not in by_id and foreign not in by_id and b["id"] not in answer.text and "Titre privé B" not in answer.text
+    assert (by_id[grant]["origin"], by_id[grant]["credits"], by_id[grant]["at"]) == ("bought", 3, at(9))
+    assert (by_id[fix]["kind"], by_id[fix]["credits"]) == ("correction", 0)
+    assert (by_id[repayment]["kind"], by_id[repayment]["credits"], by_id[repayment]["at"]) == ("correction", 1, at(11))
+    assert (by_id[spent]["at"], by_id[spent]["credit"]) == (at(10), "spent")
+    assert (by_id[released]["at"], by_id[released]["credit"]) == (at(10), "given_back")
+    assert (by_id[pending]["at"], by_id[pending]["credit"]) == (at(9), "pending")
+    assert by_id[pending]["creation_id"] == active["id"] and by_id[pending]["removed"] is False
+    for id in (spent, released, repayment):
+        row = by_id[id]
+        assert (row["creation_id"], row["title"], row["removed"]) == (a["id"], "JBL Flip", True)
+    for id in (malformed, malformed_repay, grant, fix):
+        assert all(by_id[id][key] is None for key in ("creation_id", "title", "removed"))
+    assert items == sorted(items, key=lambda row: (row["at"], row["type"], row["id"]), reverse=True)
+
+    def one_row_pages(device):
+        rows, cursor = [], None
+        while True:
+            page = device.get(route, params={"limit": 1} | ({"before": cursor} if cursor else {})).json()
+            assert len(page["items"]) == 1 and page["items"][0] not in rows
+            rows.extend(page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return rows
+
+    rows_a = one_row_pages(client)
+    assert rows_a == items
+    assert {r["id"] for r in rows_a if r["type"] == "line"} == seeded_a | {malformed_repay, grant, repayment, fix}
+    assert rows_a.index(by_id[repayment]) < rows_a.index(by_id[spent])
+    rows_b = one_row_pages(other)
+    assert {r["id"] for r in rows_b if r["type"] == "line"} == seeded_b | {grant_b}
+    assert [row for row in rows_b if row["type"] == "job"] == [
+        {"type": "job", "id": foreign, "at": at(9), "kind": "scene", "credit": "spent",
+         "creation_id": b["id"], "title": "Titre privé B", "removed": False},
+        {"type": "job", "id": foreign_link, "at": at(8), "kind": "scene", "credit": "spent",
+         "creation_id": None, "title": None, "removed": None}]
