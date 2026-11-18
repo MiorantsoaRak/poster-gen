@@ -2,26 +2,64 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
-## Release 1: multi-shop and prepaid balance built — Claude, 2026-11-17 (READ FIRST for Release 1)
+## Release 1 « Invitation » — Claude, 2026-11-18 (READ FIRST for Release 1)
 
-**Done, committed locally, nothing pushed, nothing deployed:** the multi-shop feature (T-MULTI-SHOP-001 to 006, ADR-108) and the prepaid balance (T-PENDING-KINDS, T-BALANCE-001 to 006, ADR-109; design `designs/prepaid-balance.md` v4 with its two amendments of 2026-11-17 at the top). TODO.md holds each task's detail and review reports. `main` is ahead of `origin/main`; push and deploy only on the user's word, and no deploy before Release 1 is complete.
+No work order or ClickUp ticket: the user's own project. Goal of the release: open Doka Studio to a few invited shops as a prepaid service ([ROADMAP.md](ROADMAP.md), ADR-105). Order of work: multi-shop, prepaid balance, admin dashboard, conditions of use, shop dashboard, « Partager ».
 
-**Last verified on this Linux machine (stub, zero spend, SQLite 3.53.1):** backend `uv run pytest -q -rf` 1437 passed, 3 deselected; `tests/mutant_two_shops.py` killed; frontend 227 tests and build; `browser_smoke.py`, `chat_browser.py`, `editor_refinements_browser.py` passed.
+**Done, committed locally on `main` (over thirty commits ahead of `origin/main`: `git rev-list --count origin/main..main`), nothing pushed, nothing deployed:**
+- Multi-shop (T-MULTI-SHOP-001 to 006, ADR-108), prepaid balance (T-PENDING-KINDS, T-BALANCE-001 to 006, ADR-109), T-SHOP-REPLACE (migration 0015).
+- Admin dashboard core, T-ADMIN-001 to 007 (ADR-110; design `designs/admin-dashboard.md` v3; migration 0016): operator sign-in, shops, money forms with kept requests, the Service screen, at `/admin/`. T-ADMIN-008 to 010 are after Release 1 (the user, ADR-111).
+- Conditions of use: design `designs/service-terms.md` v3 approved (ADR-112; R-TERMS-003 amended by the user); T-TERMS-001 (migration 0017, `backend/src/affiche/posters/terms.py`, `GET`/`POST /api/terms`) and T-TERMS-002 (`terms.require` called from `jobs.enqueue`, `reads._admit`, `jobs.blocked`; 403 `terms_required`; `/api/balance` reason `terms`).
 
-**Exact next step:** the conditions of use (requirements first), then the shop dashboard, « Partager ». The admin dashboard's core is built and committed locally, not pushed (2026-11-17): T-ADMIN-001 to 007 (operator sign-in, shops, money forms, Service screen at `/admin/`; design `designs/admin-dashboard.md`, migration 0016; backend 1501 passed, frontend 244). Its deferrable tasks wait for the user's word on Release 1 or after: T-ADMIN-008 (usage), 009 (problems), 010 (Reka UI trial). At release, by the user: one deploy with `OPERATOR_BOOTSTRAP=1`, then `python -m affiche.shops operator-password`, then `verify.sh` by hand. Landmines: the kept money requests live in `localStorage` under `affiche.admin.pending.<shop id>`, with one accepted cross-tab limit (TODO.md, T-ADMIN-006); the shops' 26 built files must stay byte-identical when the admin page changes. T-SESSION-REPLACE is proposed, not confirmed.
+**In progress: T-TERMS-003, the conditions dialog on the shops' page. Built, reviewed, UNCOMMITTED, not yet run in a browser on its final code.**
+- What exists: the dialog (« J’accepte », « Plus tard », no sign-out button) in `frontend/src/App.vue` (`readTerms`, `acceptTerms`, `later`, `readConditions`, the `termsAsked` watcher, `modalOpen`, the focus watcher); `conditions()` and `termsAsked` in `frontend/src/api.ts` (20 s timeout; a confirmed POST voids every earlier read); `credit().terms` and `termsDate` in `generation.ts`; the `'conditions'` card action in `chat.ts` / `ChatView.vue`; `.terms-sheet` in `style.css`; new smoke `frontend/tests/terms_browser.py`; runbook section "Release 1: the conditions of use" and the rehearsal steps ending at 0017 in `deploy/README.md`; the smoke's row in `AGENTS.md`.
+- Reviews: Codex r1 REJECT, r2 APPROVE WITH FIXES (`reviews/t-terms-003-code-r1.md`, `-r2.md`); every fix is applied; Codex has not seen the r2 fixes. No third round is owed.
+- Checked on the final code (by the implementing subagent, not rerun by the lead): Vitest 257 passed, `run build` passes, `dist/admin` byte-identical.
+- **Why it stopped:** a browser run was killed for low memory (23 GB machine, swap full, a 6 GB virtual machine running). The lead does not restart a memory-killed run without the user's word, and the user asked for the handoff instead.
+
+**Exact next step (needs the user's word "run the smokes", and `free -m` showing about 3 GB available):** from `backend/`, one command at a time, never two at once:
+
+```bash
+cd /home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend && corepack npm@10 test && corepack npm@10 run build
+cd /home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend
+uv run python ../frontend/tests/terms_browser.py   # twice
+uv run python ../frontend/tests/browser_smoke.py
+uv run python ../frontend/tests/chat_browser.py
+uv run python ../frontend/tests/editor_refinements_browser.py
+uv run python ../frontend/tests/admin_browser.py
+```
+
+Then the seven smoke mutations (each applied alone, the smoke seen failing, the file restored). The script lived in the session scratchpad and may be gone after a reboot: `/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/t3-mutations.py`. If it is gone, redo them by hand in `frontend/src`: no « Lire les conditions » on the paid sheet; « Plus tard » blocking a free action; a refused chat message's text not returned to the field; a double tap on « J’accepte » sending twice; `terms_outdated` shown as accepted; no POST timeout; a confirmed POST not voiding an earlier read. If `terms_browser.py` fails, Codex r2 predicted where: the focus wait after the 409 (`shows_conditions()`), fixed since by moving focus to the dialog before « J’accepte » is disabled (`App.vue`, `acceptTerms`).
+
+When all pass: mark T-TERMS-003 `[x]` in TODO.md and commit exactly these files (stage nothing else; TODO.md by the index method described under Landmines):
+
+```bash
+git add AGENTS.md deploy/README.md frontend/src/App.vue frontend/src/ChatView.vue frontend/src/api.ts frontend/src/chat.ts frontend/src/generation.ts frontend/src/style.css frontend/tests/api.test.ts frontend/tests/chat.test.ts frontend/tests/generation.test.ts frontend/tests/terms_browser.py
+git diff --cached --name-only
+```
+
+Then T-TERMS-004 (the always-on warning on every scene-adjustment card and in « Ajuster la scène »; the check's wording for every render; the static `frontend/public/donnees.html` with its link from the sign-in screen and from the conditions dialog, whose words « Vos données » are plain text today): one Opus subagent with the design's T-TERMS-004 rows, the lead's rerun, a Codex code review. Then the shop dashboard (requirements `requirements/shop-dashboard.md`, Draft: R-SHOP-DASH-003 now carries the « Vos données » link), then « Partager ».
+
+**How this session works (the user's standing rules):** the lead passes requirement and design gates himself, implements with Opus subagents (`model: "opus"` on every Agent call), reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
 
 **Waiting for the user's yes (defaults in force until then):**
-- French sentences: the sign-out confirmation, the pause sentence, the cleanup-failure sentence (multi-shop); « 1 crédit · il vous en reste N. Bientôt à court : … », the zero sentence followed by the purchase text on the chat card, « 1 crédit, une seule fois pour cette demande » in the editor's dialog for a lost answer (T-BALANCE-006).
-- Owner decisions listed under T-BALANCE-006 in TODO.md and at the end of the design; T-DEPLOY-DOCKER-RUN is proposed, not confirmed.
-- At the release, by the user: warn the pilot, `grant originalphone 30 --offered --ref pilot-opening`, then `purchase-text`.
+- French texts, all drafts: the conditions (`terms.PARAGRAPHS_FR`: any changed word needs a new `VERSION` and hash in `tests/test_terms.py`), the refusals `terms_required` and `terms_outdated`, the dialog's sentences, the warning's lead-in « Vous demandez des caractéristiques sans les lister ? », the draft message to the pilot in `deploy/README.md`, the « Vos données » page (not built yet). Straight apostrophes in the server's drafts, typographic ones in the page's: to settle at the reading.
+- Earlier French sentences still unread: the sign-out confirmation, the pause sentence, the cleanup-failure sentence; « 1 crédit · il vous en reste N. Bientôt à court : … »; the zero sentence with the purchase text; « 1 crédit, une seule fois pour cette demande ».
+- Owner decisions listed at the end of each design (`admin-dashboard.md`, `service-terms.md`, `prepaid-balance.md`) and under T-BALANCE-006 in TODO.md. Proposed, not confirmed: T-SESSION-REPLACE, T-DEPLOY-DOCKER-RUN.
+- At the release, by the user: warn the pilot; one deploy with `OPERATOR_BOOTSTRAP=1`; `python -m affiche.shops operator-password`; `verify.sh` by hand; `grant originalphone 30 --offered --ref pilot-opening`; `purchase-text`; set `SUPPORT_CONTACT_FR`.
 
 **Landmines:**
-- Not proven: migration 0014 and `after-restore` on the release image's SQLite 3.40.1 (the release rehearsal is the gate); `release.sh`, `restore.sh` and the read-only open of the kept database in the operator container have only run against the fake docker.
-- Review state: the last fixes of T-BALANCE-005 (after round 4) and of T-BALANCE-006 (after round 1), both APPROVE WITH FIXES, were not reviewed again.
-- The browser smokes failed now and then because they uploaded a photo while the field was still disabled (the upload is dropped); they now wait for the field. The backend's one unexplained failure (T-SUITE-FLAKE) has not come back; still run with `-rf`.
-- After a refused editor request (4xx) the browser takes a new request key (`mutation()` in `frontend/src/api.ts`); a kept key now means a lost answer only.
-- A chat left open shows the old balance until the next read (dialog, job, return to the tab, reload); the server decides at admission.
-- The checkout is shared with a Codex session: its uncommitted work (PROJECT.md, its hunks in DECISIONS.md, TODO.md and this file, `brand/`, the mockups folders, the social-publishing research) must never be staged with Claude's commits.
+- **`main` is not releasable as committed:** T-TERMS-002 refuses every AI request of a shop that has not accepted, the pilot included, and the page that lets a shop accept (T-TERMS-003) is uncommitted. Release only with T-TERMS-003 in.
+- Memory: run one test or smoke command at a time; the full backend suite takes about six minutes; do not restart a run the system killed without the user's word.
+- Not proven: migrations 0014 to 0017 and `after-restore` on the release image's SQLite 3.40.1 (the release rehearsal is the gate; this machine runs 3.53.1); `release.sh`, `restore.sh`, `verify.sh` have only run against the fake docker; a real phone, a screen reader, journald keeping the operator's log lines.
+- Review state: the last fixes of T-BALANCE-005, T-BALANCE-006, T-ADMIN-005, T-ADMIN-006 (after round 3), T-ADMIN-007, T-TERMS-001, T-TERMS-002 and of the service-terms design (after round 2) were not reviewed again. T-ADMIN-006 has one accepted limit (ADR-111): no cross-tab lock on a kept money request's storage key.
+- The admin page: kept money requests live in `localStorage` under `affiche.admin.pending.<shop id>`; the shops' 26 built files must stay byte-identical when only the admin page changes, and `dist/admin` byte-identical when only the shops' page changes (record `sha256sum` before, compare after, from `frontend/`).
+- No erase command exists and the « Vos données » page must not promise one (ADR-112); what its later design must solve is listed under "Not built" in `designs/service-terms.md`.
+- After a refused editor request (4xx) the browser takes a new request key (`mutation()` in `frontend/src/api.ts`); a kept key means a lost answer only.
+- The browser smokes print `asyncio.CancelledError` tracebacks from route handlers before their pass lines; exit code 0 is the result.
+- The checkout is shared with a Codex session: its uncommitted work (PROJECT.md, its hunks in DECISIONS.md, TODO.md and this file, `brand/`, the mockups folders, `reviews/social-publishing-saas-research-2026-11-15.md`) must never be staged with Claude's commits. For a shared file, stage only Claude's lines: take `git show HEAD:<path>`, apply the edit, `git hash-object -w --stdin`, `git update-index --cacheinfo 100644,<sha>,<path>`, and write the same edit to the working file.
+
+**Uncommitted files of this session (T-TERMS-003):** `AGENTS.md`, `deploy/README.md`, `frontend/src/{App.vue,ChatView.vue,api.ts,chat.ts,generation.ts,style.css}`, `frontend/tests/{api.test.ts,chat.test.ts,generation.test.ts}`, `frontend/tests/terms_browser.py` (new). Everything else dirty or untracked is the Codex session's.
 
 ## Codex Doka Studio — Signal kit v1 delivered, 2026-11-15
 

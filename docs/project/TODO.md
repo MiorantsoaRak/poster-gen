@@ -69,7 +69,7 @@
   - verify: the design's T-TERMS-001 rows (test_db.py, test_terms.py); `uv run pytest -q` from `backend/`.
 - [x] T-TERMS-002 (done 2026-11-18: backend 1520 passed, 3 deselected; four browser smokes pass; Codex r1 APPROVE, one test-fixture fix applied, reviews/t-terms-002-code-r1.md. **Release only together with T-TERMS-003:** the page cannot accept yet, so an unaccepted shop, the pilot included, is refused every AI request) The acceptance check at admission (`jobs.enqueue`, `reads._admit`, `jobs.blocked`), `/api/balance`'s `terms` reason, the fixture sweep.
   - verify: the design's T-TERMS-002 rows; the four browser smokes still pass.
-- [ ] T-TERMS-003 The conditions dialog (« J’accepte », « Plus tard »), the balance reason, the replay controls, focus.
+- [~] T-TERMS-003 (built and UNCOMMITTED, 2026-11-18: Vitest 257, build, dist/admin identical; Codex r1 REJECT then r2 APPROVE WITH FIXES, all fixes applied, reviews/t-terms-003-code-r1/r2.md. NOT yet run on the final code, because a browser run was killed for low memory and waits for the owner's word: `terms_browser.py` twice, the four existing smokes, then scratchpad `t3-mutations.py` (seven mutations). Do not commit or release before they pass; `main` is not releasable without this task, see T-TERMS-002) The conditions dialog (« J’accepte », « Plus tard »), the balance reason, the replay controls, focus.
   - verify: the design's T-TERMS-003 rows (Vitest, `terms_browser.py`).
 - [ ] T-TERMS-004 The always-on warning, the check's wording, the static « Vos données » page and its sign-in link.
   - verify: the design's T-TERMS-004 rows; the French texts read by the user before any second shop signs in.
