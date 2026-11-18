@@ -1,17 +1,17 @@
 # REQUIREMENTS — The shop's dashboard
 
-**Status:** Draft v1, 2026-11-15 (Claude), with working defaults marked **Default**. Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105; the user asked for it as a condition of the next deploy). Depends on [multi-shop](multi-shop.md) and [prepaid-balance](prepaid-balance.md). No design yet.
+**Status:** Approved for design by the owner, 2026-11-18 (ADR-113). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105; the user asked for it as a condition of the next deploy). Depends on [multi-shop](multi-shop.md) and [prepaid-balance](prepaid-balance.md). See the [draft design](../designs/shop-dashboard.md).
 
-**What exists:** a choice screen (« Par message » / « Pas à pas »), « Mes affiches », the shop's profile inside the editor. No home, no balance, no account screen.
+**What exists:** a choice screen (« Par message » / « Pas à pas »), « Mes affiches », the shop's profile inside the editor. A prepaid balance API and generation checks now exist. The home and account screens are still to build.
 
 ## Index
 
 | ID | Title | Priority | Status |
 |---|---|---|---|
-| R-SHOP-DASH-001 | Home | P0 | Draft |
-| R-SHOP-DASH-002 | Credits | P0 | Draft |
-| R-SHOP-DASH-003 | Account | P1 | Draft |
-| R-SHOP-DASH-004 | True and usable on a phone | P0 | Draft |
+| R-SHOP-DASH-001 | Home | P0 | Approved |
+| R-SHOP-DASH-002 | Credits | P0 | Approved |
+| R-SHOP-DASH-003 | Account | P1 | Approved |
+| R-SHOP-DASH-004 | True and usable on a phone | P0 | Approved |
 
 ## R-SHOP-DASH-001 — Home
 - **Story:** As a shop owner, I open the application and see what I have and what to do next.

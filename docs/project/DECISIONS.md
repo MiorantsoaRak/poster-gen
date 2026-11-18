@@ -1041,3 +1041,7 @@
 - **Lead's calls the user may overturn:** the warning of ADR-111 is shown on every scene-adjustment card and in « Ajuster la scène », behind a conditional lead-in (« Vous demandez des caractéristiques sans les lister ? »), with no change to the paid reading; one check wording for every poster; only the last acceptance per shop is kept; the page names OpenAI, Anthropic and Hetzner; the operator's view of who accepted is not built; all French texts are drafts until the user reads them.
 - **Why:** the first draft's erase command could remove a file another shop uses and could stop the API from starting once the pilot shop was erased; a reading-based warning could be missed on a wrong answer or an old card, and needed a paid evaluation.
 - **Accepted limits:** a preview's pixels can be saved without the check; the style quota and the adjustment-chain limit can answer before `terms_required` (neither takes a credit nor reaches a provider); SQLite 3.40.1 is verified only at the release rehearsal.
+
+## ADR-113 — Shop dashboard requirements approved for design (2026-11-18)
+
+The owner approved Home, Credits and Account, the 30-day usage line, and accessible small-phone use. This authorizes the dashboard design. Implementation awaits design approval.

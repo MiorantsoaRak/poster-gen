@@ -11,45 +11,22 @@ No work order or ClickUp ticket: the user's own project. Goal of the release: op
 - Admin dashboard core, T-ADMIN-001 to 007 (ADR-110; design `designs/admin-dashboard.md` v3; migration 0016): operator sign-in, shops, money forms with kept requests, the Service screen, at `/admin/`. T-ADMIN-008 to 010 are after Release 1 (the user, ADR-111).
 - Conditions of use: design `designs/service-terms.md` v3 approved (ADR-112; R-TERMS-003 amended by the user); T-TERMS-001 (migration 0017, `backend/src/affiche/posters/terms.py`, `GET`/`POST /api/terms`) and T-TERMS-002 (`terms.require` called from `jobs.enqueue`, `reads._admit`, `jobs.blocked`; 403 `terms_required`; `/api/balance` reason `terms`).
 
-**In progress: T-TERMS-003, the conditions dialog on the shops' page. Built, reviewed, UNCOMMITTED, not yet run in a browser on its final code.**
-- What exists: the dialog (« J’accepte », « Plus tard », no sign-out button) in `frontend/src/App.vue` (`readTerms`, `acceptTerms`, `later`, `readConditions`, the `termsAsked` watcher, `modalOpen`, the focus watcher); `conditions()` and `termsAsked` in `frontend/src/api.ts` (20 s timeout; a confirmed POST voids every earlier read); `credit().terms` and `termsDate` in `generation.ts`; the `'conditions'` card action in `chat.ts` / `ChatView.vue`; `.terms-sheet` in `style.css`; new smoke `frontend/tests/terms_browser.py`; runbook section "Release 1: the conditions of use" and the rehearsal steps ending at 0017 in `deploy/README.md`; the smoke's row in `AGENTS.md`.
-- Reviews: Codex r1 REJECT, r2 APPROVE WITH FIXES (`reviews/t-terms-003-code-r1.md`, `-r2.md`); every fix is applied; Codex has not seen the r2 fixes. No third round is owed.
-- Checked on the final code (by the implementing subagent, not rerun by the lead): Vitest 257 passed, `run build` passes, `dist/admin` byte-identical.
-- **Why it stopped:** a browser run was killed for low memory (23 GB machine, swap full, a 6 GB virtual machine running). The lead does not restart a memory-killed run without the user's word, and the user asked for the handoff instead.
+**T-TERMS-003 complete, local commit 713f6e6.** 257 frontend tests and production build passed. Conditions browser passed twice, and gallery/editor, chat, refinements and admin smokes passed. Chat timed out once reopening the other poster at chat_browser.py:942 and passed on unchanged retry. Each of seven mutations failed its intended check. Original source restored and rebuilt; admin bundle checksums matched.
 
-**Exact next step (needs the user's word "run the smokes", and `free -m` showing about 3 GB available):** from `backend/`, one command at a time, never two at once:
+**T-TERMS-004 complete, local commit 2553e49.** Scene-adjustment warnings in chat and editor, three French review labels, and public /donnees.html with sign-in and conditions links. Owner authorized Codex to apply three findings after Opus implementation. Codex r2 approved. Final: 258 frontend tests, build, identical admin bundle, 57 API tests and five serial Chromium suites passed. Full backend 1521 passed / 3 deselected before frontend-only fixes. The warning-state mutation failed its intended assertion.
 
-```bash
-cd /home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend && corepack npm@10 test && corepack npm@10 run build
-cd /home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend
-uv run python ../frontend/tests/terms_browser.py   # twice
-uv run python ../frontend/tests/browser_smoke.py
-uv run python ../frontend/tests/chat_browser.py
-uv run python ../frontend/tests/editor_refinements_browser.py
-uv run python ../frontend/tests/admin_browser.py
-```
-
-Then the seven smoke mutations (each applied alone, the smoke seen failing, the file restored). The script lived in the session scratchpad and may be gone after a reboot: `/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/t3-mutations.py`. If it is gone, redo them by hand in `frontend/src`: no « Lire les conditions » on the paid sheet; « Plus tard » blocking a free action; a refused chat message's text not returned to the field; a double tap on « J’accepte » sending twice; `terms_outdated` shown as accepted; no POST timeout; a confirmed POST not voiding an earlier read. If `terms_browser.py` fails, Codex r2 predicted where: the focus wait after the 409 (`shows_conditions()`), fixed since by moving focus to the dialog before « J’accepte » is disabled (`App.vue`, `acceptTerms`).
-
-When all pass: mark T-TERMS-003 `[x]` in TODO.md and commit exactly these files (stage nothing else; TODO.md by the index method described under Landmines):
-
-```bash
-git add AGENTS.md deploy/README.md frontend/src/App.vue frontend/src/ChatView.vue frontend/src/api.ts frontend/src/chat.ts frontend/src/generation.ts frontend/src/style.css frontend/tests/api.test.ts frontend/tests/chat.test.ts frontend/tests/generation.test.ts frontend/tests/terms_browser.py
-git diff --cached --name-only
-```
-
-Then T-TERMS-004 (the always-on warning on every scene-adjustment card and in « Ajuster la scène »; the check's wording for every render; the static `frontend/public/donnees.html` with its link from the sign-in screen and from the conditions dialog, whose words « Vos données » are plain text today): one Opus subagent with the design's T-TERMS-004 rows, the lead's rerun, a Codex code review. Then the shop dashboard (requirements `requirements/shop-dashboard.md`, Draft: R-SHOP-DASH-003 now carries the « Vos données » link), then « Partager ».
+**Next: owner approval of [shop dashboard design v3](designs/shop-dashboard.md).** Requirements approved 2026-11-18 (ADR-113). Three independent reviews, final verdict ready for owner approval (reviews/shop-dashboard-design-r3.md). Decisions for the owner: counts for the 30-day usage line, and a direct link to one poster plus remaining count per attention group. After design approval enter independently verifiable implementation tasks in TODO; none started. Real phone, screen reader and owner reading of French copy remain release checks.
 
 **How this session works (the user's standing rules):** the lead passes requirement and design gates himself, implements with Opus subagents (`model: "opus"` on every Agent call), reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
 
 **Waiting for the user's yes (defaults in force until then):**
-- French texts, all drafts: the conditions (`terms.PARAGRAPHS_FR`: any changed word needs a new `VERSION` and hash in `tests/test_terms.py`), the refusals `terms_required` and `terms_outdated`, the dialog's sentences, the warning's lead-in « Vous demandez des caractéristiques sans les lister ? », the draft message to the pilot in `deploy/README.md`, the « Vos données » page (not built yet). Straight apostrophes in the server's drafts, typographic ones in the page's: to settle at the reading.
+- French texts, all drafts: the conditions (`terms.PARAGRAPHS_FR`: any changed word needs a new `VERSION` and hash in `tests/test_terms.py`), the refusals `terms_required` and `terms_outdated`, the dialog's sentences, the warning's lead-in « Vous demandez des caractéristiques sans les lister ? », the draft message to the pilot in `deploy/README.md`, the « Vos données » page (built and browser-tested). Straight apostrophes in the server's drafts, typographic ones in the page's: to settle at the reading.
 - Earlier French sentences still unread: the sign-out confirmation, the pause sentence, the cleanup-failure sentence; « 1 crédit · il vous en reste N. Bientôt à court : … »; the zero sentence with the purchase text; « 1 crédit, une seule fois pour cette demande ».
 - Owner decisions listed at the end of each design (`admin-dashboard.md`, `service-terms.md`, `prepaid-balance.md`) and under T-BALANCE-006 in TODO.md. Proposed, not confirmed: T-SESSION-REPLACE, T-DEPLOY-DOCKER-RUN.
 - At the release, by the user: warn the pilot; one deploy with `OPERATOR_BOOTSTRAP=1`; `python -m affiche.shops operator-password`; `verify.sh` by hand; `grant originalphone 30 --offered --ref pilot-opening`; `purchase-text`; set `SUPPORT_CONTACT_FR`.
 
 **Landmines:**
-- **`main` is not releasable as committed:** T-TERMS-002 refuses every AI request of a shop that has not accepted, the pilot included, and the page that lets a shop accept (T-TERMS-003) is uncommitted. Release only with T-TERMS-003 in.
+- The conditions dialog and server gate are committed together on main. Release remains gated on the rest of Release 1.
 - Memory: run one test or smoke command at a time; the full backend suite takes about six minutes; do not restart a run the system killed without the user's word.
 - Not proven: migrations 0014 to 0017 and `after-restore` on the release image's SQLite 3.40.1 (the release rehearsal is the gate; this machine runs 3.53.1); `release.sh`, `restore.sh`, `verify.sh` have only run against the fake docker; a real phone, a screen reader, journald keeping the operator's log lines.
 - Review state: the last fixes of T-BALANCE-005, T-BALANCE-006, T-ADMIN-005, T-ADMIN-006 (after round 3), T-ADMIN-007, T-TERMS-001, T-TERMS-002 and of the service-terms design (after round 2) were not reviewed again. T-ADMIN-006 has one accepted limit (ADR-111): no cross-tab lock on a kept money request's storage key.
@@ -59,7 +36,7 @@ Then T-TERMS-004 (the always-on warning on every scene-adjustment card and in «
 - The browser smokes print `asyncio.CancelledError` tracebacks from route handlers before their pass lines; exit code 0 is the result.
 - The checkout is shared with a Codex session: its uncommitted work (PROJECT.md, its hunks in DECISIONS.md, TODO.md and this file, `brand/`, the mockups folders, `reviews/social-publishing-saas-research-2026-11-15.md`) must never be staged with Claude's commits. For a shared file, stage only Claude's lines: take `git show HEAD:<path>`, apply the edit, `git hash-object -w --stdin`, `git update-index --cacheinfo 100644,<sha>,<path>`, and write the same edit to the working file.
 
-**Uncommitted files of this session (T-TERMS-003):** `AGENTS.md`, `deploy/README.md`, `frontend/src/{App.vue,ChatView.vue,api.ts,chat.ts,generation.ts,style.css}`, `frontend/tests/{api.test.ts,chat.test.ts,generation.test.ts}`, `frontend/tests/terms_browser.py` (new). Everything else dirty or untracked is the Codex session's.
+**Uncommitted files after the dashboard documents commit:** prior tracks’ docs/project/{DECISIONS,HANDOFF,PROJECT,TODO}.md, docs/project/brand/, docs/project/mockups/{brand-directions,doka-studio-identity,text-first}/, and docs/project/reviews/social-publishing-saas-research-2026-11-15.md. No release code outstanding for T-TERMS-003/004. Nothing pushed or deployed.
 
 ## Codex Doka Studio — Signal kit v1 delivered, 2026-11-15
 
