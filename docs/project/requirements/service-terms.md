@@ -1,6 +1,6 @@
 # REQUIREMENTS — Conditions of use and the owner's check
 
-**Status:** v2, 2026-11-17: approved under the autonomy grant, with R-TERMS-002 decided by the user on 2026-11-17 (ADR-111: the owner is warned and checks). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105). Design: [designs/service-terms.md](../designs/service-terms.md), in progress. The French sentences of the conditions wait for the user's reading. A jurist has not read any of this.
+**Status:** v2, 2026-11-17: approved under the autonomy grant, with R-TERMS-002 decided by the user on 2026-11-17 (ADR-111: the owner is warned and checks). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105). Design: [designs/service-terms.md](../designs/service-terms.md), approved v3 (ADR-112). R-TERMS-003 amended by the user on 2026-11-18. The French sentences of the conditions wait for the user's reading. A jurist has not read any of this.
 
 **Why:** on 2026-11-15 the user noted that the image model writes product features nobody verified when asked for "4 lines of features", and left it as "just noted" for his own shop. AGENTS.md says never to invent specifications. With other shops, an invented feature goes on a paying customer's advert.
 
@@ -30,6 +30,6 @@
 
 ## R-TERMS-003 — What is kept, and where it goes
 - **Story:** As a shop owner, I know what happens to my photos and my words.
-- [ ] One short page says what is stored (photos, posters, messages' cost but not their text), which outside services receive what (the image provider: photos and the request; the reading provider: the message's text), and that the operator deletes a shop's data on request.
-- [ ] It is reachable from the sign-in screen and from the account screen.
-- **Out of scope:** automatic export or deletion of a shop's data.
+- [ ] One short page says what is stored (photos, posters, each message's cost, and the result of a reading, which can repeat the instruction typed), which outside services receive what, per operation, and what happens on a request to delete: the shop is suspended at once (new requests are blocked), then the operator tells the owner what is erased and when. *(Amended by the user, 2026-11-18, ADR-112: no deadline and no claim about backups until an erase procedure exists; the stored reading is named instead of "not their text".)*
+- [ ] It is reachable from the sign-in screen and from the account screen. *(The account screen is the shop dashboard's, R-SHOP-DASH-003, which carries this link as its own acceptance line; Release 1 is not complete without it.)*
+- **Out of scope:** automatic export or deletion of a shop's data; an erase command (designed when the first request arrives: designs/service-terms.md, "Not built").

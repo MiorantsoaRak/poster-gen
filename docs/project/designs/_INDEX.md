@@ -51,3 +51,4 @@ See [requirements](../requirements/_INDEX.md), [decisions](../DECISIONS.md) and 
 | [multi-shop.md](multi-shop.md) | R-MULTI-SHOP-001 … 006; D-MULTI-SHOP-001 … 007 | Approved v4 (ADR-107), amended 2026-11-16 (ADR-108); built (T-MULTI-SHOP-001 … 006) |
 | [prepaid-balance.md](prepaid-balance.md) | R-BALANCE-001 … 007; D-BALANCE-001 … 006 | Approved v4 (ADR-109); tasks T-PENDING-KINDS, T-BALANCE-001 … 006 in TODO.md |
 | [admin-dashboard.md](admin-dashboard.md) | R-ADMIN-001 … 006; D-ADMIN-001 … | Approved v3 (ADR-110); tasks T-ADMIN-001 … 010 in TODO.md, 008-010 may move after Release 1 on the user's word |
+| [service-terms.md](service-terms.md) | R-TERMS-001 … 003; D-TERMS-001 … | Approved v3 (ADR-112); tasks T-TERMS-001 … 004 in TODO.md; no erase command in Release 1 |

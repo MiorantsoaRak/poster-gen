@@ -65,6 +65,14 @@
 - [ ] T-ADMIN-008 (after Release 1: the user, 2026-11-17, ADR-111) The usage report.
 - [ ] T-ADMIN-009 (after Release 1: the user, 2026-11-17, ADR-111) Problems and queue.
 - [ ] T-ADMIN-010 (after Release 1: the user, 2026-11-17, ADR-111) The Reka UI trial (AlertDialog; kept only if it beats the native dialog on a measured point).
+- [ ] T-TERMS-001 (designs/service-terms.md v3, ADR-112) Migration 0017, `terms.py` (the text and its version), `GET`/`POST /api/terms`.
+  - verify: the design's T-TERMS-001 rows (test_db.py, test_terms.py); `uv run pytest -q` from `backend/`.
+- [ ] T-TERMS-002 The acceptance check at admission (`jobs.enqueue`, `reads._admit`, `jobs.blocked`), `/api/balance`'s `terms` reason, the fixture sweep.
+  - verify: the design's T-TERMS-002 rows; the four browser smokes still pass.
+- [ ] T-TERMS-003 The conditions dialog (« J’accepte », « Plus tard »), the balance reason, the replay controls, focus.
+  - verify: the design's T-TERMS-003 rows (Vitest, `terms_browser.py`).
+- [ ] T-TERMS-004 The always-on warning, the check's wording, the static « Vos données » page and its sign-in link.
+  - verify: the design's T-TERMS-004 rows; the French texts read by the user before any second shop signs in.
 - [ ] T-SESSION-REPLACE (proposed by Claude 2026-11-17 from the T-SHOP-REPLACE review, not confirmed by the user) A `sessions` row can be rewritten by `INSERT OR REPLACE` on its token hash and so change shop, with foreign keys on (migration 0005). No code does it. Decide whether it needs the same guards before Release 1.
 - [ ] T-DEPLOY-DOCKER-RUN (proposed by Claude 2026-11-16, not yet confirmed by the user; before the Release 1 deploy) Run `deploy/release.sh` and `deploy/restore.sh` once against real Docker on a throwaway host, never the shared box: the operator service writes nothing to the journal; `up` and `build` leave it alone; `docker exec` output stays out of the journal; the real `timeout` around a hung backup and the removal of `affiche-ia-backup`; a restore from a backup taken before migration 0013.
   - verify: the commands and their output, kept in `docs/project/reviews/`.

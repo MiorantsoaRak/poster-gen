@@ -30,7 +30,7 @@
 ## R-SHOP-DASH-003 — Account
 - **Story:** As a shop owner, I manage my shop's details and my access myself.
 - [ ] The shop's name, logo and contact (the existing profile) in one place.
-- [ ] Change the password; « Se déconnecter »; the date the conditions of use were accepted, with a link to them.
+- [ ] Change the password; « Se déconnecter »; the date the conditions of use were accepted, with a link to them, and a link to « Vos données » (`/donnees.html`, R-TERMS-003; verified from a signed-in shop that has accepted).
 - [ ] How to reach the operator.
 - **Out of scope:** several users; deleting the account from the application (asked of the operator).
 
