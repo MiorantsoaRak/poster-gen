@@ -1045,3 +1045,7 @@
 ## ADR-113 — Shop dashboard requirements approved for design (2026-11-18)
 
 The owner approved Home, Credits and Account, the 30-day usage line, and accessible small-phone use. This authorizes the dashboard design. Implementation awaits design approval.
+
+## ADR-114 — Shop dashboard design approved (2026-11-18)
+
+The owner approved v3 for implementation, including one linked poster plus the remaining count per attention group and gross credits spent by completion time alongside posters created and images generated over 30 days.

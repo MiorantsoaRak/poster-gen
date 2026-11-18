@@ -15,7 +15,7 @@ No work order or ClickUp ticket: the user's own project. Goal of the release: op
 
 **T-TERMS-004 complete, local commit 2553e49.** Scene-adjustment warnings in chat and editor, three French review labels, and public /donnees.html with sign-in and conditions links. Owner authorized Codex to apply three findings after Opus implementation. Codex r2 approved. Final: 258 frontend tests, build, identical admin bundle, 57 API tests and five serial Chromium suites passed. Full backend 1521 passed / 3 deselected before frontend-only fixes. The warning-state mutation failed its intended assertion.
 
-**Next: owner approval of [shop dashboard design v3](designs/shop-dashboard.md).** Requirements approved 2026-11-18 (ADR-113). Three independent reviews, final verdict ready for owner approval (reviews/shop-dashboard-design-r3.md). Decisions for the owner: counts for the 30-day usage line, and a direct link to one poster plus remaining count per attention group. After design approval enter independently verifiable implementation tasks in TODO; none started. Real phone, screen reader and owner reading of French copy remain release checks.
+**Current: shop dashboard design v3 approved by the owner (ADR-114).** Five implementation tasks are in TODO. Start with the shop summary and attention groups, then credit history, Home, Credits and Account. No deployment authorized.
 
 **How this session works (the user's standing rules):** the lead passes requirement and design gates himself, implements with Opus subagents (`model: "opus"` on every Agent call), reviews each artifact with Codex (`codex exec --sandbox read-only`, at most three rounds, then the user decides), commits locally; push and deploy only on the user's word; no deploy before Release 1 is complete.
 
