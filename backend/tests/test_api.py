@@ -85,7 +85,9 @@ def create_draft(client):
     return result.json()
 
 
-def test_owned_job_status_credit_and_cancel(client, settings):
+def test_owned_job_status_credit_and_cancel(client, settings, monkeypatch):
+    # This route test cancels a queued job. Keep the background scheduler from claiming it between assertions.
+    monkeypatch.setattr(jobs, "claim", lambda engine, kinds: None)
     assert client.get("/api/balance").status_code == 401
     assert client.get("/api/capabilities").status_code == 401
     login(client)
