@@ -1,6 +1,6 @@
 # REQUIREMENTS — « Partager » a confirmed poster
 
-**Status:** Draft v1, 2026-11-15 (Claude), with working defaults marked **Default**. Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105). Depends on nothing else in the release. Source: the Meta check of the [review](../reviews/saas-review-claude-2026-11-15.md). No design yet. **Its behaviour on real phones is not verified.**
+**Status:** v1, approved 2026-11-18 under the autonomy grant with its **Default** lines in force (ADR-120); two wordings (R-SHARE-001's place of the button, R-SHARE-002's device retention) await the owner's reading (design, Traceability). Part of Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105). Depends on nothing else in the release. Source: the Meta check of the [review](../reviews/saas-review-claude-2026-11-15.md). No design yet. **Its behaviour on real phones is not verified.**
 
 **What exists:** a confirmed poster can be downloaded as PNG. The owner then opens Facebook and attaches the file by hand.
 

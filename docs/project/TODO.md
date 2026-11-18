@@ -97,6 +97,15 @@
   - Implemented and independently approved. Production build, all 262 frontend unit tests and full dashboard Chromium passed.
   - Verify the field’s accessible name and description, configured support and fallback in the dashboard browser smoke. Save a contact and check a previously saved poster retains its existing details.
 
+- [ ] T-SHARE-001 (designs/share-poster.md v3, ADR-120; optional, run by the owner) The probe: a throwaway page on the owner's Android phone over USB (`adb reverse`), to see whether copying and sharing work together before T-SHARE-004 ends.
+  - verify: its scratch log, pasted into the sheet of T-SHARE-005.
+- [ ] T-SHARE-002 Open the intended render: `confirmation` on `GET /api/creations/{id}`; opening from Home, the editor and the chat; the earlier-version panel; « Télécharger ou partager ».
+  - verify: the design's T-SHARE-002 rows (pytest, Vitest, browser), including the price edit with no new render and a poster with more than 50 jobs.
+- [ ] T-SHARE-003 Keep and copy the caption (device only, per shop and poster), « Copier la légende », the help line, « Vos données ».
+  - verify: the design's T-SHARE-003 rows.
+- [ ] T-SHARE-004 Prepare and share the JPEG: the browser conversion, the tap, the panel's states, the lifetime and visibility rules.
+  - verify: the design's T-SHARE-004 rows (Vitest, `share_browser.py`); the existing smokes still pass.
+- [ ] T-SHARE-005 The phone test sheet, filled by the owner after the build; each failure becomes its own follow-up task. R-SHARE-005 stays open while the iPhone rows are missing.
 - [ ] T-SESSION-REPLACE (proposed by Claude 2026-11-17 from the T-SHOP-REPLACE review, not confirmed by the user) A `sessions` row can be rewritten by `INSERT OR REPLACE` on its token hash and so change shop, with foreign keys on (migration 0005). No code does it. Decide whether it needs the same guards before Release 1.
 - [ ] T-DEPLOY-DOCKER-RUN (proposed by Claude 2026-11-16, not yet confirmed by the user; before the Release 1 deploy) Run `deploy/release.sh` and `deploy/restore.sh` once against real Docker on a throwaway host, never the shared box: the operator service writes nothing to the journal; `up` and `build` leave it alone; `docker exec` output stays out of the journal; the real `timeout` around a hung backup and the removal of `affiche-ia-backup`; a restore from a backup taken before migration 0013.
   - verify: the commands and their output, kept in `docs/project/reviews/`.
