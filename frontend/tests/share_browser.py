@@ -1,9 +1,11 @@
 """« Partager » in real Chromium (T-SHARE-002, D-SHARE-001): every way of opening a confirmed poster opens its current
-confirmation and that confirmation's own render; an older confirmed file is an earlier version, without the live price. The
+confirmation and that confirmation's own render; an older confirmed file is an earlier version, without the live price.
+The caption (T-SHARE-003, D-SHARE-003): kept on this device per shop and poster, copied on demand, the clipboard stubbed. The
 production build (vite preview, so build first) and the API on temporary stub data, no real env file, zero spend. Run from
 backend: uv run python ../frontend/tests/share_browser.py (ports 8000 and 5173 must be free). Pictures: outputs/share-browser/.
 A newer unconfirmed render is written straight into the temporary database, as the smokes do."""
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -49,32 +51,12 @@ def walk(browser, errors, data, product):
     download = page.get_by_role("button", name=BUTTON, exact=True)
 
     open_atelier(page)
-    page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
-    page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
-    page.get_by_role("button", name="Ouvrir l’atelier").click()
-    expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+    sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
 
     # A poster made in the chat at 450 000 Ar: its card's button reads « Télécharger ou partager »; with nothing confirmed it
     # asks for a render to check, then the check confirms it.
-    page.get_by_role("link", name="Créer une affiche").click()
-    thread = page.get_by_role("log")
-    page.locator(".composer input[type=file]").set_input_files([product])
-    expect(page.locator(".tray .pic")).to_have_count(1)
-    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    page.get_by_label("Votre message").fill("Casque Bose QC noir, 450 000 Ar")
-    page.get_by_role("button", name="Envoyer").click()
-    thread.get_by_role("button", name="Créer l’affiche").click()
-    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
-    poster = page.url.split("#message-")[1]
+    poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
     address = f"{smoke.ORIGIN}/api/creations/{poster}"
-    page.get_by_role("button", name="Vérifier", exact=True).click(timeout=30000)
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
-    page.get_by_role("button", name="Tout est conforme, approuver").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
-    expect(download).to_have_count(1)
-    expect(page.get_by_role("button", name="Télécharger", exact=True)).to_have_count(0)
-    download.click()
-    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
     assert len(renders) == 1, renders  # nothing current yet: a file to check
     page.get_by_role("button", name="Tout est conforme, confirmer").click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
@@ -513,6 +495,330 @@ def walk(browser, errors, data, product):
     context.close()
 
 
+def sign_in(page, identifier, password):
+    page.get_by_label("Identifiant de la boutique", exact=True).fill(identifier)
+    page.get_by_label("Mot de passe", exact=True).fill(password)
+    page.get_by_role("button", name="Ouvrir l’atelier").click()
+    expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+
+
+def made_in_chat(page, product, message):
+    """A poster made in the chat from Home and approved; its card's « Télécharger ou partager » opens the file to check.
+    Returns the poster's id."""
+    page.get_by_role("link", name="Créer une affiche").click()
+    page.locator(".composer input[type=file]").set_input_files([product])
+    expect(page.locator(".tray .pic")).to_have_count(1)
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    page.get_by_label("Votre message").fill(message)
+    page.get_by_role("button", name="Envoyer").click()
+    page.get_by_role("log").get_by_role("button", name="Créer l’affiche").click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    page.get_by_role("button", name="Vérifier", exact=True).click(timeout=30000)
+    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
+    page.get_by_role("button", name="Tout est conforme, approuver").click()
+    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+    expect(page.get_by_role("button", name=BUTTON, exact=True)).to_have_count(1)
+    expect(page.get_by_role("button", name="Télécharger", exact=True)).to_have_count(0)
+    page.get_by_role("button", name=BUTTON, exact=True).click()
+    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    return page.url.split("#message-")[1]
+
+
+# The clipboard, stubbed in every page of a context (the real one needs a permission and is shared by the whole machine):
+# each copy is recorded, and refused while `copyRefused` is set.
+CLIPBOARD = """window.copies = []; window.copyRefused = false
+Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: text => { window.copies.push(text)
+  return window.copyRefused ? Promise.reject(new DOMException('Refusé pour l’essai.', 'NotAllowedError')) : Promise.resolve() } } })"""
+# One Storage method refusing for the captions' keys only (a full or blocked storage); `restore()` puts it back.
+REFUSE = """method => { const real = Storage.prototype[method]; window.restore = () => { Storage.prototype[method] = real }
+  Storage.prototype[method] = function (key, ...rest) {
+    if (String(key).includes('.caption.')) throw new DOMException('Refusé pour l’essai.', 'QuotaExceededError')
+    return real.call(this, key, ...rest) } }"""
+STORED = "key => localStorage[key] ?? null"  # read past a refusing getItem
+HELP = ("Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez "
+        "l’application et collez la légende dans votre publication.")
+TAB_ONLY = ("La légende reste dans cet onglet, sans être gardée sur cet appareil. Copiez-la avant de fermer : en rouvrant "
+            "l’affiche, l’ancienne légende peut revenir.")
+NOT_CLEARED = "La légende n’a pas pu être effacée de cet appareil : elle peut revenir quand vous rouvrez l’affiche."
+TOO_LONG = "La légende dépasse 2 000 caractères : elle n’est pas gardée sur cet appareil."
+BAD_CHARACTER = "La légende contient un caractère invisible non accepté : elle n’est pas gardée sur cet appareil."
+COPIED = "Légende copiée : collez-la dans votre publication."
+NOT_COPIED = "La copie a échoué. Sélectionnez la légende dans le champ, puis copiez-la."
+
+
+def captions(browser, errors, data, product):
+    """The caption (T-SHARE-003, D-SHARE-003): kept on this device per shop and poster, copied on demand."""
+    engine = smoke.make_engine(Path(data))
+    password_b = os.urandom(12).hex()
+    hashed = smoke.PASSWORDS.hash(password_b)
+    with smoke.write_tx(engine) as conn:
+        shop_b = smoke.shops.create_shop(conn, "boutiquedeux", "Boutique Deux", hashed)
+        smoke.credits.grant(conn, shop_b, 20, origin="offered", ref="tests", actor="tests")
+        smoke.accepted(conn, shop_b)
+    engine.dispose()
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    context.add_init_script(CLIPBOARD)
+
+    def tab():
+        made = context.new_page()
+        made.set_default_timeout(15000)
+        made.on("pageerror", lambda error: errors.append(str(error)))
+        return made
+    page = tab()
+    open_atelier(page)
+    sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+    poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
+    key, other = f"affiche.shop1.caption.{poster}", f"affiche.shop1.caption.{uuid4()}"
+    stored = lambda at=page, name=key: at.evaluate(STORED, name)
+
+    def parts(at):
+        panel = at.locator(".final-preview")
+        return (panel, panel.get_by_label("Légende de la publication", exact=True),
+                panel.get_by_role("button", name="Copier la légende", exact=True))
+    panel, field, copy = parts(page)
+    status, address = panel.locator("#etat-legende"), f"{smoke.ORIGIN}/api/creations/{poster}"  # mounted with the field
+
+    def reopen(at=page):
+        parts(at)[0].get_by_role("button", name="Fermer").click()
+        at.get_by_role("button", name=BUTTON, exact=True).click()
+        expect(at.get_by_role("heading", name=READY)).to_be_visible()
+
+    # No field on the file to check; confirmed in place, the field appears, empty: nothing kept for this poster yet.
+    expect(field).to_have_count(0)
+    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(page.get_by_role("heading", name=READY)).to_be_visible()
+    expect(field).to_have_value("")
+    expect(copy).to_be_disabled()
+    expect(panel.get_by_text(HELP, exact=True)).to_be_visible()
+    assert stored() is None
+    page.evaluate("key => localStorage.setItem(key, 'Légende d’une autre affiche')", other)  # never pruned below
+
+    # 2 000 emoji (4 000 UTF-16 units) kept, edited, reloaded.
+    many = "😀" * 2000
+    field.fill(many)
+    assert stored() == many
+    field.press("Control+End")
+    field.press("Backspace")
+    page.keyboard.insert_text("🎉")
+    edited = "😀" * 1999 + "🎉"
+    expect(field).to_have_value(edited)
+    assert stored() == edited
+    page.reload()
+    expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(field).to_have_value(edited)
+    # 2 001: the sentence, the text kept in the field, the stored value unchanged; nothing to copy.
+    field.press("Control+End")
+    page.keyboard.insert_text("😀")
+    expect(field).to_have_value(edited + "😀")
+    expect(panel.get_by_text(TOO_LONG, exact=True)).to_be_visible()
+    expect(field).to_have_attribute("aria-invalid", "true")
+    expect(copy).to_be_disabled()
+    assert stored() == edited
+    # A NUL after valid text: refused the same way, never taken for blank.
+    field.fill("Galaxy A15\x00   ")
+    expect(panel.get_by_text(BAD_CHARACTER, exact=True)).to_be_visible()
+    assert stored() == edited
+    # A multiline text with a tab, pasted at once: kept as it is, the sentence gone.
+    multi = "Galaxy A15 128 Go\nLivraison à Tana 📦\tdès demain"
+    field.fill(multi)
+    assert stored() == multi
+    expect(status).to_have_text("")
+    expect(field).not_to_have_attribute("aria-invalid", "true")
+
+    # « Copier la légende »: refused, then copied; the typed value each time.
+    page.evaluate("window.copyRefused = true")
+    copy.click()
+    expect(panel.get_by_text(NOT_COPIED, exact=True)).to_be_visible()
+    expect(panel.get_by_text(COPIED, exact=True)).to_have_count(0)
+    page.evaluate("window.copyRefused = false")
+    copy.click()
+    expect(panel.get_by_text(COPIED, exact=True)).to_be_visible()
+    expect(panel.get_by_text(NOT_COPIED, exact=True)).to_have_count(0)
+    assert page.evaluate("window.copies") == [multi, multi]
+    field.press("Control+End")
+    page.keyboard.insert_text("!")  # a new input withdraws « copiée »: it named the text before it
+    expect(panel.get_by_text(COPIED, exact=True)).to_have_count(0)
+    assert stored() == multi + "!"
+    # No clipboard at all (an insecure page): the same sentence, nothing else blocked.
+    page.evaluate("Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })")
+    copy.click()
+    expect(panel.get_by_text(NOT_COPIED, exact=True)).to_be_visible()
+    expect(copy).to_be_enabled()
+    page.reload()  # the stub back
+    expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+
+    # Clearing: a refused removal says so and keeps the entry; a later clear removes it.
+    page.evaluate(REFUSE, "removeItem")
+    field.fill("")
+    expect(panel.get_by_text(NOT_CLEARED, exact=True)).to_be_visible()
+    assert stored() == multi + "!"
+    page.evaluate("restore()")
+    field.fill("   ")
+    assert stored() is None
+    expect(panel.get_by_text(NOT_CLEARED, exact=True)).to_have_count(0)
+    expect(copy).to_be_disabled()
+    # A refused write: the text stays in the field with the sentence, and is still copied.
+    page.evaluate(REFUSE, "setItem")
+    field.fill("Texte gardé dans l’onglet")
+    expect(panel.get_by_text(TAB_ONLY, exact=True)).to_be_visible()
+    expect(field).to_have_value("Texte gardé dans l’onglet")
+    assert stored() is None
+    copy.click()
+    expect(panel.get_by_text(COPIED, exact=True)).to_be_visible()
+    assert page.evaluate("window.copies")[-1] == "Texte gardé dans l’onglet"
+    page.evaluate("restore()")
+    field.fill(multi)
+    assert stored() == multi
+    # A refused read at opening: an empty field, the sentence, and nothing written or removed for this opening (cleared,
+    # the field says the unread caption may come back).
+    page.evaluate(REFUSE, "getItem")
+    reopen()
+    expect(field).to_have_value("")
+    expect(status).to_have_text(TAB_ONLY)
+    field.fill("Ne remplace rien")
+    expect(status).to_have_text(TAB_ONLY)
+    assert stored() == multi
+    field.fill("")
+    expect(status).to_have_text(NOT_CLEARED)
+    assert stored() == multi
+    page.evaluate("restore()")
+    reopen()
+    expect(field).to_have_value(multi)
+    expect(status).to_have_text("")
+
+    # A render job ending while the confirmed panel is open replaces its preview (no « Fermer »): the field goes until the
+    # new file is confirmed, and comes back with the typed text and its sentence, never read again. (The job is a second
+    # render of this revision written in the database, presented as running until released, as walk() does. It keeps the
+    # format hash, which the confirmation checks, and differs by its build hash, which the schema's UNIQUE needs.)
+    confirmed = page.request.get(address).json()["confirmation"]
+    later_render = str(uuid4())
+    with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+        at = utc_now()
+        render_job = store.execute("SELECT job_id FROM poster_renders WHERE id=?", (confirmed["render_id"],)).fetchone()[0]
+        later_job = copy_row(store, "poster_jobs", render_job, result_ref=later_render, created_at=at, started_at=at, finished_at=at)
+        copy_row(store, "poster_renders", confirmed["render_id"], id=later_render, job_id=later_job, renderer_build_hash="3" * 64, created_at=at)
+    running = {"on": True}
+
+    def as_running(route):
+        if not running["on"]:
+            return route.continue_()
+        response = route.fetch()
+        body = response.json()
+        for item in body.get("items", [body]):
+            if item["id"] == later_job:
+                item.update(status="running", result_ref=None, finished_at=None)
+        route.fulfill(response=response, json=body)
+    page.route(f"{address}/jobs", as_running)
+    page.route(f"{smoke.ORIGIN}/api/jobs/{later_job}", as_running)
+    def opened_from_home(hash):
+        """A new opening of the poster: from the chat straight to its editor is only a change of view, which opens nothing."""
+        page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.evaluate("hash => { location.hash = hash }", hash)
+    panel.get_by_role("button", name="Fermer").click()
+    opened_from_home(poster)  # the editor's opening shows the confirmation and follows the running job
+    expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(field).to_have_value(multi)
+    page.evaluate(REFUSE, "setItem")
+    field.fill("Gardé pendant le rendu")
+    expect(status).to_have_text(TAB_ONLY)
+    running["on"] = False
+    expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{later_render}/preview", timeout=20000)
+    expect(field).to_have_count(0)
+    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(page.get_by_role("heading", name=READY)).to_be_visible()
+    expect(field).to_have_value("Gardé pendant le rendu")
+    expect(status).to_have_text(TAB_ONLY)
+    assert stored() == multi
+    page.evaluate("restore()")
+    page.unroute(f"{address}/jobs")
+    page.unroute(f"{smoke.ORIGIN}/api/jobs/{later_job}")
+    # « Fermer » ends the opening: reopened from the chat, the stored caption is read again.
+    panel.get_by_role("button", name="Fermer").click()
+    opened_from_home(f"message-{poster}")
+    expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(field).to_have_value(multi)
+    expect(status).to_have_text("")
+
+    # Two tabs on the poster: an idle tab never writes; the last keystroke's whole text wins; nothing is pruned.
+    second = tab()
+    second.goto(f"{smoke.ORIGIN}/#message-{poster}")
+    expect(second.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    second_field = parts(second)[1]
+    expect(second_field).to_have_value(multi)
+    second_field.fill("Texte du second onglet")
+    assert stored() == "Texte du second onglet"
+    page.evaluate(FRAMES)
+    expect(field).to_have_value(multi)  # this tab idle: shown as read, never written
+    assert stored() == "Texte du second onglet"
+    field.press("Control+End")
+    page.keyboard.insert_text(" !")
+    assert stored() == multi + " !"
+    second.reload()  # this tab's chat holds no card: its address opens the panel again
+    expect(second.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(second_field).to_have_value(multi + " !")
+    second.close()
+    assert stored(name=other) == "Légende d’une autre affiche"
+
+    # A phone, 360 × 640, both themes; the keyboard goes from the field to « Copier la légende », which Enter copies.
+    page.set_viewport_size({"width": 360, "height": 640})
+    for scheme in ("light", "dark"):
+        page.emulate_media(color_scheme=scheme)
+        field.scroll_into_view_if_needed()
+        smoke.check_contrast(page, f"caption, 360 px, {scheme}")
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
+        assert panel.evaluate("e => e.scrollWidth <= e.clientWidth"), "the panel scrolls sideways"
+        page.screenshot(path=str(OUT / f"caption-360-{scheme}.png"))
+    page.emulate_media(color_scheme="light")
+    field.focus()
+    page.keyboard.press("Tab")
+    expect(copy).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(panel.get_by_text(COPIED, exact=True)).to_be_visible()
+    assert page.evaluate("window.copies")[-1] == multi + " !"
+    page.set_viewport_size({"width": 1366, "height": 768})
+
+    # Another shop signs in on this device: its own poster's field reads only its own keys, even under the same poster id,
+    # and writes only its own; this shop's tab is signed out and shows no caption.
+    context.clear_cookies()
+    other_shop = tab()
+    open_atelier(other_shop)
+    sign_in(other_shop, "boutiquedeux", password_b)
+    expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    expect(page.get_by_label("Légende de la publication")).to_be_hidden()
+    assert page.evaluate("() => !document.body.innerText.includes('Galaxy A15')")
+    page.close()  # it still holds the device's chat
+    theirs = made_in_chat(other_shop, product, "Casque Sony noir, 300 000 Ar")
+    other_shop.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(other_shop.get_by_role("heading", name=READY)).to_be_visible()
+    their_field, their_key = parts(other_shop)[1], f"affiche.shop{shop_b}.caption.{theirs}"
+    expect(their_field).to_have_value("")
+    other_shop.evaluate("key => localStorage.setItem(key, 'Légende de la boutique A')", f"affiche.shop1.caption.{theirs}")
+    reopen(other_shop)
+    expect(their_field).to_have_value("")
+    their_field.fill("Légende de la boutique B")
+    assert stored(other_shop, their_key) == "Légende de la boutique B"
+    assert stored(other_shop) == multi + " !" and stored(other_shop, other) == "Légende d’une autre affiche"
+
+    # « Se déconnecter » erases the shop's captions, and only that shop's.
+    def sign_out(at):
+        parts(at)[0].get_by_role("button", name="Fermer").click()
+        with smoke.replaced(at):
+            at.get_by_role("button", name="Se déconnecter").first.click()
+        expect(at.get_by_label("Mot de passe", exact=True)).to_be_visible()
+    keys = lambda prefix: other_shop.evaluate("prefix => Object.keys(localStorage).filter(key => key.startsWith(prefix))", prefix)
+    sign_out(other_shop)
+    assert keys(f"affiche.shop{shop_b}.") == []
+    assert sorted(keys("affiche.shop1.caption.")) == sorted([key, other, f"affiche.shop1.caption.{theirs}"])
+    sign_in(other_shop, smoke.IDENTIFIER, smoke.PASSWORD)
+    other_shop.goto(f"{smoke.ORIGIN}/#message-{poster}")
+    expect(other_shop.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(parts(other_shop)[1]).to_have_value(multi + " !")
+    sign_out(other_shop)
+    assert keys("affiche.shop1.") == []
+    context.close()
+
+
 def current(panel, confirmation):
     """The panel holds that confirmation's own render, ready: the heading, its image, its download, no checklist."""
     expect(panel.get_by_role("heading", name=READY)).to_be_visible()
@@ -552,10 +858,11 @@ def run():
                     browser = playwright.chromium.launch(headless=True)
                     try:
                         walk(browser, errors, data, product)
+                        captions(browser, errors, data, product)
                         assert not errors, errors
                     finally:
                         browser.close()
-                (OUT / "results.json").write_text(json.dumps({"errors": errors, "viewports": [1366]}, indent=2))
+                (OUT / "results.json").write_text(json.dumps({"errors": errors, "viewports": [1366, 360]}, indent=2))
             finally:
                 vite.terminate()
                 try:
@@ -570,7 +877,12 @@ def run():
           "prepares the current version); a newer unconfirmed render never replaces the confirmation's own; a failed poster "
           "read or render read says so with « Réessayer », never a render; a Home row's failed read retried; another tab's "
           "save at another price reloads the poster and opens or asks for nothing; the latest render's read failing, or "
-          "answering after a save, changes nothing.")
+          "answering after a save, changes nothing. The caption: kept per shop and poster on this device (2 000 emoji "
+          "through an edit and a reload; 2 001, or a control character, refused with the text kept and the stored value "
+          "intact); « Copier la légende » copies the typed value and says « copiée » only on success; a refused read, "
+          "write or removal says so and keeps the typed text; an idle tab never writes and nothing is pruned; another "
+          "shop reads and writes only its own keys; « Se déconnecter » erases that shop's captions; 360 px, both themes, "
+          "keyboard.")
 
 
 if __name__ == "__main__":

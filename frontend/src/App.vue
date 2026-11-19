@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
 import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
-import { presentedAsCurrent } from './share'
+import { captionFault, presentedAsCurrent, readCaption } from './share'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
@@ -1609,6 +1609,50 @@ function openFinalPreview(value: any) {
 function previewLoad(event: Event) {
   if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) finalPreview.value.loaded = true
 }
+// The caption of « Partager » (D-SHARE-003): written once per poster, kept on this device under the shop's key, with no
+// prune (another tab's fresh text is never evicted); erased with the shop's other keys at sign-out. Its field belongs to
+// the current confirmed panel only. An opening runs from the panel's opening to « Fermer » or another poster: the stored
+// caption is read the first time the field appears in it, and the typed text and its sentence stay through the
+// automatic preview changes inside it (a render job ending hides the field until its file is confirmed). Never written
+// at a read: only typing writes, at every input, so an idle tab never overwrites newer text. `captionKey`: built at the
+// read, null when the read failed (then nothing is written or removed for this opening, so a caption it could not read
+// is not overwritten unseen); shopStorage refuses it once another shop is open. The typed text stays in the field
+// whatever the storage does.
+const CAPTION_LINES = {
+  tab_only: 'La légende reste dans cet onglet, sans être gardée sur cet appareil. Copiez-la avant de fermer : en rouvrant l’affiche, l’ancienne légende peut revenir.',
+  not_cleared: 'La légende n’a pas pu être effacée de cet appareil : elle peut revenir quand vous rouvrez l’affiche.',
+  too_long: 'La légende dépasse 2 000 caractères : elle n’est pas gardée sur cet appareil.',
+  bad_character: 'La légende contient un caractère invisible non accepté : elle n’est pas gardée sur cet appareil.',
+  copied: 'Légende copiée : collez-la dans votre publication.',
+  not_copied: 'La copie a échoué. Sélectionnez la légende dans le champ, puis copiez-la.',
+}
+const caption = ref(''), captionLine = ref(''), copyLine = ref('')
+const captionShown = computed(() => !!finalPreview.value?.download_url && !earlier.value)
+// `captionFor`: the poster whose caption this opening has read (or tried to), null before the field first appears.
+let captionKey: string | null = null, captionFor: string | null = null, copyTurn = 0
+watch(() => [finalPreview.value ? creation.value?.id ?? null : null, captionShown.value] as const, ([poster, shown], [before]) => {
+  if (poster !== before) { caption.value = ''; captionLine.value = ''; copyLine.value = ''; copyTurn++; captionKey = captionFor = null }
+  if (!poster || !shown || captionFor === poster) return
+  captionFor = poster
+  try { const key = shopKey('caption.' + poster); caption.value = readCaption(shopStorage.getItem(key)); captionKey = key }
+  catch { captionLine.value = CAPTION_LINES.tab_only }
+})
+function typeCaption(text: string) {
+  caption.value = text; copyLine.value = ''; copyTurn++
+  const fault = captionFault(text), refused = CAPTION_LINES[fault === 'blank' ? 'not_cleared' : 'tab_only']
+  if (fault === 'bad_character' || fault === 'too_long') { captionLine.value = CAPTION_LINES[fault]; return }
+  if (!captionKey) { captionLine.value = refused; return }
+  try { fault === 'blank' ? shopStorage.removeItem(captionKey) : shopStorage.setItem(captionKey, text); captionLine.value = '' }
+  catch { captionLine.value = refused }
+}
+// The typed value, whatever its stored state. Only a copy that really succeeded says so; an answer after another input or
+// another opening says nothing.
+function copyCaption() {
+  const turn = ++copyTurn, said = (line: string) => { if (turn === copyTurn) copyLine.value = line }
+  copyLine.value = ''
+  try { navigator.clipboard.writeText(caption.value).then(() => said(CAPTION_LINES.copied), () => said(CAPTION_LINES.not_copied)) }
+  catch { said(CAPTION_LINES.not_copied) }
+}
 // A poster opens on its current confirmation's own render (D-SHARE-001), read-only, never with a render request. Without
 // one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's button (`ask`) asks for a
 // render. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
@@ -2226,6 +2270,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !finalPreview.loaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!finalPreview.loaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
           </template>
+          <div v-if="captionShown" class="group caption"><label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label><p id="etat-legende" class="why" role="status">{{ captionLine }}</p><p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p><button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button><p id="copie-legende" :class="copyLine === CAPTION_LINES.not_copied ? 'why' : 'help'" role="status">{{ copyLine }}</p></div>
           <div v-if="finalPreview.download_url || earlier" class="after"><a v-if="finalPreview.download_url" :href="finalPreview.download_url" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>

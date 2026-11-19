@@ -283,6 +283,8 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .why .text-button { color: inherit }
 .look-grid + .help { margin-top: 12px }
 .card .why, .stage .why, .intake .why, .group .why { text-align: left; margin-top: 8px }
+/* The caption's status lines stay mounted with the field (announced when their text changes) and take no room empty. */
+.group.caption [role=status]:empty { margin: 0 }
 .intake .form-row + .why { margin: -6px 0 12px }
 .work { display: grid; grid-template-columns: 360px minmax(0, 1fr) 156px; gap: 14px; align-items: start }
 .card { border-radius: var(--radius); padding: 20px 22px; min-width: 0 }
