@@ -6,7 +6,7 @@
 
 No work order or ClickUp ticket: the user's own project. Goal of the release: open Doka Studio to a few invited shops as a prepaid service ([ROADMAP.md](ROADMAP.md), ADR-105).
 
-**Every build task of Release 1 is done and committed locally on `main`** (`git rev-list --count origin/main..main` says how far ahead; nothing pushed, nothing deployed):
+**Every build task of Release 1 is done and pushed to `origin/main` (2026-11-19, on the user's "push"); NOT deployed** (`git rev-list --count origin/main..main` shows any later local commit):
 - Multi-shop (ADR-108), prepaid balance (ADR-109), T-SHOP-REPLACE (migration 0015).
 - Admin dashboard core T-ADMIN-001 to 007 (ADR-110, migration 0016) at `/admin/`. T-ADMIN-008 to 010 come after Release 1 (ADR-111).
 - Conditions of use T-TERMS-001 to 004 (ADR-112, migration 0017): acceptance, the server gate, the dialog, the warning, « Vos données ».
