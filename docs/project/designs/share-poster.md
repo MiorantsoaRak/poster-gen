@@ -312,6 +312,8 @@ All of these are **to verify on the sheet**: clipboard timing, repeat taps, whic
 
 **Until the sheet is filled, the feature's behaviour on real phones is unverified**, and Release 1 is not complete (ROADMAP.md: "on a real phone").
 
+**Amended 2026-11-19 (ADR-121, the owner's decision): the release goes first, the sheet is filled on the live site.** No Android phone was at hand. After the release, the owner fills the sheet on `https://affiches.miorantsoa.app` with any phone (his, a borrowed one, an iPhone for rows 5 and 6), on a poster that is already confirmed: no `adb`, no new image, nothing paid. The invitations to new shops wait for rows 1 and 3 (deploy/README.md, « Partager » after the release). The pilot has « Partager » from the release; « Télécharger » stays beside it for any app where sharing fails. The USB way above stays valid for later checks.
+
 ---
 
 ## French texts (drafts, awaiting the owner's reading)

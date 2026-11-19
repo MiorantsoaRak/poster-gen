@@ -6,7 +6,7 @@
 
 The pilot stays on the version deployed on 2026-11-14 until Release 1 below is complete. Work goes to `main` and is pushed; it is not deployed. This includes the chat work of 2026-11-15, which is pushed and not deployed.
 
-Release 1 is complete when all six requirement files below are built, reviewed, and seen working together with two real shops in one database, on a real phone.
+Release 1 is complete when all six requirement files below are built, reviewed, and seen working together with two real shops in one database, on a real phone. « Partager » is checked on a real phone on the live site after the release, before the invitations (ADR-121).
 
 ## Release 1 — « Invitation » (the next deploy)
 

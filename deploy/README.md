@@ -282,6 +282,18 @@ above:
    montrera ses conditions d’utilisation. Lisez-les, puis appuyez sur « J’accepte » : sans cela, toute nouvelle
    demande à l’IA sera refusée. « Plus tard » vous laisse modifier et télécharger vos affiches. »
 
+### Release 1: « Partager » on a real phone, before the invitations
+
+Release 1 ships « Partager » before it was tried on a real phone (ADR-121). After the steps above and **before you
+invite a new shop**:
+1. On a phone, in Chrome (Safari on an iPhone), sign in at `https://affiches.miorantsoa.app` and open a poster whose
+   final image is already confirmed. Use « Télécharger ou partager » only on it: confirming an image again costs
+   nothing, a new image takes a credit.
+2. Fill the sheet `docs/project/reviews/share-poster-phones-2026-11-19.md`, one row per app; stop in each app before
+   « Publier » or « Envoyer ».
+3. Invite shops once rows 1 (Facebook as the Page) and 3 (WhatsApp) work. If one fails, tell Claude: each failure
+   becomes its own task. Shops can still use « Télécharger » and attach the image themselves.
+
 ### The first start after migration 0013
 
 Since 0013, each shop has its own password in the database. `SHOP_PASSWORD_HASH` is read at one start only:
