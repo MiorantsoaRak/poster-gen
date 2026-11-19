@@ -1,7 +1,9 @@
 """« Partager » in real Chromium (T-SHARE-002, D-SHARE-001): every way of opening a confirmed poster opens its current
 confirmation and that confirmation's own render; an older confirmed file is an earlier version, without the live price.
-The caption (T-SHARE-003, D-SHARE-003): kept on this device per shop and poster, copied on demand, the clipboard stubbed. The
-production build (vite preview, so build first) and the API on temporary stub data, no real env file, zero spend. Run from
+The caption (T-SHARE-003, D-SHARE-003): kept on this device per shop and poster, copied on demand, the clipboard stubbed.
+« Partager » (T-SHARE-004, D-SHARE-002 and 004): the JPEG made in the page and the tap, with the share sheet, the clipboard
+and the canvas encoder stubbed; the app switch is the page's visibilitychange with its document.hidden set (a headless
+Chromium page stays visible whatever page is in front, minimized windows included). The production build (vite preview, so build first) and the API on temporary stub data, no real env file, zero spend. Run from
 backend: uv run python ../frontend/tests/share_browser.py (ports 8000 and 5173 must be free). Pictures: outputs/share-browser/.
 A newer unconfirmed render is written straight into the temporary database, as the smokes do."""
 import json
@@ -819,6 +821,518 @@ def captions(browser, errors, data, product):
     context.close()
 
 
+# The share sheet, the clipboard and the canvas encoder, stubbed in every page of a context before the application runs.
+# `shareMode`: resolve, hold (settled later through heldShares) or the name of the DOMException it rejects with;
+# `copyMode`: resolve, reject, throw (at once) or hold (heldCopies); `blobMode`: real, hold (the real blob, delivered
+# through heldBlobs), never, png, null. `noFiles`: canShare refuses every file. Every canvas given to toBlob is kept.
+SHARE_STUBS = """window.shares = []; window.shareMode = 'resolve'; window.heldShares = []
+window.copies = []; window.copyMode = 'resolve'; window.heldCopies = []
+window.blobMode = 'real'; window.toBlobs = 0; window.heldBlobs = []; window.canvases = []
+const refused = name => new DOMException('Refusé pour l’essai.', name)
+Object.defineProperty(navigator, 'share', { configurable: true, value: data => {
+  window.shares.push(data)
+  if (window.shareMode === 'resolve') return Promise.resolve()
+  if (window.shareMode === 'hold') return new Promise((ok, ko) => window.heldShares.push({ ok, ko: name => ko(refused(name)) }))
+  return Promise.reject(refused(window.shareMode)) } })
+Object.defineProperty(navigator, 'canShare', { configurable: true, value: data => !window.noFiles && Array.isArray(data?.files)
+  && data.files.length > 0 && data.files.every(file => file instanceof File && file.type === 'image/jpeg') })
+Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: text => {
+  window.copies.push(text)
+  if (window.copyMode === 'throw') throw refused('NotAllowedError')
+  if (window.copyMode === 'hold') return new Promise((ok, ko) => window.heldCopies.push({ ok, ko: () => ko(refused('NotAllowedError')) }))
+  return window.copyMode === 'reject' ? Promise.reject(refused('NotAllowedError')) : Promise.resolve() } } })
+const toBlob = HTMLCanvasElement.prototype.toBlob
+HTMLCanvasElement.prototype.toBlob = function (callback, ...rest) {
+  window.toBlobs++; window.canvases.push(this)
+  const mode = window.blobMode
+  if (mode === 'never') return
+  if (mode === 'null') return setTimeout(() => callback(null))
+  if (mode === 'png') return toBlob.call(this, callback, 'image/png')
+  if (mode === 'hold') return toBlob.call(this, blob => window.heldBlobs.push(() => callback(blob)), ...rest)
+  return toBlob.call(this, callback, ...rest) }"""
+# One tap on « Partager », by the button's own click(): what the stubs saw by the time click() returned (the handler has
+# run, the tap's activation not yet spent). null when there is no « Partager » to tap.
+TAP = """() => { const button = [...document.querySelectorAll('.final-preview button')].find(e => e.textContent.trim() === 'Partager')
+  if (!button) return null
+  const shares = window.shares.length, copies = window.copies.length
+  button.click()
+  return { shared: window.shares.length - shares, copied: window.copies.length - copies, held: window.heldCopies.length } }"""
+# The last share's data, its file decoded in the page: its keys, the file, its size in pixels, its centre pixel, its bytes.
+SHARED = """async () => { const data = window.shares.at(-1), file = data.files[0], bitmap = await createImageBitmap(file)
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), drawing = canvas.getContext('2d')
+  drawing.drawImage(bitmap, 0, 0)
+  const centre = [...drawing.getImageData(bitmap.width >> 1, bitmap.height >> 1, 1, 1).data].slice(0, 3)
+  const url = await new Promise(done => { const reader = new FileReader(); reader.onload = () => done(reader.result); reader.readAsDataURL(file) })
+  return { keys: Object.keys(data), count: data.files.length, file: file instanceof File, type: file.type, name: file.name,
+           width: bitmap.width, height: bitmap.height, centre, base64: url.split(',')[1] } }"""
+RELEASED = "() => window.canvases.every(canvas => canvas.width === 0 && canvas.height === 0)"
+PREPARING = "Préparation de l’image…"
+CANNOT = ("Ce navigateur ne peut pas envoyer l’image à une autre application. Téléchargez-la, ou ouvrez cette page dans "
+          "Chrome (Android) ou Safari (iPhone).")
+UNPREPARED = "L’image à partager n’a pas pu être préparée. Téléchargez l’affiche."
+FAILED = "Le partage n’a pas pu s’ouvrir. Téléchargez l’affiche, puis ajoutez-la à votre publication."
+STUCK = "Le partage n’a pas répondu. Téléchargez l’affiche, ou rouvrez cette page."
+TAP_NOT_COPIED = NOT_COPIED  # one sentence for a failed copy, from « Copier la légende » or from « Partager »
+COPY_UNKNOWN = "La légende n’a peut-être pas été copiée. Touchez « Copier la légende » pour être sûr."
+MARKER = b"marqueur-des-metadonnees-du-png"
+
+
+def png_bytes(size, colour, mode="RGB", text=None):
+    from io import BytesIO
+    from PIL.PngImagePlugin import PngInfo
+    info = PngInfo()
+    if text:
+        info.add_text("Comment", text.decode())
+    out = BytesIO()
+    Image.new(mode, size, colour).save(out, "PNG", pnginfo=info)
+    return out.getvalue()
+
+
+def png_texts(data):
+    """The text and Exif chunks' payloads of a PNG."""
+    found, at = [], 8
+    while at + 8 <= len(data):
+        size, kind = int.from_bytes(data[at:at + 4], "big"), data[at + 4:at + 8]
+        if kind in (b"tEXt", b"iTXt", b"zTXt", b"eXIf"):
+            found.append(data[at + 8:at + 8 + size])
+        at += 12 + size
+    return found
+
+
+def sharing(browser, errors, data, product):
+    """« Partager » (T-SHARE-004, D-SHARE-002 and 004): the JPEG made in the page from the current confirmation's preview,
+    the tap (share called within the click, the file alone, the caption by the clipboard), its outcomes, the panel's
+    states, the File's lifetime and the app switch. The share sheet, the clipboard and toBlob are stubbed."""
+    import base64
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", accept_downloads=True)
+    context.add_init_script(SHARE_STUBS)
+    page = context.new_page()
+    page.set_default_timeout(15000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    panel = page.locator(".final-preview")
+    field = panel.get_by_label("Légende de la publication", exact=True)
+    copy = panel.get_by_role("button", name="Copier la légende", exact=True)
+    share = panel.get_by_role("button", name="Partager", exact=True)
+    preparing = panel.get_by_role("button", name=PREPARING, exact=True)
+    download = panel.get_by_role("link", name="Télécharger le PNG confirmé")
+    status, copied = panel.locator("#partage-etat"), panel.locator("#copie-legende")
+    value = lambda name: page.evaluate(f"() => window.{name}")
+    tap = lambda: page.evaluate(TAP)
+
+    def home():
+        page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+
+    def open_poster(poster, ready=True, loaded=True, address=None):
+        """A new opening of the poster's current confirmation, by the chat's address from Home (or `address`); `loaded`:
+        until its image is shown; `ready`: until « Partager »."""
+        if panel.count():
+            panel.get_by_role("button", name="Fermer").click()
+        home()
+        page.evaluate("hash => { location.hash = hash }", address or f"message-{poster}")
+        expect(panel).to_be_visible(timeout=20000)
+        if loaded:
+            expect(panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+        if ready:
+            expect(share).to_be_enabled()
+
+    def shared():
+        found = page.evaluate(SHARED)
+        found["bytes"] = base64.b64decode(found.pop("base64"))
+        return found
+
+    open_atelier(page)
+    sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+    # A file to check (an unconfirmed render): no « Partager », no sentence, nothing encoded.
+    poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
+    expect(panel.locator(".shot img")).to_have_js_property("complete", True)
+    for absent in (share, preparing, status):
+        expect(absent).to_have_count(0)
+    assert value("toBlobs") == 0
+    # Confirmed in place, no reload: prepared from the image already loaded, « Partager » the main button, the download second.
+    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(share).to_be_enabled()
+    expect(share).to_have_class(re.compile(r"\bprimary\b"))
+    expect(download).to_have_class(re.compile(r"\bsecondary\b"))
+    assert value("toBlobs") == 1 and page.evaluate(RELEASED)
+    address = f"{smoke.ORIGIN}/api/creations/{poster}"
+    confirmation = page.request.get(address).json()["confirmation"]
+    render = page.request.get(f"{smoke.ORIGIN}/api/renders/{confirmation['render_id']}").json()
+    preview = f"{smoke.ORIGIN}{render['preview_url']}"
+    # A second poster, confirmed, never captioned (as a poster confirmed before this feature).
+    panel.get_by_role("button", name="Fermer").click()
+    home()
+    second = made_in_chat(page, product, "Casque Sony noir, 300 000 Ar")
+    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(share).to_be_enabled()
+    second_confirmation = page.request.get(f"{smoke.ORIGIN}/api/creations/{second}").json()["confirmation"]
+
+    # That poster, its field empty: the tap shares with no clipboard call and says nothing of a copy.
+    expect(field).to_have_value("")
+    assert tap() == {"shared": 1, "copied": 0, "held": 0}
+    page.evaluate(FRAMES)
+    expect(copied).to_have_text("")
+    expect(status).to_have_text("")
+
+    # The share: exactly { files: [File] }, a JPEG of the render's size named after the confirmation, the caption copied.
+    open_poster(poster)
+    caption = "Galaxy A15 128 Go\nLivraison à Tana 📦"
+    field.fill(caption)
+    assert tap() == {"shared": 1, "copied": 1, "held": 0}
+    expect(copied).to_have_text(COPIED)
+    expect(status).to_have_text("")
+    assert value("copies")[-1] == caption
+    made = shared()
+    assert made["keys"] == ["files"] and made["count"] == 1 and made["file"], made["keys"]
+    assert made["type"] == "image/jpeg" and made["name"] == f"affiche-{render['format']}-{confirmation['id'][:8]}.jpg", made["name"]
+    assert (made["width"], made["height"]) == (render["width"], render["height"]) == (1080, 1350), (made["width"], made["height"])
+    assert made["bytes"][:3] == b"\xff\xd8\xff" and b"Exif" not in made["bytes"]
+    for text in png_texts(page.request.get(preview).body()):
+        assert text not in made["bytes"], text
+
+    # Timing at the button: share is called before click() returns, whether the copy is held or throws at once.
+    page.evaluate("window.copyMode = 'hold'")
+    assert tap() == {"shared": 1, "copied": 1, "held": 1}  # the copy started, still pending, the share already called
+    expect(copied).to_have_text(COPY_UNKNOWN, timeout=6000)  # resolved share, copy pending 3 s: never a claim
+    expect(panel.get_by_text(COPIED, exact=True)).to_have_count(0)
+    page.evaluate("window.heldCopies.pop().ok()")
+    expect(copied).to_have_text(COPIED)
+    page.evaluate("window.copyMode = 'throw'")
+    assert tap() == {"shared": 1, "copied": 1, "held": 0}
+    expect(copied).to_have_text(TAP_NOT_COPIED)
+    expect(copied).to_have_class(re.compile(r"\bwhy\b"))
+    # The clipboard refusing: the same sentence, the share itself fine.
+    page.evaluate("window.copyMode = 'reject'")
+    tap()
+    expect(copied).to_have_text(TAP_NOT_COPIED)
+    expect(status).to_have_text("")
+
+    # Cancel (AbortError): nothing at all, the copy resolved, refused, or refused after the cancel.
+    page.evaluate("window.shareMode = 'AbortError'")
+    for mode in ("resolve", "reject"):
+        page.evaluate("mode => { window.copyMode = mode }", mode)
+        tap()
+        page.evaluate(FRAMES)
+        expect(copied).to_have_text("")
+        expect(status).to_have_text("")
+    page.evaluate("window.copyMode = 'hold'")
+    tap()
+    page.evaluate(FRAMES)
+    page.evaluate("window.heldCopies.pop().ko()")
+    page.wait_for_timeout(3500)
+    expect(copied).to_have_text("")
+    expect(status).to_have_text("")
+
+    # Refused (NotAllowedError): the sentence pointing to the download, with the copy's outcome; the download kept.
+    page.evaluate("window.shareMode = 'NotAllowedError'; window.copyMode = 'resolve'")
+    tap()
+    expect(status).to_have_text(FAILED)
+    expect(copied).to_have_text(COPIED)
+    expect(download).to_be_visible()
+    smoke.check_contrast(page, "share refused")
+    page.screenshot(path=str(OUT / "share-failed-1366.png"))
+
+    # A share that never settles locks nothing: « Partager », the download and « Copier la légende » work; after 15 s of
+    # visible waiting the provisional line, withdrawn by a later cancel.
+    page.evaluate("window.shareMode = 'hold'")
+    tap()
+    expect(status).to_have_text("")
+    expect(share).to_be_enabled()
+    with page.expect_download():
+        download.click()
+    copy.click()
+    expect(copied).to_have_text(COPIED)
+    expect(status).to_have_text(STUCK, timeout=20000)
+    expect(share).to_be_enabled()
+    page.screenshot(path=str(OUT / "share-stuck-1366.png"))
+    page.evaluate("window.heldShares.pop().ko('AbortError')")
+    expect(status).to_have_text("")
+    # Two taps, both pending: tap two's outcome is shown; tap one's, settled after it, changes neither line.
+    tap()
+    tap()
+    page.evaluate("window.heldShares[1].ok()")
+    expect(copied).to_have_text(COPIED)
+    expect(status).to_have_text("")
+    page.evaluate("window.heldShares[0].ko('NotAllowedError')")
+    page.evaluate(FRAMES)
+    expect(copied).to_have_text(COPIED)
+    expect(status).to_have_text("")
+    page.evaluate("window.heldShares.length = 0; window.shareMode = 'resolve'")
+
+    # The JPEG not ready at the tap: « Préparation de l’image… », disabled and busy, nothing shared; the download works.
+    page.evaluate("window.blobMode = 'hold'")
+    open_poster(poster, ready=False)
+    expect(preparing).to_be_disabled()
+    expect(preparing).to_have_attribute("aria-busy", "true")
+    shares = value("shares.length")
+    assert tap() is None
+    preparing.click(force=True)
+    assert value("shares.length") == shares
+    with page.expect_download():
+        download.click()
+    until(page, lambda: value("heldBlobs.length") == 1)
+    page.evaluate("window.heldBlobs.pop()()")
+    expect(share).to_be_enabled()
+    assert page.evaluate(RELEASED)
+
+    # The encoder failing: no callback (the 10 s deadline), a PNG, a null blob, then a preview whose natural size is not
+    # the render's (nothing encoded): « Partager » withdrawn, the sentence, the download the main button again.
+    for mode in ("never", "png", "null"):
+        page.evaluate("mode => { window.blobMode = mode }", mode)
+        open_poster(poster, ready=False)
+        expect(status).to_have_text(UNPREPARED, timeout=15000)
+        expect(share).to_have_count(0)
+        expect(preparing).to_have_count(0)
+        expect(download).not_to_have_class(re.compile(r"\bsecondary\b"))
+        assert page.evaluate(RELEASED), mode
+    page.evaluate("window.blobMode = 'real'")
+    page.route(preview, lambda route: route.fulfill(status=200, content_type="image/png", body=png_bytes((540, 675), "white")))
+    before = value("toBlobs")
+    open_poster(poster, ready=False)
+    expect(status).to_have_text(UNPREPARED)
+    assert value("toBlobs") == before
+    page.screenshot(path=str(OUT / "share-unprepared-1366.png"))
+    page.unroute(preview)
+    # The PNG request failing: the page's error line, and the same sentence.
+    page.route(preview, lambda route: route.abort())
+    open_poster(poster, ready=False, loaded=False)
+    expect(status).to_have_text(UNPREPARED)
+    expect(page.locator(".message.error")).to_contain_text("Le fichier d’aperçu ne peut pas être chargé.")
+    page.unroute(preview)
+    # The PNG request held past the deadline: the whole visible preparation lasts 10 s at most, and the image arriving
+    # later brings nothing back.
+    pngs = []
+    page.route(preview, lambda route: pngs.append(route))
+    before = value("toBlobs")
+    open_poster(poster, ready=False, loaded=False)
+    until(page, lambda: pngs)
+    expect(preparing).to_be_disabled()
+    expect(status).to_have_text(UNPREPARED, timeout=13000)
+    expect(download).not_to_have_class(re.compile(r"\bsecondary\b"))
+    pngs.pop().continue_()
+    expect(panel.get_by_role("heading", name=READY)).to_be_visible()
+    page.evaluate(FRAMES)
+    expect(status).to_have_text(UNPREPARED)
+    expect(share).to_have_count(0)
+    assert value("toBlobs") == before
+    page.unroute(preview)
+    panel.get_by_role("button", name="Fermer").click()
+    if page.locator(".message.error").count():
+        page.locator(".message.error").get_by_role("button", name="Fermer").click()
+    # A transparent preview (with a text chunk): the JPEG's pixels are the poster's ground, never black, and the PNG's
+    # metadata is not carried.
+    page.route(preview, lambda route: route.fulfill(status=200, content_type="image/png",
+               body=png_bytes((1080, 1350), (0, 0, 0, 0), "RGBA", MARKER)))
+    open_poster(poster)
+    expect(share).to_be_enabled()
+    tap()
+    made = shared()
+    assert all(abs(a - b) <= 6 for a, b in zip(made["centre"], (0x17, 0x32, 0x4D))), made["centre"]
+    assert MARKER not in made["bytes"]
+    page.unroute(preview)
+
+    # Lifetime: a slow encoding of one opening never becomes another opening's File. A → B, then A closed and reopened.
+    # A's and B's previews are two plain colours, so the shared JPEG's pixels say whose they are. While two encodings
+    # are held, no canvas keeps its full-size backing store.
+    a_colour, b_colour = (200, 40, 40), (40, 60, 200)
+    second_preview = f"{smoke.ORIGIN}/api/renders/{second_confirmation['render_id']}/preview"
+    def plain(colour):
+        body = png_bytes((1080, 1350), colour)
+        return lambda route: route.fulfill(status=200, content_type="image/png", body=body)
+    for url, colour in ((preview, a_colour), (second_preview, b_colour)):
+        page.route(url, plain(colour))
+    near = lambda found, colour: all(abs(a - b) <= 6 for a, b in zip(found, colour))
+    page.evaluate("window.blobMode = 'hold'")
+    open_poster(poster, ready=False)
+    until(page, lambda: value("heldBlobs.length") == 1)
+    open_poster(second, ready=False)
+    until(page, lambda: value("heldBlobs.length") == 2)
+    assert page.evaluate("() => window.canvases.filter(canvas => canvas.width || canvas.height).length") == 0
+    page.evaluate("window.heldBlobs.shift()()")  # A's, late
+    page.evaluate(FRAMES)
+    expect(preparing).to_be_visible()
+    page.evaluate("window.heldBlobs.shift()()")
+    expect(share).to_be_enabled()
+    tap()
+    made = shared()
+    assert made["name"] == f"affiche-{render['format']}-{second_confirmation['id'][:8]}.jpg" and near(made["centre"], b_colour), made["centre"]
+    open_poster(poster, ready=False)
+    open_poster(poster, ready=False)
+    until(page, lambda: value("heldBlobs.length") == 2)
+    assert page.evaluate("() => window.canvases.filter(canvas => canvas.width || canvas.height).length") == 0
+    page.evaluate("window.heldBlobs.shift()()")  # the closed opening's
+    page.evaluate(FRAMES)
+    expect(preparing).to_be_visible()
+    page.evaluate("window.heldBlobs.shift()()")
+    expect(share).to_be_enabled()
+    tap()
+    made = shared()
+    assert made["name"] == f"affiche-{render['format']}-{confirmation['id'][:8]}.jpg" and near(made["centre"], a_colour), made["centre"]
+    page.evaluate("window.blobMode = 'real'")
+    assert page.evaluate(RELEASED)
+    page.unroute(preview)
+    page.unroute(second_preview)
+
+    # The tap checks the panel is still the current confirmation: an edit of the price, then the click in the same task,
+    # before the page has redrawn (the button still there, still enabled), shares nothing. Then, reopened, the file is an
+    # earlier version, with no « Partager » and nothing encoded.
+    open_poster(second, address=second)
+    edited = page.evaluate("""price => {
+      const button = [...document.querySelectorAll('.final-preview button')].find(e => e.textContent.trim() === 'Partager')
+      const field = document.getElementById('champ-prix')
+      if (!button || !field) return null
+      const before = window.shares.length
+      field.value = price; field.dispatchEvent(new Event('input', { bubbles: true }))
+      button.click()
+      return { shared: window.shares.length - before, drawn: button.isConnected && !button.disabled } }""", "310 000")
+    assert edited == {"shared": 0, "drawn": True}, edited
+    expect(panel.get_by_role("heading", name=EARLIER)).to_be_visible()
+    expect(page.get_by_text("Enregistré", exact=True)).to_be_visible()
+    panel.get_by_role("button", name="Fermer").click()
+    home()
+    encoded = value("toBlobs")
+    page.evaluate("hash => { location.hash = hash }", f"message-{second}")
+    earlier(panel, second_confirmation)
+    expect(panel.locator(".shot img")).to_have_js_property("complete", True)
+    page.evaluate(FRAMES)
+    assert value("toBlobs") == encoded
+
+    # Not gated: no credit left and the conditions not accepted; the tap sends nothing to the server.
+    engine = smoke.make_engine(Path(data))
+    with smoke.write_tx(engine) as conn:
+        left = smoke.credits.balance(conn, 1)["available"]
+        if left:
+            smoke.credits.correct(conn, 1, -left, ref="share-test", note="zero for the share test", actor="tests")
+        conn.exec_driver_sql("UPDATE shop_profile SET terms_version=NULL, terms_accepted_at=NULL WHERE id=1")
+    open_poster(poster)
+    expect(share).to_be_enabled()
+    sent = []
+    page.on("request", lambda r: sent.append(r.url) if "/api/" in r.url and r.method != "GET" else None)
+    assert tap()["shared"] == 1
+    page.evaluate(FRAMES)
+    expect(status).to_have_text("")
+    expect(page.locator(".terms-sheet")).to_have_count(0)
+    assert sent == [], sent
+    with smoke.write_tx(engine) as conn:
+        smoke.accepted(conn, 1)
+    engine.dispose()
+
+    # A phone, 360 × 640, both themes; the keyboard: field, « Copier la légende », then « Partager », which Enter shares.
+    page.set_viewport_size({"width": 360, "height": 640})
+    for scheme in ("light", "dark"):
+        page.emulate_media(color_scheme=scheme)
+        share.scroll_into_view_if_needed()
+        smoke.check_contrast(page, f"share, 360 px, {scheme}")
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
+        assert panel.evaluate("e => e.scrollWidth <= e.clientWidth"), "the panel scrolls sideways"
+        page.screenshot(path=str(OUT / f"share-360-{scheme}.png"))
+    page.emulate_media(color_scheme="light")
+    expect(field).to_have_value(caption)
+    field.focus()
+    page.keyboard.press("Tab")
+    expect(copy).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(share).to_be_focused()
+    shares = value("shares.length")
+    page.keyboard.press("Enter")
+    until(page, lambda: value("shares.length") == shares + 1)
+    expect(copied).to_have_text(COPIED)
+    page.set_viewport_size({"width": 1366, "height": 768})
+
+    # A browser that cannot share files: no « Partager », the sentence, the download the main button, nothing encoded.
+    other = context.new_page()
+    other.on("pageerror", lambda error: errors.append(str(error)))
+    other.add_init_script("window.noFiles = true")
+    other.goto(f"{smoke.ORIGIN}/#message-{poster}")
+    other_panel = other.locator(".final-preview")
+    expect(other_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(other_panel.locator("#partage-etat")).to_have_text(CANNOT)
+    expect(other_panel.get_by_role("button", name="Partager", exact=True)).to_have_count(0)
+    expect(other_panel.get_by_role("button", name=PREPARING, exact=True)).to_have_count(0)
+    expect(other_panel.get_by_role("link", name="Télécharger le PNG confirmé")).not_to_have_class(re.compile(r"\bsecondary\b"))
+    assert other.evaluate("() => window.toBlobs") == 0
+    smoke.check_contrast(other, "cannot share")
+    other.screenshot(path=str(OUT / "share-cannot-1366.png"))
+    other.close()
+
+    # An app switch while the sheet is open: the page hidden (its visibilitychange), the session check held; the share
+    # refused meanwhile. Answered for the same shop: the outcome is shown and the File prepared again.
+    page.evaluate("window.shareMode = 'hold'")
+    open_poster(poster)
+    expect(share).to_be_enabled()
+    tap()
+    sessions = []
+    page.route(f"{smoke.ORIGIN}/api/session", lambda route: sessions.append(route) if route.request.method == "GET" else route.continue_())
+    encoded = value("toBlobs")
+    page.evaluate(smoke.VISIBILITY, True)
+    page.evaluate(smoke.VISIBILITY, False)
+    until(page, lambda: sessions)
+    expect(panel).to_be_hidden()
+    page.evaluate("window.heldShares.pop().ko('NotAllowedError')")
+    page.evaluate(FRAMES)
+    sessions.pop().continue_()
+    page.unroute(f"{smoke.ORIGIN}/api/session")
+    expect(status).to_have_text(FAILED)
+    expect(share).to_be_enabled()
+    assert value("toBlobs") == encoded + 1
+    # Another shop signs in from another tab of this browser and opens its own confirmed panel while this tab's share is
+    # still pending: this tab is signed out by the identity change, and its late answer reaches neither panel. (Its poster
+    # is made and confirmed beforehand on another device: this tab holds the browser's chat.)
+    engine = smoke.make_engine(Path(data))
+    password_c = os.urandom(12).hex()
+    with smoke.write_tx(engine) as conn:
+        shop_c = smoke.shops.create_shop(conn, "boutiquetrois", "Boutique Trois", smoke.PASSWORDS.hash(password_c))
+        smoke.credits.grant(conn, shop_c, 20, origin="offered", ref="tests", actor="tests")
+        smoke.accepted(conn, shop_c)
+    engine.dispose()
+    device = browser.new_context(viewport={"width": 1366, "height": 768})
+    elsewhere_page = device.new_page()
+    elsewhere_page.set_default_timeout(15000)
+    open_atelier(elsewhere_page)
+    sign_in(elsewhere_page, "boutiquetrois", password_c)
+    their_poster = made_in_chat(elsewhere_page, product, "Casque JBL noir, 200 000 Ar")
+    elsewhere_page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(elsewhere_page.get_by_role("heading", name=READY)).to_be_visible()
+    device.close()
+    tap()
+    context.clear_cookies()
+    theirs = context.new_page()
+    theirs.set_default_timeout(15000)
+    theirs.on("pageerror", lambda error: errors.append(str(error)))
+    open_atelier(theirs)
+    sign_in(theirs, "boutiquetrois", password_c)
+    expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()  # this tab: signed out
+    theirs.evaluate("hash => { location.hash = hash }", their_poster)
+    their_panel = theirs.locator(".final-preview")
+    expect(their_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    expect(their_panel.get_by_role("button", name="Partager", exact=True)).to_be_enabled()
+    page.evaluate("window.heldShares.pop().ko('NotAllowedError')")
+    page.evaluate(FRAMES)
+    theirs.evaluate(FRAMES)
+    assert page.evaluate("() => document.querySelector('#partage-etat')?.textContent ?? ''") == ""
+    assert page.evaluate(TAP) is None
+    expect(their_panel.locator("#partage-etat")).to_have_text("")
+    page.close()
+    # « Se déconnecter » with the panel open and its encoding held (a key's removal refused, so that the page stays):
+    # the shop's part leaves the page, and the late encoding prepares nothing.
+    theirs.evaluate("window.blobMode = 'hold'")
+    their_panel.get_by_role("button", name="Fermer").click()
+    theirs.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+    expect(theirs.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+    theirs.evaluate("hash => { location.hash = hash }", their_poster)
+    expect(their_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    until(theirs, lambda: theirs.evaluate("() => window.heldBlobs.length") == 1)
+    theirs.evaluate("key => localStorage.setItem(key, '{}')", f"affiche.shop{shop_c}.style")
+    theirs.evaluate(smoke.REFUSE_REMOVAL, rf"^affiche\.shop{shop_c}\.style$")
+    theirs.locator(".sign-out").first.evaluate("e => e.click()")  # behind the panel
+    expect(theirs.locator("main.gate").get_by_text(smoke.LEFT_BEHIND)).to_be_visible()
+    expect(theirs.locator("main:not(.gate)")).to_have_count(0)
+    theirs.evaluate("window.heldBlobs.pop()()")
+    theirs.evaluate(FRAMES)
+    assert theirs.evaluate(RELEASED) and theirs.evaluate(TAP) is None
+    context.close()
+
+
 def current(panel, confirmation):
     """The panel holds that confirmation's own render, ready: the heading, its image, its download, no checklist."""
     expect(panel.get_by_role("heading", name=READY)).to_be_visible()
@@ -836,6 +1350,8 @@ def earlier(panel, confirmation):
     expect(panel).not_to_contain_text(re.compile(r"\d{3}\s000"))  # neither the live price nor the confirmed one
     expect(panel.locator(".done")).to_have_count(0)
     expect(panel.get_by_role("button", name="Partager")).to_have_count(0)
+    expect(panel.get_by_role("button", name="Préparation de l’image…")).to_have_count(0)
+    expect(panel.locator("#partage-etat")).to_have_count(0)
     expect(panel.get_by_role("link", name="Télécharger le PNG confirmé")).to_have_attribute("href", confirmation["download_url"])
     expect(panel.get_by_role("button", name="Vérifier l’aperçu final")).to_be_visible()
 
@@ -859,6 +1375,7 @@ def run():
                     try:
                         walk(browser, errors, data, product)
                         captions(browser, errors, data, product)
+                        sharing(browser, errors, data, product)
                         assert not errors, errors
                     finally:
                         browser.close()
@@ -882,7 +1399,12 @@ def run():
           "intact); « Copier la légende » copies the typed value and says « copiée » only on success; a refused read, "
           "write or removal says so and keeps the typed text; an idle tab never writes and nothing is pruned; another "
           "shop reads and writes only its own keys; « Se déconnecter » erases that shop's captions; 360 px, both themes, "
-          "keyboard.")
+          "keyboard. « Partager »: share called within the click, the copy held or throwing; exactly { files: [File] }, a "
+          "JPEG of the render's size, the ground under transparency, no PNG metadata; cancel silent; refused, clipboard "
+          "refused, a share never settling (nothing locked, then the line, withdrawn by a cancel); not ready, the encoder "
+          "failing (deadline, PNG, null, size), cannot share; prepared on confirmation in place; a late encoding never "
+          "another opening's; an earlier version never offers it; not gated; the app switch keeps the outcome for the same "
+          "shop and drops it for another; 360 px, both themes, keyboard.")
 
 
 if __name__ == "__main__":

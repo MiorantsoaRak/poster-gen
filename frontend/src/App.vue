@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
 import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
-import { captionFault, presentedAsCurrent, readCaption } from './share'
+import { canShareFiles, captionFault, jpegOf, linesOf, presentedAsCurrent, readCaption, shareFile, weight, type Attempt } from './share'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
@@ -442,6 +442,7 @@ const ICONS: Record<string, string> = {
   grid: 'M2.5 2.5h4.5v6h-4.5zM9 2.5h4.5v6H9zM2.5 11h4.5M9 11h4.5M2.5 13.5h3', text: 'M3 4V3h10v1M8 3v10M6 13h4',
   palette: 'M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.3-.7.9-1.4-.5-.9.1-1.8 1.1-1.8h1.2a2.3 2.3 0 0 0 2.3-2.4A5.5 5.5 0 0 0 8 2.5zM5.5 7h.01M8 5h.01M10.5 7h.01',
   image: 'M2.5 3h11v10h-11zM2.5 10.5l3.5-3 3 2.5 2-1.5 2.5 2', download: 'M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10',
+  share: 'M8 10V2.5M5 5.5l3-3 3 3M5.5 7.5H3.5v6h9v-6h-2',
   eye: 'M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
   spark: 'M8 2l1.4 4.1L13.5 7.5 9.4 8.9 8 13 6.6 8.9 2.5 7.5l4.1-1.4z', clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3.5l2 1.5',
   undo: 'M6 4L3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H7', redo: 'M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H9',
@@ -1607,7 +1608,12 @@ function openFinalPreview(value: any) {
 }
 // Only the displayed preview's own image marks it loaded (a replaced <img> may still finish loading).
 function previewLoad(event: Event) {
-  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) finalPreview.value.loaded = true
+  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) { finalPreview.value.loaded = true; void prepare() }
+}
+// The same check: only the displayed preview's own failure makes its File impossible to prepare.
+function previewError(event: Event) {
+  error.value = 'Le fichier d’aperçu ne peut pas être chargé.'
+  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) unprepared.value = true
 }
 // The caption of « Partager » (D-SHARE-003): written once per poster, kept on this device under the shop's key, with no
 // prune (another tab's fresh text is never evicted); erased with the shop's other keys at sign-out. Its field belongs to
@@ -1653,6 +1659,92 @@ function copyCaption() {
   try { navigator.clipboard.writeText(caption.value).then(() => said(CAPTION_LINES.copied), () => said(CAPTION_LINES.not_copied)) }
   catch { said(CAPTION_LINES.not_copied) }
 }
+// « Partager » (D-SHARE-002, 004): the current confirmation's own preview, drawn into one JPEG File per opening. An opening
+// moves when the panel opens, closes or shows another preview, when its preview is confirmed in place, and when the gate
+// says `out` (sign-out, another shop): the File, a preparation in flight and the attempt go with it, and later outcomes
+// are ignored. An app switch (the gate hidden) drops the File and voids a preparation, and keeps the attempt, shown when
+// the same shop's gate opens again; the File is then prepared again from the element still loaded. No `perform` and no
+// `busy` anywhere here: a share that never settles locks nothing.
+const SHARE_LINES = {
+  cannot: 'Ce navigateur ne peut pas envoyer l’image à une autre application. Téléchargez-la, ou ouvrez cette page dans Chrome (Android) ou Safari (iPhone).',
+  unprepared: 'L’image à partager n’a pas pu être préparée. Téléchargez l’affiche.',
+  failed: 'Le partage n’a pas pu s’ouvrir. Téléchargez l’affiche, puis ajoutez-la à votre publication.',
+  stuck: 'Le partage n’a pas répondu. Téléchargez l’affiche, ou rouvrez cette page.',
+  copied: CAPTION_LINES.copied,
+  not_copied: CAPTION_LINES.not_copied,
+  copy_unknown: 'La légende n’a peut-être pas été copiée. Touchez « Copier la légende » pour être sûr.',
+}
+const filesShareable = canShareFiles(navigator)
+const previewImage = ref<HTMLImageElement | null>(null)
+const prepared = shallowRef<{ opening: number; render: string; file: File; weight: string } | null>(null)
+const unprepared = ref(false), attempt = shallowRef<Attempt | null>(null), slow = ref(false)
+let opening = 0, preparing = 0, preparations = 0, attemptTurn = -1, disposeAttempt = () => {}
+let slowTimer: ReturnType<typeof setTimeout> | undefined, prepareTimer: ReturnType<typeof setTimeout> | undefined
+const shareView = computed(() => !captionShown.value ? null : !filesShareable ? 'cannot' : prepared.value ? 'ready' : unprepared.value ? 'unprepared' : 'preparing')
+const shareLine = computed(() => { const line = linesOf(attempt.value, slow.value).share; return line ? SHARE_LINES[line] : '' })
+function newOpening() {
+  opening++; preparing = 0; prepared.value = null; unprepared.value = false
+  disposeAttempt(); attempt.value = null; slow.value = false; clearTimeout(slowTimer)
+}
+// Synchronous, so that a confirmation in place has moved the opening before its own prepare() runs.
+watch(() => [finalPreview.value, finalPreview.value?.download_url], newOpening, { flush: 'sync' })
+watch(state, now => { if (now === 'out') newOpening() }, { flush: 'sync' })
+watch(shown, visible => {
+  clearTimeout(slowTimer)
+  if (!visible) { preparing = 0; prepared.value = null; return }
+  void prepare()
+  if (attempt.value?.share === 'pending' && !slow.value) waitVisibly()
+})
+// The whole visible preparation, the image's own loading included, lasts 10 s at most (the state table): armed when the
+// panel shows « Préparation de l’image… », again on each opening and each return, and only for that opening, so that a
+// late load or encoding cannot bring it back once it has said `unprepared`.
+watch(() => [shareView.value === 'preparing' && shown.value, finalPreview.value, finalPreview.value?.download_url], ([waiting]) => {
+  clearTimeout(prepareTimer)
+  if (!waiting) return
+  const turn = opening
+  prepareTimer = setTimeout(() => { if (turn === opening && !prepared.value) { preparing = 0; unprepared.value = true } }, 10_000)
+})
+// The provisional `stuck`: 15 s of visible waiting, from the tap or from the last return.
+function waitVisibly() { clearTimeout(slowTimer); slowTimer = setTimeout(() => { slow.value = true }, 15_000) }
+onBeforeUnmount(() => { clearTimeout(slowTimer); clearTimeout(prepareTimer); disposeAttempt() })
+// On the image's load, on a confirmation in place, on a return: only for the current confirmation's loaded preview.
+async function prepare() {
+  const preview = finalPreview.value, image = previewImage.value
+  if (!filesShareable || !captionShown.value || !preview?.loaded || !shown.value || prepared.value || preparing || unprepared.value
+    || !image?.complete || !image.naturalWidth) return
+  const mine = preparing = ++preparations, turn = opening, confirmation = String(preview.download_url).split('/')[3] ?? ''
+  const blob = await jpegOf(image, preview.width, preview.height)
+  if (preparing !== mine) return  // voided: another opening, or the page hidden
+  preparing = 0
+  let file: File | null = null
+  try { file = blob && new File([blob], `affiche-${preview.format}-${confirmation.slice(0, 8)}.jpg`, { type: 'image/jpeg' }) }
+  catch { /* said below: not prepared */ }
+  if (file && canShareFiles(navigator, file)) prepared.value = { opening: turn, render: preview.id, file, weight: weight(blob!.size) }
+  else unprepared.value = true
+}
+// The tap: nothing before shareFile, nothing awaited, so that `share` runs within the tap's activation. The File is used
+// only if it is this opening's, of the preview shown, with the gate open, and the panel still the current confirmation
+// (an edit makes it an earlier version before the page has redrawn the button away).
+function share() {
+  const ready = prepared.value
+  if (!ready || ready.opening !== opening || ready.render !== finalPreview.value?.id || !shown.value || !captionShown.value) return
+  const turn = opening, previous = disposeAttempt
+  const made = shareFile(ready.file, caption.value, navigator, next => {
+    if (turn !== opening || next.id !== attempt.value?.id) return
+    attempt.value = next
+    if (next.share !== 'pending') clearTimeout(slowTimer)
+  })
+  previous(); disposeAttempt = made.dispose  // the earlier tap's timer and later answers go
+  attempt.value = made.attempt; slow.value = false
+  copyLine.value = ''; attemptTurn = ++copyTurn  // the copy's line is this tap's until the next input or copy
+  waitVisibly()
+}
+// The tap's copy, said in the copy's own line, as « Copier la légende » says its own.
+watch([attempt, slow], () => {
+  if (attemptTurn !== copyTurn) return
+  const line = linesOf(attempt.value, slow.value).copy
+  copyLine.value = line ? SHARE_LINES[line] : ''
+})
 // A poster opens on its current confirmation's own render (D-SHARE-001), read-only, never with a render request. Without
 // one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's button (`ask`) asks for a
 // render. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
@@ -1700,7 +1792,7 @@ async function confirmFinal() {
     acknowledged_warning_ids: shown.warnings.map((issue: LayoutIssue) => issue.id),
   }, saver!.revision)
   // Its file, on its own preview only: another one opened meanwhile (a render job ending) is not confirmed by this answer.
-  if (creation.value?.id === poster && finalPreview.value === shown) shown.download_url = result.download_url
+  if (creation.value?.id === poster && finalPreview.value === shown) { shown.download_url = result.download_url; void prepare() }
 }
 // The chosen version's thumbnail works until its scene is drawn; the canvas keeps the previous one meanwhile.
 const choosing = ref<string | null>(null)
@@ -2262,7 +2354,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ earlier ? finalPreview.download_url ? 'Version confirmée précédente' : 'Aperçu d’une version précédente' : finalPreview.download_url ? finalPreview.loaded ? 'Votre affiche est prête' : 'Ouverture du fichier confirmé…' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ earlier ? finalPreview.download_url ? 'Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager.' : 'Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle.' : finalPreview.download_url ?'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
-        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
+        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id" ref="previewImage" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="previewError" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
         <div>
           <p v-if="finalPreview.download_url && !earlier && finalPreview.loaded" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
           <dl class="facts"><div><dt>Format</dt><dd>{{ finalPreview.width }} × {{ finalPreview.height }} px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div v-if="!earlier && finalPreview.loaded"><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
@@ -2270,8 +2362,8 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !finalPreview.loaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!finalPreview.loaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
           </template>
-          <div v-if="captionShown" class="group caption"><label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label><p id="etat-legende" class="why" role="status">{{ captionLine }}</p><p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p><button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button><p id="copie-legende" :class="copyLine === CAPTION_LINES.not_copied ? 'why' : 'help'" role="status">{{ copyLine }}</p></div>
-          <div v-if="finalPreview.download_url || earlier" class="after"><a v-if="finalPreview.download_url" :href="finalPreview.download_url" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+          <div v-if="captionShown" class="group caption"><label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label><p id="etat-legende" class="why" role="status">{{ captionLine }}</p><p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p><button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button><p id="copie-legende" :class="copyLine === CAPTION_LINES.copied || !copyLine ? 'help' : 'why'" role="status">{{ copyLine }}</p></div>
+          <div v-if="finalPreview.download_url || earlier" class="after"><template v-if="shareView === 'ready' || shareView === 'preparing'"><button class="primary" :disabled="shareView !== 'ready'" :aria-busy="shareView === 'preparing' || undefined" aria-describedby="partage-etat" @click="share"><Icon n="share" />{{ shareView === 'ready' ? 'Partager' : 'Préparation de l’image…' }}</button><span v-if="prepared?.weight" class="count">{{ prepared.weight }}</span></template><a v-if="finalPreview.download_url" :href="finalPreview.download_url" :class="shareView === 'ready' || shareView === 'preparing' ? 'download-button secondary' : 'download-button'" download><Icon n="download" />Télécharger le PNG confirmé</a><p v-if="shareView" id="partage-etat" class="why" role="status">{{ shareView === 'cannot' || shareView === 'unprepared' ? SHARE_LINES[shareView] : shareLine }}</p><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>
     </section>

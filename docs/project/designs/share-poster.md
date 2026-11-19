@@ -321,7 +321,7 @@ All of these are **to verify on the sheet**: clipboard timing, repeat taps, whic
 | field label | « Légende de la publication » |
 | `help` (before the tap) | « Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication. » |
 | `copied` (R-SHARE-002) | « Légende copiée : collez-la dans votre publication. » |
-| `not_copied` | « La légende n’a pas pu être copiée. Touchez « Copier la légende », ou copiez-la depuis le champ. » |
+| `not_copied` | « La copie a échoué. Sélectionnez la légende dans le champ, puis copiez-la. » *(Changed 2026-11-19 after T-SHARE-003's review: one sentence for a failed copy, from « Copier la légende » or from « Partager ».)* |
 | `copy_unknown` | « La légende n’a peut-être pas été copiée. Touchez « Copier la légende » pour être sûr. » |
 | copy button | « Copier la légende » |
 | `tab_only` | « La légende reste dans cet onglet, sans être gardée sur cet appareil. Copiez-la avant de fermer : en rouvrant l’affiche, l’ancienne légende peut revenir. » |

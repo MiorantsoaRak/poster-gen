@@ -489,6 +489,11 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
 .after { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px }
 .after .help { flex-basis: 100%; margin: 0 }
 .download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 1.5px solid var(--invert); border-radius: 999px; font-weight: 700; text-decoration: none; transition: opacity .15s ease-out, var(--press) }
+/* Where « Partager » is the main action (D-SHARE-004), the download is the second one: a glass pill like button.secondary. */
+.download-button.secondary { background: var(--glass-field); border-color: var(--line); color: var(--text); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field) }
+@media (hover: hover) { .download-button.secondary:hover { background: var(--raised); opacity: 1 } }
+.after .why { text-align: left }
+.after > .count { align-self: center; font-size: 13px }
 
 @media (max-width: 1080px) {
   /* A column, not a one-column grid: a grid item can only stick inside its own row, and the poster of the tabs must
