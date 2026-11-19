@@ -149,6 +149,17 @@ def get_render(conn, shop, id):
         "download_url": f"/api/confirmations/{confirmation}/download" if confirmation else None}
 
 
+def current_confirmation(conn, shop, id, primary_format):
+    """The poster's current confirmation (D-SHARE-001): made at its current revision, the library's « Confirmée ». With two
+    formats confirmed at that revision, the document's primary format first, then the latest. None without one."""
+    row = conn.execute(text(
+        "SELECT k.id, k.render_id, k.format FROM confirmations k JOIN creations c ON c.id = k.creation_id "
+        "WHERE c.id = :id AND c.shop_id = :shop AND k.confirmed_revision = c.current_revision "
+        "ORDER BY k.format = :primary DESC, k.confirmed_at DESC, k.id DESC LIMIT 1"),
+        {"id": id, "shop": shop, "primary": primary_format}).mappings().first()
+    return dict(row) | {"download_url": f"/api/confirmations/{row['id']}/download"} if row else None
+
+
 def read_png(settings, row):
     try:
         data = assets.path(settings.data_dir, row["png_sha256"], "png").read_bytes()
@@ -173,8 +184,13 @@ def confirm(engine, settings, shop, key, id, revision, request):
         if set(request.acknowledged_warning_ids) != warnings:
             raise store.Refused("confirmation_incomplete")
         read_png(settings, row)
-        existing = conn.execute(text("SELECT id FROM confirmations WHERE render_id=:id"), {"id": row["id"]}).scalar()
-        confirmation = existing or str(uuid4())
+        existing = conn.execute(text("SELECT id, confirmed_revision FROM confirmations WHERE render_id=:id"),
+                                {"id": row["id"]}).mappings().first()
+        # Confirmed already, before an undo brought the same image back (another tab): that file is an earlier version,
+        # not this revision's (D-SHARE-001). The current one needs its own preview.
+        if existing and existing["confirmed_revision"] < revision:
+            raise store.Refused("preview_stale", 409)
+        confirmation = existing["id"] if existing else str(uuid4())
         if not existing:
             conn.execute(text("INSERT INTO confirmations VALUES (:id,:creation,:source,:revision,:format,:hash,:render,:png,:checks,:now)"),
                          {"id": confirmation, "creation": id, "source": row["source_revision"], "revision": revision,

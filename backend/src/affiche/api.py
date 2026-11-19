@@ -33,7 +33,7 @@ from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.db import utc_now
 from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, terms, typography, visuals
 from affiche.posters.service import PosterService
-from affiche.posters.models import CopyCreation, Document, Id, Model, NewCreation, ProductInput, Profile, Sha
+from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import usd_to_micros
@@ -324,12 +324,20 @@ class ProfileView(Profile):
     revision: int
 
 
+class CurrentConfirmation(Model):
+    id: Id
+    render_id: Id
+    format: Format
+    download_url: str
+
+
 class CreationView(Model):
     id: Id
     revision: int
     status: Literal["active", "abandoned"]
     parent_creation_id: Id | None
     document: Document
+    confirmation: CurrentConfirmation | None = None  # GET /api/creations/{id} only (D-SHARE-001): never a mutation's answer
 
 
 class ErrorDetail(Model):
@@ -941,7 +949,10 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     @protected.get("/api/creations/{id}", response_model=CreationView)
     def creation(id: Id, request: Request):
         with app.state.engine.connect() as conn:
-            return result_response((200, store.get_creation(conn, request.state.shop, id)))
+            # Computed here only: store.get_creation's answer is also what the mutation routes return and replay.
+            found = store.get_creation(conn, request.state.shop, id)
+            found["confirmation"] = exports.current_confirmation(conn, request.state.shop, id, found["document"]["primary_format"])
+            return result_response((200, found))
 
     @protected.put("/api/creations/{id}", response_model=CreationView)
     def save_creation(id: Id, body: Document, request: Request, key: Key, version: Version = None):

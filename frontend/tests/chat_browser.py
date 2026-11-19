@@ -207,7 +207,7 @@ def walk_desktop(browser, errors, product, inspiration):
     assert side.bounding_box()["x"] > thread.bounding_box()["x"] + thread.bounding_box()["width"], "wide: the poster has the right column"
     assert thread.locator(".chat-poster img").evaluate("e => e.complete && e.naturalWidth > 0 && e.src.includes('display=true')")
     both_themes(page, "result, desktop", "chat-result-1366")
-    # « Vérifier » is the editor's own review, with the photo; its approval turns the card into « Télécharger ».
+    # « Vérifier » is the editor's own review, with the photo; its approval turns the card into « Télécharger ou partager ».
     verify.click()
     expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
     assert chat.evaluate("e => e.inert")
@@ -218,7 +218,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
     expect(thread.locator(".chat-state")).to_have_text("Approuvée")
     expect(verify).to_have_count(0)
-    page.get_by_role("button", name="Télécharger", exact=True).click()
+    page.get_by_role("button", name="Télécharger ou partager", exact=True).click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
     expect(page.locator(".final-preview .points li", has_text=CONTENT)).to_have_count(1)
     page.get_by_role("button", name="Tout est conforme, confirmer").click()
@@ -470,7 +470,7 @@ def walk_changes(browser, errors, session, data):
     poster = page.url.split("#message-")[1]
     create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
     redo = thread.get_by_role("button", name="Refaire l’affiche")
-    verify, download = page.get_by_role("button", name="Vérifier", exact=True), page.get_by_role("button", name="Télécharger", exact=True)
+    verify, download = page.get_by_role("button", name="Vérifier", exact=True), page.get_by_role("button", name="Télécharger ou partager", exact=True)
     mods, toggle = side.locator(".mod"), side.get_by_role("button", name=re.compile("^Modifications"))
     items = lambda: page.evaluate(THREAD, poster)["items"]
     spent = lambda: [item for item in items() if item.get("spent")][-1]

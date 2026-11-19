@@ -7,6 +7,7 @@ from PIL import Image
 from sqlalchemy import text
 
 from affiche import assets
+from affiche.db import utc_now, write_tx
 from affiche.posters import exports, jobs, store, visuals
 from affiche.posters.models import FORMATS, Document, PriceBadge, Profile
 from affiche.posters.plans import Headline
@@ -87,6 +88,68 @@ def test_older_render_confirms_only_when_effective_format_unchanged(engine, sett
     with engine.connect() as conn:
         row, _ = exports.download(conn, settings, 1, result["confirmation_id"])
         assert row["source_revision"] == creation["revision"] and row["confirmed_revision"] == updated["revision"]
+
+
+def copy_row(conn, table, id, **changes):
+    """A copy of a row under a new id, written straight into the database as the smokes do: what the schema allows and the
+    interface does not make."""
+    row = dict(conn.execute(text(f"SELECT * FROM {table} WHERE id=:id"), {"id": id}).mappings().one()) | {"id": key()} | changes
+    conn.execute(text(f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join(':' + name for name in row)})"), row)
+    return row["id"]
+
+
+def save_price(engine, settings, value, price):
+    document = Document.model_validate(value["document"])
+    document.offer.price_ar = price
+    return store.save_creation(engine, settings.data_dir, 1, key(), value["id"], document, value["revision"])[1]
+
+
+def test_the_poster_read_names_only_the_confirmation_made_at_its_current_revision(engine, settings, creation):
+    """D-SHARE-001: current means confirmed_revision = current_revision, read from the confirmations, never the jobs."""
+    def current(primary="feed"):
+        with engine.connect() as conn:
+            return exports.current_confirmation(conn, 1, creation["id"], primary)
+
+    def priced(value, price):
+        return save_price(engine, settings, value, price)
+
+    assert current() is None
+    preview = render(engine, settings, creation)
+    # Undo: two saves back to the same image, then the earlier preview confirmed. It records the later revision: current.
+    back = priced(priced(creation, 450000), creation["document"]["offer"]["price_ar"])
+    confirmed = exports.confirm(engine, settings, 1, key(), creation["id"], back["revision"], confirm_request(preview))[1]
+    named = {"id": confirmed["confirmation_id"], "render_id": preview["id"], "format": "feed", "download_url": confirmed["download_url"]}
+    assert current() == named
+    assert current("story") == named  # the primary format unconfirmed: the only one confirmed
+    with write_tx(engine) as conn:
+        job = exports.render_row(conn, 1, preview["id"])["job_id"]
+        # More than 50 jobs after it, at the same revision: still named (the jobs list stops at 50).
+        for _ in range(51):
+            copy_row(conn, "poster_jobs", job, origin_revision=back["revision"], created_at=utc_now())
+        # A second format confirmed later at the same revision (the interface makes a locked format a separate poster).
+        square = copy_row(conn, "poster_renders", preview["id"], job_id=copy_row(conn, "poster_jobs", job), format="square")
+        later = copy_row(conn, "confirmations", confirmed["confirmation_id"], render_id=square, format="square", confirmed_at=utc_now())
+    assert current() == named  # the primary's first, though not the latest
+    assert current("square")["id"] == current("story")["id"] == later  # else the most recently confirmed
+    # Price edit: confirmed at one price, another price saved, no render: nothing is current.
+    priced(back, 460000)
+    assert current() is None and current("square") is None
+
+
+def test_a_preview_confirmed_before_an_undo_is_stale_and_its_same_revision_replay_is_not(engine, settings, creation):
+    """Another tab confirmed the preview; two saves later the same image is back. Confirming it again would name the old
+    confirmation, made at an older revision: refused as preview_stale. At its own revision the same id comes back."""
+    preview, replayed = render(engine, settings, creation), key()
+    first = exports.confirm(engine, settings, 1, replayed, creation["id"], creation["revision"], confirm_request(preview))
+    assert exports.confirm(engine, settings, 1, replayed, creation["id"], creation["revision"], confirm_request(preview)) == first
+    again = exports.confirm(engine, settings, 1, key(), creation["id"], creation["revision"], confirm_request(preview))
+    assert again[1] == first[1]  # another tab at the same revision: the same confirmation
+    back = save_price(engine, settings, save_price(engine, settings, creation, 450000), creation["document"]["offer"]["price_ar"])
+    with pytest.raises(store.Refused, match="preview_stale"):
+        exports.confirm(engine, settings, 1, key(), creation["id"], back["revision"], confirm_request(preview))
+    with engine.connect() as conn:
+        assert exports.current_confirmation(conn, 1, creation["id"], "feed") is None
+        assert conn.execute(text("SELECT count(*) FROM confirmations")).scalar_one() == 1
 
 
 def test_hidden_title_requires_scene_headline_with_the_current_title(engine, settings, creation, input_id):
@@ -403,6 +466,7 @@ def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settin
                                               "offer": {"title": "JBL Flip", "price_ar": 899000},
                                               "brand_selection": {"logo": False, "shop_name": False, "contact": False}})
     assert created.status_code == 201, created.text
+    assert "confirmation" not in created.json()  # the poster read's own field (D-SHARE-001), never a mutation's
     id, (width, height) = created.json()["id"], FORMATS[format]
 
     def act(path, body, revision):
@@ -422,6 +486,7 @@ def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settin
     poster = client.get(f"/api/creations/{id}").json()
     layout = poster["document"]["formats"][format]
     assert poster["revision"] == 2 and layout["scene"]["visual_id"] == visual_id  # the first scene is placed
+    assert poster["confirmation"] is None
     assert all(0 <= layer["y"] and layer["y"] + layer["height"] <= height for layer in layout["layers"])
     approved = post(client, f"/api/visuals/{visual_id}/decision",
                     {"action": "approve", "checks": {check: True for check in visuals.CHECKS}})
@@ -448,6 +513,15 @@ def test_every_format_goes_from_draft_to_download_at_its_own_size(client, settin
     assert client.get(item["thumbnail_url"].split("?")[0]).headers["cache-control"] == "no-store"  # no version: not kept
     thumbnail = Image.open(io.BytesIO(client.get(item["thumbnail_url"]).content))
     assert thumbnail.format == "JPEG" and abs(thumbnail.width / thumbnail.height - width / height) < .01
+    read = client.get(f"/api/creations/{id}").json()
+    assert read["confirmation"] == {"id": confirmed["confirmation_id"], "render_id": render["id"], "format": format,
+                                    "download_url": confirmed["download_url"]}
+    # Another price saved with no render: the confirmation is an earlier version, and the read names none.
+    document = read["document"] | {"offer": read["document"]["offer"] | {"price_ar": 450000}}
+    saved = client.put(f"/api/creations/{id}", json=document, headers={"If-Match": '"2"', "Idempotency-Key": key()})
+    assert saved.status_code == 200 and "confirmation" not in saved.json(), saved.text
+    assert client.get(f"/api/creations/{id}").json()["confirmation"] is None
+    assert client.get(f"/api/creations/{id}/versions/2").json().get("confirmation") is None
 
 
 @pytest.mark.parametrize("case", ["no_seal_layer", "shop_name", "contact_left", "price_not_drawn", "contact_not_drawn"])

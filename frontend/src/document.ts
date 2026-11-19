@@ -24,7 +24,9 @@ export interface PosterDocument {
   include: { logo: boolean; shop_name: boolean; contact: boolean }
   primary_format: Format; formats: Partial<Record<Format, Layout>>
 }
-export interface Creation { id: string; revision: number; status: 'active' | 'abandoned'; parent_creation_id: string | null; document: PosterDocument }
+// `confirmation`: only the poster read (GET /api/creations/{id}) gives it, the one made at its current revision (D-SHARE-001).
+export interface Creation { id: string; revision: number; status: 'active' | 'abandoned'; parent_creation_id: string | null; document: PosterDocument
+  confirmation?: { id: string; render_id: string; format: Format; download_url: string } | null }
 export interface Visual { id: string; plan_id?: string | null; replaces_visual_id?: string | null; status: 'pending_review' | 'approved' | 'rejected'; image_url: string; original_urls: string[]; style_reference_asset?: string | null; headline?: { title: string; brand?: string | null; brand_in_title?: true; subtitle?: string | null; shop_name?: string; contact?: string; signature_align?: 'left' | 'centre' | 'right'; price_ar?: number } | null; logo_disc?: { x: number; y: number; d: number } | null; logo_box?: Box; logo_footer_box?: Box; size: string; base_visual_id: string | null; instruction_fr?: string | null }
 
 // Documents are JSON values; this also accepts Vue proxies, unlike structuredClone.

@@ -76,6 +76,7 @@ export interface ChatAdapter {
   /** Reads the shop's credits again (a 402 says the balance shown was stale). */
   recount(): void
   review(visual: Visual): void
+  /** « Télécharger ou partager »: the poster's current confirmation; a file to check is rendered only without one. */
   download(): void
   /** « Lire les conditions »: the conditions of use read again and shown, unless the shop has accepted them meanwhile
    *  (then the credits are read again, and the card offers its tap). Nothing paid. */

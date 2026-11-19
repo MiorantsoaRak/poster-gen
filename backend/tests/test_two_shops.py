@@ -290,6 +290,9 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
 
     refused_as_nothing(attempts)
     assert b.get(f"/api/creations/{bid}").json()["revision"] == 1  # every attempt on B's own poster changed nothing
+    # The poster read's confirmation (D-SHARE-001) is the shop's own: A's names A's, B's own poster never names it.
+    assert a.get(f"/api/creations/{cid}").json()["confirmation"]["id"] == theirs["confirmation"]
+    assert b.get(f"/api/creations/{bid}").json()["confirmation"] is None
 
     # A chat read under the key A used is a fresh key for B (0013): a read of B's own, as with any new key.
     reused, fresh = (b.post("/api/reads", json=read_body, headers={"Idempotency-Key": k}) for k in (read_key, key()))

@@ -2344,7 +2344,12 @@ def run():
                                     raise
                                 time.sleep(.25)
                         # The files load but the application's own process does not answer: a French message with a retry.
+                        # A fresh tab's case: the first answer (signed out) binds this tab to nobody (D-MULTI-SHOP-007), and
+                        # a tab bound to nobody shows the sign-in form whatever the service says. Wait for that answer, then
+                        # forget the binding, so the reload below is a fresh page whichever finished first.
+                        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
                         page.route("**/api/session", lambda route: route.fulfill(status=503, content_type="application/json", body='{"error":{"code":"service_down","message_fr":"Le service est momentanément indisponible.","retryable":true}}'))
+                        page.evaluate("sessionStorage.removeItem('affiche.bound')")
                         page.reload()
                         expect(page.get_by_role("alert")).to_contain_text("momentanément indisponible")
                         expect(page.get_by_label("Mot de passe", exact=True)).to_have_count(0)

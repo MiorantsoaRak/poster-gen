@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, proxyRefs, reactive, ref, shallowRef, watch } from 'vue'
 import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
+import { presentedAsCurrent } from './share'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
@@ -333,7 +334,9 @@ let keptAlign: 'left' | 'centre' | 'right' | null = null
 let keptFrom: string | null = null
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
-const finalPreview = ref<any>(null), confirmedDownload = ref(''), previewLoaded = ref(false)
+// The final panel's preview: one render's metadata (its id, source revision, image, confirmed `download_url` or null) and
+// whether its own image has `loaded`. Replaced as a whole by openFinalPreview, never patched from another preview.
+const finalPreview = ref<any>(null)
 const finalPoints = { framing: 'Le produit est entier, bien cadré et dégagé du texte', content: 'Tous les textes sont exacts : le titre, le prix, et chaque mot, chiffre ou caractéristique ajouté par l’IA', identity: 'Le logo et les détails de la boutique sont corrects, sans chevauchement avec le titre, le produit ou le prix', readability: 'Tous les éléments sont lisibles' }
 const proposal = ref<any>(null), effect = ref<any>(null), polish = ref(''), acknowledgeContent = ref(false), previewPolish = ref(false)
 const effectSources = ref<Record<string, string>>({})
@@ -580,6 +583,8 @@ async function importMissingProfile() {
 type View = 'opening' | 'accueil' | 'create' | 'posters' | 'styles' | 'credits' | 'compte'
 const view = ref<View>('opening')
 const routeRetry = ref<string | null>(null)
+// The error line's « Réessayer » for the error it was made for (`text`); any action clears it (perform).
+const retry = ref<{ text: string; run: () => void } | null>(null)
 let creatorReady = false
 const VIEWS: Record<string, View> = { accueil: 'accueil', credits: 'credits', compte: 'compte', affiches: 'posters', styles: 'styles' }
 type Start = 'chat' | 'steps'
@@ -745,6 +750,8 @@ async function openFromList(id: string) {
   try { await openCreation(id, origin, preferChat.value) } catch (reason) {
     if (origin !== 'credits') chatting.value = false
     if (reason instanceof ApiError && reason.status === 404) { home.value?.refresh(); throw new Error('Cette affiche n’est plus disponible.') }
+    // « Réessayer » opens the same poster again (a Home or « Mes affiches » row: no address to go back to).
+    if (reason instanceof Error) retry.value = { text: reason.message, run: () => void perform(() => openFromList(id)) }
     throw reason
   }
 }
@@ -1027,6 +1034,13 @@ const sources = computed(() => Object.fromEntries([
   ...Object.values(doc.value?.formats ?? {}).flatMap(layout => layout.layers.filter(layer => layer.kind !== 'text').map(layer => [(layer as any).asset, preparedUrl(`/api/assets/${(layer as any).asset}`)])),
 ]))
 const saveState = computed(() => { savingTick.value; return saver?.state ?? 'saved' })
+// The final panel's one rule (share.ts), for every way it opens: the image beside the live price and the « ready » wording
+// only for a render of the saved revision, or the confirmation a poster read named at it, with nothing waiting to be saved.
+// An edit flips it at once (savingTick). `observed`: the open poster's last read, its revision and the confirmation it named
+// (null included): a read ahead of the saver means another tab saved, and nothing is current here.
+const observed = ref<{ revision: number; render_id: string | null } | null>(null)
+const remember = (read: Creation) => { observed.value = { revision: read.revision, render_id: read.confirmation?.render_id ?? null } }
+const earlier = computed(() => { savingTick.value; return !!finalPreview.value && !presentedAsCurrent(finalPreview.value, saver?.revision ?? 0, !!saver?.unsaved, observed.value) })
 const saveLabel = computed(() => ({ saved: 'Enregistré', dirty: 'Modifications en attente', saving: 'Enregistrement…', failed: 'Échec de l’enregistrement', conflict: 'Une autre version existe' }[saveState.value]))
 const shownPrice = (value: number) => value.toLocaleString('fr-FR')
 function tidyPrice() { try { priceText.value = shownPrice(parsePrice(priceText.value)) } catch { /* the error is already beside the field */ } }
@@ -1065,7 +1079,7 @@ async function perform(action: () => Promise<void>) {
   const working = started && performance.now() - started.at < 600 ? started.element : null
   started = null
   if (busy.value) return
-  busy.value = true; error.value = ''; notice.value = ''; fieldError.value = null
+  busy.value = true; error.value = ''; notice.value = ''; fieldError.value = null; retry.value = null; routeRetry.value = null
   if (working) markWorking(working)
   try { await action() } catch (reason) {
     if (reason instanceof ApiError && reason.code === 'no_credit') void readBalance()  // the balance shown was stale
@@ -1143,7 +1157,8 @@ watch(() => [creation.value?.id, !!currentVisual.value?.headline, JSON.stringify
   const id = creation.value?.id
   if (id) currentVisual.value?.headline ? forgetWords(id) : keepWords(id)
 })
-async function adopt(result: Creation, origin?: string, asChat = chatting.value) {
+// `final`: false reloads the poster without opening its final panel (openFinal, after another tab's save).
+async function adopt(result: Creation, origin?: string, asChat = chatting.value, final = true) {
   // Steps or tabs depend on the versions: for another poster they are read before the editor shows it.
   const opening = creation.value?.id !== result.id
   const known = opening ? (await api<{ items: Visual[] }>(`/api/creations/${result.id}/visuals`)).items : visuals.value
@@ -1158,9 +1173,9 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value)
     refinement.value = ''; polish.value = ''
   }
   if (opening) { group.value = 'textes'; visited.value = ['textes']; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false; formatAsk.value = null }
-  finalPreview.value = null; confirmedDownload.value = ''; previewLoaded.value = false; priceError.value = ''
+  finalPreview.value = null; priceError.value = ''
   clearTimeout(pollTimer); job.value = null; review.value = null; proposal.value = null; effect.value = null; previewPolish.value = false
-  saver?.dispose(); creation.value = result; visuals.value = known; doc.value = copy(result.document); priceText.value = shownPrice(result.document.offer.price_ar)
+  saver?.dispose(); creation.value = result; remember(result); visuals.value = known; doc.value = copy(result.document); priceText.value = shownPrice(result.document.offer.price_ar)
   selected.value = result.document.formats[result.document.primary_format]!.layers.find(layer => layer.role === 'title')?.id ?? null
   // This poster's own entry only, and before anything waits: the watcher above would first write the blank words over it.
   if (opening && !currentVisual.value?.headline) {
@@ -1184,9 +1199,16 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value)
   await refreshEffects(); await nextTick()
   // A jump, not the page's smooth scroll: for a moment the new poster sat under the top bar, scrolled from the intake form.
   if (opening) window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
-  const jobs = await api<{ items: Job[] }>(`/api/creations/${result.id}/jobs`)
-  const previousRender = jobs.items.find(item => item.kind === 'render' && item.status === 'succeeded')
-  if (previousRender) openFinalPreview(await api(`/api/renders/${previousRender.result_ref}`))
+  let jobs: { items: Job[] }
+  try { jobs = await api<{ items: Job[] }>(`/api/creations/${result.id}/jobs`) }
+  catch (reason) {
+    // The poster is open, its work unknown: « Réessayer » reads the poster and its jobs again (the address is already its).
+    if (creation.value?.id !== result.id || !(reason instanceof Error)) throw reason
+    error.value = reason.message
+    retry.value = { text: reason.message, run: () => void perform(() => reloadKeeping(result.id)) }
+    return
+  }
+  if (final) await openFinal(result.id, result.revision, false, { confirmation: result.confirmation ?? null, latest: latestRender(jobs.items) })
   const active = jobs.items.find(item => ['queued', 'running'].includes(item.status))
   const previousProposal = jobs.items.find(item => item.kind === 'text_patch' && item.status === 'succeeded')
   if (previousProposal) proposal.value = await api(`/api/text-proposals/${previousProposal.result_ref}`)
@@ -1255,7 +1277,7 @@ function askRemove(item: LibraryItem) {
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
     run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
 }
-async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; confirmedDownload.value = ''; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
+async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
 async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
@@ -1263,6 +1285,17 @@ async function refreshVisuals(quiet = false) {
   if (creation.value?.id === id) visuals.value = result.items
 }
 async function discardAndReload() { await adopt(await api<Creation>(`/api/creations/${creation.value!.id}`)) }
+// The poster and its jobs read again without losing an edit: the saved poster replaces the editor's only if the same saver
+// is still clean at the revision it had when the read left; else the edit is saved first and the poster read again.
+async function reloadKeeping(id: string) {
+  while (creation.value?.id === id) {
+    await flush()
+    const held = saver!, revision = held.revision
+    const read = await api<Creation>(`/api/creations/${id}`)
+    if (creation.value?.id !== id) return
+    if (saver === held && !held.unsaved && held.revision === revision) return adopt(read)
+  }
+}
 function edit(change: (document: PosterDocument) => void, mergeKey = '') {
   if (!doc.value) return
   try {
@@ -1450,8 +1483,16 @@ async function poll() {
     if (job.value.status === 'succeeded') {
       const completed = job.value
       if (completed.kind === 'render') {
-        const result = await api(`/api/renders/${completed.result_ref}`, { quiet: true })
+        let result: any = await api(`/api/renders/${completed.result_ref}`, { quiet: true })
+        // Confirmed already (a job reused): the poster read says whether it is still the poster's file. Saved elsewhere since
+        // (a revision ahead): nothing is current here, and with nothing waiting to be saved the saved poster is reloaded, as
+        // the chat's button does. Another confirmation of this revision is the poster's (two formats): that one is shown.
+        const read = result.download_url ? await api<Creation>(`/api/creations/${creationId}`, { quiet: true }) : null
+        const ahead = !!read && read.revision > (saver?.revision ?? 0)
+        if (read?.confirmation && !ahead && read.confirmation.render_id !== result.id) result = await api(`/api/renders/${read.confirmation.render_id}`, { quiet: true })
         if (stale()) return
+        if (read) remember(read)
+        if (ahead && !saver?.unsaved) { await adopt(read!, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return }
         openFinalPreview(result)
       }
       else if (completed.kind === 'text_patch' || completed.kind === 'text_texture') {
@@ -1562,7 +1603,44 @@ async function decideEffect(action: 'apply' | 'reject') {
   effect.value = null; previewPolish.value = false
 }
 function openFinalPreview(value: any) {
-  finalPreview.value = value; previewLoaded.value = false; confirmedDownload.value = value.download_url ?? ''
+  finalPreview.value = { ...value, loaded: false }
+}
+// Only the displayed preview's own image marks it loaded (a replaced <img> may still finish loading).
+function previewLoad(event: Event) {
+  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) finalPreview.value.loaded = true
+}
+// A poster opens on its current confirmation's own render (D-SHARE-001), read-only, never with a render request. Without
+// one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's button (`ask`) asks for a
+// render. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
+// That read naming a saved revision other than this tab's reloads the poster and opens and asks for nothing. A failed read
+// says OPEN_FAILED, with « Réessayer » repeating the reads, never a render. An answer once another poster or saved revision
+// is open changes nothing.
+const OPEN_FAILED = 'L’affiche confirmée n’a pas pu être ouverte.'
+const CHANGED_ELSEWHERE = 'Cette affiche a été modifiée ailleurs : la version enregistrée a été rechargée. Réessayez.'
+const latestRender = (items: Job[]) => items.find(item => item.kind === 'render' && item.status === 'succeeded')?.result_ref ?? null
+async function openFinal(id: string, revision: number, ask: boolean, known?: { confirmation: Creation['confirmation']; latest: string | null }) {
+  const same = () => creation.value?.id === id && saver?.revision === revision
+  let found: Creation | undefined, file: any = null
+  try {
+    if (!known) {
+      found = await api<Creation>(`/api/creations/${id}`, { quiet: true })
+      if (found.revision === revision) known = { confirmation: found.confirmation ?? null,
+        latest: ask ? null : latestRender((await api<{ items: Job[] }>(`/api/creations/${id}/jobs`)).items) }
+    }
+    const shown = known && (known.confirmation?.render_id ?? known.latest)
+    if (shown && same()) file = await api(`/api/renders/${shown}`)
+  } catch {
+    if (!same()) return
+    error.value = OPEN_FAILED
+    retry.value = { text: OPEN_FAILED, run: () => void perform(async () => { if (creation.value?.id === id) { await flush(); await openFinal(id, saver!.revision, ask) } }) }
+    return
+  }
+  if (!same()) return
+  // Saved elsewhere since this tab read it: its image and price may be another revision's. Unsaved edits meet the conflict.
+  if (!known) { await flush(); await adopt(found!, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return }
+  if (found) remember(found)
+  if (file) openFinalPreview(file)
+  else if (ask) await renderFinal()
 }
 async function renderFinal() {
   await flush()
@@ -1571,12 +1649,14 @@ async function renderFinal() {
 }
 async function confirmFinal() {
   await flush()
-  const result: any = await mutation(`/api/creations/${creation.value!.id}/confirmations`, {
-    render_id: finalPreview.value.id, png_sha256: finalPreview.value.png_sha256, // One confirmation covers every listed point and warning (ADR-051); the server still requires each one.
+  const poster = creation.value!.id, shown = finalPreview.value
+  const result: any = await mutation(`/api/creations/${poster}/confirmations`, {
+    render_id: shown.id, png_sha256: shown.png_sha256, // One confirmation covers every listed point and warning (ADR-051); the server still requires each one.
     checks: Object.fromEntries(Object.keys(finalPoints).map(key => [key, true])),
-    acknowledged_warning_ids: finalPreview.value.warnings.map((issue: LayoutIssue) => issue.id),
+    acknowledged_warning_ids: shown.warnings.map((issue: LayoutIssue) => issue.id),
   }, saver!.revision)
-  confirmedDownload.value = result.download_url
+  // Its file, on its own preview only: another one opened meanwhile (a render job ending) is not confirmed by this answer.
+  if (creation.value?.id === poster && finalPreview.value === shown) shown.download_url = result.download_url
 }
 // The chosen version's thumbnail works until its scene is drawn; the canvas keeps the previous one meanwhile.
 const choosing = ref<string | null>(null)
@@ -1723,7 +1803,8 @@ const chat: ChatAdapter = {
   follow: found => follow(found as Job, true),
   recount: () => void readBalance(),
   review: visual => { review.value = visual; resetChecks() },
-  download: () => { void perform(renderFinal) },
+  // « Télécharger ou partager »: the current confirmation if there is one; a file to check is rendered only without.
+  download: () => { void perform(async () => { await flush(); await openFinal(creation.value!.id, saver!.revision, true) }) },
   conditions: () => { void readTerms() },
 }
 function zoomScene(event: Event) {
@@ -1926,7 +2007,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p><p class="help"><a href="/donnees.html" class="data-link">Vos données</a></p></form>
   </main>
   <main v-if="loaded" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }">
-    <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
+    <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button v-else-if="retry && retry.text === error" class="text-button" type="button" @click="retry.run()">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
@@ -2135,17 +2216,17 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="row"><button v-if="terms" class="primary" :disabled="accepting" @click="acceptTerms">J’accepte</button><button v-else class="primary" @click="retryTerms">Réessayer</button><button class="secondary" @click="later">Plus tard</button></div>
     </div></div>
     <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null">
-      <div class="section-heading"><div><h2 id="final-title">{{ confirmedDownload ? 'Votre affiche est prête' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ confirmedDownload ? 'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
+      <div class="section-heading"><div><h2 id="final-title">{{ earlier ? finalPreview.download_url ? 'Version confirmée précédente' : 'Aperçu d’une version précédente' : finalPreview.download_url ? finalPreview.loaded ? 'Votre affiche est prête' : 'Ouverture du fichier confirmé…' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ earlier ? finalPreview.download_url ? 'Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager.' : 'Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle.' : finalPreview.download_url ?'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
-        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoaded = true" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'; previewLoaded = false" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
+        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="error = 'Le fichier d’aperçu ne peut pas être chargé.'" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
         <div>
-          <p v-if="confirmedDownload" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
-          <dl class="facts"><div><dt>Format</dt><dd>{{ finalPreview.width }} × {{ finalPreview.height }} px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
-          <template v-if="!confirmedDownload">
+          <p v-if="finalPreview.download_url && !earlier && finalPreview.loaded" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
+          <dl class="facts"><div><dt>Format</dt><dd>{{ finalPreview.width }} × {{ finalPreview.height }} px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div v-if="!earlier && finalPreview.loaded"><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
+          <template v-if="!finalPreview.download_url && !earlier">
           <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
-          <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !previewLoaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!previewLoaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
+          <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !finalPreview.loaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!finalPreview.loaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
           </template>
-          <div v-if="confirmedDownload" class="after"><a :href="confirmedDownload" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+          <div v-if="finalPreview.download_url || earlier" class="after"><a v-if="finalPreview.download_url" :href="finalPreview.download_url" class="download-button" download><Icon n="download" />Télécharger le PNG confirmé</a><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
         </div>
       </div>
     </section>
