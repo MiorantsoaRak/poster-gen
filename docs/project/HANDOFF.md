@@ -2,11 +2,38 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
+## Interface polish — Claude, 2026-11-20 (READ FIRST)
+
+No work order or ClickUp ticket: the user's own project. Goal: the shop's interface and the operator's page read as one product in the Signal identity, with one frame on every screen and no text cut or faint (ADR-122; [requirements](requirements/interface-polish.md) v2, [design](designs/interface-polish.md) v2).
+
+**State: T-POLISH-001 to 005 are done and committed locally on `main`; NOT pushed, NOT deployed** (`git rev-list --count origin/main..main` says how far ahead). **Release 1 itself is live:** the user deployed it on 2026-11-20 (revision `2944ea0`, schema 0017, started 09:30 UTC); Claude read it through the operator dashboard in Chrome the same day: 30 offered credits granted to `originalphone`, the operator password set, 7 posters kept, no failed job. The polish is NOT on the live site.
+
+**What the polish changed** (the proof: [reviews/design-after-2026-11-20.md](reviews/design-after-2026-11-20.md), against [the baseline](reviews/design-baseline-2026-11-20.md)):
+- The name and the mark: « Doka Studio » in the tab and the manifest, the kit's icons, the operator's mark (in its own stylesheet: its page still asks the server for nothing but its own files).
+- The amber accent is gone: `--signal` (`#f2c744`) is a fill, always under `--on-signal`; `--hue` is every ring, border and progress mark (an ochre, `#8f6b00`, in the light theme). The main button stays charcoal; the dark greys stay.
+- One frame for Accueil, Mes affiches, Styles, Mes crédits and Mon compte: `.page-title`, `--page: 860px`, a 16 px phone gutter. The phone's bottom bar shows « Affiches » and the credits as a number alone; the accessible names keep the full words. One hidden title for the chat route.
+- `DESIGN.md` at the root records the system as built. `frontend/tests/design_capture.py` takes the 102 captures again.
+
+**Exact next step: the user's.** Nothing is in progress.
+1. Look at the polish locally before any deploy: from `frontend/`, `corepack npm@10 run build`; from `backend/`, `uv run python ../frontend/tests/design_capture.py look`, then open `outputs/design-capture/look/sheets/`.
+2. Decide the six points of « For the owner » in the after report (the typeface, a yellow main button, the dark ground, « Affiches » and the bare number in the phone bar, two new titles for screen readers, the name typed beside the mark).
+3. Then, on his word only: push, and deploy as an ordinary release (`cd deploy; pyinfra 89.167.56.26 deploy.py --user deploy -y`; no migration, so the rehearsal has nothing to run; never `OPERATOR_BOOTSTRAP` again).
+4. Still his from Release 1: the purchase text (the dashboard's Service screen: none set, shops read the fallback with his e-mail address), the phone sheet of « Partager » on the live site before inviting shops (ADR-121), the French texts.
+
+**Landmines:**
+- The smokes share ports 5173 and 8000 and `frontend/dist`: one at a time, and never while `design_capture.py` runs. A subagent told to wait for the lead's smokes with a background watcher stayed idle 45 minutes: make it wait in the foreground.
+- Tests now read stylesheets as text (`vite.config.ts`, `test: { css: true }`): before, Vitest handed them over empty, and `admin.test.ts`'s isolation rule had never seen `admin.css`.
+- `--hue` is a line, `--signal` a fill: a yellow line on paper is 1.4:1. `check_marks` and `check_contrast` in `browser_smoke.py` measure what is painted; when one fails on a changed screen, fix the CSS.
+- A page title takes the focus on arrival; its underline needs `:root[data-keys]` (set in `main.ts` on a key press). Without it every page opened directly shows an underlined title: a browser counts a script's focus as the keyboard's until the first tap.
+- Review state: the design's v2 was not reviewed again after v1's REJECT; the last fixes of T-POLISH-002 and 003 and the lead's two fixes in T-POLISH-005 were not reviewed by Codex; T-POLISH-001 and 004 were not reviewed as code.
+- `.impeccable/design.json` (the sidecar of `DESIGN.md`) and `PRODUCT.md` are uncommitted: they sit with the other session's files. Claude edited `PRODUCT.md` on 2026-11-20 (`/impeccable init`: Release 1 live, « Partager », the conditions, the channels).
+- Proposed, not confirmed: T-POLISH-BORDERS (control borders at about 1.2:1), T-POLISH-MOTION (what still moves under reduced motion, forced colours).
+
 ## Release 1 « Invitation » — Claude, 2026-11-19 (READ FIRST for Release 1)
 
 No work order or ClickUp ticket: the user's own project. Goal of the release: open Doka Studio to a few invited shops as a prepaid service ([ROADMAP.md](ROADMAP.md), ADR-105).
 
-**Every build task of Release 1 is done and pushed to `origin/main` (2026-11-19, on the user's "push"); NOT deployed** (`git rev-list --count origin/main..main` shows any later local commit):
+**Every build task of Release 1 is done, pushed to `origin/main` (2026-11-19) and deployed by the user on 2026-11-20** (see the section above for what Claude read on the live site):
 - Multi-shop (ADR-108), prepaid balance (ADR-109), T-SHOP-REPLACE (migration 0015).
 - Admin dashboard core T-ADMIN-001 to 007 (ADR-110, migration 0016) at `/admin/`. T-ADMIN-008 to 010 come after Release 1 (ADR-111).
 - Conditions of use T-TERMS-001 to 004 (ADR-112, migration 0017): acceptance, the server gate, the dialog, the warning, « Vos données ».
