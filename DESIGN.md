@@ -2,87 +2,77 @@
 name: Doka Studio
 description: "Vos produits au premier plan."
 colors:
-  # The Signal kit (docs/project/brand/doka-studio-signal/palette.json). In the shops' app --signal is signal-yellow
-  # and --on-signal is charcoal, in both themes.
+  # The Signal kit (docs/project/brand/doka-studio-signal/palette.json). --signal is signal-yellow and --on-signal is
+  # charcoal, in both themes and in both interfaces.
   signal-yellow: "#f2c744"
   charcoal: "#20201d"
   warm-paper: "#f5f1e8"
+  # --signal-hover: the yellow mixed 86 % toward charcoal, written as a value (style.css).
+  signal-hover: "#d5b03f"
   # Hard-coded behind an owner's original photo and behind the poster canvas (style.css: #fff).
   photo-mat: "#ffffff"
-  # Shops' app, light theme: :root[data-theme=clair] in frontend/src/style.css
+  # Light theme: :root[data-theme=clair] in frontend/src/style.css; the first value of each light-dark() in admin.css.
   light-ground: "#f5f1e8"
-  light-surface: "#ffffff"
-  light-raised: "#ebe5dc"
-  light-line: "#e2dacf"
-  light-control: "#c9c0b4"
+  light-surface: "#fffdf8"
+  light-raised: "#ece6d8"
+  light-line: "rgb(32 32 29 / .10)"
+  light-control: "#7d786d"
+  light-edge: "rgb(32 32 29 / .20)"
+  light-active: "rgb(32 32 29 / .08)"
+  light-side-bg: "rgb(32 32 29 / .045)"
   light-text: "#20201d"
-  light-muted: "#5c554d"
-  light-faint: "#67605a"
+  light-muted: "#4d4940"
+  light-faint: "#5f5a50"
+  light-signal-edge: "#d9b032"
   light-hue: "#8f6b00"
   light-accent-soft: "#fcf1d0"
   light-accent-ink: "#7a5c00"
   light-ok: "#145c37"
   light-ok-bg: "#e2f2e8"
   light-warn: "#6b4600"
-  light-warn-bg: "#fff1d6"
+  light-warn-bg: "#fdf0cf"
   light-bad: "#a3271f"
   light-bad-bg: "#fbeae8"
   light-invert: "#20201d"
   light-invert-ink: "#ffffff"
   light-scrim: "#15130f99"
-  light-glass: "rgb(255 255 255 / .86)"
-  light-glass-panel: "rgb(255 255 255 / .74)"
-  light-glass-field: "rgb(255 255 255 / .62)"
-  light-glass-strong: "rgb(255 255 255 / .92)"
-  light-glass-line: "rgb(255 255 255 / .75)"
-  light-glass-hi: "rgb(255 255 255 / .96)"
-  light-warn-glass: "rgb(255 241 214 / .8)"
+  light-glass-strong: "rgb(255 253 248 / .86)"
+  light-patch-1: "rgb(242 199 68 / .28)"
+  light-patch-2: "rgb(222 204 168 / .55)"
+  light-patch-3: "rgb(255 255 255 / .7)"
   light-bubble: "#e4dfd7"
-  light-patch-1: "#f7f5f1"
-  light-patch-2: "#f2efe9"
-  light-patch-3: "#eae6df"
-  # Shops' app, dark theme: :root in frontend/src/style.css
-  dark-ground: "#100f0e"
-  dark-surface: "#1b1a18"
-  dark-raised: "#2a2825"
-  dark-line: "#302d2a"
-  dark-control: "#57524c"
+  # Dark theme: :root in frontend/src/style.css; the second value of each light-dark() in admin.css.
+  dark-ground: "#20201d"
+  dark-surface: "#2b2b27"
+  dark-raised: "#36362f"
+  dark-line: "rgb(245 241 232 / .10)"
+  dark-control: "#8f8b80"
+  dark-edge: "rgb(245 241 232 / .22)"
+  dark-active: "rgb(245 241 232 / .10)"
+  dark-side-bg: "rgb(0 0 0 / .22)"
   dark-text: "#f5f1e8"
-  dark-muted: "#bdb6ad"
-  dark-faint: "#a39b91"
+  dark-muted: "#d6d0c3"
+  dark-faint: "#c2bcaf"
+  dark-signal-edge: "#f2c744"
   dark-hue: "#f2c744"
   dark-accent-soft: "#3b3113"
   dark-accent-ink: "#f8d97a"
   dark-ok: "#8fddb0"
-  dark-ok-bg: "#16261d"
-  dark-warn: "#e9b458"
-  dark-warn-bg: "#2a2212"
-  dark-bad: "#ef7d74"
-  dark-bad-bg: "#331a18"
+  dark-ok-bg: "#1d3327"
+  dark-warn: "#f0c26a"
+  dark-warn-bg: "#3a2f14"
+  dark-bad: "#ff9a8f"
+  dark-bad-bg: "#3d2320"
   dark-invert: "#f5f1e8"
   dark-invert-ink: "#100f0e"
   dark-scrim: "#000000cc"
-  dark-glass: "rgb(27 26 24 / .86)"
-  dark-glass-panel: "rgb(30 28 26 / .58)"
-  dark-glass-field: "rgb(255 255 255 / .07)"
-  dark-glass-strong: "rgb(70 66 62 / .7)"
-  dark-glass-line: "rgb(255 255 255 / .1)"
-  dark-glass-hi: "rgb(74 70 65 / .72)"
-  dark-warn-glass: "rgb(42 34 18 / .8)"
+  dark-glass-strong: "rgb(43 43 39 / .88)"
+  dark-patch-1: "rgb(242 199 68 / .16)"
+  dark-patch-2: "rgb(110 98 70 / .34)"
+  dark-patch-3: "rgb(255 255 255 / .04)"
   dark-bubble: "#34312d"
-  dark-patch-1: "#191816"
-  dark-patch-2: "#121110"
-  dark-patch-3: "#0d0c0b"
-  # Operator's page: frontend/src/admin/admin.css (ground and text are warm-paper / charcoal, swapped in dark)
-  operator-light-surface: "#fffdf8"
-  operator-light-muted: "#57534a"
-  operator-light-line: "#cfc7b6"
-  operator-light-bad: "#a3271f"
-  operator-dark-surface: "#2b2b27"
-  operator-dark-muted: "#c9c3b6"
-  operator-dark-line: "#55534c"
-  operator-dark-bad: "#ff9a8f"
-  operator-backdrop: "rgb(0 0 0 / .55)"
+  # Console only (admin.css): the drawer's scrim and the dialog's backdrop, both themes.
+  console-scrim: "rgb(21 19 15 / .55)"
 typography:
   page-title:
     fontFamily: "Figtree, system-ui, sans-serif"
@@ -106,11 +96,17 @@ typography:
     fontSize: "14px"
     fontWeight: 700
     lineHeight: "20px"
-  figure:
+  top-title:
     fontFamily: "Figtree, system-ui, sans-serif"
-    fontSize: "2rem"
-    fontWeight: 700
-    lineHeight: 1.2
+    fontSize: "17px"
+    fontWeight: 750
+    lineHeight: "24px"
+  chat-question:
+    fontFamily: "Figtree, system-ui, sans-serif"
+    fontSize: "clamp(26px, 3.4vw, 32px)"
+    fontWeight: 750
+    lineHeight: 1.15
+    letterSpacing: "-0.02em"
   body:
     fontFamily: "Figtree, system-ui, sans-serif"
     fontSize: "14px"
@@ -146,39 +142,55 @@ typography:
     fontSize: "13px"
     fontWeight: 400
     lineHeight: "19px"
+  badge:
+    fontFamily: "Figtree, system-ui, sans-serif"
+    fontSize: "12.5px"
+    fontWeight: 700
   nav-label-phone:
     fontFamily: "Figtree, system-ui, sans-serif"
     fontSize: "12.5px"
     fontWeight: 650
     lineHeight: "16px"
-  operator-body:
-    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+  console-body:
+    fontFamily: "Figtree, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
     fontSize: "16px"
     fontWeight: 400
     lineHeight: 1.5
-  operator-heading-1:
-    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "24px"
+  console-heading-1:
+    fontFamily: "Figtree, system-ui, sans-serif"
+    fontSize: "26px"
+    fontWeight: 800
     lineHeight: "32px"
-  operator-heading-2:
-    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-    fontSize: "18px"
+    letterSpacing: "-0.015em"
+  console-heading-2:
+    fontFamily: "Figtree, system-ui, sans-serif"
+    fontSize: "17px"
+    fontWeight: 750
     lineHeight: "24px"
+  console-figure:
+    fontFamily: "Figtree, system-ui, sans-serif"
+    fontSize: "28px"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "-0.01em"
 rounded:
   text-button: "4px"
   poster: "5px"
-  operator: "8px"
-  thumb: "10px"
   version-mark: "9px"
+  thumb: "10px"
   chip: "12px"
+  nav-row: "12px"
   chat-poster: "14px"
-  operator-dialog: "12px"
+  recent-row: "14px"
   field: "16px"
   tile: "18px"
   group: "20px"
-  composer: "22px"
+  console-card: "20px"
   card: "24px"
+  composer: "24px"
+  console-dialog: "24px"
   dialog: "28px"
+  frame: "28px"
   pill: "999px"
 spacing:
   gutter: "20px"
@@ -187,35 +199,40 @@ spacing:
   stack-gap: "14px"
   page: "860px"
   main-max: "1480px"
-  operator-page: "960px"
+  sidebar: "288px"
+  rail: "76px"
+  frame-gap: "12px"
+  drawer: "min(320px, 86vw)"
+  console-column: "860px"
+  console-column-wide: "1240px"
 components:
   # Values resolve to the light theme; in the dark theme read each light- key as its dark- twin.
   button-primary:
-    backgroundColor: "{colors.light-invert}"
-    textColor: "{colors.light-invert-ink}"
+    backgroundColor: "{colors.signal-yellow}"
+    textColor: "{colors.charcoal}"
     typography: "{typography.button-main}"
     rounded: "{rounded.pill}"
     padding: "0 20px"
     height: "48px"
+  button-primary-hover:
+    backgroundColor: "{colors.signal-hover}"
   button-primary-disabled:
     backgroundColor: "{colors.light-raised}"
     textColor: "{colors.light-faint}"
   button-secondary:
-    backgroundColor: "{colors.light-glass-field}"
     textColor: "{colors.light-text}"
     typography: "{typography.button-main}"
     rounded: "{rounded.pill}"
     padding: "0 20px"
     height: "48px"
   button-default:
-    backgroundColor: "{colors.light-glass-field}"
     textColor: "{colors.light-text}"
     typography: "{typography.button}"
     rounded: "{rounded.pill}"
     padding: "0 20px"
     height: "40px"
   button-default-hover:
-    backgroundColor: "{colors.light-raised}"
+    backgroundColor: "{colors.light-active}"
   button-ghost:
     textColor: "{colors.light-text}"
     rounded: "{rounded.pill}"
@@ -235,14 +252,14 @@ components:
     rounded: "{rounded.pill}"
     size: "44px"
   field:
-    backgroundColor: "{colors.light-glass-field}"
+    backgroundColor: "{colors.light-surface}"
     textColor: "{colors.light-text}"
     typography: "{typography.field}"
     rounded: "{rounded.field}"
     padding: "10px 16px"
     height: "48px"
   chip:
-    backgroundColor: "{colors.light-glass-field}"
+    backgroundColor: "{colors.light-surface}"
     textColor: "{colors.light-muted}"
     rounded: "{rounded.chip}"
     padding: "0 15px"
@@ -251,442 +268,473 @@ components:
     backgroundColor: "{colors.light-accent-soft}"
     textColor: "{colors.light-accent-ink}"
     rounded: "{rounded.pill}"
+  badge:
+    backgroundColor: "{colors.light-raised}"
+    textColor: "{colors.light-muted}"
+    typography: "{typography.badge}"
+    rounded: "{rounded.pill}"
+    padding: "0 10px"
+    height: "24px"
+  badge-ok:
+    backgroundColor: "{colors.light-ok-bg}"
+    textColor: "{colors.light-ok}"
+  badge-warn:
+    backgroundColor: "{colors.light-warn-bg}"
+    textColor: "{colors.light-warn}"
+  badge-bad:
+    backgroundColor: "{colors.light-bad-bg}"
+    textColor: "{colors.light-bad}"
   segment-selected:
     backgroundColor: "{colors.light-invert}"
     textColor: "{colors.light-invert-ink}"
     rounded: "{rounded.pill}"
     height: "38px"
-  nav-link:
+  side-link:
     textColor: "{colors.light-muted}"
+    rounded: "{rounded.nav-row}"
+    padding: "0 12px"
+    height: "40px"
+  side-link-current:
+    backgroundColor: "{colors.light-active}"
+    textColor: "{colors.light-text}"
+  credits-pill:
+    textColor: "{colors.light-text}"
     rounded: "{rounded.pill}"
     padding: "0 14px"
-    height: "40px"
-  nav-link-current:
-    backgroundColor: "{colors.light-glass-field}"
-    textColor: "{colors.light-text}"
-  nav-item-phone:
+    height: "44px"
+  phone-bar-item:
     textColor: "{colors.light-muted}"
     typography: "{typography.nav-label-phone}"
     rounded: "{rounded.field}"
-    padding: "0 4px"
+    padding: "0 2px"
     height: "58px"
-  nav-icon-phone-current:
+  phone-bar-icon-current:
     backgroundColor: "{colors.light-accent-soft}"
     textColor: "{colors.light-accent-ink}"
     rounded: "{rounded.pill}"
     width: "58px"
     height: "32px"
-  card-glass:
-    backgroundColor: "{colors.light-glass-panel}"
-    rounded: "{rounded.card}"
-    padding: "20px 22px"
-  card-solid:
+  phone-bar-make:
+    backgroundColor: "{colors.signal-yellow}"
+    textColor: "{colors.charcoal}"
+    rounded: "{rounded.pill}"
+    size: "56px"
+  card:
     backgroundColor: "{colors.light-surface}"
     rounded: "{rounded.card}"
+    padding: "20px 22px"
   dialog-confirm:
-    backgroundColor: "{colors.light-glass}"
+    backgroundColor: "{colors.light-glass-strong}"
     rounded: "{rounded.dialog}"
     padding: "24px"
     width: "440px"
   toast:
-    backgroundColor: "{colors.light-glass}"
+    backgroundColor: "{colors.light-glass-strong}"
     textColor: "{colors.light-text}"
     rounded: "{rounded.card}"
     padding: "10px 10px 10px 18px"
   bubble-owner:
-    backgroundColor: "{colors.light-bubble}"
-    textColor: "{colors.light-text}"
+    backgroundColor: "{colors.light-invert}"
+    textColor: "{colors.light-invert-ink}"
     typography: "{typography.body-chat}"
     rounded: "{rounded.tile}"
     padding: "10px 14px"
-  operator-button:
-    backgroundColor: "{colors.operator-light-surface}"
-    textColor: "{colors.charcoal}"
-    rounded: "{rounded.operator}"
-    padding: "0 16px"
+  composer:
+    backgroundColor: "{colors.light-surface}"
+    rounded: "{rounded.composer}"
+    padding: "8px 8px 8px 10px"
+  console-button:
+    textColor: "{colors.light-text}"
+    rounded: "{rounded.pill}"
+    padding: "0 18px"
     height: "44px"
-  operator-button-primary:
+  console-button-primary:
     backgroundColor: "{colors.signal-yellow}"
     textColor: "{colors.charcoal}"
-  operator-field:
-    backgroundColor: "{colors.operator-light-surface}"
-    textColor: "{colors.charcoal}"
-    rounded: "{rounded.operator}"
-    padding: "8px 12px"
-    height: "44px"
+  console-field:
+    backgroundColor: "{colors.light-surface}"
+    textColor: "{colors.light-text}"
+    rounded: "{rounded.field}"
+    padding: "10px 14px"
+    height: "48px"
+  console-card:
+    backgroundColor: "{colors.light-surface}"
+    rounded: "{rounded.console-card}"
+    padding: "16px 20px"
 ---
 
 # Design System: Doka Studio
 
-As built on 2026-11-20 at the end of the interface polish (T-POLISH-001 to 005, ADR-122), on the local stub build. The proof is in docs/project/reviews/design-after-2026-11-20.md; the screens are captured again with `uv run python ../frontend/tests/design_capture.py <label>` from `backend/`.
+As built on 2026-11-21 on the branch `redesign` after T-REDESIGN-001 to 006 (ADR-123; design: docs/project/designs/app-redesign.md v2), on the local stub build. Every value below is read from `frontend/src/style.css`, `frontend/src/admin/admin.css` and the components named. The screens are captured again with `uv run python ../frontend/tests/design_capture.py <label>` from `backend/`.
 
 ## Overview
 
 **Creative North Star: "The poster is the one lifted thing"** (the words of `style.css`'s header and of its `.stage` rule).
 
-Doka Studio has two interfaces. **The shops' app** (`frontend/index.html`, `frontend/src/style.css` and the scoped styles of `ShopHome.vue`, `ShopCredits.vue`, `ShopAccount.vue`) is a French, phone-first workspace for an owner on an Android phone in Chrome. It has a light theme (« clair », a warm paper ground) and a dark one (« sombre », a warm near-black ground). The theme follows the device until the owner picks one; the pick is stored under `affiche.theme` and applied by an inline script before the first paint. Every surface is frosted glass over a fixed, nearly flat neutral backdrop. Type is Figtree. The main button is ink (charcoal in light, paper in dark), and Signal Yellow is the one accent.
+Doka Studio has two interfaces on one system. **The shops' app** (`frontend/index.html`, `frontend/src/style.css`, `App.vue`, `ChatView.vue` and the scoped styles of `ShopHome.vue`, `ShopCredits.vue`, `ShopAccount.vue`) is a French, phone-first workspace for an owner on an Android phone in Chrome. **The operator's console** (`frontend/admin/index.html`, `frontend/src/admin/`) is an English workspace for one operator. Both use the kit's Warm Paper, Charcoal and Signal Yellow, Figtree, the same token table, the same shell (sidebar, rail, drawer) and the same frame.
 
-**The operator's page** (`frontend/admin/index.html`, `frontend/src/admin/admin.css`) is for one operator. It is flat: system font, the kit's exact paper, charcoal and yellow, both themes from the device only, 2 px borders, no glass, no shadows, no transitions. It imports nothing from the shops' app and requests nothing from it (D-ADMIN-005; `admin.test.ts` and `admin_browser.py` assert this). Both interfaces share the name « Doka Studio », the Signal D mark and the three kit colours. A third page, « Vos données » (`frontend/public/donnees.html`), is static. It has its own copy of five of the app's tokens, Figtree, solid sections and the device's theme.
+Each has a light theme and a dark one. The theme follows the device until the person picks one. The shops' app stores the pick under `affiche.theme` and applies it before the first paint (inline script in `index.html`). The console stores it under `affiche.admin.theme` (`Admin.vue`). The console imports nothing from the shops' app and requests nothing from it (`admin.test.ts`). A third page, « Vos données » (`frontend/public/donnees.html`), is static: Figtree, five of the tokens copied inline, solid sections, the device's theme.
 
-The shop's poster is outside this system. The canvas draws it with the poster's own fonts and colours, and no page token reaches it. D-POLISH-002 has a test for this: the same `toDataURL()` in both themes. The poster never carries the Doka identity.
+The shop's poster is outside this system. The canvas draws it with the poster's own fonts and colours, and no page token reaches it. The poster never carries the Doka identity.
 
 **Key Characteristics:**
-- Two themes of equal standing in the shops' app; the operator's page and « Vos données » follow `prefers-color-scheme` only.
-- Glass on every surface (ADR-077) over a neutral backdrop (ADR-091), with a solid fallback.
-- An ink main button; Signal Yellow only as a fill under charcoal; a separate line colour for rings and progress marks.
-- Pills for actions and chosen states; rounded squares for choices not yet made.
-- Contrast measured on the rendered screens, over the darkest and the lightest point of the real backdrop.
-- 44 px touch targets, 52 px main buttons and fields on touch screens.
+- Warm Paper (light) or Charcoal (dark) under three soft lights.
+- The main action is charcoal on Signal Yellow, in both themes.
+- Resting surfaces (cards, lists, fields, chips) are opaque with a hairline. No blur, no shadow.
+- One glass, `--glass-strong`, only on what floats: bars, the drawer, sheets, dialogs, toasts.
+- A sidebar over 1180 px, reduced to a rail on demand; a drawer at 1180 px and under; a bottom bar at 720 px and under (shops only).
+- Contrast is tested: from the pinned tokens where the browser cannot see the pixels, on the rendered screens elsewhere.
+- 44 px touch targets; 52 px main buttons and fields on touch screens.
 
 ## Colors
 
-Warm paper and charcoal carry the page; Signal Yellow marks an action or a state; red, green and amber carry state only.
+Warm paper and charcoal carry the page. Signal Yellow fills the main action. A dark ochre line (light) or the yellow (dark) marks rings and progress. Red, green and amber carry state only.
 
 ### Primary
-- **Signal Yellow** (`--signal`, #f2c744, the same in both themes): a **fill** only, and always with **Charcoal** (`--on-signal`, #20201d) on it. In the shops' app it fills two things: the tile behind the header's D (`.signal-symbol`) and the chat's send button (`.chat .send`). On the operator's page it fills the primary button and the banner. It is also used there as a line: the 2px border of `.shown` and `.kept`, the 4px left border of `.note`, and the focus ring in the dark theme.
-- **Signal line** (`--hue`): every ring, border and progress mark that has to read against the page: the border of a chosen chip, format or poster element, the loading line, the moving part of the wait bar, the current step's ring, the generation dot, the chat spinner's arc, and the press ring under reduced motion. It is a **dark ochre** (#8f6b00) in the light theme and the **yellow** (#f2c744) in the dark one. A yellow line on paper is 1.4:1. The ochre is 3.9:1 on `--raised`, 4.4:1 on `--ground` and 4.9:1 on `--surface` (`style.css` comment).
-- **Accent soft / accent ink** (`--accent-soft`, `--accent-ink`): the pale fill of a chosen chip, poster element or format, of the active tool icon, of the phone bar's current icon and of the chat's « inspiration » role, with its ink on top. Light: #fcf1d0 / #7a5c00; dark: #3b3113 / #f8d97a.
+- **Signal Yellow** (`--signal`, #f2c744, both themes): a **fill**, always with **Charcoal** (`--on-signal`, #20201d) on it. It fills the main action (`button.primary`, `a.primary`, `.download-button`), the chat's send button, the phone bar's centre « Nouvelle affiche », the tile behind the D (`.signal-symbol`), and in the console the primary button and the banner.
+- **Signal edge** (`--signal-edge`): the 1.5 px border of a yellow fill. #d9b032 in light, #f2c744 in dark. The console also uses it for the 4 px left border of `.note`.
+- **Signal hover** (`--signal-hover`, #d5b03f, both themes): the main action under a hovering pointer. It is the yellow mixed 86 % toward charcoal, written as a value because the contrast checks read `rgb()` only. A main action never changes its opacity.
+- **Signal line** (`--hue`): every ring, chosen border and progress mark: the border of a chosen chip, format or poster element, the loading line, the wait bar's moving part, the current step's ring, the generation dot, the chat spinner's arc, the press ring under reduced motion. It is a dark ochre (#8f6b00) in light and the yellow (#f2c744) in dark, because a yellow line on paper is 1.4:1. In the console it is also the focus ring and the 2 px border of `.kept` and `.shown`.
+- **Accent soft / accent ink** (`--accent-soft`, `--accent-ink`): the pale fill of a chosen chip, poster element or format, the active editor tool, the phone bar's current icon and the chat's « inspiration » role, with its ink on top. Light #fcf1d0 / #7a5c00; dark #3b3113 / #f8d97a. Shops only.
 
 ### Neutral
-- **Warm Paper** (#f5f1e8): the light `--ground`, the dark `--text` and `--invert`, and the operator's light ground and dark text.
-- **Charcoal** (#20201d): the light `--text` and `--invert`, `--on-signal`, and the operator's light text and dark ground.
-- **Near-black** (#100f0e): the shops' dark `--ground` and `--invert-ink`. This is not the kit's Charcoal (owner decision 3 of interface-polish).
-- **White** (#ffffff): the light `--surface` and `--invert-ink`, and the hard-coded mat behind an owner's photo and the poster canvas (`.photo-strip img`, `.proof .photo img`, `.comparison figure:first-child img`, `.poster-canvas`). The chat's poster frame is hard-coded #14110e.
+- **Warm Paper** (#f5f1e8): the light `--ground`, the dark `--text` and `--invert`.
+- **Charcoal** (#20201d): the dark `--ground` (the kit's Charcoal, ADR-123), the light `--text` and `--invert`, `--on-signal`.
+- **Near-black** (#100f0e): only the dark `--invert-ink`.
+- **White** (#ffffff): the light `--invert-ink`, and the hard-coded mat behind an owner's photo and the poster canvas (`.photo-strip img`, `.proof .photo img`, `.comparison figure:first-child img`, `.poster-canvas`). The chat's poster frame is hard-coded #14110e.
 
-### Shops' app: light theme (`:root[data-theme=clair]`)
+### Token table
 
-`--signal` and `--on-signal`, `--radius` (24px), `--field` (16px), the blurs, `--press` and `--ambient` are defined once in `:root` and hold in both themes.
+`:root` is the dark theme and `:root[data-theme=clair]` the light one in `style.css`. In `admin.css` each colour is written once as `light-dark(<light>, <dark>)`. `tokens.test.ts` pins the shops' values and `brand.test.ts` pins the console's, from one table (D-REDESIGN-001).
 
-| Token | Key | Value | Role |
+| Token | Light | Dark | Role |
 | --- | --- | --- | --- |
-| `--ground` | light-ground | #f5f1e8 | Page ground (`html`), the review panel's and credits dialog's ground, the sticky step row on a phone |
-| `--surface` | light-surface | #ffffff | Solid cards of Accueil, Mes crédits, Mon compte; the solid-glass fallback; swatch and spinner gaps |
-| `--raised` | light-raised | #ebe5dc | Hover and press fill of buttons and rows, disabled main button, switch track when off |
-| `--line` | light-line | #e2dacf | 1 to 1.5 px borders of controls, separators of lists, the wait bar's track |
-| `--control` | light-control | #c9c0b4 | Field border on hover, dashed drop zones, swatch ring, spinner track, disabled send button |
-| `--text` | light-text | #20201d | Text, focus ring, focused field border, chosen-swatch and chosen-style ring |
-| `--muted` | light-muted | #5c554d | Secondary text, labels, placeholders, unchosen chips, tabs and links, the off switch's ring and knob |
-| `--faint` | light-faint | #67605a | Help and small text, meta lines, disabled control text, chevrons, the « Ar » unit |
-| `--hue` | light-hue | #8f6b00 | The line accent (see Primary) |
-| `--accent-soft` | light-accent-soft | #fcf1d0 | Fill of a chosen chip, element, format, tool, phone-bar icon |
-| `--accent-ink` | light-accent-ink | #7a5c00 | Text and icon on `--accent-soft`; current step's number |
-| `--ok` / `--ok-bg` | light-ok / light-ok-bg | #145c37 / #e2f2e8 | Success: notice dot, approved state, « done » banner, finished step |
-| `--warn` / `--warn-bg` | light-warn / light-warn-bg | #6b4600 / #fff1d6 | Caution: `.why` reasons, demo notice, recovery and issue blocks, draft state dot, offline note, demo badge |
-| `--bad` / `--bad-bg` | light-bad / light-bad-bg | #a3271f / #fbeae8 | Failure: error toast dot, rejected state dot, blocking issue link. `--bad-bg` is defined but no rule uses it |
-| `--invert` / `--invert-ink` | light-invert / light-invert-ink | #20201d / #ffffff | The main button, the download link, the chosen segment, a switch when on, « Retirer de l'affiche », the chosen style's tick, the chat's remove-photo button |
-| `--scrim` | light-scrim | #15130f99 | Behind dialogs and the review panel |
-| `--glass` | light-glass | rgb(255 255 255 / .86) | Bars and sheets over content |
-| `--glass-panel` | light-glass-panel | rgb(255 255 255 / .74) | Panels and tiles |
-| `--glass-field` | light-glass-field | rgb(255 255 255 / .62) | Fields, chips, default and secondary buttons, tab tracks |
-| `--glass-strong` | light-glass-strong | rgb(255 255 255 / .92) | A chosen tab or segment, the French file-pick button |
-| `--glass-line` | light-glass-line | rgb(255 255 255 / .75) | The edge of a glass bar, toast, dialog, chat surface |
-| `--glass-hi` | light-glass-hi | rgb(255 255 255 / .96) | The sheen at one corner of the chat's surfaces |
-| `--warn-glass` | light-warn-glass | rgb(255 241 214 / .8) | Glass caution blocks |
-| `--bubble` | light-bubble | #e4dfd7 | The owner's chat bubble; the current modification row |
-| `--patch-1…3` | light-patch-1…3 | #f7f5f1, #f2efe9, #eae6df | Backdrop gradient stops |
-
-### Shops' app: dark theme (`:root`)
-
-| Token | Key | Value | Role |
-| --- | --- | --- | --- |
-| `--ground` | dark-ground | #100f0e | As light |
-| `--surface` | dark-surface | #1b1a18 | As light |
-| `--raised` | dark-raised | #2a2825 | As light |
-| `--line` | dark-line | #302d2a | As light |
-| `--control` | dark-control | #57524c | As light |
-| `--text` | dark-text | #f5f1e8 | As light |
-| `--muted` | dark-muted | #bdb6ad | As light; it is also the placeholder colour, because `--faint` is 4.19:1 on a dark field over `--raised` |
-| `--faint` | dark-faint | #a39b91 | As light |
-| `--hue` | dark-hue | #f2c744 | The line accent, the yellow itself |
-| `--accent-soft` | dark-accent-soft | #3b3113 | As light |
-| `--accent-ink` | dark-accent-ink | #f8d97a | As light |
-| `--ok` / `--ok-bg` | dark-ok / dark-ok-bg | #8fddb0 / #16261d | As light |
-| `--warn` / `--warn-bg` | dark-warn / dark-warn-bg | #e9b458 / #2a2212 | As light |
-| `--bad` / `--bad-bg` | dark-bad / dark-bad-bg | #ef7d74 / #331a18 | As light. On a dark bubble `--bad` is 4.29:1, so the word « Refusée » in the chat keeps `--text` |
-| `--invert` / `--invert-ink` | dark-invert / dark-invert-ink | #f5f1e8 / #100f0e | As light |
-| `--scrim` | dark-scrim | #000000cc | As light |
-| `--glass` | dark-glass | rgb(27 26 24 / .86) | As light |
-| `--glass-panel` | dark-glass-panel | rgb(30 28 26 / .58) | As light |
-| `--glass-field` | dark-glass-field | rgb(255 255 255 / .07) | As light |
-| `--glass-strong` | dark-glass-strong | rgb(70 66 62 / .7) | As light |
-| `--glass-line` | dark-glass-line | rgb(255 255 255 / .1) | As light |
-| `--glass-hi` | dark-glass-hi | rgb(74 70 65 / .72) | As light |
-| `--warn-glass` | dark-warn-glass | rgb(42 34 18 / .8) | As light |
-| `--bubble` | dark-bubble | #34312d | As light |
-| `--patch-1…3` | dark-patch-1…3 | #191816, #121110, #0d0c0b | As light |
-
-### Operator's page (`admin.css`)
-
-| Token | Light | Dark (`prefers-color-scheme: dark`) | Role |
-| --- | --- | --- | --- |
-| `--paper`, `--charcoal`, `--signal` | #f5f1e8, #20201d, #f2c744 | same | The kit's three colours |
-| `--ground` | warm-paper | charcoal | Page ground |
-| `--surface` | #fffdf8 | #2b2b27 | Buttons, fields, cards, dialogs |
-| `--text` | charcoal | warm-paper | Text |
-| `--muted` | #57534a | #c9c3b6 | Secondary text, table headers, and the 2 px border of buttons and fields |
-| `--line` | #cfc7b6 | #55534c | Separators, the top bar's rule, the phone cards' border |
-| `--bad` | #a3271f | #ff9a8f | A refusal (`.refusal`, bold) |
-| `--focus` | charcoal | signal-yellow | The 3 px focus outline |
-| dialog backdrop | rgb(0 0 0 / .55) | same | `dialog::backdrop` |
+| `--ground` | #f5f1e8 | #20201d | Page ground (`:root`, the console's `body`); the review panel's and the credits dialog's ground |
+| `--surface` | #fffdf8 | #2b2b27 | Cards, lists, fields, chips, the composer, the pills over the poster; the solid fallback of the glass |
+| `--raised` | #ece6d8 | #36362f | Tracks and troughs (tabs, segmented control, switch off), the disabled main button, the owner's bubble in dark, a neutral badge, a press under reduced motion |
+| `--line` | rgb(32 32 29 / .10) | rgb(245 241 232 / .10) | The hairline of a card, a row, a bar's edge, the frame |
+| `--control` | #7d786d | #8f8b80 | A field's and the composer's boundary (3:1), drop zones, spinner tracks, the disabled send button |
+| `--edge` | rgb(32 32 29 / .20) | rgb(245 241 232 / .22) | The border of a default or secondary button, a chip, the credits pill |
+| `--active` | rgb(32 32 29 / .08) | rgb(245 241 232 / .10) | Hover, and the current sidebar row |
+| `--side-bg` | rgb(32 32 29 / .045) | rgb(0 0 0 / .22) | The sidebar's column, painted by the frame |
+| `--text` | #20201d | #f5f1e8 | Text; the shops' focus ring; a focused field's border |
+| `--muted` | #4d4940 | #d6d0c3 | Secondary text, labels, placeholders (shops) |
+| `--faint` | #5f5a50 | #c2bcaf | Help, meta lines, counts, section headings in the sidebar; placeholders (console) |
+| `--signal` / `--on-signal` | #f2c744 / #20201d | same | The main action |
+| `--signal-edge` | #d9b032 | #f2c744 | The main action's border |
+| `--signal-hover` | #d5b03f | same | The main action, hovered (shops only) |
+| `--hue` | #8f6b00 | #f2c744 | The line accent |
+| `--accent-soft` / `--accent-ink` | #fcf1d0 / #7a5c00 | #3b3113 / #f8d97a | A chosen choice's fill and ink (shops only) |
+| `--ok` / `--ok-bg` | #145c37 / #e2f2e8 | #8fddb0 / #1d3327 | Success |
+| `--warn` / `--warn-bg` | #6b4600 / #fdf0cf | #f0c26a / #3a2f14 | Caution |
+| `--bad` / `--bad-bg` | #a3271f / #fbeae8 | #ff9a8f / #3d2320 | Failure |
+| `--invert` / `--invert-ink` | #20201d / #ffffff | #f5f1e8 / #100f0e | The chosen segment, a switch when on, « Retirer de l'affiche », the chosen style's tick, the account avatar, the owner's bubble in light, the chat's remove-photo button (shops only) |
+| `--scrim` | #15130f99 | #000000cc | Behind the drawer, dialogs and the review panel (shops). The console uses rgb(21 19 15 / .55) in both themes |
+| `--glass-strong` | rgb(255 253 248 / .86) | rgb(43 43 39 / .88) | The one glass |
+| `--patch-1…3` | rgb(242 199 68 / .28), rgb(222 204 168 / .55), rgb(255 255 255 / .7) | rgb(242 199 68 / .16), rgb(110 98 70 / .34), rgb(255 255 255 / .04) | The three soft lights: yellow, sand, white. The console calls them `--yellow-light`, `--sand-light`, `--white-light` |
+| `--bubble` | #e4dfd7 | #34312d | The current row of the chat's list of modifications (shops only) |
 
 ### Contrast
 
-The smokes test these rules on rendered screens, in both themes, over the darkest and the lightest point of the real backdrop (the ground, each patch, glass and its `saturate()` folded in). The tests are `check_contrast` and `check_marks` in `frontend/tests/browser_smoke.py`, which `shop_dashboard_browser.py` and `chat_browser.py` also call.
-- **Text:** 4.5:1; 3:1 from 24 px, or from 18.66 px at weight 700 or more (WCAG AA). Disabled controls and text over an image are not measured.
-- **Placeholders:** 4.5:1 at any size, colour and opacity together, and lower than the typed value's ratio.
-- **Accent lines (`check_marks`):** 3:1 against what is behind them. This covers the loading line, the border of a chosen chip, format or element, the generation dot at the smallest point of its pulse, the current step's ring and the chat spinner. The wait bar's moving part must reach 3:1 in light and at least 6.57:1 in dark. The send button's glyph must reach 4.5:1 on its yellow.
-- **Not measured:** the `--line` borders of fields and buttons. The comment on the switch rule says the switch's off track is outlined in `--muted` for 3:1.
-- **Kit pairs** (USAGE.md): charcoal on paper 14.49:1, charcoal on yellow 10.13:1, paper on charcoal 14.49:1.
+What the tests prove:
+- **Text on the glass, whatever scrolls under it.** `--text`, `--muted` and `--faint` on `--glass-strong` composited over pure black and over pure white are at least 4.5:1, in both themes. Shops: `tokens.test.ts`, « keeps the text of what floats at 4.5:1 whatever is behind it, black or white ». Console: `brand.test.ts`, « keeps the texts at 4.5:1 on the one glass, whatever scrolls under it ». The browser checks cannot see what scrolls under a sibling, so this is computed from the pinned values. The mockup's lighter glass (.62) fell to 2.74:1 over a white poster.
+- **The sidebar's tint.** `--muted` and `--faint` on `--side-bg` over `--ground` are at least 4.5:1 in both themes (`tokens.test.ts`, « keeps the sidebar's secondary text at 4.5:1 on its tint over the ground »). The console's test also proves `--text` on `--active` over that column (`brand.test.ts`, « keeps the sidebar's texts at 4.5:1 on the frame's tint »). On a hovered or current sidebar row a count and a recent poster's state switch from `--faint` to `--muted` (`style.css`: 4.37:1 light otherwise, where the yellow light is under the sidebar).
+- **Rendered screens** (`frontend/tests/browser_smoke.py`, also called by `shop_dashboard_browser.py` and `chat_browser.py`), in both themes over the real backdrop: `check_contrast` (text 4.5:1, or 3:1 from 24 px or from 18.66 px at 700; placeholders 4.5:1 and lighter than typed text) and `check_marks` (the `MARKS` list: each line accent 3:1 against what is behind it; the wait bar's moving part 3:1 in light and 6.57:1 in dark; the send button's glyph 4.5:1 on its yellow; the main action's label 4.5:1 on its yellow).
+- **The main action's paint.** `check_primary` asserts on an enabled main action a fill of rgb(242, 199, 68), text rgb(32, 32, 29) and the theme's `--signal-edge`, and that the named secondary action is clear with `--text` and `--edge`.
+- **Fields.** `check_field` asserts an empty field's boundary is `--control` at rest and `--text` when focused by the keyboard, 3:1 both times. `composer_edge` in `chat_browser.py` does the same for the composer.
 
-**The Fill-and-Line Rule.** In the shops' app, `--signal` is a fill and nothing else, and its content is always `--on-signal`. A shape that holds a glyph or a label is a fill. Anything that must be seen against the page is a line, and a line uses `--hue` (D-POLISH-002).
+Computed from the tokens, not a test: charcoal on Signal Yellow 10.13:1; charcoal on `--signal-hover` 7.86:1; the ochre `--hue` 3.95:1 on `--raised`, 4.36:1 on `--ground`, 4.84:1 on `--surface`; Signal Yellow on paper 1.43:1.
 
-**The Ink Button Rule.** The shops' main action is `--invert`: charcoal with white ink in light, paper with near-black ink in dark. It is not yellow (owner decision 2 of interface-polish).
+**The Fill-and-Line Rule.** `--signal` is a fill, and its content is always `--on-signal`. Anything that must be seen against the page is a line, and a line uses `--hue`.
+
+**The Yellow Action Rule.** The main action is charcoal on Signal Yellow with a 1.5 px `--signal-edge`, in both themes (ADR-123 reverses ADR-122's ink button). Hovered, it is `--signal-hover`. Disabled, it is `--raised` with `--faint`. Busy, it keeps its yellow. Where « Partager » is the main action, the download link is the secondary (`.download-button.secondary`).
 
 **The Mark-and-Place Rule.** A state colour is a dot, a ground or a word's colour, and it always comes with words. A toast's kind is its dot and its place (errors at the bottom, notices at the top), never its text colour.
 
 ## Typography
 
-**Body and display font (shops' app):** Figtree, with `system-ui, sans-serif` as fallback. It ships as one variable file, `frontend/public/fonts/Figtree-Variable.woff2` (weights 300 to 900, `font-display: swap`, preloaded by `index.html`, with `Figtree-OFL.txt`). Nothing is fetched from another site.
-**Operator's page:** `system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif`; code in `ui-monospace, monospace`.
-**« Vos données »:** Figtree, `15px/22px`.
+**Font:** Figtree, with `system-ui, sans-serif` as fallback, in both interfaces. The shops' app ships `frontend/public/fonts/Figtree-Variable.woff2` (weights 300 to 900, `font-display: swap`). The console has its own copy, `frontend/src/admin/Figtree-Variable.woff2`, with `Figtree-OFL.txt`, loaded as `url('./Figtree-Variable.woff2')`. Nothing is fetched from another site. `admin_browser.py` and `shop_dashboard_browser.py` check that a Figtree face has `status === 'loaded'`.
 
-**Character:** a single humanist sans for everything. The weight carries the hierarchy (400 to 800). Size changes little.
+**Character:** one humanist sans for everything. The weight carries the hierarchy (400 to 800). Size changes little.
 
-**Why Figtree, not the kit's fonts.** The Signal guide names Space Grotesk Bold for large titles and Noto Sans Regular/Bold for text and controls. For an interface without those fonts loaded, it accepts a system sans as a fallback. The app does not load Space Grotesk or Noto Sans for its text. Figtree was chosen with the approved mockup (ADR-077). The owner did not answer the typeface question in the polish, so the lead's recommendation stands (ADR-122; owner decision 1). He may overturn it. Space Grotesk survives only as outlines inside the logo files.
+**Why Figtree, not the kit's fonts.** The Signal guide names Space Grotesk Bold for titles and Noto Sans for text, and accepts a system sans for an interface without them. Figtree was chosen with the approved mockup (ADR-077) and kept by ADR-122. Space Grotesk survives only as outlines inside the logo files.
 
-**The narrow no-break space.** Figtree has no U+202F, the French thousands separator in « 90 000 ». A second `@font-face` named Figtree maps `NotoSans-Regular.ttf` to `unicode-range: U+202F` only, so a price has the same spacing on every phone. The other font files in `public/fonts/` (Noto Sans Bold, Noto Serif, Montserrat Black Italic, and the same Noto Sans Regular as « Affiche Noto Sans ») are the poster's, listed in `font-manifest.json`.
+**The narrow no-break space.** Figtree has no U+202F, the French thousands separator in « 90 000 ». A second `@font-face` named Figtree maps `NotoSans-Regular.ttf` to `unicode-range: U+202F` only. The other font files in `public/fonts/` are the poster's.
 
 ### Hierarchy (shops' app)
-- **Page title** (800, 26px, 32px): `.page-title`, the `h1` of Accueil, Mes affiches, Styles, Mes crédits and Mon compte. It takes the focus on arrival for a screen reader and shows no box; a 2px underline 6px under it appears only after a key was pressed (`:root[data-keys]`, set in `main.ts` on `keydown` and cleared on `pointerdown`): until the first tap a browser counts a script's focus as the keyboard's, and the title of every page opened would be underlined. The sign-in and intake titles use the same size (`.sign-in h1, .intake h1`).
-- **Heading 1** (800, 22px, 28px, -0.01em, `text-wrap: balance`): every other `h1`. In the phone editor's bar (`.bar h1`) the title is 16px/22px at 700.
-- **Heading 2** (800, 18px, 24px, -0.01em): `h2`. A review section's heading is 21px/27px. The versions column heading is 13px/700 in `--muted`.
-- **Heading 3** (700, 14px): `h3`, with an icon gap of 8px.
-- **Figures** (700): Accueil's counts at 2rem/1.2 and the credit figures at 1.8rem/1.3. `:root` sets 14px, so 1rem is 14px here. Also the chat recap price (800, 24px/30px) and the wait block's title (800, 16px/22px).
-- **Body** (400, 14px, 20px): the `:root` default. The chat is 15px/22px. Intro text is limited to 52ch and a review lede to 62ch.
-- **Field** (550, 15px): typed values. At 720px wide and below, fields are 16px, because iOS zooms the page on a field under 16px.
-- **Button** (700, 14px, line-height 1.2). Main and secondary buttons are 15px. The phone bottom bars use 15.5px.
-- **Label** (650, 13px, `--muted`): a field's label, a choice's heading, chips at 14px.
-- **Help** (400, 13px, 19px, `--faint`): `small`, `.help`, `.meta` (500).
-- **Phone bar label** (650, 12.5px, 16px). The tool tabs use the same size.
+- **Page title** (800, 26px/32px): `.page-title`, the `h1` of Accueil, Mes affiches, Styles, Mes crédits and Mon compte, and the sign-in and intake titles. It takes the focus on arrival and shows no box; a 2 px underline 6 px under it appears only after a key was pressed (`:root[data-keys]`).
+- **Top bar title** (750, 17px/24px): `.top-title`, the poster's name in the chat, over 720 px, cut with an ellipsis.
+- **Chat question** (750, `clamp(26px, 3.4vw, 32px)`/1.15, -0.02em): « Quelle affiche créons-nous ? » in an empty conversation; its greeting under it is 16px/24px `--muted`.
+- **Heading 1** (800, 22px/28px, -0.01em, `text-wrap: balance`): other `h1`. The phone editor bar's title is 16px/22px at 700.
+- **Heading 2** (800, 18px/24px, -0.01em). A review section's heading is 21px/27px. The sidebar's « Affiches récentes » is 13px/18px at 600 in `--faint`.
+- **Heading 3** (700, 14px).
+- **Body** (400, 14px/20px). The chat is 15px/22px.
+- **Field** (550, 15px). At 720 px and below, fields are 16px (iOS zooms under 16px). The composer's textarea is 16px/22px.
+- **Button** (700, 14px, 1.2). Main and secondary buttons are 15px; the editor's phone bottom bar uses 15.5px.
+- **Label** (650, 13px, `--muted`). **Help** (400, 13px/19px, `--faint`).
+- **Badge** (700, 12.5px). **Phone bar label** (650, 12.5px/16px).
+- **Figures**: the recap price in the chat (800, 24px/30px).
 
-### Hierarchy (operator's page)
-- **Heading 1** (24px/32px), **Heading 2** (18px/24px), **Body** (16px/1.5), **Small** (14px, `--muted`). Labels, buttons and summaries are 700. The brand line is 800.
+### Hierarchy (console)
+- **Body** 16px/1.5. **Heading 1** 800, 26px/32px, -0.015em. **Heading 2** 750, 17px/24px. **Small** 14px `--faint`. **Label** 650, 14px `--muted`.
+- **Overview figure** (`.kpi .value`) 700, 28px/1.2, -0.01em; its label 13px `--muted`; its detail 14px `--faint`.
+- **Shops table**: 14px; headers 12.5px at 500 in `--faint`, no band.
+- Fields are 16px at every width where a phone would zoom (the filter).
 
-**The One Family Rule.** The shops' interface uses Figtree for every word. The poster keeps its own fonts. Never load a second interface family or fetch a font from another origin.
+**The One Family Rule.** Both interfaces use Figtree for every word. The poster keeps its own fonts. Never fetch a font from another origin.
 
-**The Tabular Rule.** `:root` sets `font-variant-numeric: tabular-nums` and `font-synthesis: none`, so every figure in the shops' app is tabular. The operator's page applies tabular figures only to the Shops table's numeric columns from 600px (`.shops .num`, right-aligned).
+**The Tabular Rule.** The shops' `:root` sets `font-variant-numeric: tabular-nums` and `font-synthesis: none`. The console applies tabular figures to the Shops table's numeric columns from 600 px (`.shops .num`, right-aligned) and to payment amounts.
 
 ## Layout
 
-**The frame.** `main` is centred, at most 1480px wide. Its gutters are `--gutter-l` and `--gutter-r`: 20px on wider screens, or the safe area if larger. At 720px and below the gutter is 12px for the chat and the editor, whose sticky bars use it in their negative margins. It is 16px for the five frame screens (`main:has(> :is(.shop-home, .shop-account, .gallery, div.credits-container))`). The bottom padding is 64px (56px at 720px and below), or 88px plus the safe area above the phone bar.
+### The shell
 
-**The One Frame Rule.** Accueil, Mes affiches, Styles, Mes crédits and Mon compte share one content width, `--page: 860px`, and one title, `.page-title` (D-POLISH-003). As a panel inside the creator, Mes crédits keeps its dialog's 680px.
+Both interfaces share one shell (D-REDESIGN-002, D-REDESIGN-005). `<html>` carries `data-shell` while the person is signed in, and `data-rail` when the rail applies. CSS reads two variables: `--side-w` and `--gap`, both `0px` by default.
 
-**Other widths:** sign-in 420px; new-poster intake 640px; chat 680px, or 1080px with a 340px poster column from 880px wide (24px column gap); confirmation 440px; conditions of use 560px; credits dialog `min(680px, 100% - 24px)`; review panel `inset: 3vh max(3vw, calc(50vw - 580px))`; toast `max-width: min(94vw, 680px)`; « Vos données » 680px; operator page 960px with 16px side padding.
+| Width | What shows |
+| --- | --- |
+| Over 1180 px (`width > 1180px`) | The sidebar, fixed, `--side-w: 288px`, `--gap: 12px`. With `data-rail`, `--side-w: 76px`. The frame is painted |
+| 1180 px and under (`width <= 1180px`) | No sidebar. The same `aside.side` is a drawer, opened by the menu button |
+| 720 px and under (`width <= 720px`) | Shops only: the bottom bar as well, outside the chat and the editor |
 
-**The editor.** At more than 1080px wide it is three columns: a 360px rail, the stage, and a 156px versions column, with a 14px gap. The stage is sticky 64px from the top. At 1080px and below it is one column (a flex column, so that the poster can stick). The main action becomes a fixed glass bar at the bottom of the screen, and 150px is reserved below the content.
+Each width is split by complementary conditions (`>` and `<=`), in CSS and in `matchMedia`, so that a fractional width under zoom is always on one side.
 
-**Rhythm.** There is no spacing token scale. Gaps run 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24 and 28px. 14px is the most frequent: the gap between stacked blocks, a field's bottom margin, the wall and grid gaps. Card padding runs from 18 to 28px.
+**The sidebar** (over 1180 px): fixed at `inset-block: var(--gap)`, `inset-inline-start: var(--gap)`, `width: var(--side-w)`, padding 18px 14px 14px. It scrolls inside itself. It has no fill of its own: the frame paints its column. Shops: the horizontal logo (220px), « Nouvelle affiche » (`a.primary`), the navigation (Accueil, Mes affiches with its count, Styles with its count), « Affiches récentes » (up to five links with a 32 × 40 thumbnail), then at the foot the credit card, the account row, « Se déconnecter ». Console: the logo, « New shop », the navigation (Overview, Shops, Payments, Service), then the theme switch, the actor and « Sign out ».
+
+**The rail**: icons only, 76px wide, padding 14px 8px (console 12px 8px). Labels are visually hidden and each link keeps a `title`. The D (40px on its yellow tile) replaces the logo. « Affiches récentes » is hidden. The credit card shows the number alone. The shops' rail toggle stores `affiche.rail` (`'1'` or absent), applied by `index.html` before the first paint; the step editor always has the rail. The console's rail is in memory only.
+
+**The drawer** (1180 px and under): fixed, the window's height, `min(320px, 86vw)` wide, `--glass-strong` with its own blur, a `--line` edge on its right, corners `0 24px 24px 0` (shops), `--lift`. Closed, it is `translateX(-105%)` and `visibility: hidden`, and `inert` at once. It opens in 280ms on `transform` with `cubic-bezier(.2, .8, .2, 1)`. A scrim covers the page behind it. Shops: drawer 42, scrim 41, above the toasts (40) and under the dialogs (45, 50). Console: drawer 50, scrim 40.
+
+**The drawer's contract.** The menu button has `aria-expanded` and `aria-controls`. Opening moves the focus to « Fermer le menu ». Open, the skip link, the top bar, `main` and the phone bar are `inert`. Escape, the scrim or the close button close it and return the focus to the menu button. A destination closes it and the route owns the focus. It also closes when the window becomes wider than 1180 px, when a dialog opens, and on every route change. It makes no history entry: Back acts on the page.
+
+**The frame** (over 1180 px): `body::before`, absolute, `inset: var(--gap)`, as tall as the page, a 1px `--line` border and 28px corners, behind everything (`z-index: -1`). Its background paints the sidebar's column: `--side-bg` up to `--side-w`, a 1px `--line`, then nothing. It scrolls with the page. Nothing is clipped by it. In the shops' step editor (`data-editing`) the gap is `0px` and the frame has no border or corners: the editor is a work surface.
+
+**The top bar**: sticky at `top: 0` in the page's flow, after the sidebar's margin (`margin-inline: calc(var(--gap) + var(--side-w)) var(--gap)`). Its glass is on its own `::before`, with a `--line` bottom edge and the frame's top-right corner (28px shops, 27px console) over 1180 px. Shops: at least 64px plus the top safe area. It holds the menu button (≤ 1180) or the rail toggle (> 1180, not while editing), the D on its tile (≤ 1180, not in the chat at ≤ 720), the title in the chat (> 720), the « Message / Pas à pas » switch in the creator, « Nouvelle affiche » as a plus (≤ 720, in the chat), the credits pill, and the theme switch (> 720, and at every width while signed out). Console: at least 64px, the menu or rail toggle and « Filter shops » on the Shops list.
+
+**The phone bar** (shops, 720 px and under, not in the chat and not in the editor): fixed at the bottom, `--glass-strong` with blur, a `--line` top, padding 6px plus the safe area. Five equal columns: Accueil, Affiches, the centre « Nouvelle affiche », Styles, Compte. The centre action is a 56px yellow circle with `--signal-edge` and `--lift`. Each other item is 58px high, an icon in a 58 × 32 pill over a one-line label; the current item's pill is `--accent-soft`. Counts and the long words (« Mes affiches 3 », « Mon compte ») are visually hidden but stay in the accessible name. The console has no bottom bar and nothing fixed to the bottom.
+
+**The three rules** (they hold in both interfaces):
+1. **Nothing between a fixed element and the window.** No `backdrop-filter`, `filter`, `transform`, `perspective`, `contain` or `container-type` on an ancestor of a `position: fixed` element. A blur is painted by the fixed or sticky element itself, or by its `::before`. The top bar's glass is on its `::before`. The drawer blurs and moves itself because it holds nothing fixed. The review panel has its own opaque ground and never blurs, because its decision bar is fixed on a phone.
+2. **The window scrolls.** No wrapper around the top bar and `main`, no `overflow` on an ancestor of a sticky element. The frame is painted behind, not wrapped around.
+3. **One thing is exposed at a time.** What is not shown is `hidden` or `inert`: a closed drawer, the page behind an open drawer or a dialog, the sidebar and the phone bar under a dialog (`:inert="modalOpen || peeking"`), the shop's parts while the identity gate is closed (`v-if="shown"`).
+
+`check_reach` in `browser_smoke.py` scrolls the review and final panels to their end on a phone and checks that each decision stays fixed, inside the viewport, and is what a tap at its centre reaches.
+
+### The content
+
+`main` takes the same margins as the top bar. Its gutters are `--gutter-l` and `--gutter-r`: 20px, or the safe area if larger; 12px at 720 px and below for the chat and the editor; 16px for the five frame screens (`main:has(> :is(.shop-home, .shop-account, .gallery, div.credits-container))`). Over 1180 px `main` has no max width and the editor is at most 1440px, centred. Otherwise `main` is at most 1480px. Toasts are centred on the content column (`left: calc(50% + var(--side-w) / 2)`); a notice sits at `top: calc(64px + var(--gap) + env(safe-area-inset-top, 0px))`; the loading line runs from `calc(var(--gap) + var(--side-w))` to `var(--gap)`.
+
+**The One Frame Rule.** Accueil, Mes affiches, Styles, Mes crédits and Mon compte share one content width, `--page: 860px`, and one title, `.page-title`. As a panel inside the creator, Mes crédits keeps its dialog's 680px.
+
+**Other widths (shops):** sign-in 420px; intake 640px; chat 680px, or 1080px with a 340px poster column from 880 px (24px column gap); confirmation 440px; conditions of use 560px; credits dialog `min(680px, 100% - 24px)`; review panel `inset: 3vh max(3vw, calc(50vw - 580px))`; toast `max-width: min(94vw, 680px)`.
+
+**The console's column:** `main` centres its own column in the space right of the sidebar: `--column: 860px`, 1240px on wide screens (`main.wide`), 420px signed out (`main.out`). Its gutter is 20px, 16px under 600 px. The banner and the one-time secret (`.banner`, `.shown`) take the same inset.
+
+**The editor.** Over 1080 px: three columns, a 360px rail, the stage, a 156px versions column, 14px gap; the stage sticks 64px from the top. At 1080 px and under: one flex column; the main action becomes a fixed glass bar at the bottom; 150px is reserved below.
+
+**Rhythm.** There is no spacing scale. 14px is the most frequent gap. Card padding runs from 16 to 28px.
 
 **Breakpoints:**
 
 | Query | What changes |
 | --- | --- |
-| `min-width: 1440px` | The header shows the kit's horizontal logo at 220px in place of the D and the typed name |
+| `width > 1180px` / `width <= 1180px` | Sidebar or rail and the frame / the drawer (both interfaces). Over 1180 px an empty chat centres its question and composer as one group; the console shows four figures across and two columns |
 | `max-width: 1080px` | Editor in one column; the main action is a fixed bottom bar; large view of the poster; tools as an icon row |
 | `min-width: 880px` | Chat with a poster: two columns |
-| `max-width: 720px` | Phone: bottom navigation bar, compact header, 12/16px gutters, 16px fields, editor's own top bar, full-screen review panel |
-| `max-width: 420px` | Header with the « Message / Pas à pas » switch packs tighter |
-| `min-width: 600px` / `max-width: 599px` (operator) | Shops table with right-aligned numbers, or one card per shop |
-| `hover: hover` | Hover looks exist only here (on touch screens they stick to the next control) |
+| `width <= 720px` / `max-width: 720px` | Phone: bottom bar, compact top bar, theme switch in the drawer, 12/16px gutters, 16px fields, the editor's own top bar, full-screen review panel |
+| `max-width: 480px` | The chat's recap goes to two columns |
+| `max-width: 420px` | The top bar with the « Message / Pas à pas » switch packs tighter |
+| `width >= 600px` / `width < 600px` (console) | Two figures per row, right-aligned numbers / one figure per row, one card per shop, 16px gutter |
+| `hover: hover` | Hover looks exist only here |
 | `pointer: coarse` | 44px minimum targets; 52px main buttons and fields |
 | `forced-colors: active` | The switch goes back to a native checkbox |
-| `prefers-reduced-transparency` / `prefers-reduced-motion` | Solid glass, no blur (see Elevation) |
+| `prefers-reduced-transparency` / `prefers-reduced-motion` | The glass becomes `--surface` and nothing blurs |
 
-**Safe areas.** `viewport-fit=cover` and `interactive-widget=resizes-content` are set in the viewport meta. Every fixed or sticky bar pads with `max(…, env(safe-area-inset-*))`. `scroll-padding` is 64px at the top and 80px at the bottom (150px at the bottom at 1080px and below).
+**Safe areas.** `viewport-fit=cover` and `interactive-widget=resizes-content` are set. Every fixed or sticky bar and the drawer pad with `max(…, env(safe-area-inset-*))`. `scroll-padding` is 64px at the top and 80px at the bottom (150px at the bottom at 1080 px and below).
 
 ## Elevation & Depth
 
-The system is a hybrid. Depth comes from translucent glass layered over a fixed backdrop, plus a small vocabulary of soft shadows. The backdrop is `html::before`, fixed, with `--ambient: linear-gradient(155deg, var(--patch-1), var(--patch-2) 50%, var(--patch-3))`. It is neutral and almost flat (ADR-091), never a blurred copy of the poster (ADR-077). `body` stays transparent. The operator's page and « Vos données » are flat: solid surfaces, borders, no shadows.
+Depth comes from three things only: the soft lights behind the window, one glass on what floats, and a short list of shadows. The backdrop is `html::before`, fixed, with `--ambient`: three radial gradients of `--patch-1` (yellow, top left), `--patch-2` (sand, bottom right) and `--patch-3` (white, centre right) on the ground. It is never a blurred copy of the poster. `tokens.test.ts` pins `--ambient` and checks that the light theme changes the lights, not the gradient.
 
-### Glass by surface
+### One glass
 
-| Token | Blur | Used on |
-| --- | --- | --- |
-| `--glass` | `--blur-panel`: blur(26px) saturate(1.5) | Header, phone navigation bar, editor top bar, fixed bottom action bars, step navigation, toasts, confirmation dialogs, large poster view; with `--blur-field` for the badge and generation pill over the poster |
-| `--glass-panel` | `--blur-panel` | Sign-in, intake, empty states, poster list, style tiles and cards, editor rail, review groups, comparison figures, final shot, facts, job state, switch groups, tool row |
-| `--glass-field` | `--blur-field`: blur(16px) saturate(1.4) | Fields, default and secondary buttons, chips, upload zone, tab tracks, segmented controls, current desktop nav link |
-| `--glass-strong` | none of its own | A chosen tab or segment, the file-pick button |
-| `--glass-hi` → `--glass-panel` | `--blur-panel` | The chat's bot bubbles, composer and poster side, as `linear-gradient(140deg, var(--glass-hi), var(--glass-panel) 60%)` |
-| `--warn-glass` | `--blur-field` | Demo notice, issues, save recovery, polish preview, refusal |
+`--glass-strong` with `--blur-panel` (`blur(26px) saturate(1.5)`; the console's `--blur` is `blur(22px) saturate(1.35)`). It is used on:
+- the top bar's `::before` (both interfaces);
+- the drawer (both);
+- the phone bar, the editor's phone bar (`.titlerow.bar`), the step navigation (`.main-action.step-nav`), the editor's fixed bottom bar at 1080 px and under, the sticky poster strip (`.pin`), the review panel's decision bar on a phone;
+- toasts (`.message`), the confirmation and conditions dialogs (`.confirm`, no blur of its own: its sheet blurs the page with `blur(6px)`), the large poster view (`.stage.peek`);
+- the console's dialog.
 
-### Shadow Vocabulary
-- **Glass edge** (`--glass-shadow`; light `inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3)`; dark `inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65)`): every glass panel, the chat surfaces and the confirmation dialog.
-- **Lift** (`--lift`; light `0 1px 2px rgb(40 28 14 / .06), 0 10px 28px -10px rgb(40 28 14 / .18)`; dark `0 1px 2px rgb(0 0 0 / .5), 0 10px 28px -10px rgb(0 0 0 / .7)`): what floats over content. That is a toast, the chosen tab or review segment, the badge and generation pill over the poster, and « Retirer de l'affiche ».
+The old tokens `--glass`, `--glass-panel`, `--glass-field`, `--glass-line`, `--glass-hi`, `--warn-glass`, `--glass-shadow`, `--msg-shadow` and `--blur-field` are gone.
+
+**Resting surfaces are opaque.** `.sign-in`, `.intake`, `.empty`, `.look-card`, `.rows`, `.card`, `.group`, `.comparison figure`, `.shot`, `.facts`, `.job-state` are `--surface` with a 1px `--line` border: no blur, no shadow. So are fields, chips, style tiles, the switch group, the composer and the chat's side panel, and the console's cards. `check_resting` in `browser_smoke.py` asserts this on every such element on screen, including `.rail` and their `::before` and `::after`, in both themes. The pills over the poster (`.frame .badge`, `.gen-pill`) are `--surface`: any poster is behind them.
+
+### Shadow vocabulary
+- **Lift** (`--lift`; light `0 2px 4px rgb(60 44 16 / .08), 0 28px 60px -28px rgb(60 44 16 / .45)`; dark `0 2px 4px rgb(0 0 0 / .45), 0 28px 60px -28px rgb(0 0 0 / .9)`): what floats. The drawer, toasts, the confirmation dialog, the chosen tab, the badge and generation pill over the poster, « Retirer de l'affiche », the phone bar's centre action, the console's drawer and dialog.
 - **Poster shadow** (`--poster-shadow`; light `0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16)`; dark `0 8px 20px -8px rgb(0 0 0 / .6)`): the poster canvas, version thumbnails, the final check's image.
-- **Message shadow** (`--msg-shadow`; light `inset 0 1px 0 rgb(255 255 255 / .7), 0 4px 18px -10px rgb(40 28 14 / .12)`; dark `inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3)`): a bot bubble.
-- **Selection ring** (`0 0 0 2px var(--ground), 0 0 0 5px var(--text)`): a chosen style tile. It is a shadow so that the focus outline still shows outside it (focus offset 6px).
-- **Scrim**: `.confirm-sheet` lays `--scrim` with `blur(6px)` behind its dialog. The review panel casts `0 0 0 100vmax var(--scrim)`.
+- **Composer shadow** (`0 1px 2px rgb(0 0 0 / .04), 0 10px 24px -18px rgb(0 0 0 / .22)`): the one resting surface with a shadow, from the mockup (R-REDESIGN-001).
+- **Selection ring** (`0 0 0 2px var(--ground), 0 0 0 5px var(--text)`): a chosen style tile. It is a shadow so that the focus outline still shows outside it.
+- **Scrim**: `.confirm-sheet` lays `--scrim` with `blur(6px)`. The review panel casts `0 0 0 100vmax var(--scrim)`.
 
-### Stacking order
-Header 5 · editor top bar 6 · bottom action bar and phone navigation 20 · large poster view 25 · review panel 30 · toasts 40 · conditions of use 45 · confirmation 50 · skip link 60 · loading line 70.
+### Stacking order (shops)
+Editor rail tabs 2 · top bar 5 · sidebar over 1180 px 6 · editor phone bar 6 · bottom bars and phone bar 20 · large poster view 25 · review panel 30 · toasts 40 · drawer scrim 41 · drawer 42 · conditions of use 45 · confirmation 50 · skip link 60 · loading line 70.
 
-**The One Lifted Thing Rule.** The stage has no surface of its own. The poster sits directly on the backdrop and is the one lifted object on the screen. `--lift` is only for things that float over content.
+Console: top bar 20 · sidebar 30 · scrim 40 · drawer 50.
 
-**The Blur Once Rule.** A control or tile on a surface that already blurs keeps its translucent fill but gets no blur of its own (the selector list at the end of `style.css`). A blurred element becomes the containing block of its fixed descendants. So the header on a phone and the editor rail carry their blur on a `::before` layer, and their fixed bars still sit on the screen.
+**The One Lifted Thing Rule.** The stage has no surface of its own. The poster sits on the backdrop and is the one lifted object on the screen.
 
-**The Solid Fallback Rule.** Where `backdrop-filter` is unsupported, or under `prefers-reduced-transparency: reduce` or `prefers-reduced-motion: reduce`, the glass tokens become opaque. `--glass`, `--glass-panel`, `--glass-hi` and `--glass-strong` become `--surface`; `--glass-field` becomes `--ground`; `--warn-glass` becomes `--warn-bg`; `--glass-line` becomes `--line`. Under the two preferences `--blur-panel` and `--blur-field` become `none`, and the confirmation sheet loses its blur.
+**The Blur Once Rule.** Only what floats blurs, and nothing inside it blurs again.
+
+**The Solid Fallback Rule.** Where `backdrop-filter` is unsupported, `--glass-strong` becomes `--surface`. Under `prefers-reduced-transparency: reduce` or `prefers-reduced-motion: reduce`, `--glass-strong` becomes `--surface`, `--blur-panel` becomes `none`, and the confirmation sheet loses its blur (`tokens.test.ts` pins both blocks).
 
 ## Shapes
 
-Actions and chosen states are pills (999px). A choice not yet made is a rounded square. Containers have large, soft corners. Fields: 16px (`--field`). In the chat, a poster and a reused picture: 14px; the version mark of a change (« V1 »): 9px. Cards, lists, toasts and the credits dialog: 24px (`--radius`). Confirmation and review dialogs, the phone tool row and the sticky step row: 28px. Groups, facts, switch groups, the wait block and the « done » banner: 20px. Style tiles and chat bubbles: 18px; a bubble's corner toward its speaker is 6px. Composer: 22px. Unchosen chips and poster elements: 12px. Version thumbnails: 10px. The poster and its small previews: 5px. Photos: 12 to 16px. Text buttons: 4px. Status dots, swatches and step numbers are circles.
+Actions and chosen states are pills (999px). A choice not yet made is a rounded square. Containers have large, soft corners.
 
-Strokes: 1.5px for control borders and inner rings, 1px for separators and glass edges, 2px dashed for drop zones and the « new » tile. Icons are one outline set: 16px viewBox, stroke 1.5, round caps and joins, `currentColor`, inline paths in `App.vue` with no icon dependency (ADR-050). In the chat they are 20px at stroke 2.
+Shops: the frame and dialogs 28px; cards, lists, toasts, the credits dialog 24px (`--radius`); the composer 24px; groups, facts, the wait block, the switch group, the chat's side panel 20px; style tiles and chat bubbles 18px (a bubble's corner toward its speaker 6px); fields, the recap, the credit card 16px (`--field`); recent rows and the chat's poster 14px; chips, sidebar rows and the D's tile in the header 12px; version thumbnails 10px; the version mark 9px; the poster 5px; text buttons 4px. Console: cards 20px, fields 16px, shop cards under 600 px 16px, the banner 16px, the dialog 24px, sidebar rows 12px, buttons pills.
 
-The kit's cut corners and the arcs of the D are not used in either interface. The operator's page uses 8px corners, 2px borders, and 12px for its dialog.
+Strokes: 1.5px for control and button borders, 1px for hairlines and glass edges, 2px dashed for drop zones and the « new » tile. Shops' icons are one outline set: 16px, stroke 1.5, round caps, `currentColor`, inline in `App.vue` (ADR-050). In the chat and the console they are 20px at stroke 2 and 1.6.
 
-**The Pill Means Chosen Rule.** A chip, a poster element or a format is a 12px rounded square until it is chosen. Then it becomes a pill with the accent fill and the `--hue` border. Shape marks the choice as well as colour, and the change of corner animates over 200ms.
+**The Pill Means Chosen Rule.** A chip, a poster element or a format is a 12px rounded square until it is chosen. Then it becomes a pill with the accent fill and the `--hue` border. The change of corner animates over 200ms.
 
 ## Components
 
 ### Buttons
 Every `button` starts from one zero-specificity reset (`:where(button)`), so one class overrides it.
-- **Shape:** pill (999px), 1.5px border, 8px gap between icon and label, line-height 1.2, weight 700.
-- **Default** (40px, padding 0 20px): `--glass-field` with `--blur-field`, `--line` border, `--text`. Hover, only where a pointer hovers: `--raised`.
-- **Primary** (`button.primary`, 48px, 15px): `--invert` fill and border, `--invert-ink` label, no blur. Hover: opacity .86. Disabled: `--raised` fill, `--faint` label. While busy it keeps its own colours. `.download-button` is the same look for a link (48px, padding 0 22px). « Retirer de l'affiche » (`.selection .remove`) is the one dark pill near the poster, with `--lift`.
-- **Secondary** (`button.secondary`, 48px, 15px): the default glass pill at main size. `.download-button.secondary` matches it when « Partager » is the main action.
-- **Ghost** (`button.ghost`): no border, no fill, `--text`, weight 500, padding 0 12px. Used for sign-out and the theme switch.
+- **Shape:** pill, 1.5px `--edge` border, transparent, `--text`, 700, 8px icon gap.
+- **Default** (40px, padding 0 20px). Hover, only where a pointer hovers: `--active`.
+- **Primary** (`button.primary`, `a.primary`, `.download-button`; 48px, 15px): `--signal`, `--signal-edge`, `--on-signal`. Hover: `--signal-hover`. Disabled: `--raised` fill and border, `--faint` label.
+- **Secondary** (`button.secondary`, 48px, 15px): the default at main size. `.download-button.secondary` matches it.
+- **Ghost** (`button.ghost`): no border, no fill, 500, padding 0 12px.
 - **Icon** (`button.icon`): 44 × 44px.
-- **Text** (`button.text-button`, 32px): no border or fill, `--muted`, 600, underlined 2px below. Hover: `--text`.
-- **Send** (`.chat .send`): a 44px yellow circle, `--signal`, with a 24-unit up arrow in `--on-signal` (stroke 2). Disabled: `--control` at opacity .6.
-- **Focus:** `outline: 2px solid var(--text); outline-offset: 2px` on buttons, links, fields, summaries and the poster.
-- **Press:** `scale(.97)` at once and back on `--press`. Full-width rows and switch rows take a `--raised` background instead.
-- **Busy:** after 120ms a 14px spinner in `currentColor` takes the place of the last icon, or sits at the label's end. The control keeps its size.
-- **Touch:** with `pointer: coarse` every button is at least 44px high, and main and secondary buttons and download links at least 52px. The phone bottom bars use 52px, 15.5px, padding 0 16px; the primary takes the free width.
+- **Text** (`button.text-button`, 32px): `--muted`, 600, underlined. Hover: `--text`.
+- **Send** (`.chat .send`): a 44px yellow circle with an up arrow in `--on-signal`. Disabled: `--control` at opacity .6.
+- **Focus:** shops `outline: 2px solid var(--text); outline-offset: 2px`; console `outline: 2px solid var(--hue)`.
+- **Press:** `scale(.97)` on `--press`. Full-width rows and switch rows take `--raised` instead.
+- **Busy:** after 120ms a 14px spinner takes the place of the last icon. The control keeps its size and colours.
+- **Touch:** with `pointer: coarse` every button is at least 44px; main and secondary buttons, download links and fields 52px.
+- **Console:** 44px at every width, padding 0 18px, 1px `--edge`, 650; primary 1.5px `--signal-edge`, 750; hover `--active`, primary hover `color-mix(in srgb, var(--signal) 86%, var(--on-signal))`.
 
-### Inputs / Fields
-- **Style:** 48px high (52px on touch), padding 10px 16px, 16px radius, 1.5px `--line` border, `--glass-field` with `--blur-field`, `--text` at 15px/550 (16px at 720px and below).
-- **Label:** above the field, gap 6px, 13px/650 `--muted`, 14px below.
-- **Placeholder:** `--muted` at weight 400, lighter and thinner than a typed value, 4.5:1.
-- **Hover / Focus:** border `--control` on hover (hover devices); `--text` on focus, plus the 2px focus outline for a keyboard.
-- **Price:** `.unit` writes « Ar » in `--faint` 600, 16px from the right edge.
-- **Files:** `.upload-zone` is a 2px dashed `--control` area with 22px padding. `.file-pick` lays a transparent native input over the whole area and shows a French pill button (`--glass-strong`, 44px).
-- **Checkbox:** 22px, `accent-color: var(--text)`, in a `label.check` row at least 40px high.
-- **Switch** (`label.switch`), for a choice that changes the poster at once: the label is on the left and a 52 × 32 track on the right. Off: `--raised` with a 2px `--muted` ring and a 20px `--muted` knob. On: `--invert` with a 24px `--invert-ink` knob. Switches are grouped in a 20px glass list with `--line` between rows. It is still a checkbox for the keyboard and screen readers.
-- **Disclosure** (`summary`): 44px, 700, `--muted` (`--text` when open), with a 7px chevron in `--faint` that turns.
-- **Errors:** fields carry no error colour. A reason goes in a `.why` line (`--warn`, 13px/550), a block of issues, or an error toast.
+### Fields
+- 48px (52px on touch), padding 10px 16px, 16px radius, 1.5px `--control` border, `--surface`, `--text` at 15px/550 (16px at 720 px and below). Focused: `--text` border.
+- Label above, gap 6px, 13px/650 `--muted`. Placeholder `--muted` at 400.
+- `.upload-zone`: `--surface`, 2px dashed `--control`. `.file-pick` shows a French pill with an `--edge` border over a transparent native input.
+- **Switch** (`label.switch`): a 52 × 32 track. Off: `--raised` with a 2px `--muted` ring and knob. On: `--invert` with an `--invert-ink` knob. Grouped in a 20px `--surface` list with `--line` between rows.
+- Fields carry no error colour. A reason goes in a `.why` line (`--warn`), a block of issues, or an error toast.
+- **Console:** 48px, padding 10px 14px, 1.5px `--control`, 16px corners, `--surface`; textarea 96px; the filter is a 44px pill at 16px with a search icon.
 
 ### Chips and choices
-- **Chip** (`.chip`): 40px (44px on touch), at least 44px wide, padding 0 15px, 12px corners, `--line` border, `--muted` at 14px/650. Chosen (`aria-pressed=true`): a pill, `--accent-soft`, `--hue` border, `--accent-ink`. Poster elements (`.layer-list button`, 36px) and format radios (`.format-choice label.chip`, with the radio transparent over the label) behave the same way.
-- **Colour swatch** (`.sw`): 36px circle (44px on touch), 3px `--surface` border, 1.5px `--control` ring. Chosen: 2.5px `--text` ring.
-- **Segmented control** (`.seg`, « Message / Pas à pas » in the header): a pill track with 3px padding, `--glass-field`, 1px `--line` ring. Segments are 38px at 13px/600 `--muted`; the chosen one is `--invert`.
-- **Tabs and steps** (`.tabs`): a pill track with 4px padding and a 1.5px `--line` ring. Tabs are 36px at 13.5px/600 `--muted`. The chosen tab is `--glass-strong`, `--text` 700, with `--lift`. A step number is a 16px disc in `--line`, or `--text` when chosen. In the editor's tools at 1080px and below, the tabs become a 28px-corner glass row of icons with labels. The active icon sits in a 54 × 32 pill of `--accent-soft`.
-- **Style tile** (`.look`): an 18px glass tile with a 13px-corner square image and 12.5px/600 text. Chosen: the selection ring and a 24px `--invert` disc with an `--invert-ink` tick.
+- **Chip** (`.chip`): 40px (44px on touch), 12px corners, `--edge`, `--surface`, `--muted` at 14px/650. Hover: `--raised`. Chosen: pill, `--accent-soft`, `--hue` border, `--accent-ink`. Poster elements and format radios behave the same way.
+- **Segmented control** (`.seg`): a pill track, `--raised` with a 1px `--line` ring; segments 38px at 13px/600; the chosen one `--invert`.
+- **Tabs and steps** (`.tabs`): a pill track, `--raised` with a 1.5px `--line` ring; the chosen tab `--surface`, 700, `--lift`. In the editor's tools at 1080 px and under: a 28px-corner `--surface` row of icons; the active icon in a 54 × 32 `--accent-soft` pill.
+- **Style tile** (`.look`): `--surface`, 1px `--line`, 18px. Chosen: the selection ring and a 24px `--invert` disc with a tick.
 
-### Cards / Containers
-- **Glass panels:** `--glass-panel` with `--glass-shadow` and `--blur-panel`. Editor rail `.card`: 24px corners, padding 20px 22px (18px 16px on a phone). `.group`: 20px corners, padding 18px 20px. `.sign-in` (420px) and `.intake`: 24px corners, padding 28px (20px on a phone). `.empty`: padding 28px, `--muted`.
-- **Solid dashboard cards:** on Accueil (`.home-bal`, padding `clamp(16px, 3vw, 32px)`), Mes crédits (`.credit-balance`, 16px) and Mon compte (forms and sections, 18px, 12px gap). These are `--surface`, with a 1px `--line` border and `--radius` corners. They are not glass.
-- **Facts** (`.facts`): a three-column glass strip with `--line` between cells. The label is 13px `--faint` and the value 16px/700. On a phone only the price row stays.
+### Badge
+`.badge` names a state in words (D-REDESIGN-004): a pill, at least 24px, padding 0 10px, 12.5px/700, `nowrap`. Plain: `--raised` with `--muted`. `.ok`: `--ok-bg` / `--ok`. `.warn`: `--warn-bg` / `--warn`. `.bad`: `--bad-bg` / `--bad`. One dot, in `currentColor`: in the shops' app a 3px border on a zero box, so that forced colours keep it; in the console a 6px filled circle. Mes affiches and Accueil's recent posters put it on its own line between the title and the details: Brouillon (plain), À vérifier (`.warn`), Approuvée and Confirmée (`.ok`). The console's Shops table shows `suspended`, « no password » or `active`. The pill over the poster (`.frame .badge`) is a different look: `--surface`, `--lift`, `--text`, 28px.
 
-### List rows
-- **Poster list** (`.rows` > `.library-row` > `.library-item`): one 24px glass panel. Rows are at least 76px high and separated by 1px `--line`. Columns: a 48 × 60 thumbnail (8px corners, `object-fit: contain`), title (ellipsis) with the meta under it in `--faint` 500, whole at every width (state · price · date · variant), and a 16px chevron. Hover: `--glass-field`. Press: `--raised`, no scale. Rows off screen use `content-visibility: auto`.
-- **Accueil's recent posters** (`.home-recent`): transparent rows with a bottom `--line`, padding 10px 2px, a 44 × 55 thumbnail on `--raised`.
-- **Credit history** (`ShopCredits.vue li`): padding 10px 0, a bottom `--line`, time and note in `--muted`, tabular figures.
+### Cards and lists
+- **Cards** (`.card`, `.group`, `.sign-in`, `.intake`, `.empty`, `.rows`): `--surface`, 1px `--line`. Editor rail `.card` 24px, padding 20px 22px (18px 16px on a phone). `.group` 20px, padding 18px 20px.
+- **Dashboard cards** (`.home-bal`, `.credit-balance`, Mon compte's forms): `--surface`, `--line`, `--radius`.
+- **Poster list** (`.rows` > `.library-row` > `.library-item`): rows at least 76px, separated by `--line`. A 48 × 60 thumbnail, the title, the badge, the details in `--faint`, a chevron. Hover: `--active`. Press: `--raised`.
+- **Accueil's recent posters**: transparent rows on a bottom `--line`, a 44 × 55 thumbnail, the badge under the title.
 
-### Dialogs and sheets
-- **Confirmation** (`.confirm-sheet` > `.confirm`), for a paid action, the fidelity check, the final check and sign-out. The sheet is fixed and centred, with `--scrim` and `blur(6px)` behind it. The dialog is `min(100%, 440px)` wide, `--glass` with a 1px `--glass-line` edge, 28px corners, padding 24px, gap 10px and `--glass-shadow`. Text is `--muted`; the cost is `--text` 700.
-- **Conditions of use** (`.terms-sheet`): the same, 560px, starting from the top and scrolling.
-- **Review panel** (`.review-panel`): fixed, with its own ground (`--ambient` over `--ground`) and 28px corners. On a phone it fills the screen with 0 corners. Its decision bar is fixed at the bottom, one full-width 52px button per row, with the forward decision on top.
-- **Credits dialog** (`dialog.credits-container`): `--ground`, 1px `--line`, `--radius` corners, `--scrim` backdrop.
-- **Large poster view** (`.stage.peek`, 1080px and below): fixed full screen on `--glass`.
-
-### Navigation
-- **Header** (`.app-header`): sticky, at least 56px, `--glass` with `--blur-panel`, a 1px `--glass-line` bottom edge. The brand link is at least 44px high, named « Doka Studio — Accueil », with `translate="no"`. Then the shop's name (13px/600 `--muted`, at most 28ch, hidden on a phone), the navigation, the segmented control in the creator, the theme switch (ghost icon) and sign-out (ghost).
-- **Desktop navigation** (`.nav a`): 40px pills, padding 0 14px, `--muted` 650. Hover: `--glass-field` and `--text`. Current (`aria-current`): `--text` 700 on `--glass-field` with a 1.5px `--line` inner ring. Counts are `--muted` in the header.
-- **Phone bar** (at 720px and below, outside the editor): the same `nav` becomes a fixed bar at the bottom. It is `--glass` with `--blur-panel`, a 1px `--line` top, a padding of 6px 8px plus the safe area, and a grid of 4 equal columns (5 in the creator). Each item is 58px high, with an icon in a 58 × 32 pill over a one-line label at 12.5px/16px. The current item's icon pill is `--accent-soft` with `--accent-ink`. The bar shows « Accueil », « Créer », « Affiches », « Styles » and, in the creator, the bare balance number (« Crédits » when the balance failed to load). The counts and the long words (« Mes affiches 3 », « Styles 12 », « 117 crédits ») are visually hidden but stay in the accessible name. The short labels are `aria-hidden`. While a chat message is being typed, the bar is hidden.
-- **Phone editor bar** (`.titlerow.bar`): replaces the header while a poster is open. It is sticky, 56px plus the safe area, with back, the poster's name (16px/700) and its save state (12.5px `--muted`), then undo and redo. `--muted` keeps 4.5:1 over the content blurred behind it.
+### Navigation (shops)
+- **Sidebar rows** (`.nav a`, `.sign-out`, `.theme-toggle`): 40px (44px on touch), padding 0 12px, 12px corners, `--muted` 600. Hover: `--active` and `--text`. Current (`aria-current`): `--active`, `--text`, 700. Counts: `--faint` 13px at the row's end.
+- **Recent rows** (`.recent a`): at least 52px, a 32 × 40 thumbnail with 6px corners, the title (650, ellipsis), the state in `--faint`. The open poster's row is current.
+- **Credit card** (`.credit-card`): 48px, `--surface`, 1px `--line`, 16px corners, 700.
+- **Account row** (`.account`): 48px, a 36px `--invert` avatar with 12px corners, the shop's name.
+- **Credits pill** (`.credits-pill`): 44px, 1.5px `--edge`, the balance; « Crédits » while unread; its accessible name is the full balance label.
+- **Phone editor bar** (`.titlerow.bar`): replaces the top bar while a poster is open at 720 px and under. Sticky, 56px plus the safe area, `--glass-strong`: back, the name (16px/700), the save state (12.5px `--muted`), undo, redo.
 
 ### Chat
-- **Frame** (`.chat`): a grid of the poster side, the thread and the composer, 680px wide, 15px/22px text, thin `--control` scrollbars. From 880px with a poster, the thread and the composer are on the left and a 340px poster column is on the right. The chat's height follows the visible screen, and the page itself does not scroll.
-- **Bubbles:** at most `min(86%, 460px)`, padding 10px 14px, 18px corners. The owner's bubble is on the right, `--bubble`, with a 6px bottom-right corner. The bot's is on the left, glass with the corner sheen, a 1px `--glass-line` edge, `--msg-shadow` and a 6px bottom-left corner. While a reply is awaited, a 16px spinner shows (`--control` track, `--hue` arc).
-- **Composer** (`.composer`): glass with the sheen, 22px corners, padding 8px. Its edge turns `--text` while focused. It holds the photo tray (68px images, 12px corners), the style pills (34px, `--glass-field`, chosen with a `--text` border) and a borderless 16px/22px textarea of 44 to 120px beside the send button.
-- **Poster side** (`.chat-side`): glass, 20px corners. It holds a 60px poster thumbnail (full width in the wide column) and the list of modifications, with 44px rows and the current row on `--bubble`.
+- **Frame** (`.chat`): a grid of the side panel, the thread and the composer, 680px, 15px/22px. Its height is set by `ChatView.vue` from the visible screen, minus `body`'s bottom padding (the frame's gap) and 12px; the page itself does not scroll (`main.chatting` has no bottom padding). From 880 px with a poster: 1080px, the thread and the composer on the left, a 340px side column on the right.
+- **Empty conversation** (`.hello`): the D (56px, decorative), the question, the greeting, centred. Over 1180 px the welcome and the composer are centred as one group (`.chat.welcome`); under, the composer stays at the bottom.
+- **Messages:** the owner's bubble (`.bubble.me`) on the right, at most `min(86%, 460px)`, 18px corners with a 6px bottom-right corner: `--invert` with `--invert-ink` in light, `--raised` with `--text` in dark. The assistant's (`.bubble.bot`) has no fill and no border: it speaks on the ground, the full width, with the D (28px, a painted `::before`) at its left. The wait line has a 16px spinner (`--control` track, `--hue` arc).
+- **Recap** (`.recap`): the facts as cells of one `--surface` box split by 1px `--line` gaps, 16px corners; the price 800, 24px/30px. Under 480 px: two columns, the name and the price each on their own line.
+- **Composer** (`form.composer`): `--surface`, a 1px `--control` border (`--text` while focused), 24px corners, the composer shadow, padding 8px 8px 8px 10px. Rows: the photo tray (68px images), the error lines, a borderless 16px/22px textarea (44 to 120px), and the tool row: the attach button (« Images » beside its icon over 720 px), the style pills (34px, `--edge`, `--surface`; chosen with a `--text` border) in a strip that scrolls sideways, and `.send` at the right. With the keyboard open on a phone the style row hides.
+- **Side panel** (`.chat-side`): `--surface`, `--line`, 20px. A 60px poster thumbnail and « Modifications » folded behind a button; from 880 px the poster is full width and the list is open. Rows 44px; the current one is `--bubble`.
+
+### Dialogs and sheets
+- **Confirmation** (`.confirm-sheet` > `.confirm`): the sheet is fixed, `--scrim` and `blur(6px)`. The dialog is `min(100%, 440px)`, `--glass-strong`, 1px `--line`, 28px, padding 24px, `--lift`.
+- **Conditions of use** (`.terms-sheet`): the same at 560px, from the top.
+- **Review panel** (`.review-panel`): fixed, `--ambient` over `--ground`, 28px. On a phone it fills the screen and its decision bar is fixed at the bottom.
+- **Credits dialog** (`dialog.credits-container`): `--ground`, `--line`, `--radius`, `--scrim` backdrop.
+- **Console dialog**: `min(32rem, 100vw - 32px)`, `--glass-strong` with blur, 1px `--line`, 24px, `--lift`; backdrop rgb(21 19 15 / .55).
 
 ### Status blocks
-- **Toast** (`.message`): fixed and centred, `--glass`, 24px corners, `--lift`, 700 text, and an 8px dot: `--ok`, or `--bad` for an error. Errors sit at the bottom, notices at the top (64px). At 1080px and below an error rises 130px, above the bottom bar, and in the editor a notice moves there too.
-- **Caution:** `.demo-notice`, `.issues`, `.save-recovery`, `.polish-preview` and `.refusal` are `--warn-glass` with 16px corners. Their text is `--warn` at 13px; a blocking issue's link is `--bad` 700.
-- **Done** (`p.done`): `--ok-bg` with `--ok` text at 650, 20px corners.
-- **Version state** (`.state`): a 7px dot, `--warn` for draft, `--ok` for approved, `--bad` for rejected, always beside its word.
-- **Wait block** (`.job-state.wait`): a 20px glass block with a padding of 16px 18px. It has a 16px/22px/800 heading, the elapsed time in the top right corner (13px/700 `--muted`), a 2px rail, and three steps in 24px circles. A finished step is `--ok-bg` with `--ok`; the current step has a 2px `--hue` ring and `--accent-ink`. An offline note is `--warn-bg` with `--warn`.
+- **Toast** (`.message`): fixed, centred on the content column, `--glass-strong` with blur, 1px `--line`, 24px, `--lift`, 700, an 8px dot (`--ok`, or `--bad` for an error). Errors at the bottom, notices under the top bar. At 1080 px and below an error rises 130px.
+- **Caution:** `.demo-notice`, `.issues`, `.save-recovery`, `.polish-preview`, `.refusal` are `--warn-bg` with 16px corners, `--warn` text.
+- **Done** (`p.done`): `--ok-bg` with `--ok`, 20px.
+- **Version state** (`.state`): a 7px dot beside its word.
+- **Wait block** (`.job-state.wait`): `--surface`, 20px, a 2px rail, three steps in 24px circles; the current step a 2px `--hue` ring.
 
 ### Progress marks
-- **Loading line** (`.load-line`, `role=progressbar`): fixed at the top of the screen, 3px high, above everything. A 30% segment of `--hue` travels across.
-- **Wait bar** (`.wait-rail`): a 2px `--line` track. A 30% segment of `--hue` travels while the job runs (`.moving`).
-- **Generation pill** (`.gen-pill`): a 28px glass pill at the bottom centre of the poster, 12.5px/18px/700, with a 7px `--hue` dot that pulses in size. While a scene is made, the poster dims to opacity .55 and the version badge shows.
-- **Spinners:** the busy control's 14px spinner, a 22px spinner on a version thumbnail (over `--surface`), the chat's 16px spinner, and a 16px `--text` spinner on a photo while it uploads.
+- **Loading line** (`.load-line`): fixed at the top of the content column, 3px; a 30% `--hue` segment travels.
+- **Wait bar** (`.wait-rail`): a 2px `--line` track; a 30% `--hue` segment while the job runs.
+- **Generation pill** (`.gen-pill`): a 28px `--surface` pill on the poster with a 7px `--hue` dot that pulses in size; the poster dims to .55.
 
 ### The Signal mark
-- **Kit files** (`docs/project/brand/doka-studio-signal/`, untracked in git at this commit): `masters/`, `digital/` (charcoal, black, paper and white versions of horizontal, stacked, wordmark and symbol, SVG and PNG), `web/` (favicons, Apple and PWA icons, maskable icon, app icon), `fonts/`, `palette.json`, `USAGE.md`.
-- **In the app, byte for byte:** `frontend/src/assets/doka-symbol-small.svg`, `doka-horizontal.svg` and `doka-horizontal-reverse.svg` (from `masters/`); `frontend/public/favicon.svg`, `favicon.ico` and `icons/{apple-touch-icon,icon-192,icon-512,icon-maskable-512}.png` (from `web/`, the kit's `maskable-512.png` renamed). `tests/brand.test.ts` pins their SHA-256. The manifest uses `theme_color` #F2C744 and `background_color` #F5F1E8, the kit's values. The page's `theme-color` metas follow the ground (#f5f1e8 / #100f0e).
-- **Header, below 1440px:** the charcoal small D (`doka-symbol-small.svg`) at 32px with 6px of padding on a square `--signal` tile (`.signal-symbol`), followed by the name « Doka Studio » set in Figtree at 16px/800.
-- **Header, from 1440px:** the horizontal logo at 220px, the guide's screen minimum. It is the charcoal file in light and the reverse paper file in dark.
-- **Operator's page:** the kit's `favicon.svg` (a D on a yellow tile with corners of radius 40.96/256), percent-encoded inside `admin.css` as `.marked::before`. It is 24px (28px beside the `h1`), with a quarter of its height kept clear (`margin: 6px 0`, `7px 0` beside the `h1`, and an 8px gap), before « Doka Studio · Operator ». The page asks the server for no image.
-- **Clear space** (USAGE.md): x = a quarter of the visible height of the D, at the scale in use. For the wordmark alone, a quarter of the height of the « d ». Measure from the drawing, not the file's edge. The space stays free of text, edges and other marks. The supplied icons have their own framing.
-- **Minimum screen widths** (USAGE.md): horizontal 220px; stacked 160px; wordmark 160px; D alone 16px (prefer the favicon file at that size).
-- **Yellow** (USAGE.md): paper and charcoal structure the page, and yellow draws attention to an action or an announcement. Charcoal goes on yellow, never white. Yellow is a ground or an accent, never a text colour on a light ground. Icons are the charcoal D on yellow.
-- **Integrity** (USAGE.md): keep the files' proportions, orientation, spacing and colours. Do not stretch, rotate, outline, shadow or add a gradient, and do not assemble the elements improvisationally. On a dark ground use the paper or white files. Do not retype the logo with a font.
+- **Kit files** (`docs/project/brand/doka-studio-signal/`): masters, digital, web, fonts, `palette.json`, `USAGE.md`.
+- **Shops' app, byte for byte:** `src/assets/doka-symbol-small.svg`, `doka-horizontal.svg`, `doka-horizontal-reverse.svg`; `public/favicon.svg`, `favicon.ico`, `icons/*.png`. `tests/brand.test.ts` pins their SHA-256.
+- **Sidebar, drawer and signed-out screen:** the horizontal logo at 220px, the guide's screen minimum: the charcoal file in light, the reverse paper file in dark. The product's name is not typed beside it (R-SHOP-DASH-008 amended).
+- **Rail:** the charcoal D on its yellow tile, 40px with 8px padding. **Top bar at 1180 px and under:** the same at 32px with 6px padding, in a 44px link.
+- **Chat:** `favicon.svg` at 56px over the empty conversation and at 28px beside each assistant message.
+- **Console, its own files:** `src/admin/doka-horizontal-charcoal.svg`, `doka-horizontal-paper.svg` (`.on-light`, `.on-dark`, shown by `data-theme` or by `prefers-color-scheme`) and `doka-symbol.svg` (the rail). `brand.test.ts` pins their digests. The build emits them under `/admin/assets/`.
+- **Clear space and integrity** (USAGE.md): a quarter of the D's visible height around it; keep proportions, orientation and colours; charcoal on yellow, never white; paper or white files on a dark ground; do not retype the logo.
 
-### Operator's page
-- **Top bar** (`.bar`): 960px wide, a 2px `--line` rule below, the brand in 800 with the mark, then the navigation and the `.actor` line (14px `--muted`).
-- **Buttons:** 44px, padding 0 16px, 2px `--muted` border, 8px corners, `--surface`, 700. **Primary:** `--signal` fill and border with charcoal text, in both themes.
-- **Fields:** 44px (a textarea 88px), padding 8px 12px, 2px `--muted` border, 8px corners, `--surface`.
-- **Focus:** `outline: 3px solid var(--focus); outline-offset: 2px`.
-- **Shops table:** a 1px `--line` under each row, headers 14px `--muted`. From 600px, the numeric columns are right-aligned with tabular figures. Below 600px each shop is a card (2px `--line`, 8px corners) and each value carries its column's name.
-- **Notices:** `.banner` is a yellow band with charcoal 700 text. `.note` has a 4px yellow left border. A shown secret or kept record (`.shown`, `.kept`) is a 2px yellow-bordered card. `.refusal` is `--bad` 700.
-- **Dialog:** `min(32rem, 100vw - 32px)`, 2px `--text` border, 12px corners, `--surface`, backdrop rgb(0 0 0 / .55).
+### Console (Overview and Shops)
+- **Overview** (`Overview.vue`, the console's home): four figures in one card (Active shops, Credits outstanding, Received in the month, Provider spend with a 6px meter in `--text` on `--raised`). The 1px gaps over `--line` are the hairlines between them: one column, two by two from 600 px, four across over 1180 px. « Needs you » follows, the full width, its lines as 44px links on a hairline in as many columns as fit. Below: Shops (the first eight) and Service on the left, the month's payments in a 340px column on the right, over 1180 px.
+- **Shops table:** rows 60px on a `--line` hairline; the first cell the identifier (a 44px link) and the name under it; numbers right-aligned and tabular from 600 px; under 600 px one `--surface` card per shop, each value with its column's name.
+- **Notices:** `.banner` a 16px-corner yellow band with charcoal 700. `.note` a 4px `--signal-edge` left border. `.kept` and `.shown` a 2px `--hue` border. `.refusal` `--bad` 700.
 
 ### Motion
 
 | What moves | Property | Duration | Easing |
 | --- | --- | --- | --- |
-| Colour changes on controls, fields, nav, tabs, switch track | `background-color`, `border-color`, `color`, `opacity` | 150ms | ease-out |
+| Colour changes on controls, fields, rows, tabs, the switch track | `background-color`, `border-color`, `color`, `opacity` | 150ms | ease-out |
 | Press (`--press`) | `transform: scale(.97)` | 160ms | `cubic-bezier(.23, 1, .32, 1)` |
 | A chip or element becoming a pill | `border-radius` | 200ms | ease-out |
+| The drawer (both interfaces) | `transform`, then `visibility` | 280ms | `cubic-bezier(.2, .8, .2, 1)` |
+| The drawer's scrim (shops) | `opacity` | 200ms | ease-out |
 | Switch knob | `inset`, `width`, `height` | 150ms | ease-out |
-| Disclosure chevron | `transform` (45° → 225°) | 150ms | ease-out |
-| Busy spinner | `rotate` 1 turn, shown after 120ms | 700ms, infinite | linear |
+| Disclosure chevron | `transform` | 150ms | ease-out |
+| Busy spinner | `rotate`, shown after 120ms | 700ms, infinite | linear |
 | Loading line | `translateX(-100%)` → `translateX(435%)` | 1.2s, infinite | `cubic-bezier(.4, 0, .2, 1)` |
 | Wait bar segment | same keyframes | 2.4s, infinite | linear |
 | Generation dot | `scale` 1 → .6 → 1 | 1.6s, infinite | ease-in-out |
-| Chat reply spinner | `rotate` | 800ms, infinite | linear |
-| A new version appearing (`App.vue`, `canvasDrawn`) | `opacity` 0 → 1 (Web Animations) | 200ms | ease-out |
-| Page scroll | `scroll-behavior: smooth` | | |
+| Chat wait spinner | `rotate` | 800ms, infinite | linear |
+| A new version appearing (`App.vue`) | `opacity` 0 → 1 | 200ms | ease-out |
 
 Transitions name their property, never `all`. The generation dot pulses in size, not opacity, because a fainter dot fell under 3:1.
 
-**`prefers-reduced-motion: reduce` does exactly this:** it sets `scroll-behavior: auto` and `transition: none` on every element (`*`, `!important`). Pseudo-elements are not matched, so the switch knob and the disclosure chevron keep their 150ms transition. It stops the generation dot. It stops the wait bar segment and the loading line and draws each at full width, still and not dimmed. It replaces the press scale: buttons (except the primary, a thumbnail, the « new version » tile and send), links (except the download link) and format chips take a `--raised` background, and those exceptions take a 3px `--hue` ring. It slows the chat spinner and the photo spinner to 2.4s per turn. It makes every glass surface solid with no blur (see Elevation) and removes the confirmation sheet's blur. `App.vue` skips the new version's fade. The busy-control spinner and the thumbnail spinner keep turning at 700ms. The operator's page and « Vos données » define no motion.
+**`prefers-reduced-motion: reduce`** sets `scroll-behavior: auto` and `transition: none` on every element (the drawer included; the console removes its drawer transition itself), stops the generation dot, draws the wait bar and the loading line still at full width, replaces the press scale with a `--raised` background (or a 3px `--hue` ring on the yellow and picture controls), slows the chat and photo spinners to 2.4s, and makes the glass solid with no blur.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** put the shops' main action on `--invert` (charcoal #20201d with #ffffff ink in light, paper #f5f1e8 with #100f0e ink in dark).
-- **Do** use `--signal` only as a fill with `--on-signal` on it, and `--hue` for every ring, border and progress mark.
-- **Do** keep text at 4.5:1 (3:1 from 24px, or 18.66px bold), placeholders at 4.5:1 at any size and lighter than typed text, and accent lines at 3:1, measured with `check_contrast` and `check_marks` in both themes.
-- **Do** mark a choice by its shape as well as its colour: a pill among rounded squares, a ring, a tick.
-- **Do** keep targets at 44px on touch screens, and main buttons and fields at 52px.
-- **Do** keep each phone-bar label on one line and keep the full French name in the accessible name.
-- **Do** give the five frame screens `--page` (860px) and `.page-title` (26px/32px/800).
+- **Do** make the main action charcoal on Signal Yellow with its `--signal-edge`, and `--signal-hover` under a hovering pointer.
+- **Do** keep resting surfaces `--surface` with a 1px `--line`, and keep glass and `--lift` for what floats.
+- **Do** use `--glass-strong` for every floating surface that carries text; it is the one glass that keeps 4.5:1 over black and white.
+- **Do** use `--hue` for every ring, chosen border and progress mark.
+- **Do** keep text at 4.5:1 (3:1 from 24px, or 18.66px bold), placeholders at 4.5:1, accent lines and field boundaries at 3:1, measured in both themes.
+- **Do** paint a blur on the fixed or sticky element itself or on its `::before`.
+- **Do** split every width condition into complementary halves (`>` and `<=`).
+- **Do** make what is not shown `hidden` or `inert`.
+- **Do** mark a choice by shape as well as colour, and a state by a word as well as a dot.
+- **Do** keep targets at 44px on touch screens (at every width in the console), and main buttons and fields at 52px on touch.
+- **Do** give the five frame screens `--page` (860px) and `.page-title`.
 - **Do** put hover looks inside `@media (hover: hover)`.
-- **Do** use the kit's files byte for byte, the charcoal files on light grounds and the paper or white files on dark ones.
+- **Do** use the kit's files byte for byte: charcoal on light grounds, paper on dark ones.
 
 ### Don't:
-- **Don't** make the shops' main button yellow until the owner has seen a yellow one on a phone in daylight (owner decision 2; Signal Yellow on paper is 1.43:1).
-- **Don't** use Signal Yellow as a line or as text on a light ground; never put white on yellow.
+- **Don't** put white on yellow, or use Signal Yellow as a line or as text on a light ground.
+- **Don't** change a main action's opacity on hover.
+- **Don't** blur or shadow a card, a list, a field or a chip.
+- **Don't** put a `backdrop-filter`, `filter`, `transform` or containment on an ancestor of a fixed element.
+- **Don't** wrap the top bar and `main` in a scrolling box; the window scrolls.
 - **Don't** add the Doka logo or any Doka identity to a shop's poster, and don't let a page token reach the poster canvas.
-- **Don't** load Space Grotesk or Noto Sans for the interface text, and don't fetch a font from another site (ADR-122).
-- **Don't** rebuild the shops' dark theme on the kit's Charcoal; it keeps its near-black ground and greys (owner decision 3).
-- **Don't** let the operator's page import or request anything of the shops' app (D-ADMIN-005).
-- **Don't** blur a copy of the poster as a backdrop, and don't blur a control again on a surface that already blurs.
-- **Don't** put a blur on an ancestor of a fixed bar; move the blur to a `::before` layer.
+- **Don't** fetch a font from another site.
+- **Don't** let the console import or request anything of the shops' app.
+- **Don't** blur a copy of the poster as a backdrop.
 - **Don't** fade a progress mark with opacity; it falls under 3:1.
 - **Don't** transition `all`.
