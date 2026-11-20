@@ -13,6 +13,25 @@ then `http://127.0.0.1:8777/` (the index links every state). A state is an addre
 `client.html?view=chat|talk|home`, `admin.html?view=overview|shops`, plus `&theme=light|dark`, `&rail=1` (sidebar
 collapsed), `&primary=ink` (the main action in charcoal instead of yellow). Under 900 px wide the phone layout shows.
 
+Also published as a private artifact: https://claude.ai/artifact/TLAJXwcJihPh6Tp8R2pa5F (states by hash there:
+`client.html#chat|talk|home`, `admin.html#overview|shops`).
+
+## Round 2 (same day, on the owner's review)
+
+- Layout after the Dribbble shot « Zyricon — AI Chatbot Web App »: the whole app in one framed window over the field,
+  the sidebar a darker column inside it with labelled sections, suggestions above the composer, quiet tools at the
+  bottom left of the composer and the send button at the bottom right. Structure only; nothing copied.
+- Softer edges in the light theme: a button's edge is a 20% charcoal line, the yellow button's edge a darker yellow,
+  no black outline. Fields keep a 3:1 line.
+- Tables and cards after design-taste's app-screen rules and a web search on table design: one key-figures card
+  split by hairlines (label over value, no icon), small grey sentence-case headers with no band, rows of one height
+  on a faint rule, the identity column widest, figures on one right edge, pale status pills, « View all » with the
+  total; cards are a surface and a hairline, a shadow only on what floats (the composer, the sheet).
+- The conversation says less: one recap line, « Créer l’affiche · 1 crédit », « Votre affiche est prête. », three
+  suggestions. The progress line, the remaining-credit sentence and the repeated cost are gone.
+- No « Service running » badge; the active navigation item is a neutral fill, not a yellow bar.
+- Kept against design-taste's own rule: the glass and the soft field, which the owner asked for.
+
 ## Files
 
 | File | What |

@@ -8,82 +8,72 @@
 <link rel="stylesheet" href="doka.css">
 <style>
 /* The chat: what a shop uses most. A thread, one composer, and the poster beside it on a wide screen. */
-.chat { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0 }
-.thread-col { display: flex; flex-direction: column; height: calc(100dvh - 68px); width: min(100%, 780px); margin: 0 auto; padding: 0 20px }
-.thread { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 18px; padding: 12px 2px 20px }
+.chat { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) }
+.thread-col { display: flex; flex-direction: column; min-height: 0; height: 100%; width: min(100%, 760px); margin: 0 auto; padding: 0 20px }
+.thread { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 22px; padding: 12px 2px 20px }
 .thread > :first-child { margin-top: auto }
-.hello { margin: auto 0; padding: 24px 0 8px; text-align: center; display: grid; gap: 6px; justify-items: center }
+.hello { margin: auto 0; padding: 24px 0 8px; text-align: center; display: grid; gap: 8px; justify-items: center }
 .hello > img { width: 56px; height: 56px; margin-bottom: 12px }
-@media (min-width: 901px) { .thread-col.empty { justify-content: center; padding-bottom: 8vh } .empty .thread { flex: none; padding-bottom: 28px } }
-.hello h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; font-weight: 800; letter-spacing: -.02em }
+.hello h2 { font-size: clamp(26px, 3.4vw, 32px); line-height: 1.15; font-weight: 750; letter-spacing: -.02em }
 .hello p { color: var(--muted); font-size: 16px }
+@media (min-width: 901px) { .thread-col.empty { justify-content: center; padding-bottom: 6vh } .empty .thread { flex: none; padding-bottom: 36px } }
 .msg { display: grid; gap: 8px; max-width: 86% }
 .msg.me { justify-self: end; align-self: flex-end; justify-items: end }
 .bubble { padding: 12px 16px; border-radius: 20px 20px 6px 20px; background: var(--charcoal); color: var(--paper) }
 :root[data-theme=dark] .bubble { background: var(--raised); color: var(--text) }
-.msg.me img { width: 92px; height: 92px; object-fit: cover; border-radius: 16px; border: 1px solid var(--line) }
-.msg.ai { align-self: flex-start; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; max-width: 100% }
-.msg.ai > .who-ai { width: 32px; height: 32px; border-radius: 10px; background: var(--signal); border: 1.5px solid var(--charcoal); display: grid; place-items: center }
-.msg.ai > .who-ai img { width: 18px; height: 18px }
-.msg.ai .body { display: grid; gap: 10px; padding-top: 4px }
-.recap { border-radius: 20px; padding: 6px 16px; display: grid }
-.recap div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line) }
-.recap div:last-of-type { border: 0 } .recap dt { color: var(--faint); font-size: 13px } .recap dd { margin: 0; font-weight: 650 }
-.cost { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px }
-.cost .hint { display: inline-flex; align-items: center; gap: 6px; color: var(--muted) }
-.result { border-radius: 24px; padding: 12px; display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; align-items: center }
-.result img, .poster img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 14px; display: block; box-shadow: var(--shadow) }
+.msg.me img { width: 84px; height: 84px; object-fit: cover; border-radius: 16px; border: 1px solid var(--line) }
+.msg.ai { align-self: flex-start; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; max-width: 100% }
+.msg.ai > img { width: 28px; height: 28px; margin-top: 2px }
+.msg.ai .body { display: grid; gap: 12px; justify-items: start }
+/* What the assistant understood, as one line of facts: the product, the price, the style. */
+.recap { display: flex; flex-wrap: wrap; gap: 0; margin: 0; border-radius: 16px; border: 1px solid var(--line); background: var(--surface) }
+.recap div { padding: 10px 16px } .recap div + div { border-left: 1px solid var(--line) }
+.recap dt { color: var(--faint); font-size: 12.5px } .recap dd { margin: 0; font-weight: 650 }
+.go { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+.result { border-radius: 20px; padding: 10px; display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 14px; align-items: center; width: min(100%, 420px); border: 1px solid var(--line); background: var(--surface) }
+.result img, .poster img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: 12px; display: block }
 .result .acts, .poster .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px }
-.steps { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted) }
-.steps span { display: inline-flex; align-items: center; gap: 6px } .steps .i { width: 16px; height: 16px; color: var(--ok) }
-.chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none }
-.chips button { flex: none; min-height: 38px; padding: 0 14px; font-weight: 600; font-size: 14px; border-color: var(--line); background: var(--glass) }
-.suggest { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 28px }
-.suggest button { min-height: 0; padding: 14px; border-radius: 18px; border: 1px solid var(--glass-out); display: grid; justify-items: start; gap: 6px; text-align: left; font-weight: 650; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur) }
-.suggest small { font-weight: 500 }
-/* The composer: one card, the words on top, the tools inside, the send button where the thumb is. */
+/* The composer, as in the AI chats people know: suggestions above it, the words on top, quiet tools at the bottom left,
+   the send button at the bottom right. */
 .dock { padding: 0 0 14px; display: flex; flex-direction: column }
-.composer { border-radius: 26px; padding: 10px; display: grid; gap: 6px; box-shadow: inset 0 1px 0 var(--glass-edge), var(--lift); background: var(--glass-strong) }
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none }
+.chips button { flex: none; min-height: 36px; padding: 0 14px; font-weight: 600; font-size: 14px; background: var(--surface) }
+.composer { border-radius: 24px; padding: 8px 8px 8px 10px; display: grid; gap: 2px; background: var(--surface); border: 1px solid var(--edge) }
 .composer:focus-within { border-color: var(--text) }
-.tray { display: flex; gap: 8px; padding: 4px 4px 0 } .tray span { position: relative }
-.tray img { width: 56px; height: 56px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); display: block }
-.tray button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; min-height: 0; padding: 0; background: var(--text); color: var(--ground); border: 0 } .tray .i { width: 12px; height: 12px }
-.composer textarea { min-height: 52px; max-height: 180px; padding: 10px 12px 4px; border: 0; background: none; resize: none; font-size: 16px; outline: none }
-.tools { display: flex; align-items: center; gap: 6px }
-.tools .opts { display: flex; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 2px }
-.tools .opt { flex: none; min-height: 40px; padding: 0 12px 0 8px; border-color: var(--line); font-size: 14px; font-weight: 600; gap: 8px }
-.tools .opt img { width: 24px; height: 24px; border-radius: 8px; object-fit: cover } .tools .opt .i:last-child { width: 14px; height: 14px; color: var(--faint) }
-.tools .price { font-size: 13px; color: var(--muted); white-space: nowrap; display: inline-flex; gap: 6px; align-items: center }
-.send { width: 46px; height: 46px; min-height: 0; padding: 0; background: var(--signal); color: var(--charcoal); border-color: var(--charcoal) }
+.composer textarea { min-height: 64px; max-height: 180px; padding: 10px 10px 4px; border: 0; background: none; resize: none; font-size: 16px; outline: none }
+.tools { display: flex; align-items: center; gap: 2px }
+.tools .opts { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 2px }
+.tools .opt { flex: none; min-height: 36px; padding: 0 10px; border: 0; font-size: 14px; font-weight: 600; color: var(--muted); gap: 8px }
+.tools .opt img { width: 22px; height: 22px; border-radius: 7px; object-fit: cover } .tools .opt .i { width: 18px; height: 18px } .tools .opt .i:last-child:not(:first-child) { width: 14px; height: 14px; color: var(--faint) }
+.send { width: 44px; height: 44px; min-height: 0; padding: 0; background: var(--signal); color: var(--charcoal); border-color: var(--primary-edge) }
 .fine { text-align: center; padding: 8px 12px 0; font-size: 12.5px; color: var(--faint) }
 /* The poster beside the thread, as the canvas of a regular AI chat: only when there is room. */
 .poster { display: none }
 @media (min-width: 1240px) {
-  body[data-view=talk] .chat { grid-template-columns: minmax(0, 1fr) 400px }
-  .poster { display: block; padding: 0 20px 14px 0 } .poster .glass { position: sticky; top: 76px; border-radius: 26px; padding: 16px; display: grid; gap: 14px }
+  body[data-view=talk] .chat { grid-template-columns: minmax(0, 1fr) 380px }
+  .poster { display: block; min-height: 0; padding: 0 16px 14px 0 } .poster > div { border-radius: 24px; padding: 14px; display: grid; gap: 14px; border: 1px solid var(--line); background: var(--surface) }
   body[data-view=talk] .result { display: none }
 }
 .poster header { display: flex; align-items: center; justify-content: space-between; gap: 8px }
-.vers { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--raised) } .vers button { min-height: 32px; padding: 0 12px; border: 0; font-size: 13px } .vers [aria-pressed=true] { background: var(--surface); box-shadow: var(--shadow) }
-.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-radius: 16px; border: 1px solid var(--line) } .facts div { padding: 10px 14px } .facts div + div { border-left: 1px solid var(--line) }
-.facts dt { font-size: 12.5px; color: var(--faint) } .facts dd { margin: 0; font-weight: 700 }
+.vers { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--raised) } .vers button { min-height: 32px; padding: 0 12px; border: 0; font-size: 13px } .vers [aria-pressed=true] { background: var(--surface) }
 /* Accueil */
 .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 8px }
-.todo { border-radius: 20px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; background: var(--warn-bg); color: var(--warn); font-weight: 650; text-decoration: none }
+.todo { border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; background: var(--warn-bg); color: var(--warn); font-weight: 650; text-decoration: none }
 .todo .i:last-child { margin-left: auto }
-.balance { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center }
-.nums { display: flex; gap: 36px } .nums b { display: block; font-size: 34px; line-height: 1.1; font-weight: 800 } .nums span { color: var(--muted); font-size: 14px }
-.rows { border-radius: var(--r-l); overflow: hidden } .rows a { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto 20px; gap: 14px; align-items: center; padding: 10px 16px; text-decoration: none; min-height: 76px }
+.balance { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; border-radius: var(--r-l); padding: 20px; border: 1px solid var(--line); background: var(--surface) }
+.nums { display: flex; gap: 36px } .nums b { display: block; font-size: 32px; line-height: 1.1; font-weight: 750 } .nums span { color: var(--muted); font-size: 14px }
+.rows { border-radius: var(--r-l); overflow: hidden; border: 1px solid var(--line); background: var(--surface) }
+.rows a { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto 20px; gap: 14px; align-items: center; padding: 8px 16px; text-decoration: none; min-height: 76px }
 .rows a + a { border-top: 1px solid var(--line) } .rows img { width: 48px; height: 60px; object-fit: cover; border-radius: 8px }
 .rows b { display: block } .rows span { color: var(--faint); font-size: 13px } .rows .i { color: var(--faint) }
-@media (hover: hover) { .rows a:hover { background: var(--tint) } }
+@media (hover: hover) { .rows a:hover { background: var(--active) } }
 .sec { display: flex; align-items: baseline; justify-content: space-between; gap: 12px }
 @media (max-width: 900px) {
-  .thread-col { height: calc(100dvh - 60px); padding: 0 12px } .suggest { order: -1 } .opt .lbl { display: none } .tools .opt:has(.lbl) { width: 40px; padding: 0; justify-content: center } .suggest { display: flex; overflow-x: auto; scrollbar-width: none; gap: 8px; margin: 10px 0 14px } .suggest small { display: none } .suggest button { flex: none; padding: 10px 14px; border-radius: 999px; font-size: 14px }
-  .result { grid-template-columns: 104px minmax(0, 1fr) } .msg { max-width: 92% } .balance { grid-template-columns: 1fr } .balance .primary { width: 100% }
+  .thread-col { padding: 0 12px } .msg { max-width: 92% } .balance { grid-template-columns: 1fr }
   .rows a { grid-template-columns: 48px minmax(0, 1fr) 20px } .rows .badge { grid-column: 2; grid-row: 2; justify-self: start } .rows a > .i { grid-row: 1 / span 2; grid-column: 3 }
-  body:not([data-view=home]) .tabs { display: none } .tools .price { display: none }
-  .tools .opt, .chips button, .suggest button { min-height: 44px } .tools .opt:has(.lbl) { width: 44px }
+  body:not([data-view=home]) .tabs { display: none }
+  .tools .opt, .chips button { min-height: 44px } .opt .lbl { display: none } .tools .opt:has(.lbl) { width: 44px; padding: 0; justify-content: center }
+  .result { grid-template-columns: 96px minmax(0, 1fr) }
 }
 .top .mark { display: none } @media (max-width: 900px) { .top .mark { display: block; width: 32px; height: 32px } }
 </style>
@@ -92,13 +82,14 @@
 <div class="scrim"></div>
 <div class="shell">
   <aside class="side" aria-label="Menu">
-    <div class="side-in glass">
+    <div class="side-in">
       <a class="brand" href="#home" data-view="home" aria-label="Doka Studio — Accueil">
         <img class="lockup on-light" src="assets/doka-horizontal-charcoal.svg" width="220" height="79" alt="">
         <img class="lockup on-dark" src="assets/doka-horizontal-paper.svg" width="220" height="79" alt="">
         <img class="symbol" src="assets/favicon.svg" width="40" height="40" alt="">
       </a>
       <a class="btn primary new" href="#chat" data-view="chat" title="Nouvelle affiche"><svg class="i"><use href="#i-plus"/></svg><span class="label">Nouvelle affiche</span></a>
+      <h3>Atelier</h3>
       <nav aria-label="Navigation">
         <a href="#home" data-view="home" title="Accueil"><svg class="i"><use href="#i-home"/></svg><span class="label">Accueil</span></a>
         <a href="#" title="Mes affiches"><svg class="i"><use href="#i-grid"/></svg><span class="label">Mes affiches</span><span class="count">7</span></a>
@@ -112,7 +103,6 @@
       </ul>
       <div class="side-foot">
         <a class="credit" href="#" title="117 crédits disponibles"><svg class="i"><use href="#i-coins"/></svg><b>117 crédits</b><span>Obtenir des crédits</span></a>
-        <button class="row" type="button" data-theme-toggle aria-label="Passer au thème sombre" title="Changer de thème"><svg class="i"><use href="#i-moon"/></svg><span class="label">Thème</span></button>
         <button class="row who" type="button" title="Original Phone Mada — compte"><span class="avatar" aria-hidden="true">OP</span><span><b>Original Phone Mada</b><span>Mon compte</span></span><svg class="i"><use href="#i-dots"/></svg></button>
       </div>
     </div>
@@ -125,7 +115,7 @@
       <img class="mark" src="assets/favicon.svg" alt="">
       <h1 data-title-slot>Nouvelle affiche</h1>
       <span class="grow"></span>
-      <a class="pill glass" href="#" aria-label="117 crédits disponibles"><svg class="i"><use href="#i-coins"/></svg>117<span class="label vh"> crédits</span></a>
+      <a class="pill btn" href="#" aria-label="117 crédits disponibles"><svg class="i"><use href="#i-coins"/></svg>117</a>
       <button class="icon-btn" type="button" data-theme-toggle aria-label="Passer au thème sombre"><svg class="i"><use href="#i-moon"/></svg></button>
     </header>
 
@@ -136,73 +126,58 @@
           <div class="hello">
             <img src="assets/favicon.svg" alt="">
             <h2>Quelle affiche créons-nous ?</h2>
-            <p>Ajoutez la photo du produit, dites son nom et son prix. Je m’occupe de l’image.</p>
+            <p>La photo du produit, son nom, son prix.</p>
           </div>
         </div>
         <div class="dock">
-          <form class="composer glass" onsubmit="return false">
+          <div class="chips"><button type="button" data-view="talk">Un produit et son prix</button><button type="button">Une promotion</button><button type="button">Comme une de mes affiches</button></div>
+          <form class="composer float" onsubmit="return false">
             <label class="vh" for="m1">Votre message</label>
             <textarea id="m1" rows="2" placeholder="Ex. Casque Sony WH-CH720N noir, 289 000 Ar"></textarea>
             <div class="tools">
               <div class="opts"><button class="opt" type="button" aria-label="Ajouter une photo"><svg class="i"><use href="#i-clip"/></svg><span class="lbl">Photo</span></button>
               <button class="opt" type="button"><img src="assets/clair.jpg" alt="">Studio clair<svg class="i"><use href="#i-down"/></svg></button>
-              <button class="opt" type="button"><svg class="i"><use href="#i-ratio"/></svg>4:5<svg class="i"><use href="#i-down"/></svg></button></div>
-              <span class="price"><svg class="i"><use href="#i-coins"/></svg><span>1 crédit par image</span></span>
+              <button class="opt" type="button">4:5<svg class="i"><use href="#i-down"/></svg></button></div>
               <button class="send" type="submit" aria-label="Envoyer"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
-          <div class="suggest">
-            <button type="button" data-view="talk">Un produit et son prix<small>La photo, le nom, le prix : l’affiche est prête à vérifier.</small></button>
-            <button type="button">Une promotion<small>L’ancien prix barré et le nouveau, bien visibles.</small></button>
-            <button type="button">Comme une de mes affiches<small>Le même style, pour un autre produit.</small></button>
-          </div>
+          <p class="fine">1 crédit par image · vérifiez le produit et le prix avant de publier.</p>
         </div>
       </div>
     </main>
 
-    <!-- 2. The chat with a poster: the recap before a credit is spent, then the result. -->
+    <!-- 2. The chat with a poster: one recap before a credit is spent, then the result. -->
     <main class="chat" data-screen="talk" data-title="Casque Sony WH-CH720N" hidden>
       <div class="thread-col">
         <div class="thread">
-          <div class="msg me"><img src="assets/clair.jpg" alt="Photo du produit"><div class="bubble">Casque Sony WH-CH720N noir, 289 000 Ar. Style studio clair.</div></div>
-          <div class="msg ai"><span class="who-ai"><img src="assets/doka-symbol-charcoal.svg" alt=""></span><div class="body">
-            <p>Voici ce que j’ai compris. Vérifiez avant que je crée l’image.</p>
-            <dl class="recap glass">
-              <div><dt>Produit</dt><dd>Casque Sony WH-CH720N noir</dd></div>
-              <div><dt>Prix</dt><dd>289 000 Ar</dd></div>
-              <div><dt>Style</dt><dd>Studio clair · 4:5</dd></div>
-            </dl>
-            <div class="cost"><button class="primary" type="button">Créer l’affiche</button><button class="ghost" type="button"><svg class="i"><use href="#i-pencil"/></svg>Corriger</button><span class="hint"><svg class="i"><use href="#i-coins"/></svg>1 crédit · il vous en restera 116</span></div>
+          <div class="msg me"><img src="assets/clair.jpg" alt="Photo du produit"><div class="bubble">Casque Sony WH-CH720N noir, 289 000 Ar</div></div>
+          <div class="msg ai"><img src="assets/favicon.svg" alt=""><div class="body">
+            <dl class="recap"><div><dt>Produit</dt><dd>Casque Sony WH-CH720N noir</dd></div><div><dt>Prix</dt><dd>289 000 Ar</dd></div><div><dt>Style</dt><dd>Studio clair</dd></div></dl>
+            <div class="go"><button class="primary" type="button">Créer l’affiche · 1 crédit</button><button class="ghost" type="button">Corriger</button></div>
           </div></div>
-          <div class="msg ai"><span class="who-ai"><img src="assets/doka-symbol-charcoal.svg" alt=""></span><div class="body">
-            <p><b>Votre affiche est prête.</b> Regardez le produit et le prix, puis vérifiez-la.</p>
-            <div class="steps"><span><svg class="i"><use href="#i-check"/></svg>Photo lue</span><span><svg class="i"><use href="#i-check"/></svg>Scène créée</span><span><svg class="i"><use href="#i-check"/></svg>Prix écrit : 289 000 Ar</span></div>
-            <div class="result glass"><img src="assets/clair.jpg" alt="Affiche, version 1"><div><b>Version 1</b> <span class="badge warn">À vérifier</span><p class="hint">1080 × 1350 px · 289 000 Ar</p>
-              <div class="acts"><button class="primary small" type="button"><svg class="i"><use href="#i-eye"/></svg>Vérifier</button><button class="small" type="button">Changer le prix</button></div></div></div>
+          <div class="msg ai"><img src="assets/favicon.svg" alt=""><div class="body">
+            <p>Votre affiche est prête.</p>
+            <div class="result"><img src="assets/clair.jpg" alt="Affiche, version 1"><div><b>Version 1</b><p class="hint">289 000 Ar · à vérifier</p>
+              <div class="acts"><button class="primary small" type="button">Vérifier</button></div></div></div>
           </div></div>
         </div>
         <div class="dock">
-          <div class="chips"><button type="button">Prix plus grand</button><button type="button">Fond plus sombre</button><button type="button">Ajouter mon logo</button><button type="button">Autre style</button></div>
-          <form class="composer glass" onsubmit="return false">
+          <div class="chips"><button type="button">Prix plus grand</button><button type="button">Fond plus sombre</button><button type="button">Autre style</button></div>
+          <form class="composer float" onsubmit="return false">
             <label class="vh" for="m2">Votre message</label>
             <textarea id="m2" rows="1" placeholder="Dites ce qu’il faut changer…"></textarea>
             <div class="tools">
               <div class="opts"><button class="opt" type="button" aria-label="Ajouter une photo"><svg class="i"><use href="#i-clip"/></svg><span class="lbl">Photo</span></button>
               <button class="opt" type="button"><img src="assets/clair.jpg" alt="">Studio clair<svg class="i"><use href="#i-down"/></svg></button></div>
-              <span class="price"><svg class="i"><use href="#i-coins"/></svg><span>1 crédit par image</span></span>
               <button class="send" type="submit" aria-label="Envoyer"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
-          <p class="fine">L’IA peut se tromper : vérifiez le produit et le prix avant de publier.</p>
         </div>
       </div>
-      <aside class="poster" aria-label="Affiche"><div class="glass">
-        <header><h2>Affiche</h2><span class="vers" role="group" aria-label="Versions"><button type="button" aria-pressed="true">V1</button><button type="button" aria-pressed="false">Photo</button></span></header>
+      <aside class="poster" aria-label="Affiche"><div>
+        <header><h2>Version 1</h2><span class="vers" role="group" aria-label="Voir"><button type="button" aria-pressed="true">Affiche</button><button type="button" aria-pressed="false">Photo</button></span></header>
         <img src="assets/clair.jpg" alt="Affiche, version 1">
-        <div><b>Version 1</b> <span class="badge warn">À vérifier</span></div>
-        <dl class="facts"><div><dt>Format</dt><dd>1080 × 1350 px</dd></div><div><dt>Prix affiché</dt><dd>289 000 Ar</dd></div></dl>
-        <div class="acts"><button class="primary" type="button"><svg class="i"><use href="#i-eye"/></svg>Vérifier l’affiche</button><button type="button">Changer le prix</button></div>
-        <p class="hint">Après la vérification : télécharger, ou partager vers Facebook et WhatsApp.</p>
+        <div class="acts" style="margin:0"><button class="primary" type="button">Vérifier l’affiche</button><button type="button">Changer le prix</button></div>
       </div></aside>
     </main>
 
@@ -211,13 +186,13 @@
       <div class="page">
         <div class="head"><h1>Bonjour, Original Phone Mada</h1></div>
         <a class="todo" href="#talk" data-view="talk"><svg class="i"><use href="#i-eye"/></svg>1 affiche à vérifier : Casque Sony WH-CH720N<svg class="i"><use href="#i-right"/></svg></a>
-        <section class="card glass balance" aria-labelledby="t-credits">
+        <section class="balance" aria-labelledby="t-credits">
           <div><h2 id="t-credits">Mes crédits</h2><div class="nums" style="margin-top:10px"><div><b>117</b><span>Disponibles</span></div><div><b>0</b><span>En attente</span></div></div></div>
           <a class="btn" href="#">Voir mes crédits</a>
         </section>
         <section aria-labelledby="t-recent" style="display:grid;gap:10px">
           <div class="sec"><h2 id="t-recent">Affiches récentes</h2><a href="#">Tout voir</a></div>
-          <div class="rows glass">
+          <div class="rows">
             <a href="#talk" data-view="talk"><img src="assets/clair.jpg" alt=""><span><b>Casque Sony WH-CH720N noir</b><span>289 000 Ar · aujourd’hui</span></span><span class="badge warn">À vérifier</span><svg class="i"><use href="#i-right"/></svg></a>
             <a href="#"><img src="assets/couleur.jpg" alt=""><span><b>JBL Tune 770NC lilas</b><span>350 000 Ar · hier</span></span><span class="badge ok">Confirmée</span><svg class="i"><use href="#i-right"/></svg></a>
             <a href="#"><img src="assets/sombre.jpg" alt=""><span><b>Sony WH-1000XM6</b><span>1 450 000 Ar · 15 nov.</span></span><span class="badge ok">Confirmée</span><svg class="i"><use href="#i-right"/></svg></a>
@@ -228,7 +203,7 @@
   </div>
 </div>
 
-<nav class="tabs glass" aria-label="Navigation">
+<nav class="tabs glass float" aria-label="Navigation">
   <a href="#home" data-view="home"><svg class="i"><use href="#i-home"/></svg>Accueil</a>
   <a href="#"><svg class="i"><use href="#i-grid"/></svg>Affiches</a>
   <a class="make" href="#chat" data-view="chat" aria-label="Nouvelle affiche"><svg class="i"><use href="#i-plus"/></svg></a>

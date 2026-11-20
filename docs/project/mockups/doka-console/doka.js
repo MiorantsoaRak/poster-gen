@@ -49,7 +49,7 @@ function theme(next) {
     button.querySelector('use').setAttribute('href', next === 'dark' ? '#i-sun' : '#i-moon')
   }
 }
-theme(query.get('theme') || stored('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+theme(query.get('theme') || root.dataset.theme || stored('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
 if (query.get('primary') === 'ink' || (!query.has('primary') && stored('primary') === 'ink')) root.dataset.primary = 'ink'
 if (query.get('rail') === '1' || (!query.has('rail') && stored('rail') === '1')) root.dataset.rail = ''
 
