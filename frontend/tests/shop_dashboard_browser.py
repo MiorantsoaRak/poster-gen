@@ -1,4 +1,5 @@
 """Run from backend after the production frontend build. Stub stores and providers only."""
+import re
 import subprocess
 import tempfile
 from uuid import uuid4
@@ -81,6 +82,168 @@ def walk_header(browser):
         expect(page.get_by_label("Photos du produit")).to_be_enabled()
         check()
         assert header.locator(".shop-label").evaluate("e => e.scrollWidth > e.clientWidth")
+    finally:
+        context.close()
+
+
+# The frame of the shop's five screens (D-POLISH-003). A title: its type, and what shows its focus.
+TITLE_JS = """e => { const style = getComputedStyle(e)
+  return [style.fontSize, style.lineHeight, style.fontWeight, style.outlineStyle, e.matches(':focus-visible'), style.textDecorationLine,
+          style.textDecorationThickness, style.textUnderlineOffset] }"""
+# The lines of text of a screen that come closer than 16 px to an edge of the window.
+NEAR_EDGE_JS = r"""root => {
+  const width = document.documentElement.clientWidth, near = [], range = document.createRange()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent.trim() || !node.parentElement.checkVisibility()) continue
+    range.selectNodeContents(node)
+    for (const line of range.getClientRects()) if (line.width && (line.left < 16 || line.right > width - 16)) near.push(`${line.left}–${line.right}: ${node.textContent.trim().slice(0, 40)}`)
+  }
+  return near
+}"""
+# Each link of the bottom bar: the text it paints, its smallest size, its lines as drawn (a DOM range, not a scroll width)
+# and whether they stay inside the link and inside everything that clips them, and the link's box. A text is painted when
+# it is visible, nothing up to the link is faded to nothing, and it is not in a 1 px box kept for a screen reader.
+BAR_JS = r"""nav => [...nav.querySelectorAll('a')].map(link => {
+  const chain = node => { const up = []; for (let e = node.parentElement; ; e = e.parentElement) { up.push(e); if (e === link) return up } }
+  const clips = e => { const style = getComputedStyle(e); return style.overflowX !== 'visible' || style.overflowY !== 'visible' || style.clipPath !== 'none' }
+  const painted = up => getComputedStyle(up[0]).visibility === 'visible' && up.every(e => { const style = getComputedStyle(e), box = e.getBoundingClientRect()
+    return style.display !== 'none' && Number(style.opacity) > 0 && !(clips(e) && box.width <= 1 && box.height <= 1) })
+  const walker = document.createTreeWalker(link, NodeFilter.SHOW_TEXT), range = document.createRange(), shown = [], lines = [], within = []
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const up = node.textContent.trim() && chain(node)
+    if (!up || !painted(up)) continue
+    shown.push(node)
+    const bounds = up.filter(clips).concat(link).map(e => e.getBoundingClientRect())
+    range.selectNodeContents(node)
+    for (const line of [...range.getClientRects()].filter(line => line.width)) {
+      lines.push(line)
+      within.push(bounds.every(box => line.left >= box.left && line.right <= box.right && line.top >= box.top && line.bottom <= box.bottom))
+    }
+  }
+  const box = link.getBoundingClientRect()
+  return { text: shown.map(node => node.textContent).join('').trim(), size: Math.min(...shown.map(node => parseFloat(getComputedStyle(node.parentElement).fontSize))),
+           lines: new Set(lines.map(line => Math.round(line.top))).size, width: box.width, height: box.height, inside: within.every(Boolean) }
+})"""
+
+
+def level_one(page):
+    """The level-one headings of Chromium's own accessibility tree. Playwright's role queries keep an inert background
+    (Playwright 1.64); this tree leaves it out, as a screen reader does."""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        nodes = cdp.send("Accessibility.getFullAXTree")["nodes"]
+    finally:
+        cdp.detach()
+    return [node["name"]["value"] for node in nodes if not node.get("ignored") and node.get("role", {}).get("value") == "heading"
+            and any(item["name"] == "level" and item["value"]["value"] == 1 for item in node.get("properties", []))]
+
+
+def check_bar(nav, items, where):
+    """The bottom bar on a phone (D-POLISH-003): its items in order, each showing its short text on one line inside its link
+    at 11 px or more, a 44 × 44 px target, named by its full French name, which contains what is shown."""
+    links = nav.get_by_role("link")
+    expect(links).to_have_count(len(items))
+    for link, (shown, name) in zip(links.all(), items):
+        expect(link).to_have_accessible_name(name)
+        assert shown.casefold() in name.casefold(), (shown, name)
+    measured = nav.evaluate(BAR_JS)
+    assert [item["text"] for item in measured] == [shown for shown, _ in items], (where, measured)
+    for item in measured:
+        assert item["size"] >= 11 and item["lines"] == 1 and item["inside"] and item["width"] >= 44 and item["height"] >= 44, (where, item)
+
+
+def walk_frame(browser):
+    """One frame for the shop's five screens (D-POLISH-003), on a shop with no poster yet: one title each at one size,
+    focused on arrival with no box and underlined for the keyboard, the next Tab on the screen's first control; one width
+    and the same edges at 1440 px, 16 px from the edges at 360 px; then the phone's bottom bar, with four items and with
+    five, for every balance and list size."""
+    context = browser.new_context(viewport={"width": 1440, "height": 900}, color_scheme="light")
+    try:
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.add_init_script(smoke.STEPS_FIRST)
+        open_atelier(page, "#accueil")
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        nav = page.get_by_role("navigation", name="Navigation", exact=True)
+        home = page.get_by_role("region", name="Accueil", exact=True)
+        expect(home).to_be_visible()
+        title = page.get_by_role("heading", level=1)
+        edges = []
+        for name, link, first in (
+                ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.get_by_label("Afficher les affiches retirées")),
+                ("Styles", nav.get_by_role("link", name=re.compile("^Styles")), page.locator(".look-card").first),
+                ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("button", name="Actualiser")),
+                ("Mes crédits", home.get_by_role("link", name="Voir mes crédits"), page.locator(".shop-credits").get_by_role("link", name="Retour à l’accueil")),
+                ("Mon compte", home.get_by_role("link", name="Mon compte"), page.locator(".shop-account").get_by_role("link", name="Retour à l’accueil"))):
+            if name == "Mon compte":
+                page.go_back()
+                expect(home).to_be_visible()
+            # Arrived with the keyboard: the title has the focus, no box, a 2 px underline 6 px under it.
+            link.focus()
+            page.keyboard.press("Enter")
+            expect(title).to_have_count(1)
+            expect(title).to_have_accessible_name(name)
+            expect(title).to_be_focused()
+            assert title.evaluate(TITLE_JS) == ["26px", "32px", "800", "none", True, "underline", "2px", "6px"], (name, title.evaluate(TITLE_JS))
+            page.keyboard.press("Tab")
+            expect(first).to_be_focused()
+            box = page.get_by_role("region", name=name, exact=True).bounding_box()
+            edges.append((name, box["x"], box["x"] + box["width"]))
+        assert all(right - left == 860 for _, left, right in edges), edges
+        assert len({(left, right) for _, left, right in edges}) == 1, edges
+        # A mouse arrival: the title has the focus, and nothing shows it.
+        nav.get_by_role("link", name=re.compile("^Styles")).click()
+        expect(title).to_be_focused()
+        assert title.evaluate(TITLE_JS)[3:6] == ["none", False, "none"]
+
+        page.set_viewport_size({"width": 360, "height": 740})
+        for route, name, loaded in (("accueil", "Accueil", page.get_by_text("Aucune affiche pour le moment.")),
+                                    ("affiches", "Mes affiches", page.get_by_text("Vos affiches apparaîtront ici dès la première création.")),
+                                    ("styles", "Styles", page.locator(".look-card").first),
+                                    ("credits", "Mes crédits", page.get_by_text("Disponibles", exact=True)),
+                                    ("compte", "Mon compte", page.get_by_label("Nom de la boutique"))):
+            page.goto(f"{smoke.ORIGIN}/#{route}")
+            expect(loaded).to_be_visible()
+            expect(title).to_have_accessible_name(name)
+            page.wait_for_function(smoke.NO_SIDEWAYS)
+            gutters = page.locator("main:not(.gate)").evaluate("e => [getComputedStyle(e).paddingLeft, getComputedStyle(e).paddingRight]")
+            assert gutters == ["16px", "16px"], (name, gutters)
+            near = page.get_by_role("region", name=name, exact=True).evaluate(NEAR_EDGE_JS)
+            assert not near, f"{name} at 360 px, text closer than 16 px to an edge: {near}"
+
+        # The bar: four items on the dashboard's screens, five in the creator; the balance and the list as the server says.
+        balance = page.request.get(smoke.ORIGIN + "/api/balance").json()
+        answers = {"available": 0, "posters": 0}
+        def read_balance(route):
+            if answers["available"] is None:
+                route.abort()
+            else:
+                route.fulfill(json={**balance, "available": answers["available"]})
+        page.route("**/api/balance", read_balance)
+        page.route("**/api/creations?limit=50&status=active", lambda route: route.fulfill(json={"items": [], "total": answers["posters"], "next_cursor": None}))
+        nav.get_by_role("link", name="Créer", exact=True).click()  # the creator reads the styles: their count is known from here on
+        expect(page.get_by_label("Photos du produit")).to_be_enabled()
+        for posters in (0, 3, 120):
+            answers["posters"] = posters
+            nav.get_by_role("link", name=re.compile("^Mes affiches")).click()
+            expect(nav.get_by_role("link", name=f"Mes affiches {posters}", exact=True)).to_be_visible()
+            for available in (-2, 0, 117, 12345, None):
+                answers["available"] = available
+                with page.expect_request("**/api/balance"):
+                    nav.get_by_role("link", name="Accueil", exact=True).click()
+                items = [("Accueil", "Accueil"), ("Créer", "Créer"), ("Affiches", f"Mes affiches {posters}"), ("Styles", "Styles 3")]
+                credits = ("Crédits", "Mes crédits") if available is None else (str(available), f"{available} crédit" + ("" if abs(available) == 1 else "s"))
+                where = f"{posters} affiches, solde {available}"
+                expect(home.get_by_role("button", name="Réessayer le solde")).to_have_count(int(available is None))
+                check_bar(nav, items, "Accueil, " + where)
+                nav.get_by_role("link", name="Créer", exact=True).click()
+                expect(page.get_by_label("Photos du produit")).to_be_enabled()
+                check_bar(nav, items + [credits], "creator, " + where)
+        assert not errors, errors
     finally:
         context.close()
 
@@ -170,8 +333,10 @@ def walk(browser, out):
         page.go_back()
         dialog = page.get_by_role("dialog", name="Quitter le message ?")
         expect(dialog).to_be_visible()
+        assert level_one(page) == [], level_one(page)  # the chat's title is behind the dialog, inert (D-POLISH-003)
         dialog.get_by_role("button", name="Annuler").click()
         expect(page.locator(".chat .pic img").first).to_be_visible()
+        assert level_one(page) == ["Créer une affiche"], level_one(page)
         page.go_back()
         dialog.get_by_role("button", name="Quitter sans les envoyer").click()
         expect(home).to_be_visible()
@@ -944,6 +1109,20 @@ def walk_account(browser, out, data):
         save.click()
         expect(account.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
         assert page.request.get(url).json()["name"] == "Mon choix local"
+        # The last edit's control gone with the logo, a cancelled departure gives the focus back to « Ma boutique »: a section
+        # title, it keeps its ring (D-POLISH-003). Leaving without the edit brings the saved logo back.
+        account.get_by_role("button", name="Retirer le logo").click()
+        home_link.click()
+        expect(keep).to_be_focused()
+        page.keyboard.press("Escape")
+        profile_title = account.get_by_role("heading", name="Ma boutique", exact=True)
+        expect(profile_title).to_be_focused()
+        assert profile_title.evaluate("e => e.matches(':focus-visible') && getComputedStyle(e).outlineStyle !== 'none'")
+        home_link.click()
+        discard.click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        page.get_by_role("link", name="Mon compte").click()
+        expect(account.get_by_alt_text("Logo de la boutique")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
         # The transparent file input on the French picker remains keyboard accessible.
         contact.focus()
         page.keyboard.press("Tab")
@@ -1059,6 +1238,7 @@ def run():
                     browser = playwright.chromium.launch()
                     try:
                         walk_header(browser)
+                        walk_frame(browser)
                         walk_credits(browser, out)
                         walk(browser, out)
                         walk_account(browser, out, data)

@@ -602,6 +602,8 @@ const PosterCanvas = defineAsyncComponent({ loader: () => import('./PosterCanvas
 const ChatView = defineAsyncComponent({ loader: () => import('./ChatView.vue'), onError: (_reason, retry) => { chatRetry.value = retry } })
 const editing = computed(() => !!doc.value && !chatting.value)
 const shownStart = computed<Start>(() => doc.value || view.value === 'create' ? (chatting.value ? 'chat' : 'steps') : startView.value ?? 'steps')
+// The chat route's one title, for a screen reader (D-POLISH-003): the same in each of its branches, outside the conversation.
+const chatTitle = computed(() => !creation.value ? 'Créer une affiche' : doc.value?.offer.title.trim() || 'Votre affiche')
 function askToDiscardPhotos(run: () => Promise<void>) {
   paid.value = { title: 'Quitter le message ?', text: 'Les photos jointes à ce message n’ont pas encore été envoyées avec lui.', cost: '',
     label: 'Quitter sans les envoyer', run }
@@ -2131,7 +2133,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     </a><template v-if="loaded">
     <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
     <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
-    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span>Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a><a v-if="view === 'create' && !editing" ref="creditButton" class="creator-credits" href="#credits" aria-haspopup="dialog" @click.exact.prevent="openCredits"><Icon n="credits" /><span>{{ balanceLabel }}</span></a></nav>
+    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="long">Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span><span class="short" aria-hidden="true">Affiches</span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a><a v-if="view === 'create' && !editing" ref="creditButton" class="creator-credits" href="#credits" aria-haspopup="dialog" @click.exact.prevent="openCredits"><Icon n="credits" /><span class="long">{{ balanceLabel }}</span><span class="short" aria-hidden="true">{{ balance ? balance.available : 'Crédits' }}</span></a></nav>
     <div v-if="chatOn && (doc || view === 'create')" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
   <!-- Everything but the shop: the session awaited or failed, and the signed-out screen. -->
@@ -2153,7 +2155,9 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
     </component>
     <template v-if="chatting">
-      <p v-if="chatRetry" class="empty" role="alert">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
+      <!-- Only once the chat is the page: while a poster opens from a list, the list keeps its own title. -->
+      <h1 v-if="doc || view === 'create'" class="visually-hidden" :inert="modalOpen" :translate="doc?.offer.title.trim() ? 'no' : undefined">{{ chatTitle }}</h1>
+      <p v-if="chatRetry" class="empty" role="alert" :inert="modalOpen">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
     </template>
     <div v-if="!doc && view === 'create' && !chatting" class="intake-layout" :inert="termsOpen">
@@ -2171,7 +2175,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </form>
     </div>
     <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button></div>
       <p v-if="listFailed"><button class="secondary" @click="perform(loadLibrary)">Réessayer la liste</button></p>
       <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
       <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
@@ -2182,7 +2186,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
     <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-styles">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-styles" class="page-title" tabindex="-1">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>

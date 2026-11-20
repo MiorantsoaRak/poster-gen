@@ -203,9 +203,16 @@ details[open] > summary { color: var(--text) }
 .nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--glass-field); box-shadow: inset 0 0 0 1.5px var(--line) }
 .count { color: var(--faint); font-weight: 500 }
 .app-header .count { color: var(--muted) }
+.nav .short { display: none }
 .theme-toggle { margin-left: auto }
 .nav + .theme-toggle { margin-left: 0 }
 main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, env(safe-area-inset-right)); max-width: 1480px; margin: auto; padding: 8px var(--gutter-r) max(64px, env(safe-area-inset-bottom)) var(--gutter-l) }
+/* Accueil, Mes affiches, Styles, Mes crédits and Mon compte share one frame (D-POLISH-003): this width and one title. The
+   title takes the focus on arrival, for a screen reader: no box; a focus moved with the keyboard is underlined. */
+:root { --page: 860px }
+.page-title { font-size: 26px; line-height: 32px; font-weight: 800 }
+.page-title:focus { outline: none }
+.page-title:focus-visible { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 6px }
 .message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
   border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
@@ -241,7 +248,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .photo-strip .mini { display: grid; justify-items: center }
 .photo-strip img { width: 76px; height: 76px; object-fit: contain; background: #fff; border-radius: var(--field) }
 .logo-preview { width: 120px; height: 80px; object-fit: contain }
-.gallery { max-width: 1100px; margin: 0 auto }
+.gallery { max-width: var(--page); margin: 0 auto }
 .rows { display: grid; border-radius: var(--radius); overflow: hidden }
 .library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center }
 .library-row + .library-row { border-top: 1px solid var(--line) }
@@ -593,6 +600,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .bar-sign-out { display: inline-flex }
   .sign-out span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
   main { --gutter-l: max(12px, env(safe-area-inset-left)); --gutter-r: max(12px, env(safe-area-inset-right)); padding: 4px var(--gutter-r) max(56px, env(safe-area-inset-bottom)) var(--gutter-l) }
+  /* The five screens of the frame keep 16 px from the edges; the chat and the editor keep 12 (the editor's bars use it). */
+  main:has(> :is(.shop-home, .shop-account, .gallery, div.credits-container)) { --gutter-l: max(16px, env(safe-area-inset-left)); --gutter-r: max(16px, env(safe-area-inset-right)) }
   .intake, .sign-in { padding: 20px }
   /* While a poster is open the editor has one bar at the top (D-POSTER-EDITOR-005): back to « Mes affiches », the
      poster's name and its save state, undo, redo. The application's header and the long demo notice leave. */
@@ -661,6 +670,10 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .nav a, .nav a[aria-current] { flex-direction: column; justify-content: center; gap: 3px; min-height: 58px; padding: 0 4px; border-radius: var(--field); background: none; box-shadow: none; font-size: 12.5px; line-height: 16px; text-align: center }
   .nav .i { width: 58px; height: 32px; padding: 7px 20px; border-radius: 999px }
   .nav a[aria-current] .i { background: var(--accent-soft); color: var(--accent-ink) }
+  /* Each label on one line (R-POLISH-003): a count, or the long words behind a short label, leave the eye, not the name. */
+  .nav a > span { white-space: nowrap }
+  .nav :is(.count, .long) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+  .nav .short { display: inline }
   main:not(.editing) { padding-bottom: calc(88px + env(safe-area-inset-bottom)) }
   /* The format and the file type never change: on a phone only the price is worth a row before the points. */
   .facts div:not(:last-child) { display: none }
@@ -818,7 +831,6 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .rail .creator-credits { display: block; margin-inline-start: auto; min-height: 44px }
 @media (max-width: 720px) {
   .nav:has(.creator-credits) { grid-template-columns: repeat(5, minmax(0, 1fr)) }
-  .nav .creator-credits span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 }
 dialog.credits-container { width: min(680px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 4px 20px 16px; color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: var(--radius); overscroll-behavior: contain }
 dialog.credits-container::backdrop { background: var(--scrim) }

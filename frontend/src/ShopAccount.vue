@@ -87,7 +87,7 @@ onMounted(readProfile)
 
 <template>
   <section class="shop-account" aria-labelledby="titre-compte">
-    <header><h1 id="titre-compte" tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></header>
+    <header><h1 id="titre-compte" class="page-title" tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></header>
     <form aria-labelledby="titre-profil" @input="rememberEdit" @submit.prevent="save">
       <h2 id="titre-profil" ref="profileHeading" tabindex="-1">Ma boutique</h2>
       <fieldset v-if="draft" :disabled="working || conflict || uncertain || !!overlaps.length">
@@ -136,7 +136,7 @@ onMounted(readProfile)
 </template>
 
 <style scoped>
-.shop-account { width: min(100%, 660px); margin: auto; padding: 18px 0 30px; overflow-wrap: anywhere }
+.shop-account { width: min(100%, var(--page)); margin: auto; padding: 18px 0 30px; overflow-wrap: anywhere }
 header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px }
 h1, h2, p { margin: 0 }
 form, section > section { display: grid; gap: 12px; margin-top: 20px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }

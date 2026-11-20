@@ -21,7 +21,7 @@ defineExpose({ refresh })
 
 <template>
   <section class="shop-home" aria-labelledby="titre-accueil">
-    <header class="home-head"><h1 id="titre-accueil" tabindex="-1">Accueil</h1><button type="button" class="secondary" @click="refresh">Actualiser</button></header>
+    <header class="home-head"><h1 id="titre-accueil" class="page-title" tabindex="-1">Accueil</h1><button type="button" class="secondary" @click="refresh">Actualiser</button></header>
     <section class="home-attention" aria-label="À votre attention">
       <p v-if="summary.loading" role="status">Recherche des affiches à vérifier…</p>
       <p v-if="summary.error" role="status">Suivi indisponible. {{ summary.error }} <button type="button" class="text-button" @click="summary.read">Réessayer le suivi</button></p>
@@ -52,10 +52,9 @@ defineExpose({ refresh })
   </section>
 </template>
 <style scoped>
-.shop-home { max-width: 860px; margin: 0 auto; padding: clamp(18px, 4vw, 46px) 0; overflow-wrap: anywhere }
+.shop-home { max-width: var(--page); margin: 0 auto; padding: clamp(18px, 4vw, 46px) 0; overflow-wrap: anywhere }
 .home-head, .home-section, .home-bal, .home-numbers, .attention-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
 .home-head h1, h2 { margin: 0 }
-.home-head h1 { font-size: clamp(2rem, 5vw, 3rem) }
 .home-attention:has(> *) { margin: 16px 0 }
 .attention-row button { max-width: 100%; overflow-wrap: anywhere; text-align: start }
 .home-bal { margin: 24px 0 32px; padding: clamp(16px, 3vw, 32px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }

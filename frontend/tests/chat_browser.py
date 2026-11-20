@@ -1478,6 +1478,84 @@ def walk_lockless(browser, errors, session):
     context.close()
 
 
+# The chat's lock never given: ownership stays pending, and the page says when the chat asked. The identity's lock works as before.
+LOCK_PENDING = """const request = LockManager.prototype.request
+LockManager.prototype.request = function (name, ...rest) { if (name !== 'affiche-chat') return request.call(this, name, ...rest); window.chatLockAsked = true; return new Promise(() => {}) }"""
+# Hidden from the eye: a box of 1 px at most that clips what it holds.
+CLIPPED = "e => { const box = e.getBoundingClientRect(), style = getComputedStyle(e); return box.width <= 1 && box.height <= 1 && (style.overflowX === 'hidden' || style.clipPath === 'inset(50%)') }"
+
+
+def check_title(page, name, where):
+    """The chat route's one title (D-POLISH-003): one level-one heading for a screen reader, hidden from the eye, outside
+    the conversation's live region."""
+    title = page.get_by_role("heading", level=1)
+    expect(title).to_have_count(1)
+    expect(title).to_have_accessible_name(name)
+    assert title.evaluate(CLIPPED) and title.evaluate("e => !e.closest('[aria-live], [role=log]')"), where
+
+
+def walk_titles(browser, errors, session):
+    """The chat's title in each state: no poster yet, a poster with its title and without, the chat in another tab, a
+    browser without Web Locks, ownership still pending, and the chat's code that failed to load."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(smoke.ORIGIN + "/#creer")
+    page.wait_for_url("**/#message")
+    expect(page.locator(".chat")).to_be_visible()
+    check_title(page, "Créer une affiche", "no poster")
+    other = context.new_page()
+    other.on("pageerror", lambda error: errors.append(str(error)))
+    other.goto(smoke.ORIGIN + "/#message")
+    expect(other.get_by_text("Le chat est ouvert dans un autre onglet.")).to_be_visible()
+    check_title(other, "Créer une affiche", "chat in another tab")
+    other.close()
+    poster = page.request.get(smoke.ORIGIN + "/api/creations?limit=1").json()["items"][0]
+    # A poster opened from « Mes affiches »: while its read is on its way, the list's title is the only one.
+    page.goto(smoke.ORIGIN + "/#affiches")
+    expect(page.get_by_role("heading", level=1)).to_have_accessible_name("Mes affiches")
+    read, held = f"**/api/creations/{poster['id']}", []
+    page.route(read, lambda route: held.append(route))
+    with page.expect_request(read):
+        page.evaluate("id => { location.hash = 'message-' + id }", poster["id"])
+    expect(page.get_by_role("heading", level=1)).to_have_count(1)
+    expect(page.get_by_role("heading", level=1)).to_have_accessible_name("Mes affiches")
+    held.pop().continue_()
+    page.unroute(read)
+    expect(page.get_by_role("log")).to_be_visible()
+    check_title(page, poster["title"], "a poster")
+    def untitled(route):
+        response = route.fetch()
+        body = response.json()
+        body["document"]["offer"]["title"] = ""
+        route.fulfill(response=response, json=body)
+    page.route(f"**/api/creations/{poster['id']}", untitled)
+    page.reload()
+    expect(page.get_by_role("log")).to_be_visible()
+    check_title(page, "Votre affiche", "a poster without a title")
+    context.close()
+    for script, where, shown in ((smoke.NO_LOCKS, "no Web Locks", "Ce navigateur ne permet pas le chat."),
+                                 (LOCK_PENDING, "ownership pending", None),
+                                 (None, "the chat's code not loaded", "La création par message n’a pas pu se charger.")):
+        context = browser.new_context(viewport={"width": 360, "height": 740}, color_scheme="light", storage_state=session)
+        if script:
+            context.add_init_script(script)
+        else:
+            context.route(re.compile(r"/ChatView[^/]*\.(vue|js)"), lambda route: route.abort())
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(smoke.ORIGIN + "/#message")
+        if shown:
+            expect(page.get_by_text(shown)).to_be_visible()
+        else:
+            page.wait_for_function("window.chatLockAsked === true")
+            expect(page.locator(".chat, .chat-elsewhere")).to_have_count(0)
+        check_title(page, "Créer une affiche", where)
+        context.close()
+
+
 def walk_slow_read(browser, errors, session):
     """A read still on its way when the chat closes (a switch to « Pas à pas ») does nothing when its answer finally comes:
     the next read's pending record stays in place."""
@@ -2091,6 +2169,7 @@ def run():
                         walk_phone(browser, errors, session)
                         walk_two_tabs(browser, errors, session, product)
                         walk_lockless(browser, errors, session)
+                        walk_titles(browser, errors, session)
                         walk_slow_read(browser, errors, session)
                         walk_uploads(browser, errors, session, small, broken, animated)
                         walk_guards(browser, errors, session)

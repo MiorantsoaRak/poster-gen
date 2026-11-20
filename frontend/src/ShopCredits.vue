@@ -17,7 +17,7 @@ defineExpose({ refresh, unavailable })
 
 <template>
   <section class="shop-credits" aria-labelledby="titre-credits">
-    <header><h1 id="titre-credits" tabindex="-1">Mes crédits</h1><button v-if="panel" type="button" class="secondary" autofocus @click="emit('close')">Fermer</button><a v-else href="#accueil">Retour à l’accueil</a></header>
+    <header><h1 id="titre-credits" class="page-title" tabindex="-1">Mes crédits</h1><button v-if="panel" type="button" class="secondary" autofocus @click="emit('close')">Fermer</button><a v-else href="#accueil">Retour à l’accueil</a></header>
     <section class="credit-balance" aria-labelledby="titre-solde">
       <header><h2 id="titre-solde">Solde</h2><button type="button" class="secondary" @click="refresh">Actualiser</button></header>
       <dl v-if="funds.data"><div><dt>Disponibles</dt><dd>{{ funds.data.available }}</dd></div><div><dt>En attente</dt><dd>{{ funds.data.pending }}</dd></div></dl>
@@ -57,7 +57,8 @@ defineExpose({ refresh, unavailable })
 </template>
 
 <style scoped>
-.shop-credits { max-width: 680px; margin: auto; padding: 16px 0; overflow-wrap: anywhere }
+/* As a page, the frame's width; as the creator's panel, its dialog's 680 px (style.css). */
+.shop-credits { max-width: var(--page); margin: auto; padding: 16px 0; overflow-wrap: anywhere }
 header, li > div, dl { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
 h1, h2, h3, dl, dd, ul { margin: 0 }
 section > section { margin-top: 24px }
