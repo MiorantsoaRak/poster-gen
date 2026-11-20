@@ -223,7 +223,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(chat).to_be_visible()
     page.wait_for_url("**/#message")
     expect(home).to_have_count(0)
-    both_themes(page, "empty chat, desktop", "chat-empty-1366", placeholders=(".compose-row textarea",))
+    both_themes(page, "empty chat, desktop", "chat-empty-1366", placeholders=(".composer textarea",))
     composer_edge(page, "empty chat, desktop")
 
     # The unsent text survives a reload.
@@ -345,7 +345,8 @@ def walk_desktop(browser, errors, product, inspiration):
     # A new poster shows nothing of the one just opened.
     smoke.go(page, "Nouvelle affiche")
     page.wait_for_url("**/#message")
-    expect(thread.locator(".bubble")).to_have_count(1)
+    expect(thread.locator(".bubble")).to_have_count(0)  # only the welcome (D-REDESIGN-003)
+    expect(thread.locator(".hello")).to_have_count(1)
     expect(page.locator(".chat-side, .chat-poster")).to_have_count(0)
     # A lost answer: the bubble stays with « Réessayer ». Typing the next message, and a reload, leave the pending read
     # alone: the retry is the same request (same key), and « Envoyer » waits for it.
@@ -499,6 +500,7 @@ def walk_desktop(browser, errors, product, inspiration):
     context.unroute("**/scenes")
     expect(resume).to_be_visible()
     expect(resume.locator("xpath=../..")).to_contain_text(ONCE)  # its cost, once
+    expect(resume).to_have_accessible_description(ONCE)  # the visible once line is the button's description
     assert scenes.count(card["id"]) == 1, scenes
     resume.click()
     expect(page.get_by_role("button", name="Vérifier", exact=True)).to_be_visible(timeout=30000)
@@ -603,7 +605,8 @@ def walk_changes(browser, errors, session, data):
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text("Scène : « fond plus sombre »")
     expect(card).to_contain_text(COST)
-    expect(create).to_have_accessible_description(WARNING)
+    # The warning, then the cost line under the buttons (D-REDESIGN-003).
+    expect(create).to_have_accessible_description(re.compile("^" + re.escape(WARNING) + " " + COST.pattern + "$"))
     expect(card.get_by_text(WARNING, exact=True)).to_be_visible()  # a fresh scene adjustment warns
     first = versions()[0]["id"]
     assert len(reads) == 1 and bodies[-1]["visual_id"] == first, (reads, bodies)  # the read names the version shown
@@ -639,7 +642,7 @@ def walk_changes(browser, errors, session, data):
     resume = thread.get_by_role("button", name="Reprendre")
     expect(resume).to_be_visible()
     expect(resume.locator("xpath=../..")).to_contain_text(ONCE)
-    expect(resume).to_have_accessible_description(WARNING)
+    expect(resume).to_have_accessible_description(f"{WARNING} {ONCE}")  # the warning, then the once line (D-REDESIGN-003)
     expect(resume.locator("xpath=../..").get_by_text(WARNING, exact=True)).to_be_visible()  # restored from the device
     expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()  # the waiting card comes first
     page.wait_for_timeout(500)
@@ -1071,6 +1074,7 @@ def walk_changes(browser, errors, session, data):
     expect(card.locator("p.lines")).to_have_text("Titre : Casque JBL Tune 520 Max")
     expect(card).not_to_contain_text("crédit")  # a free change says no cost
     expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
+    expect(card.get_by_role("button", name="Changer")).not_to_have_attribute("aria-describedby", re.compile("."))
     looks_right(page, "free title change", "chat-free-title-1366.png")
     change.click()
     changed("title", "Casque JBL Tune 520 Max")
@@ -1285,6 +1289,131 @@ def walk_phone(browser, errors, session):
     back.tap()
     page.wait_for_url(f"**/#message-{poster}")
     expect(chat).to_be_visible()
+    context.close()
+
+
+def walk_layout(browser, errors, session, product):
+    """D-REDESIGN-003: where the welcome and the composer sit, empty and after the first message, at 1440 and 360 px; the
+    tool row; the recap's cells; the cost beside its button on a phone; the side panel's surface at 1241 px."""
+    box = lambda page, selector: page.locator(selector).first.bounding_box()
+    bottom = lambda b: b["y"] + b["height"]
+    tops = ".recap > *", "es => es.map(e => Math.round(e.getBoundingClientRect().top))"
+
+    def open_chat(width, height):
+        context = browser.new_context(viewport={"width": width, "height": height}, is_mobile=width < 720, has_touch=width < 720,
+                                      color_scheme="light", storage_state=session)
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(smoke.ORIGIN + "/#creer")
+        page.wait_for_url("**/#message")
+        expect(page.locator(".hello-q")).to_have_text("Quelle affiche créons-nous ?")
+        expect(page.locator(".hello")).to_contain_text("Quel produit, à quel prix ?")
+        return context, page
+
+    def first_message(page, text):
+        page.locator(".composer input[type=file]").set_input_files([product])
+        expect(page.locator(".tray .pic")).to_have_count(1)
+        expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+        say(page, text)
+        card = page.get_by_role("log").locator(".bubble.bot", has=page.locator(".recap"))
+        expect(card).to_have_count(1)
+        expect(page.locator(".hello")).to_have_count(0)
+        return card
+
+    def cost_said(card):
+        """The cost line says the shop's own balance, as the server counts it (D-BALANCE-006)."""
+        available = card.page.request.get(f"{smoke.ORIGIN}/api/balance").json()["available"]
+        cost = card.locator("small", has_text=COST)
+        expect(cost).to_have_text(f"1 crédit · il vous en reste {available}")
+        return cost
+
+    def on_phone(page, where):
+        """Not wider than the 360 px screen (a wider page is laid out larger and zoomed out, D-REDESIGN-003 review), the
+        composer inside what is seen."""
+        width = page.evaluate("document.documentElement.scrollWidth")
+        assert width <= 361, f"the page is {width} px wide at 360 px, {where}"
+        assert page.locator(".composer").evaluate(smoke.REACH_JS)["inside"], f"the composer is not in view, {where}"
+
+    # 1440 px: the question and the composer are one group in the middle half of the column; then the composer goes down.
+    context, page = open_chat(1440, 900)
+    chat, question, composer = box(page, ".chat"), box(page, ".hello-q"), box(page, ".composer")
+    assert question["y"] >= chat["y"] + chat["height"] / 4 and bottom(composer) <= chat["y"] + chat["height"] * 3 / 4, (chat, question, composer)
+    both_themes(page, "empty chat, 1440 px", "chat-empty-1440", placeholders=(".composer textarea",))
+    card = first_message(page, "Sony WH-1000XM6 noir, 700 000 Ar")
+    chat, composer = box(page, ".chat"), box(page, ".composer")
+    assert abs(bottom(composer) - bottom(chat)) <= 1, (chat, composer)
+    cells = page.locator(tops[0]).evaluate_all(tops[1])
+    assert len(cells) >= 3 and len(set(cells)) == 1, f"the recap's cells are not one row at 1440 px: {cells}"
+    cost_said(card)
+    both_themes(page, "recap, 1440 px", "chat-recap-1440", placeholders=(".composer textarea",))
+    context.close()
+
+    # 1440 px, a recap brought from « Pas à pas » before any message: the thread is a conversation, not the welcome; it is
+    # not centred, the composer is at the bottom.
+    context, page = open_chat(1440, 900)
+    switch = page.get_by_role("group", name="Façon de créer")
+    switch.get_by_role("button", name="Pas à pas").click()
+    page.get_by_label("Photos du produit").set_input_files(product)
+    page.get_by_label("Nom du produit", exact=True).fill("Sony WH-1000XM6 noir")
+    page.get_by_label("Prix en ariary", exact=True).fill("700000")
+    expect(page.locator(".photo-strip img")).to_have_count(1)
+    switch.get_by_role("button", name="Message").click()
+    expect(page.get_by_role("log").get_by_role("button", name="Créer l’affiche")).to_be_visible()
+    expect(page.locator(".hello")).to_have_count(0)
+    expect(page.locator(".chat.welcome")).to_have_count(0)
+    expect(page.get_by_role("log").locator(".bubble.bot").first).to_contain_text("Quel produit, à quel prix ?")
+    chat, composer = box(page, ".chat"), box(page, ".composer")
+    assert abs(bottom(composer) - bottom(chat)) <= 1, ("imported recap", chat, composer)
+    context.close()
+
+    # 360 px: the composer is at the bottom, empty and after the first message; its tool row is one line, « Envoyer » at its right.
+    context, page = open_chat(360, 740)
+    chat, composer, tools, send = box(page, ".chat"), box(page, ".composer"), box(page, ".tools"), box(page, ".chat .send")
+    attach = box(page, ".chat .attach")
+    assert abs(bottom(composer) - bottom(chat)) <= 1, (chat, composer)
+    assert tools["height"] < 2 * 44 and abs(send["x"] + send["width"] - tools["x"] - tools["width"]) <= 1 and send["y"] >= tools["y"], (tools, send)
+    on_phone(page, "empty chat")
+    # The style strip scrolls sideways to its last style; « Ajouter des images » and « Envoyer » stay where they are.
+    last = page.locator(".style-row .style-pill").last
+    last.evaluate("e => e.scrollIntoView({ inline: 'end', block: 'nearest', behavior: 'instant' })")
+    assert page.locator(".style-row").evaluate("e => e.scrollLeft > 0"), "the style strip did not scroll"
+    reach = last.evaluate(smoke.REACH_JS)
+    assert reach["inside"] and reach["hit"], f"the last style is not reachable: {reach}"
+    assert smoke.same_boxes([attach, send], [box(page, ".chat .attach"), box(page, ".chat .send")]), "attach or send moved with the strip"
+    both_themes(page, "empty chat, 360 px", "chat-empty-360", placeholders=(".composer textarea",))
+    card = first_message(page, "Casque Bluetooth Sony WH-1000XM6 noir à réduction de bruit, 12 500 000 Ar")  # 58 characters, the title's limit is 60
+    chat, composer = box(page, ".chat"), box(page, ".composer")
+    assert abs(bottom(composer) - bottom(chat)) <= 1, (chat, composer)
+    on_phone(page, "recap")
+    # The cost is read before the tap: the line and its button seen at once, the line in the card and named by the button.
+    create, cost = card.get_by_role("button", name="Créer l’affiche"), cost_said(card)
+    seen = box(page, ".chat-thread")
+    for part in (create, cost):
+        reach, b = part.evaluate(smoke.REACH_JS), part.bounding_box()
+        assert reach["inside"] and b["y"] >= seen["y"] - .5 and bottom(b) <= bottom(seen) + .5, (reach, b, seen)
+    assert cost.get_attribute("id") in create.get_attribute("aria-describedby").split()
+    expect(create).to_have_accessible_description(COST)
+    both_themes(page, "recap with a long title, 360 px", "chat-recap-360")
+    context.close()
+
+    # 1241 px: the poster's side panel is a resting surface with a hairline; the thread has none.
+    context = browser.new_context(viewport={"width": 1241, "height": 800}, color_scheme="light", storage_state=session)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(smoke.ORIGIN + "/#affiches")
+    page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    page.get_by_role("button", name="Fermer", exact=True).click()
+    expect(page.locator(".chat-side")).to_be_visible()
+
+    def surface(theme):
+        faults = page.evaluate(smoke.RESTING_JS, [".chat-side", smoke.PAINT[theme]["surface"], smoke.PAINT[theme]["line"]])
+        assert not faults, f"the side panel at 1241 px, {theme}: {faults}"
+        assert page.locator(".chat-thread").evaluate("e => getComputedStyle(e).backgroundColor") == smoke.CLEAR, "the thread has a surface"
+    smoke.both_themes(page, surface)
+    looks_right(page, "result, 1241 px", "chat-result-1241.png")
     context.close()
 
 
@@ -2244,6 +2373,7 @@ def run():
                     try:
                         session = walk_desktop(browser, errors, product, inspiration)
                         walk_phone(browser, errors, session)
+                        walk_layout(browser, errors, session, product)
                         walk_two_tabs(browser, errors, session, product)
                         walk_lockless(browser, errors, session)
                         walk_titles(browser, errors, session)

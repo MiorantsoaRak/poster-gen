@@ -71,6 +71,9 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…'
   : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: 'Je dessine l’affiche…', receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
   : state.job?.kind === 'render' ? 'Je prépare le fichier…'
   : starting.value ? state.paletteLoading ? 'Je lis les couleurs de la photo…' : 'Je prépare la scène…' : '')
+// Nothing in the thread and no poster: the greeting is the centred welcome (D-REDESIGN-003). A card imported from
+// « Pas à pas » or a stored assistant-only thread is a conversation already.
+const empty = computed(() => !shown.value && !items.value.length)
 const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
 const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
@@ -512,7 +515,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
 <template>
   <section v-if="lockless" class="empty chat-elsewhere" aria-label="Création par message"><p role="status">Ce navigateur ne permet pas le chat.</p><button type="button" class="primary" @click="emit('steps')">Pas à pas</button></section>
   <section v-else-if="owner === false" class="empty chat-elsewhere" aria-label="Création par message"><p role="status">Le chat est ouvert dans un autre onglet.</p><button type="button" class="primary" @click="takeOver">Continuer ici</button></section>
-  <section v-else-if="owner" ref="root" class="chat" :class="{ 'has-poster': !!shown, typing }" :style="{ height: `${height}px` }" aria-label="Création par message">
+  <section v-else-if="owner" ref="root" class="chat" :class="{ 'has-poster': !!shown, typing, welcome: empty }" :style="{ height: `${height}px` }" aria-label="Création par message">
     <aside v-if="shown" class="chat-side">
       <button type="button" class="chat-poster" aria-label="Agrandir l’affiche" @click="adapter.review(shown)"><img :src="displayUrl(shown.image_url)" :alt="`Affiche, version ${numberOf(shown)}`" /></button>
       <p><b>Version {{ numberOf(shown) }} · {{ stateNames[shown.status] }}</b><span translate="no">{{ shown.headline?.title ?? state.offer?.title }} · {{ price(shown.headline?.price_ar ?? state.offer?.price_ar) }}</span></p>
@@ -524,7 +527,8 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       <div v-if="stale && !staleCard" class="chat-stale"><p class="why" role="status">{{ stale }}</p><button type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.')">Remettre les textes de l’image</button></div>
     </aside>
     <div ref="thread" class="chat-thread" role="log" aria-live="polite" aria-label="Conversation" tabindex="0">
-      <div class="bubble bot"><p>{{ greeting }}</p></div>
+      <div v-if="empty" class="hello"><img src="/favicon.svg" width="56" height="56" alt="" /><p class="hello-q">Quelle affiche créons-nous ?</p><p>{{ greeting }}</p></div>
+      <div v-else class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
         <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
@@ -553,9 +557,9 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
           <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
-            <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
+            <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, 'une-fois-' + item.id].filter(Boolean).join(' ')" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>
@@ -565,8 +569,8 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
             <button v-if="stale && item === staleCard" type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.', item)">Remettre les textes de l’image</button>
             <button v-if="item.card && !item.done && offersSteps(item.card)" type="button" class="secondary" @click="emit('steps')">Pas à pas</button>
           </div>
-          <small v-if="button === 'create' && !free(item)">{{ state.credit.text }}</small>
-          <small v-else-if="button === 'retry' || button === 'resume'">{{ ONCE }}</small>
+          <small v-if="button === 'create' && !free(item)" :id="'cout-' + item.id">{{ state.credit.text }}</small>
+          <small v-else-if="button === 'retry' || button === 'resume'" :id="'une-fois-' + item.id">{{ ONCE }}</small>
           <small v-if="button === 'create' && item.card?.kind === 'recap'">Une erreur ? Écrivez la correction.</small>
         </template>
       </div>
@@ -582,16 +586,16 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
         </span>
       </div>
       <p v-for="entry in tray.filter(item => item.error)" :key="entry.id" class="why" role="alert">{{ entry.error }}</p>
-      <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
-      <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
-        <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>
-        <button v-for="[id, name] in inspiration ? [] : STYLES" :key="id" type="button" class="style-pill" :aria-pressed="draft.style === id" @click="draft.style = id; save()"><img :src="`/styles/${id}.jpg`" width="26" height="26" alt="" />{{ name }}</button>
-      </div>
       <p v-if="elsewhere" class="chat-elsewhere-read" role="status">Un message attend encore sur une autre affiche.<button type="button" class="secondary" @click="toPending">Ouvrir cette affiche</button></p>
-      <div class="compose-row">
-        <button type="button" class="ghost icon" aria-label="Ajouter des images" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg></button>
-        <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
-          @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
+      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
+        @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
+      <div class="tools">
+        <button type="button" class="ghost attach" aria-label="Ajouter des images" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Images</span></button>
+        <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
+        <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
+          <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>
+          <button v-for="[id, name] in inspiration ? [] : STYLES" :key="id" type="button" class="style-pill" :aria-pressed="draft.style === id" @click="draft.style = id; save()"><img :src="`/styles/${id}.jpg`" width="26" height="26" alt="" />{{ name }}</button>
+        </div>
         <!-- mousedown is held back so that the tap keeps the focus, and the keyboard, on the field. -->
         <button type="submit" class="send" aria-label="Envoyer" :aria-busy="reading || undefined" :disabled="held || !!pending || tray.some(item => item.status !== 'done') || (!text.trim() && !tray.length)" @mousedown.prevent><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
       </div>
