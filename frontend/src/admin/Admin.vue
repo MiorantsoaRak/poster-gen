@@ -423,13 +423,13 @@ async function repay(job: JobItem) {
   <p v-if="outdated" class="banner" role="alert">{{ outdated }} <button @click="reload">Reload</button></p>
 
   <main v-if="!session" class="page">
-    <h1>Doka Studio · Operator</h1>
+    <h1 class="marked">Doka Studio · Operator</h1>
     <p role="status">{{ starting || 'Loading…' }}</p>
     <button v-if="starting" @click="start">Try again</button>
   </main>
 
   <main v-else-if="!signedIn" class="page">
-    <h1>Doka Studio · Operator</h1>
+    <h1 class="marked">Doka Studio · Operator</h1>
     <p v-if="session.configured === false" class="note">No operator password is set. On the server run: <code>python -m affiche.shops operator-password</code> (deploy/README.md, « Operator dashboard »).</p>
     <form class="stack" @submit.prevent="signIn">
       <!-- For password managers: the one account's name. -->
@@ -443,7 +443,7 @@ async function repay(job: JobItem) {
 
   <div v-show="signedIn">
     <header class="bar">
-      <p class="brand">Doka Studio · Operator</p>
+      <p class="brand marked">Doka Studio · Operator</p>
       <nav aria-label="Dashboard">
         <a href="#/shops" :aria-current="route.view === 'shops' ? 'page' : undefined">Shops</a> ·
         <a href="#/service" :aria-current="route.view === 'service' ? 'page' : undefined">Service</a> ·

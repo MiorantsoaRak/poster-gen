@@ -19,7 +19,8 @@ const admin = Object.entries(sources).filter(([path]) => path.startsWith('../src
 it('keeps the operator page and the shops apart: neither imports the other (D-ADMIN-005)', () => {
   expect(admin.map(([path]) => path).sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts'].map(name => `../src/admin/${name}`).sort())
   for (const [path, text] of admin)
-    for (const name of imports(text)) expect(name === 'vue' || /^\.\/[^/]+$/.test(name), `${path} imports ${name}`).toBe(true)
+    // A data: address is the file's own bytes (the mark in admin.css, D-POLISH-001): it asks the server for nothing.
+    for (const name of imports(text)) expect(name === 'vue' || /^\.\/[^/]+$/.test(name) || name.startsWith('data:image/svg+xml,'), `${path} imports ${name}`).toBe(true)
   const shops = Object.entries(sources).filter(([path]) => path.startsWith('../src/') && !path.startsWith('../src/admin/'))
   expect(shops.length).toBeGreaterThan(10)
   for (const [path, text] of shops)
