@@ -55,3 +55,4 @@ See [requirements](../requirements/_INDEX.md), [decisions](../DECISIONS.md) and 
 | [service-terms.md](service-terms.md) | R-TERMS-001 … 003; D-TERMS-001 … | Approved v3 (ADR-112); tasks T-TERMS-001 … 004 in TODO.md; no erase command in Release 1 |
 | [share-poster.md](share-poster.md) | R-SHARE-001 … 005; D-SHARE-001 … 005 | Approved v3 (ADR-120); tasks T-SHARE-001 … 005 in TODO.md; one read-only field on the poster read, no migration |
 | [interface-polish.md](interface-polish.md) | R-POLISH-001 … 005; D-POLISH-001 … 005 | Approved v2 (ADR-122); tasks T-POLISH-001 … 005 in TODO.md; presentation only, no route and no migration |
+| [app-redesign.md](app-redesign.md) | R-REDESIGN-001 … 007; D-REDESIGN-001 … 007 | Approved v2 (ADR-123); tasks T-REDESIGN-001 … 007 in TODO.md, built on the branch `redesign`, not on `main`; both interfaces follow the mockup `mockups/doka-console/`; no route, no server answer, no migration |
