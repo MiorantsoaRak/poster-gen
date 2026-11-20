@@ -1,82 +1,261 @@
-/* The operator's page (D-ADMIN-005), apart from the shops' style.css. The Signal kit's palette (T-BRAND-DOKA): charcoal on
-   warm paper, Signal yellow as the accent with charcoal text on it, never white; both themes from the device; the
-   system's fonts. One column at 360 px: fields at 16 px, targets 44 px high, long values wrap anywhere. */
+/* The operator's console (D-REDESIGN-005), apart from the shops' style.css: the tokens of D-REDESIGN-001, each colour
+   written once for both themes; Figtree from this folder's copy. The shell keeps three rules: no wrapper around header
+   and main, nothing that blurs, filters, transforms or contains above a fixed element, the window scrolls. One column at
+   360 px: fields at 16 px, targets 44 px at every width, long values wrap anywhere, nothing fixed to the bottom. */
+@font-face { font-family: Figtree; src: url('./Figtree-Variable.woff2') format('woff2'); font-weight: 300 900; font-display: swap }
+
+/* light-dark() takes colours only: a gradient and a shadow are made of colour tokens. The theme follows the device
+   until the switch sets data-theme on <html>, which changes color-scheme and nothing else. */
 :root {
-  --paper: #f5f1e8; --charcoal: #20201d; --signal: #f2c744;
-  --ground: var(--paper); --surface: #fffdf8; --text: var(--charcoal); --muted: #57534a; --line: #cfc7b6; --bad: #a3271f; --focus: var(--charcoal);
   color-scheme: light dark;
+  --ground: light-dark(#f5f1e8, #20201d); --surface: light-dark(#fffdf8, #2b2b27); --raised: light-dark(#ece6d8, #36362f);
+  --text: light-dark(#20201d, #f5f1e8); --muted: light-dark(#4d4940, #d6d0c3); --faint: light-dark(#5f5a50, #c2bcaf);
+  --line: light-dark(rgb(32 32 29 / .10), rgb(245 241 232 / .10)); --control: light-dark(#7d786d, #8f8b80);
+  --edge: light-dark(rgb(32 32 29 / .20), rgb(245 241 232 / .22)); --active: light-dark(rgb(32 32 29 / .08), rgb(245 241 232 / .10));
+  --side-bg: light-dark(rgb(32 32 29 / .045), rgb(0 0 0 / .22));
+  --signal: #f2c744; --on-signal: #20201d; --signal-edge: light-dark(#d9b032, #f2c744); --hue: light-dark(#8f6b00, #f2c744);
+  --ok: light-dark(#145c37, #8fddb0); --ok-bg: light-dark(#e2f2e8, #1d3327);
+  --warn: light-dark(#6b4600, #f0c26a); --warn-bg: light-dark(#fdf0cf, #3a2f14);
+  --bad: light-dark(#a3271f, #ff9a8f); --bad-bg: light-dark(#fbeae8, #3d2320);
+  --glass-strong: light-dark(rgb(255 253 248 / .86), rgb(43 43 39 / .88));
+  --yellow-light: light-dark(rgb(242 199 68 / .28), rgb(242 199 68 / .16)); --sand-light: light-dark(rgb(222 204 168 / .55), rgb(110 98 70 / .34));
+  --white-light: light-dark(rgb(255 255 255 / .7), rgb(255 255 255 / .04));
+  --ambient: radial-gradient(52rem 34rem at 8% -6%, var(--yellow-light), transparent 62%), radial-gradient(46rem 38rem at 104% 104%, var(--sand-light), transparent 60%),
+    radial-gradient(34rem 26rem at 62% 34%, var(--white-light), transparent 70%);
+  --lift-near: light-dark(rgb(60 44 16 / .08), rgb(0 0 0 / .45)); --lift-far: light-dark(rgb(60 44 16 / .45), rgb(0 0 0 / .9));
+  --lift: 0 2px 4px var(--lift-near), 0 28px 60px -28px var(--lift-far);
+  --blur: blur(22px) saturate(1.35); --ease: cubic-bezier(.2, .8, .2, 1);
+  --side-w: 0px; --gap: 0px; --gutter: 20px;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --ground: var(--charcoal); --surface: #2b2b27; --text: var(--paper); --muted: #c9c3b6; --line: #55534c; --bad: #ff9a8f; --focus: var(--signal) }
+:root[data-theme=light] { color-scheme: light }
+:root[data-theme=dark] { color-scheme: dark }
+/* Over 1180 px, signed in: the sidebar (or the rail) and the frame's gaps. At 1180 px and under the sidebar is a drawer.
+   Each width is split by complementary conditions (> and <=), so that a fractional width under zoom is always on one side. */
+@media (width > 1180px) {
+  :root[data-shell] { --side-w: 288px; --gap: 12px }
+  :root[data-shell][data-rail] { --side-w: 76px }
 }
+@media (width < 600px) { :root { --gutter: 16px } }
 
 * { box-sizing: border-box }
-body { margin: 0; background: var(--ground); color: var(--text); font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; overflow-wrap: anywhere }
-h1 { font-size: 24px; line-height: 32px; margin: 16px 0 }
-h2 { font-size: 18px; line-height: 24px; margin: 24px 0 8px }
+/* The field behind the window: three lights on the ground, under everything. */
+html::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--ambient) }
+body { margin: 0; min-height: 100dvh; position: relative; padding-block: var(--gap); background: var(--ground); color: var(--text);
+  font: 16px/1.5 Figtree, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; overflow-wrap: anywhere; -webkit-font-smoothing: antialiased }
+/* The frame: as tall as the page, it scrolls with it; its background paints the sidebar's column and a hairline. */
+@media (width > 1180px) {
+  :root[data-shell] body::before { content: ''; position: absolute; inset: var(--gap); z-index: -1; pointer-events: none; border: 1px solid var(--line); border-radius: 28px;
+    background: linear-gradient(to right, var(--side-bg) var(--side-w), var(--line) var(--side-w) calc(var(--side-w) + 1px), transparent 0) border-box }
+}
+h1 { font-size: 26px; line-height: 32px; font-weight: 800; letter-spacing: -.015em; margin: 16px 0 }
+h2 { font-size: 17px; line-height: 24px; font-weight: 750; margin: 24px 0 8px }
 p { margin: 0 0 8px }
-small { display: block; color: var(--muted); font-size: 14px }
+small { display: block; color: var(--faint); font-size: 14px }
 a { color: inherit }
 code { font-family: ui-monospace, monospace }
-:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px }
+:focus-visible { outline: 2px solid var(--hue); outline-offset: 2px }
 [tabindex='-1']:focus { outline: none }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round }
 
 button, input, select, textarea { font: inherit; color: inherit }
-button { min-height: 44px; padding: 0 16px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface); font-weight: 700; cursor: pointer }
-button.primary { background: var(--signal); border-color: var(--signal); color: var(--charcoal) }
+button, a.primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border: 1px solid var(--edge);
+  border-radius: 999px; background: transparent; font-weight: 650; text-decoration: none; cursor: pointer; transition: background-color .15s var(--ease) }
+@media (hover: hover) { button:hover { background: var(--active) } }
+:is(button, a).primary { background: var(--signal); color: var(--on-signal); border: 1.5px solid var(--signal-edge); font-weight: 750 }
+@media (hover: hover) { :is(button, a).primary:hover { background: color-mix(in srgb, var(--signal) 86%, var(--on-signal)) } }
 button[aria-disabled='true'] { opacity: .6; cursor: progress }
-input, select, textarea { min-height: 44px; width: 100%; padding: 8px 12px; border: 2px solid var(--muted); border-radius: 8px; background: var(--surface) }
-textarea { min-height: 88px; resize: vertical }
-label { font-weight: 700 }
-summary { min-height: 44px; padding: 10px 0; font-weight: 700; cursor: pointer }
+input, select, textarea { min-height: 48px; width: 100%; padding: 10px 14px; border: 1.5px solid var(--control); border-radius: 16px; background: var(--surface) }
+input::placeholder { color: var(--faint) }
+textarea { min-height: 96px; resize: vertical }
+label { font-size: 14px; font-weight: 650; color: var(--muted) }
+summary { min-height: 44px; padding: 10px 0; font-size: 17px; line-height: 24px; font-weight: 750; cursor: pointer }
 nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; font-weight: 700 }
 
-.page, .bar, .banner { max-width: 960px; margin-inline: auto; padding-inline: 16px }
-.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding-block: 8px; border-bottom: 2px solid var(--line) }
-.bar .brand { margin: 0; font-weight: 800 }
-/* The mark beside the name: decorative (the text is the name), with a quarter of its height clear on each side (USAGE.md). */
-.marked { display: flex; align-items: center; gap: 8px }
-/* The kit's favicon.svg, its own markup percent-encoded (tests/brand.test.ts compares the drawing): in this file, so
-   the page still asks the server for nothing but its own files (D-ADMIN-005). */
-.marked::before { content: ''; flex: none; width: 24px; height: 24px; margin: 6px 0; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' width='256' height='256'%3E%3Crect width='256' height='256' rx='40.96' fill='%23F2C744' /%3E%3Cg transform='translate(2.56 2.56) scale(0.98)' fill='%2320201D'%3E%3Cg fill='%2320201D'%3E%3Cg transform='translate(-18.285714 -18.285714) scale(1.142857)'%3E%3Cpath fill-rule='evenodd' d='M84 32H116A96 96 0 0 1 116 224H44V72Z M92 80H116A48 48 0 0 1 116 176H92Z' /%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat }
-h1.marked::before { width: 28px; height: 28px; margin: 7px 0 }
-.bar nav { margin-right: auto }
-.actor { color: var(--muted); font-size: 14px }
+/* The content column: right of the sidebar, its own width centred in it (860 px; the shops' table 1240 px). */
+main { --column: 860px; margin-inline: calc(var(--gap) + var(--side-w)) var(--gap);
+  padding: 8px max(var(--gutter), (100% - var(--side-w) - 2 * var(--gap) - var(--column)) / 2) 48px }
+main.wide { --column: 1240px }
+main > button { margin-bottom: 16px }
+main.out { --column: 420px; padding-top: 48px }
+.out .lockup { display: block; width: 220px; height: auto }
+.banner, .shown { --inset: max(var(--gutter), (100% - var(--side-w) - 2 * var(--gap) - 860px) / 2);
+  margin: 16px calc(var(--gap) + var(--inset)) 0 calc(var(--gap) + var(--side-w) + var(--inset)) }
+.banner { padding: 10px 16px; border-radius: 16px; background: var(--signal); color: var(--on-signal); font-weight: 700 }
+.banner button { border-color: var(--on-signal) }
+
+/* The top bar: sticky in the page's flow, its glass on its ::before. */
+.bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-height: 64px; padding: 10px var(--gutter);
+  margin-inline: calc(var(--gap) + var(--side-w)) var(--gap) }
+.bar::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--line) }
+.bar .refusal { flex-basis: 100%; margin: 0 }
+.menu, .rail-toggle, .side-close { flex: none; width: 44px; padding: 0; border-color: transparent }
+.filter { position: relative; flex: 1 1 200px; max-width: 360px; margin-inline-start: auto }
+.filter .i { position: absolute; left: 14px; top: 12px; color: var(--faint) }
+/* 16 px, not the label's 14 px: a phone zooms into a smaller field (D-ADMIN-005). */
+.filter input { min-height: 44px; padding-block: 6px; padding-left: 42px; border-radius: 999px; font-size: 16px }
+@media (width > 1180px) {
+  :root[data-shell] .bar::before { border-start-end-radius: 27px }
+  .menu, .side-close { display: none }
+}
+
+/* The sidebar: fixed at every width; over 1180 px on the frame's column, at 1180 px and under a drawer. */
+.side { position: fixed; z-index: 30; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overscroll-behavior: contain }
+.side-close { align-self: flex-end }
+.brand { display: block; padding: 4px 4px 10px; border-radius: 10px }
+.brand img { display: block }
+.brand .lockup { width: 220px; height: auto }
+.brand .symbol { display: none; width: 40px; height: 40px }
+.side .new { width: 100%; min-height: 48px; margin: 4px 0 10px }
+.side .section { margin: 0; padding: 12px 12px 6px; font-size: 13px; font-weight: 600; color: var(--faint) }
+.side nav { display: grid; gap: 2px }
+.side nav a, .side .row { display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%; min-height: 44px; margin: 0; padding: 0 12px;
+  border: 0; border-radius: 12px; background: none; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap }
+@media (hover: hover) { .side nav a:hover, .side button.row:hover { background: var(--active); color: var(--text) } }
+.side nav a[aria-current] { background: var(--active); color: var(--text); font-weight: 700 }
+.side .label { min-width: 0; overflow: hidden; text-overflow: ellipsis }
+.side .actor { font-size: 14px; color: var(--faint) }
+.side-foot { margin-top: auto; display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--line) }
+.scrim { position: fixed; inset: 0; z-index: 40; background: rgb(21 19 15 / .55) }
+@media (width > 1180px) {
+  .side { inset-block: var(--gap); inset-inline-start: var(--gap); width: var(--side-w); padding: 18px 14px 14px }
+  /* The rail: icons only, each named by its hidden label and its title; the D alone for the logo. */
+  :root[data-rail] .side { padding: 12px 8px; align-items: center }
+  :root[data-rail] .side :is(.label, .section) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+  :root[data-rail] .side .lockup { display: none }
+  :root[data-rail] .side .symbol { display: block }
+  :root[data-rail] .side :is(nav a, .row) { width: 44px; padding: 0; justify-content: center }
+  :root[data-rail] .side .new { width: 48px; padding: 0 }
+  :root[data-rail] .side :is(nav, .side-foot) { justify-items: center }
+}
+@media (width <= 1180px) {
+  .rail-toggle { display: none }
+  .side { z-index: 50; inset-block: 0; inset-inline-start: 0; width: min(320px, 86vw); padding: 12px 14px 14px; background: var(--glass-strong);
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border-inline-end: 1px solid var(--line); box-shadow: var(--lift);
+    transform: translateX(-105%); visibility: hidden; transition: transform .28s var(--ease), visibility 0s .28s }
+  .side.open { transform: none; visibility: visible; transition: transform .28s var(--ease) }
+}
+@media (prefers-reduced-motion: reduce) { .side, .side.open { transition: none } }
+/* The kit's horizontal logo of the theme, charcoal on light and paper on dark, in the three cases. */
+:root .on-dark, :root[data-theme=dark] .on-light { display: none }
+:root[data-theme=dark] .on-dark { display: block }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) .on-light { display: none }
+  :root:not([data-theme=light]) .on-dark { display: block }
+}
+
+/* Cards: a surface and a hairline, never a shadow. */
+.card { margin: 0 0 16px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface) }
+.card > :first-child { margin-top: 0 }
+.card > :last-child { margin-bottom: 0 }
+details.card { padding-block: 6px }
+details.card[open] { padding-bottom: 16px }
+.kept, .shown { border: 2px solid var(--hue) }
+.shown { padding: 16px 20px; border-radius: 20px; background: var(--surface) }
 .stack { display: grid; gap: 8px; max-width: 480px }
 .stack button { justify-self: start }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 }
-.fold { border-block: 2px solid var(--line); margin: 16px 0; padding-bottom: 8px }
 .refusal { color: var(--bad); font-weight: 700 }
 .refusal:empty, [role='status']:empty { margin: 0 }
-.note { border-left: 4px solid var(--signal); padding-left: 12px }
-.banner { padding-block: 8px; background: var(--signal); color: var(--charcoal); font-weight: 700; margin-bottom: 0 }
-.shown { width: min(928px, calc(100% - 32px)); margin: 16px auto; padding: 12px 16px; border: 2px solid var(--signal); border-radius: 8px; background: var(--surface) }
+.note { border-left: 4px solid var(--signal-edge); padding-left: 12px }
 .secret { font-size: 20px; letter-spacing: .05em; user-select: all }
-.name { font-size: 18px }
-.kept { margin: 16px 0; padding: 12px 16px; border: 2px solid var(--signal); border-radius: 8px; background: var(--surface) }
-.kept h2 { margin-top: 0 }
+.name { font-size: 18px; font-weight: 650 }
 .lines { list-style: none; margin: 0 0 8px; padding: 0 }
-.lines li { padding: 8px 0; border-bottom: 1px solid var(--line) }
+.lines li { padding: 12px 0; border-top: 1px solid var(--line) }
+.lines li:first-child { border-top: 0 }
 .lines p { margin: 0 0 4px }
 .copyable { user-select: all }
-.purchase { border-left: 4px solid var(--line); padding-left: 12px }
+.purchase { border-left: 4px solid var(--edge); padding-left: 12px }
+.badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12.5px;
+  font-weight: 700; background: var(--raised); color: var(--muted) }
+.badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor }
+.badge.ok { background: var(--ok-bg); color: var(--ok) }
+.badge.warn { background: var(--warn-bg); color: var(--warn) }
+.badge.bad { background: var(--bad-bg); color: var(--bad) }
 
-table { width: 100%; border-collapse: collapse }
-th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line) }
-th { color: var(--muted); font-size: 14px }
+/* The shops: small plain headers with no band, rows of one height on a hairline, the shop first and widest. */
+.table-card { padding: 4px 0 }
+.shops { width: 100%; border-collapse: collapse; font-size: 14px }
+.shops th { padding: 10px 16px; text-align: left; font-size: 12.5px; font-weight: 500; color: var(--faint); white-space: nowrap }
+.shops td { height: 60px; padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); vertical-align: middle }
+.shops td.shop { width: 38% }
+/* The link keeps a 44 px target of its own; the name sits under it, so a row is a little taller than the mockup's. */
+.shops td.shop { padding-block: 4px 8px }
+.shops td.shop a { color: var(--text); font-weight: 650; text-decoration: none }
+@media (hover: hover) { .shops td.shop a:hover { text-decoration: underline } }
+.shops td.shop small { font-size: 13px; line-height: 18px }
+/* Whole or on the next line, never broken between its words (the overview's state column is narrow). */
+.shops .unresolved { display: inline-block; margin-inline-start: 8px; color: var(--text); font-size: 13px; white-space: nowrap }
 /* Only the identifier and the name may break inside a word; short values and headings keep theirs. */
-.shops th, .shops td:nth-child(n+3) { overflow-wrap: normal }
+.shops th, .shops td:not(.shop) { overflow-wrap: normal }
 /* Numbers line up by their units, as a table of counts is read (D-POLISH-004). The cards below label each value instead. */
-@media (min-width: 600px) { .shops .num { text-align: right; font-variant-numeric: tabular-nums } }
-/* Below 600 px each shop is a card: its identifier first, then each value with its column's name. */
-@media (max-width: 599px) {
+@media (width >= 600px) {
+  .shops .num { text-align: right; font-variant-numeric: tabular-nums }
+  /* Rows of one height: the identifier and the name on one line each, cut with an ellipsis; the whole of each is in its
+     title and on the shop's page. max-width: 0 lets the cell keep its share instead of growing to an unbroken line. */
+  .shops td.shop { max-width: 0 }
+  .shops td.shop :is(a, small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .shops td.shop a { line-height: 44px }
+  /* A date is not broken at its hyphens: in the overview's narrower column it would make a row taller than the others. */
+  .shops td[data-label='Last poster'] { white-space: nowrap }
+}
+/* Below 600 px each shop is a card in one column: the shop first, then each value with its column's name; long values
+   wrap there. */
+@media (width < 600px) {
+  .table-card { padding: 0; border: 0; background: none }
   .shops thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
   .shops, .shops tbody, .shops tr, .shops td { display: block }
-  .shops tr { margin-bottom: 12px; padding: 4px 12px 8px; border: 2px solid var(--line); border-radius: 8px; background: var(--surface) }
-  .shops td { padding: 2px 0; border: 0 }
-  .shops td[data-label]::before { content: attr(data-label) ': '; color: var(--muted) }
+  .shops tr { margin-bottom: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface) }
+  .shops td, .shops td.shop { width: auto; height: auto; padding: 0; border: 0 }
+  .shops td + td { margin-top: 4px }
+  .shops td[data-label]::before { content: attr(data-label) ': '; color: var(--faint) }
 }
 
-dialog { width: min(32rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 16px 20px; border: 2px solid var(--text); border-radius: 12px; background: var(--surface); color: var(--text) }
-dialog::backdrop { background: rgb(0 0 0 / .55) }
+/* The overview (D-REDESIGN-006). The four figures: one card whose 1 px gaps, on --line over --surface, are the hairlines
+   between them in every arrangement; one column, two by two from 600 px, four across over 1180 px. */
+.kpis { display: grid; gap: 1px; padding: 0; overflow: hidden; background: linear-gradient(var(--line) 0 0) var(--surface) }
+.kpi { display: grid; gap: 4px; align-content: start; padding: 18px 20px; background: var(--surface) }
+.kpi dt { font-size: 13px; color: var(--muted) }
+.kpi dd { margin: 0; font-size: 14px; color: var(--faint) }
+.kpi .value { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -.01em; color: var(--text) }
+.kpi .value small { display: inline; font-size: 14px; font-weight: 500 }
+.meter { height: 6px; margin-top: 4px; border-radius: 999px; background: var(--raised); overflow: hidden }
+.meter i { display: block; height: 100%; border-radius: inherit; background: var(--text) }
+/* « Needs you », the full width under the figures: its heading and its sentences on one slim line; its lines in as many
+   columns as the width holds, each a 44 px link on a hairline. */
+.needs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px }
+.needs h2, .needs p { margin: 0 }
+.needs ul { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); column-gap: 24px; margin: 0 }
+.needs li, .needs li:first-child { padding: 4px 0; border-top: 1px solid var(--line) }
+/* Below it: the shops and the service, then the payments; two columns over 1180 px. */
+.cols { display: grid; gap: 0 16px; align-items: start }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; margin-bottom: 4px }
+.head h2 { margin: 0 }
+.head a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted) }
+.needs a { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; text-decoration: none }
+/* The lists as dense as the table beside them. */
+:is(.needs, .paid) :is(strong, p) { font-size: 14px }
+:is(.needs, .paid) small { font-size: 13px }
+.paid .amount { white-space: nowrap; font-variant-numeric: tabular-nums }
+.facts { margin: 0 }
+.facts div { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px }
+.facts div:first-child { border-top: 0 }
+.facts dt { color: var(--faint) }
+.facts dd { margin: 0 }
+@media (width >= 600px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .table-card > :is(.head, .pad) { padding-inline: 16px }
+  .paid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center }
+  .facts div { display: flex; justify-content: space-between; gap: 12px }
+  .facts dd { text-align: right }
+}
+@media (width > 1180px) {
+  .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)) }
+  .cols { grid-template-columns: minmax(0, 1fr) 340px }
+}
+
+dialog { width: min(32rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 20px 24px; border: 1px solid var(--line); border-radius: 24px;
+  background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--lift); color: var(--text) }
+dialog::backdrop { background: rgb(21 19 15 / .55) }
 dialog h2 { margin-top: 0 }

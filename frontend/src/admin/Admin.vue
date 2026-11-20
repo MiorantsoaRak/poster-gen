@@ -1,23 +1,23 @@
 <script setup lang="ts">
-// The operator's dashboard (D-ADMIN-005): sign-in, the shops, one shop's money and access, the service, the payments. The
-// view comes from the address's hash (admin.ts route). A 401 shows the sign-in form in place of the view, which stays
-// mounted with what was typed; never with a password the server made or a shop's data (leave).
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+// The operator's dashboard (D-ADMIN-005): sign-in, the overview (the home, D-REDESIGN-006), the shops, one shop's money and
+// access, the service, the payments. The view comes from the address's hash (admin.ts route). A 401 shows the sign-in
+// form in place of the view, which stays
+// mounted with what was typed; never with a password the server made or a shop's data (leave). The shell around the
+// views (D-REDESIGN-005): a sidebar, a rail or a drawer, a sticky top bar, the theme switch.
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import Confirm, { type Question } from './Confirm.vue'
+import Overview from './Overview.vue'
 import Payments from './Payments.vue'
 import Service from './Service.vue'
 import { AdminError, call, newEpoch } from './adminApi'
 import {
   CAP_WARNING, PENDING, UNSTORED, WHOLE, concession, correctionRequest, count, describe, dollars, grantRequest, grouped,
   headroom, inHistory, moveRequest, newCorrection, newGrant, newMove, route as read, recorded, release, repayment, sentence,
-  settle, signed, stored, uncertain, when,
+  settle, signed, state, stored, uncertain, when,
   type CorrectionDraft, type Existing, type Form, type GrantDraft, type Headroom, type Item, type JobItem, type Kept, type MoveDraft, type Pending,
+  type Shop,
 } from './admin'
 
-interface Shop {
-  id: number; identifier: string; name: string | null; state: 'active' | 'suspended'; has_password: boolean; created_at: string
-  available: number; pending: number; posters: number; last_poster_at: string | null; sessions: number
-}
 interface Limits { day_spent_micros: number; day_limit_micros: number; reads_today: number; reads_limit: number }
 interface Session { authenticated: boolean; configured?: boolean; actor?: string; expires_at?: string }
 
@@ -64,6 +64,7 @@ const pendingHere = computed(() => current.value ? kept[current.value.shop.id] :
 const others = computed(() => (shops.value ?? []).filter(shop => shop.id !== current.value?.shop.id))
 const correctionFold = ref<HTMLDetailsElement>(), reasonField = ref<HTMLTextAreaElement>(), payments = ref<InstanceType<typeof Payments>>()
 const service = ref<InstanceType<typeof Service>>(), purchaseDraft = ref<string>()  // the Service screen's text area
+const overview = ref<InstanceType<typeof Overview>>()
 // A money answer belongs to its shop and its form, as an access action's note does.
 const result = ref<{ shop: number; form: Form; lines: string[]; refused: boolean; warning?: string }>()
 const said = (form: Form, refused: boolean) => {
@@ -75,6 +76,91 @@ const history = ref<{ shop: number; items: Item[]; next: string | null }>(), his
 const shopHistory = computed(() => history.value && history.value.shop === current.value?.shop.id ? history.value : undefined)
 const find = (id: number) => shops.value?.find(shop => shop.id === id) ?? (one.value?.shop.id === id ? one.value.shop : undefined)
 const named = (id: number) => find(id)?.identifier ?? `shop ${id}`
+// « Filter shops »: the rows on the page whose identifier or name holds what is typed, in any case; no request.
+const filter = ref('')
+const rows = computed(() => {
+  const typed = filter.value.trim().toLowerCase()
+  return (shops.value ?? []).filter(shop => [shop.identifier, shop.name ?? ''].some(text => text.toLowerCase().includes(typed)))
+})
+
+// The shell (D-REDESIGN-005). Over 1180 px a sidebar, reduced to a rail by one button (in memory only); at 1180 px and
+// under a drawer, the rest of the page inert behind it. Both flags go on <html>, where the stylesheet keys the frame.
+const drawer = ref(false), rail = ref(false)
+const menuButton = ref<HTMLButtonElement>(), closeButton = ref<HTMLButtonElement>(), railToggle = ref<HTMLButtonElement>(), identifierField = ref<HTMLInputElement>()
+// The stylesheet's own split: complementary conditions, so that a fractional width is on one side.
+const wide = matchMedia('(width > 1180px)'), darkDevice = matchMedia('(prefers-color-scheme: dark)')
+// A closed drawer is inert at once: its links stay out of reach while it slides away.
+const narrow = ref(!wide.matches)
+// The theme follows the device until the operator switches it; the switch is kept on this device. A storage that
+// refuses (the getter included) leaves the choice to this page.
+const THEME = 'affiche.admin.theme'
+const chosen = ref((() => {
+  try { const kept = localStorage.getItem(THEME); return kept === 'light' || kept === 'dark' ? kept : undefined } catch { return undefined }
+})())
+const device = ref(darkDevice.matches)
+const dark = computed(() => chosen.value ? chosen.value === 'dark' : device.value)
+const themeName = computed(() => dark.value ? 'Switch to light theme' : 'Switch to dark theme')
+function switchTheme() {
+  chosen.value = dark.value ? 'light' : 'dark'
+  try { localStorage.setItem(THEME, chosen.value) } catch { /* refused: the choice lasts the page */ }
+}
+watchEffect(() => {
+  const root = document.documentElement
+  root.toggleAttribute('data-shell', signedIn.value)
+  root.toggleAttribute('data-rail', rail.value)
+  if (chosen.value) root.dataset.theme = chosen.value
+  else delete root.dataset.theme
+})
+const schemeChanged = () => { device.value = darkDevice.matches }
+/** Wider than 1180 px, an open drawer closes; the focus it held on « Close the menu », which is not shown there, goes to
+ *  the rail toggle in its place. A focus on a link of the sidebar stays: the link is still shown. */
+async function widened() {
+  narrow.value = !wide.matches
+  if (narrow.value || !drawer.value) return
+  drawer.value = false
+  await nextTick()
+  const at = document.activeElement
+  if (!at || at === document.body || at === closeButton.value) railToggle.value?.focus()
+}
+watch(signedIn, () => { drawer.value = false })
+
+async function openDrawer() {
+  drawer.value = true
+  await nextTick(); closeButton.value?.focus()
+}
+/** Escape, the scrim or « Close the menu »: the focus goes back to the menu button, once the page is no longer inert. */
+async function closeDrawer() {
+  if (!drawer.value) return
+  drawer.value = false
+  await nextTick(); menuButton.value?.focus()
+}
+/** Tab and Shift+Tab go round inside the open drawer: the rest of the page is inert, but the browser's own controls are
+ *  not. The sidebar itself takes the focus of a click on its plain text, so that Escape still reaches it. */
+function keepTab(event: KeyboardEvent) {
+  if (!drawer.value) return
+  const side = event.currentTarget as HTMLElement, controls = [...side.querySelectorAll<HTMLElement>('a[href], button')]
+  const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === side ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
+  if (to) { event.preventDefault(); to.focus() }
+}
+// « New shop » in the sidebar: the list, its fold open, its first field focused once the route and the fold have settled.
+let adding = false
+async function openNewShop() {
+  if (!newShop.value) return
+  newShop.value.open = true
+  await nextTick(); identifierField.value?.focus()
+}
+/** A link of the sidebar closes the drawer, and its destination takes the focus (navigate): also when the address does
+ *  not change, since the link that had the focus is hidden with the drawer. */
+function destination(event: MouseEvent) {
+  const link = (event.target as Element).closest<HTMLAnchorElement>('a[href]')
+  if (!link || event.ctrlKey || event.metaKey || event.shiftKey) return  // opened elsewhere: this page stays as it is
+  drawer.value = false
+  adding = link.classList.contains('new')
+  if (link.hash !== location.hash) return  // the hashchange's navigate() gives the focus
+  event.preventDefault()
+  adding = false
+  void nextTick(() => link.classList.contains('new') ? openNewShop() : heading.value?.focus())
+}
 
 /** Leaving an authentication state, by a sign-out or a session lost: a new epoch (adminApi), so that no answer to an
  *  earlier request lands; the password shown, an open question, the shops' data and the messages go at once. What was
@@ -89,7 +175,7 @@ function leave(all: boolean) {
   copied.value = listMessage.value = createMessage.value = shopMessage.value = headerMessage.value = ''
   creating.value = busy.value = asking.value = older.value = false
   sending.clear()
-  if (all) { draft.value = blank(); drafts.value = undefined; purchaseDraft.value = undefined }
+  if (all) { draft.value = blank(); drafts.value = undefined; purchaseDraft.value = undefined; filter.value = '' }
 }
 
 /** What a refused request says. A 401 is shown on the sign-in form, which takes the view's place; a defect is not an
@@ -119,6 +205,7 @@ async function load() {
     if (drafts.value?.shop !== at.id) drafts.value = { shop: at.id, grant: newGrant(), correction: newCorrection(), move: newMove() }
     await Promise.all([loadShop(at.id), loadHistory(at.id), loadShops()])  // the shops: the move's destinations
   } else if (at.view === 'shops') await loadShops()
+  else if (at.view === 'overview') await overview.value?.read()
   else if (at.view === 'service') await service.value?.read()
   else await payments.value?.read()  // on its first opening each reads itself, once mounted
 }
@@ -174,7 +261,7 @@ async function signIn() {
   newEpoch()  // a new authentication state: nothing asked before it lands in it
   session.value = answer
   await nextTick(); heading.value?.focus()
-  await load()
+  if (route.value.view !== 'overview') await load()  // the overview, mounted just now, has started its own read
 }
 async function signOut() {
   if (signingOut.value) return
@@ -215,9 +302,12 @@ async function unsure(error: unknown) {
 }
 
 function navigate() {
+  drawer.value = false  // also by Back and Forward: the destination is never left behind an open drawer
   route.value = read(location.hash)
   shopMessage.value = ''
-  void nextTick(() => heading.value?.focus())
+  const opening = adding
+  adding = false
+  void nextTick(() => opening ? openNewShop() : heading.value?.focus())
   void load()
 }
 // Fresh data when the tab comes back (D-ADMIN-005); a session ended meanwhile answers 401 and shows the sign-in form.
@@ -231,10 +321,12 @@ function shared(event: StorageEvent) {
 }
 onMounted(() => {
   addEventListener('hashchange', navigate); addEventListener('storage', shared); document.addEventListener('visibilitychange', visible)
+  wide.addEventListener('change', widened); darkDevice.addEventListener('change', schemeChanged)
   void start()
 })
 onUnmounted(() => {
   removeEventListener('hashchange', navigate); removeEventListener('storage', shared); document.removeEventListener('visibilitychange', visible)
+  wide.removeEventListener('change', widened); darkDevice.removeEventListener('change', schemeChanged)
 })
 
 async function show(identifier: string, password: string) {
@@ -420,71 +512,123 @@ async function repay(job: JobItem) {
 </script>
 
 <template>
-  <p v-if="outdated" class="banner" role="alert">{{ outdated }} <button @click="reload">Reload</button></p>
+  <p v-if="outdated" class="banner" role="alert" :inert="drawer">{{ outdated }} <button @click="reload">Reload</button></p>
 
-  <main v-if="!session" class="page">
-    <h1 class="marked">Doka Studio · Operator</h1>
-    <p role="status">{{ starting || 'Loading…' }}</p>
-    <button v-if="starting" @click="start">Try again</button>
+  <main v-if="!signedIn" class="out">
+    <img class="lockup on-light" src="./doka-horizontal-charcoal.svg" width="220" height="79" alt="">
+    <img class="lockup on-dark" src="./doka-horizontal-paper.svg" width="220" height="79" alt="">
+    <!-- The logo says the name: it is not typed again beside it, and the heading keeps it for a screen reader. -->
+    <h1><span class="vh">Doka Studio · </span>Operator</h1>
+    <template v-if="!session">
+      <p role="status">{{ starting || 'Loading…' }}</p>
+      <button v-if="starting" @click="start">Try again</button>
+    </template>
+    <template v-else>
+      <p v-if="session.configured === false" class="note">No operator password is set. On the server run: <code>python -m affiche.shops operator-password</code> (deploy/README.md, « Operator dashboard »).</p>
+      <form class="stack" @submit.prevent="signIn">
+        <!-- For password managers: the one account's name. -->
+        <input type="text" name="username" autocomplete="username" value="operator" hidden>
+        <label for="password">Operator password</label>
+        <input id="password" ref="passwordField" type="password" name="password" autocomplete="current-password" required maxlength="1024" autocapitalize="none" spellcheck="false" enterkeyhint="go">
+        <button class="primary" :aria-disabled="signing || signingOut">Sign in</button>
+        <p class="refusal" role="alert">{{ signInMessage }}</p>
+      </form>
+    </template>
   </main>
 
-  <main v-else-if="!signedIn" class="page">
-    <h1 class="marked">Doka Studio · Operator</h1>
-    <p v-if="session.configured === false" class="note">No operator password is set. On the server run: <code>python -m affiche.shops operator-password</code> (deploy/README.md, « Operator dashboard »).</p>
-    <form class="stack" @submit.prevent="signIn">
-      <!-- For password managers: the one account's name. -->
-      <input type="text" name="username" autocomplete="username" value="operator" hidden>
-      <label for="password">Operator password</label>
-      <input id="password" ref="passwordField" type="password" name="password" autocomplete="current-password" required maxlength="1024" autocapitalize="none" spellcheck="false" enterkeyhint="go">
-      <button class="primary" :aria-disabled="signing || signingOut">Sign in</button>
-      <p class="refusal" role="alert">{{ signInMessage }}</p>
-    </form>
-  </main>
+  <aside v-show="signedIn" id="side" class="side" :class="{ open: drawer }" tabindex="-1" aria-label="Console menu" :inert="narrow && !drawer"
+         @click="destination" @keydown.tab="keepTab" @keydown.esc="closeDrawer">
+    <button ref="closeButton" type="button" class="side-close" aria-label="Close the menu" title="Close the menu" @click="closeDrawer">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+    </button>
+    <a class="brand" href="#/overview" aria-label="Doka Studio — Overview">
+      <img class="lockup on-light" src="./doka-horizontal-charcoal.svg" width="220" height="79" alt="">
+      <img class="lockup on-dark" src="./doka-horizontal-paper.svg" width="220" height="79" alt="">
+      <img class="symbol" src="./doka-symbol.svg" width="40" height="40" alt="">
+    </a>
+    <a class="primary new" href="#/shops" title="New shop">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span class="label">New shop</span>
+    </a>
+    <p id="console-label" class="section">Console</p>
+    <nav aria-labelledby="console-label">
+      <a href="#/overview" title="Overview" :aria-current="route.view === 'overview' ? 'page' : undefined">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-6h-5v6H4Z" /></svg><span class="label">Overview</span>
+      </a>
+      <a href="#/shops" title="Shops" :aria-current="route.view === 'shops' ? 'page' : undefined">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5 5.5 4h13L20 9.5M4 9.5h16M4 9.5V20h16V9.5M9 20v-5h6v5" /></svg><span class="label">Shops</span>
+      </a>
+      <a href="#/money" title="Payments" :aria-current="route.view === 'money' ? 'page' : undefined">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5V18a2 2 0 0 0 2 2h14v-4M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5A2.5 2.5 0 0 0 6.5 10H20v6h-4a3 3 0 0 1 0-6" /></svg><span class="label">Payments</span>
+      </a>
+      <a href="#/service" title="Service" :aria-current="route.view === 'service' ? 'page' : undefined">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14 2.5-7h4" /></svg><span class="label">Service</span>
+      </a>
+    </nav>
+    <div class="side-foot">
+      <button type="button" class="row" :title="themeName" @click="switchTheme">
+        <svg v-if="dark" class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" /></svg>
+        <svg v-else class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" /></svg><span class="label">{{ themeName }}</span>
+      </button>
+      <p class="row actor" :title="session?.actor">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4.5 20a7.5 7.5 0 0 1 15 0" /></svg><span class="label">{{ session?.actor }}</span>
+      </p>
+      <button type="button" class="row" title="Sign out" :aria-disabled="signingOut" @click="signOut">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H5v14h5M15 8l4 4-4 4M19 12H9" /></svg><span class="label">Sign out</span>
+      </button>
+    </div>
+  </aside>
+  <div v-if="drawer" class="scrim" @click="closeDrawer"></div>
 
-  <div v-show="signedIn">
-    <header class="bar">
-      <p class="brand marked">Doka Studio · Operator</p>
-      <nav aria-label="Dashboard">
-        <a href="#/shops" :aria-current="route.view === 'shops' ? 'page' : undefined">Shops</a> ·
-        <a href="#/service" :aria-current="route.view === 'service' ? 'page' : undefined">Service</a> ·
-        <a href="#/money" :aria-current="route.view === 'money' ? 'page' : undefined">Money</a>
-      </nav>
-      <span class="actor">{{ session?.actor }}</span>
-      <button :aria-disabled="signingOut" @click="signOut">Sign out</button>
-      <p class="refusal" role="alert">{{ headerMessage }}</p>
-    </header>
+  <header v-show="signedIn" class="bar" :inert="drawer">
+    <button ref="menuButton" type="button" class="menu" aria-label="Open the menu" title="Open the menu" aria-controls="side" :aria-expanded="drawer" @click="openDrawer">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+    </button>
+    <button ref="railToggle" type="button" class="rail-toggle" :aria-label="rail ? 'Expand the menu' : 'Collapse the menu'" :title="rail ? 'Expand the menu' : 'Collapse the menu'" @click="rail = !rail">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM9.5 5v14" /></svg>
+    </button>
+    <label v-if="route.view === 'shops'" class="filter">
+      <span class="vh">Filter shops</span>
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-3.8-3.8" /></svg>
+      <input v-model="filter" type="search" placeholder="Identifier or name" autocomplete="off" autocapitalize="none" spellcheck="false">
+    </label>
+    <p class="refusal" role="alert">{{ headerMessage }}</p>
+  </header>
 
-    <section v-if="shown" ref="panel" class="shown" tabindex="-1" aria-labelledby="shown-password">
-      <p id="shown-password">Password for <strong>{{ shown.identifier }}</strong>, shown once: <code class="secret">{{ shown.password }}</code></p>
-      <p>It will not be shown again. Give it to the owner in person.</p>
-      <div class="actions"><button class="primary" @click="copy">Copy</button><button @click="closeShown">Close</button></div>
-      <p role="status">{{ copied }}</p>
-    </section>
+  <section v-if="shown" v-show="signedIn" ref="panel" class="shown" tabindex="-1" aria-labelledby="shown-password" :inert="drawer">
+    <p id="shown-password">Password for <strong>{{ shown.identifier }}</strong>, shown once: <code class="secret">{{ shown.password }}</code></p>
+    <p>It will not be shown again. Give it to the owner in person.</p>
+    <div class="actions"><button class="primary" @click="copy">Copy</button><button @click="closeShown">Close</button></div>
+    <p role="status">{{ copied }}</p>
+  </section>
 
-    <main v-if="route.view === 'shops'" class="page">
-      <h1 ref="heading" tabindex="-1">Shops</h1>
-      <details ref="newShop" class="fold">
-        <summary>New shop</summary>
-        <form class="stack" @submit.prevent="create">
-          <label for="identifier">Identifier</label>
-          <input id="identifier" v-model="draft.identifier" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="identifier-help">
-          <small id="identifier-help">3 to 32 letters or digits; case, accents, spaces and punctuation do not count. The owner signs in with it.</small>
-          <label for="name">Name (optional)</label>
-          <input id="name" v-model="draft.name" maxlength="160" autocomplete="off">
-          <label for="welcome">Welcome credits</label>
-          <input id="welcome" v-model="draft.welcome" required inputmode="numeric" pattern="[0-9]{1,9}" autocomplete="off">
-          <button class="primary" :aria-disabled="creating">Create the shop</button>
-          <p class="refusal" role="alert">{{ createMessage }}</p>
-        </form>
-      </details>
-      <p class="refusal" role="alert">{{ listMessage }}</p>
-      <table v-if="shops?.length" class="shops">
-        <thead><tr><th>Identifier</th><th>Name</th><th>State</th><th class="num">Available</th><th class="num" lang="fr">En attente</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
+  <main v-if="route.view === 'shops'" v-show="signedIn" class="wide" :inert="drawer">
+    <h1 ref="heading" tabindex="-1">Shops</h1>
+    <details ref="newShop" class="fold card">
+      <summary>New shop</summary>
+      <form class="stack" @submit.prevent="create">
+        <label for="identifier">Identifier</label>
+        <input id="identifier" ref="identifierField" v-model="draft.identifier" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="identifier-help">
+        <small id="identifier-help">3 to 32 letters or digits; case, accents, spaces and punctuation do not count. The owner signs in with it.</small>
+        <label for="name">Name (optional)</label>
+        <input id="name" v-model="draft.name" maxlength="160" autocomplete="off">
+        <label for="welcome">Welcome credits</label>
+        <input id="welcome" v-model="draft.welcome" required inputmode="numeric" pattern="[0-9]{1,9}" autocomplete="off">
+        <button class="primary" :aria-disabled="creating">Create the shop</button>
+        <p class="refusal" role="alert">{{ createMessage }}</p>
+      </form>
+    </details>
+    <p class="refusal" role="alert">{{ listMessage }}</p>
+    <div v-if="rows.length" class="card table-card">
+      <table class="shops">
+        <thead><tr><th>Shop</th><th>State</th><th class="num">Available</th><th class="num" lang="fr">En attente</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
         <tbody>
-          <tr v-for="shop in shops" :key="shop.id">
-            <td><a :href="`#/shops/${shop.id}`">{{ shop.identifier }}</a><strong v-if="kept[shop.id]"> · unresolved request</strong></td>
-            <td data-label="Name">{{ shop.name ?? '—' }}</td>
-            <td data-label="State">{{ shop.state }}<template v-if="!shop.has_password"> · no password</template></td>
+          <tr v-for="shop in rows" :key="shop.id">
+            <td class="shop"><a :href="`#/shops/${shop.id}`" :title="shop.identifier">{{ shop.identifier }}</a><small :title="shop.name ?? undefined">{{ shop.name ?? '—' }}</small></td>
+            <!-- One state: suspended, else no password, else active; beside it the mark of an unanswered request. -->
+            <td data-label="State">
+              <span class="badge" :class="state(shop).tone">{{ state(shop).word }}</span>
+              <strong v-if="kept[shop.id]" class="unresolved">unresolved request</strong>
+            </td>
             <td class="num" data-label="Available">{{ shop.available }}</td>
             <td class="num" data-label="En attente">{{ shop.pending }}</td>
             <td class="num" data-label="Posters">{{ shop.posters }}</td>
@@ -493,168 +637,176 @@ async function repay(job: JobItem) {
           </tr>
         </tbody>
       </table>
-      <p v-else-if="shops">No shop yet.</p>
-    </main>
+    </div>
+    <p v-else-if="shops?.length">No shop matches.</p>
+    <p v-else-if="shops">No shop yet.</p>
+  </main>
 
-    <main v-else-if="route.view === 'money'" class="page">
-      <h1 ref="heading" tabindex="-1">Money</h1>
-      <Payments v-if="signedIn" ref="payments" :failure="failure" />
-    </main>
+  <main v-else-if="route.view === 'money'" v-show="signedIn" :inert="drawer">
+    <h1 ref="heading" tabindex="-1">Payments</h1>
+    <Payments v-if="signedIn" ref="payments" :failure="failure" />
+  </main>
 
-    <main v-else-if="route.view === 'service'" class="page">
-      <h1 ref="heading" tabindex="-1">Service</h1>
-      <Service v-if="signedIn" ref="service" v-model:draft="purchaseDraft" :failure="failure" :ask="ask" :ended="ended" :reload="load" />
-    </main>
+  <main v-else-if="route.view === 'service'" v-show="signedIn" :inert="drawer">
+    <h1 ref="heading" tabindex="-1">Service</h1>
+    <Service v-if="signedIn" ref="service" v-model:draft="purchaseDraft" :failure="failure" :ask="ask" :ended="ended" :reload="load" />
+  </main>
 
-    <main v-else class="page">
-      <p><a href="#/shops">← Shops</a></p>
-      <h1 ref="heading" tabindex="-1">{{ current?.shop.identifier ?? 'Shop' }}</h1>
-      <p class="refusal" role="alert">{{ shopMessage }}</p>
-      <template v-if="current">
+  <main v-else-if="route.view === 'overview'" v-show="signedIn" class="wide" :inert="drawer">
+    <h1 ref="heading" tabindex="-1">Overview</h1>
+    <Overview v-if="signedIn" ref="overview" :failure="failure" :kept="kept" />
+  </main>
+
+  <main v-else v-show="signedIn" :inert="drawer">
+    <p><a href="#/shops">← Shops</a></p>
+    <h1 ref="heading" tabindex="-1">{{ current?.shop.identifier ?? 'Shop' }}</h1>
+    <p class="refusal" role="alert">{{ shopMessage }}</p>
+    <template v-if="current">
+      <div class="card">
         <p class="name">{{ current.shop.name ?? 'No name' }}</p>
         <p>{{ current.shop.state }}<template v-if="!current.shop.has_password"> · no password</template> · {{ count(current.shop.sessions, 'live session') }}</p>
         <p>available {{ grouped(current.shop.available) }} · <span lang="fr">en attente</span> {{ grouped(current.shop.pending) }}</p>
+      </div>
 
-        <section v-if="pendingHere" class="kept" aria-labelledby="kept-title">
-          <h2 id="kept-title">A request with no definite answer</h2>
-          <p>{{ describe(pendingHere, find) }}</p>
-          <p>{{ why[current.shop.id] ?? UNANSWERED }}</p>
-          <p v-if="memoryOnly.has(current.shop.id)" class="note">{{ UNSTORED }}</p>
-          <div class="actions">
-            <button class="primary" :aria-disabled="sending.has(current.shop.id)" @click="again(pendingHere)">Send again</button>
-            <button :aria-disabled="sending.has(current.shop.id)" @click="discard(pendingHere)">Discard</button>
-          </div>
-          <p role="status">{{ sending.has(current.shop.id) ? 'Sending…' : '' }}</p>
-        </section>
+      <section v-if="pendingHere" class="kept card" aria-labelledby="kept-title">
+        <h2 id="kept-title">A request with no definite answer</h2>
+        <p>{{ describe(pendingHere, find) }}</p>
+        <p>{{ why[current.shop.id] ?? UNANSWERED }}</p>
+        <p v-if="memoryOnly.has(current.shop.id)" class="note">{{ UNSTORED }}</p>
+        <div class="actions">
+          <button class="primary" :aria-disabled="sending.has(current.shop.id)" @click="again(pendingHere)">Send again</button>
+          <button :aria-disabled="sending.has(current.shop.id)" @click="discard(pendingHere)">Discard</button>
+        </div>
+        <p role="status">{{ sending.has(current.shop.id) ? 'Sending…' : '' }}</p>
+      </section>
 
-        <section aria-labelledby="grant-title">
-          <h2 id="grant-title">Grant credits</h2>
-          <p v-if="!storable" class="note">{{ UNSTORED }}</p>
-          <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
-          <form v-else-if="forms" class="stack" @submit.prevent="submitGrant">
-            <label for="grant-credits">Credits</label>
-            <input id="grant-credits" v-model="forms.grant.credits" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
-            <label for="grant-origin">Bought or offered</label>
-            <select id="grant-origin" v-model="forms.grant.origin"><option value="bought">Bought: a payment</option><option value="offered">Offered: a gift</option></select>
-            <template v-if="forms.grant.origin === 'bought'">
-              <label for="grant-amount">Amount received, in ariary</label>
-              <input id="grant-amount" v-model="forms.grant.amount" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
-              <label for="grant-method">Method</label>
-              <input id="grant-method" v-model="forms.grant.method" required maxlength="40" pattern=".*\S.*" list="methods" autocomplete="off" autocapitalize="none" spellcheck="false">
-              <datalist id="methods"><option value="mvola" /><option value="orange" /><option value="airtel" /><option value="cash" /></datalist>
-              <label for="grant-ref">The payment’s reference</label>
-              <input id="grant-ref" v-model="forms.grant.paymentRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="grant-ref-help">
-              <small id="grant-ref-help">Exactly as the payment shows it. Case and spaces do not count, every other character does: MV-123 and MV123 are two references.</small>
+      <section class="card" aria-labelledby="grant-title">
+        <h2 id="grant-title">Grant credits</h2>
+        <p v-if="!storable" class="note">{{ UNSTORED }}</p>
+        <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
+        <form v-else-if="forms" class="stack" @submit.prevent="submitGrant">
+          <label for="grant-credits">Credits</label>
+          <input id="grant-credits" v-model="forms.grant.credits" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
+          <label for="grant-origin">Bought or offered</label>
+          <select id="grant-origin" v-model="forms.grant.origin"><option value="bought">Bought: a payment</option><option value="offered">Offered: a gift</option></select>
+          <template v-if="forms.grant.origin === 'bought'">
+            <label for="grant-amount">Amount received, in ariary</label>
+            <input id="grant-amount" v-model="forms.grant.amount" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
+            <label for="grant-method">Method</label>
+            <input id="grant-method" v-model="forms.grant.method" required maxlength="40" pattern=".*\S.*" list="methods" autocomplete="off" autocapitalize="none" spellcheck="false">
+            <datalist id="methods"><option value="mvola" /><option value="orange" /><option value="airtel" /><option value="cash" /></datalist>
+            <label for="grant-ref">The payment’s reference</label>
+            <input id="grant-ref" v-model="forms.grant.paymentRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="grant-ref-help">
+            <small id="grant-ref-help">Exactly as the payment shows it. Case and spaces do not count, every other character does: MV-123 and MV123 are two references.</small>
+          </template>
+          <template v-else>
+            <label for="grant-ref">Reference</label>
+            <input id="grant-ref" v-model="forms.grant.offeredRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
+          </template>
+          <label for="grant-note">Note (optional)</label>
+          <textarea id="grant-note" v-model="forms.grant.note" maxlength="500"></textarea>
+          <button class="primary" :aria-disabled="asking">Grant…</button>
+        </form>
+        <div role="status"><template v-if="said('grant', false)"><p v-for="line in said('grant', false)!.lines" :key="line">{{ line }}</p><p v-if="said('grant', false)!.warning"><strong>{{ said('grant', false)!.warning }}</strong></p></template></div>
+        <div class="refusal" role="alert"><p v-for="line in said('grant', true)?.lines" :key="line">{{ line }}</p></div>
+      </section>
+
+      <details ref="correctionFold" class="fold card">
+        <summary>Correction</summary>
+        <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
+        <form v-else-if="forms" class="stack" @submit.prevent="submitCorrection">
+          <template v-if="forms.correction.mode === 'repay'">
+            <p>Repay the job <code>{{ forms.correction.job }}</code>: +1 credit, reference <code>{{ repayment(forms.correction.job) }}</code>.</p>
+            <button type="button" @click="forms.correction = newCorrection()">Not a repayment</button>
+          </template>
+          <template v-else>
+            <label for="correction-mode">It changes</label>
+            <select id="correction-mode" v-model="forms.correction.mode"><option value="credits">Credits</option><option value="amount">A payment’s amount (0 credits)</option></select>
+            <label for="correction-sign">Add or take back</label>
+            <select id="correction-sign" v-model="forms.correction.sign"><option :value="1">Add</option><option :value="-1">Take back</option></select>
+            <template v-if="forms.correction.mode === 'credits'">
+              <label for="correction-credits">Credits</label>
+              <input id="correction-credits" v-model="forms.correction.credits" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
+              <label for="correction-ref">Reference</label>
+              <input id="correction-ref" v-model="forms.correction.madeRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
             </template>
             <template v-else>
-              <label for="grant-ref">Reference</label>
-              <input id="grant-ref" v-model="forms.grant.offeredRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
+              <label for="correction-amount">Ariary</label>
+              <input id="correction-amount" v-model="forms.correction.amount" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
+              <label for="correction-ref">The payment’s reference</label>
+              <input id="correction-ref" v-model="forms.correction.paymentRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
             </template>
-            <label for="grant-note">Note (optional)</label>
-            <textarea id="grant-note" v-model="forms.grant.note" maxlength="500"></textarea>
-            <button class="primary" :aria-disabled="asking">Grant…</button>
-          </form>
-          <div role="status"><template v-if="said('grant', false)"><p v-for="line in said('grant', false)!.lines" :key="line">{{ line }}</p><p v-if="said('grant', false)!.warning"><strong>{{ said('grant', false)!.warning }}</strong></p></template></div>
-          <div class="refusal" role="alert"><p v-for="line in said('grant', true)?.lines" :key="line">{{ line }}</p></div>
-        </section>
+          </template>
+          <label for="correction-note">Reason</label>
+          <textarea id="correction-note" ref="reasonField" v-model="forms.correction.note" required maxlength="500"></textarea>
+          <button class="primary" :aria-disabled="asking">Correct…</button>
+        </form>
+        <div role="status"><p v-for="line in said('correction', false)?.lines" :key="line">{{ line }}</p></div>
+        <div class="refusal" role="alert"><p v-for="line in said('correction', true)?.lines" :key="line">{{ line }}</p></div>
+      </details>
 
-        <details ref="correctionFold" class="fold">
-          <summary>Correction</summary>
-          <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
-          <form v-else-if="forms" class="stack" @submit.prevent="submitCorrection">
-            <template v-if="forms.correction.mode === 'repay'">
-              <p>Repay the job <code>{{ forms.correction.job }}</code>: +1 credit, reference <code>{{ repayment(forms.correction.job) }}</code>.</p>
-              <button type="button" @click="forms.correction = newCorrection()">Not a repayment</button>
+      <details class="fold card">
+        <summary>Move a payment</summary>
+        <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
+        <form v-else-if="forms" class="stack" @submit.prevent="submitMove">
+          <label for="move-ref">The payment’s reference</label>
+          <input id="move-ref" v-model="forms.move.ref" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
+          <label for="move-to">To the shop</label>
+          <select id="move-to" v-model="forms.move.to" required>
+            <option value="">Choose a shop</option>
+            <option v-for="shop in others" :key="shop.id" :value="String(shop.id)">{{ shop.identifier }}{{ shop.name ? ` (${shop.name})` : '' }}</option>
+          </select>
+          <p class="refusal" role="alert">{{ listMessage }}</p>
+          <label for="move-note">Reason</label>
+          <textarea id="move-note" v-model="forms.move.note" required maxlength="500"></textarea>
+          <button class="primary" :aria-disabled="asking">Move…</button>
+        </form>
+        <div role="status"><p v-for="line in said('move', false)?.lines" :key="line">{{ line }}</p></div>
+        <div class="refusal" role="alert"><p v-for="line in said('move', true)?.lines" :key="line">{{ line }}</p></div>
+      </details>
+
+      <section class="card" aria-labelledby="history-title">
+        <h2 id="history-title">History</h2>
+        <p class="refusal" role="alert">{{ historyMessage?.shop === current.shop.id ? historyMessage.text : '' }}</p>
+        <ul v-if="shopHistory?.items.length" class="lines">
+          <li v-for="item in shopHistory.items" :key="`${item.type}${item.id}`">
+            <template v-if="item.type === 'line'">
+              <p><strong>{{ signed(item.credits) }} {{ Math.abs(item.credits) === 1 ? 'credit' : 'credits' }}</strong> · {{ item.kind }}{{ item.origin ? ` ${item.origin}` : '' }} · line {{ item.id }}</p>
+              <p v-if="item.amount_ar !== null">{{ signed(item.amount_ar) }}&nbsp;Ar<template v-if="item.method"> by {{ item.method }}</template></p>
+              <p>Reference <code>{{ item.ref }}</code><template v-if="item.job_id"> · job <code>{{ item.job_id }}</code></template></p>
+              <p v-if="item.note">{{ item.note }}</p>
+              <small>{{ when(item.at) }} · {{ item.actor }}</small>
             </template>
             <template v-else>
-              <label for="correction-mode">It changes</label>
-              <select id="correction-mode" v-model="forms.correction.mode"><option value="credits">Credits</option><option value="amount">A payment’s amount (0 credits)</option></select>
-              <label for="correction-sign">Add or take back</label>
-              <select id="correction-sign" v-model="forms.correction.sign"><option :value="1">Add</option><option :value="-1">Take back</option></select>
-              <template v-if="forms.correction.mode === 'credits'">
-                <label for="correction-credits">Credits</label>
-                <input id="correction-credits" v-model="forms.correction.credits" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
-                <label for="correction-ref">Reference</label>
-                <input id="correction-ref" v-model="forms.correction.madeRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
-              </template>
-              <template v-else>
-                <label for="correction-amount">Ariary</label>
-                <input id="correction-amount" v-model="forms.correction.amount" required inputmode="numeric" :pattern="WHOLE" title="A whole number from 1 to 1 000 000 000, digits only." autocomplete="off">
-                <label for="correction-ref">The payment’s reference</label>
-                <input id="correction-ref" v-model="forms.correction.paymentRef" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
-              </template>
+              <p><strong>{{ item.kind.replace('_', ' ') }}</strong> · {{ item.status }} · credit {{ item.credit.replace('_', ' ') }}<template v-if="item.repaid_by !== null"> · repaid by line {{ item.repaid_by }}</template></p>
+              <p>Poster <code>{{ item.creation_id }}</code></p>
+              <p>Job <code class="copyable">{{ item.id }}</code></p>
+              <small>{{ when(item.at) }}</small>
+              <button v-if="item.status === 'succeeded' && item.repaid_by === null && !pendingHere" @click="repay(item)">Repay</button>
             </template>
-            <label for="correction-note">Reason</label>
-            <textarea id="correction-note" ref="reasonField" v-model="forms.correction.note" required maxlength="500"></textarea>
-            <button class="primary" :aria-disabled="asking">Correct…</button>
-          </form>
-          <div role="status"><p v-for="line in said('correction', false)?.lines" :key="line">{{ line }}</p></div>
-          <div class="refusal" role="alert"><p v-for="line in said('correction', true)?.lines" :key="line">{{ line }}</p></div>
-        </details>
+          </li>
+        </ul>
+        <p v-else-if="shopHistory">No line and no image yet.</p>
+        <button v-if="shopHistory?.next" :aria-disabled="older" @click="olderPage">Older</button>
+      </section>
 
-        <details class="fold">
-          <summary>Move a payment</summary>
-          <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
-          <form v-else-if="forms" class="stack" @submit.prevent="submitMove">
-            <label for="move-ref">The payment’s reference</label>
-            <input id="move-ref" v-model="forms.move.ref" required maxlength="100" pattern=".*\S.*" autocomplete="off" autocapitalize="none" spellcheck="false">
-            <label for="move-to">To the shop</label>
-            <select id="move-to" v-model="forms.move.to" required>
-              <option value="">Choose a shop</option>
-              <option v-for="shop in others" :key="shop.id" :value="String(shop.id)">{{ shop.identifier }}{{ shop.name ? ` (${shop.name})` : '' }}</option>
-            </select>
-            <p class="refusal" role="alert">{{ listMessage }}</p>
-            <label for="move-note">Reason</label>
-            <textarea id="move-note" v-model="forms.move.note" required maxlength="500"></textarea>
-            <button class="primary" :aria-disabled="asking">Move…</button>
-          </form>
-          <div role="status"><p v-for="line in said('move', false)?.lines" :key="line">{{ line }}</p></div>
-          <div class="refusal" role="alert"><p v-for="line in said('move', true)?.lines" :key="line">{{ line }}</p></div>
-        </details>
-
-        <section aria-labelledby="history-title">
-          <h2 id="history-title">History</h2>
-          <p class="refusal" role="alert">{{ historyMessage?.shop === current.shop.id ? historyMessage.text : '' }}</p>
-          <ul v-if="shopHistory?.items.length" class="lines">
-            <li v-for="item in shopHistory.items" :key="`${item.type}${item.id}`">
-              <template v-if="item.type === 'line'">
-                <p><strong>{{ signed(item.credits) }} {{ Math.abs(item.credits) === 1 ? 'credit' : 'credits' }}</strong> · {{ item.kind }}{{ item.origin ? ` ${item.origin}` : '' }} · line {{ item.id }}</p>
-                <p v-if="item.amount_ar !== null">{{ signed(item.amount_ar) }}&nbsp;Ar<template v-if="item.method"> by {{ item.method }}</template></p>
-                <p>Reference <code>{{ item.ref }}</code><template v-if="item.job_id"> · job <code>{{ item.job_id }}</code></template></p>
-                <p v-if="item.note">{{ item.note }}</p>
-                <small>{{ when(item.at) }} · {{ item.actor }}</small>
-              </template>
-              <template v-else>
-                <p><strong>{{ item.kind.replace('_', ' ') }}</strong> · {{ item.status }} · credit {{ item.credit.replace('_', ' ') }}<template v-if="item.repaid_by !== null"> · repaid by line {{ item.repaid_by }}</template></p>
-                <p>Poster <code>{{ item.creation_id }}</code></p>
-                <p>Job <code class="copyable">{{ item.id }}</code></p>
-                <small>{{ when(item.at) }}</small>
-                <button v-if="item.status === 'succeeded' && item.repaid_by === null && !pendingHere" @click="repay(item)">Repay</button>
-              </template>
-            </li>
-          </ul>
-          <p v-else-if="shopHistory">No line and no image yet.</p>
-          <button v-if="shopHistory?.next" :aria-disabled="older" @click="olderPage">Older</button>
-        </section>
-
-        <details class="fold">
-          <summary>Access</summary>
-          <div class="actions">
-            <button :aria-disabled="busy" @click="setPassword(current.shop)">Set a new password</button>
-            <button :aria-disabled="busy" @click="endSessions(current.shop)">End its sessions</button>
-            <button :aria-disabled="busy" @click="suspendOrEnable(current.shop)">{{ current.shop.state === 'active' ? 'Suspend' : 'Enable' }}</button>
-          </div>
-          <p role="status">{{ own && !own.refused ? own.text : '' }}</p>
-          <p class="refusal" role="alert">{{ own?.refused ? own.text : '' }}</p>
-        </details>
-        <section aria-labelledby="limits">
-          <h2 id="limits">Today’s limits (UTC day)</h2>
-          <p>Provider spend: {{ dollars(current.limits.day_spent_micros) }} of {{ dollars(current.limits.day_limit_micros) }}</p>
-          <p>Messages read: {{ current.limits.reads_today }} of {{ current.limits.reads_limit }}</p>
-        </section>
-      </template>
-    </main>
-  </div>
+      <details class="fold card">
+        <summary>Access</summary>
+        <div class="actions">
+          <button :aria-disabled="busy" @click="setPassword(current.shop)">Set a new password</button>
+          <button :aria-disabled="busy" @click="endSessions(current.shop)">End its sessions</button>
+          <button :aria-disabled="busy" @click="suspendOrEnable(current.shop)">{{ current.shop.state === 'active' ? 'Suspend' : 'Enable' }}</button>
+        </div>
+        <p role="status">{{ own && !own.refused ? own.text : '' }}</p>
+        <p class="refusal" role="alert">{{ own?.refused ? own.text : '' }}</p>
+      </details>
+      <section class="card" aria-labelledby="limits">
+        <h2 id="limits">Today’s limits (UTC day)</h2>
+        <p>Provider spend: {{ dollars(current.limits.day_spent_micros) }} of {{ dollars(current.limits.day_limit_micros) }}</p>
+        <p>Messages read: {{ current.limits.reads_today }} of {{ current.limits.reads_limit }}</p>
+      </section>
+    </template>
+  </main>
 
   <Confirm ref="confirm" />
 </template>
