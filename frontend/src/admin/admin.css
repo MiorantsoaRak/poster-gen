@@ -17,7 +17,7 @@
   --ok: light-dark(#145c37, #8fddb0); --ok-bg: light-dark(#e2f2e8, #1d3327);
   --warn: light-dark(#6b4600, #f0c26a); --warn-bg: light-dark(#fdf0cf, #3a2f14);
   --bad: light-dark(#a3271f, #ff9a8f); --bad-bg: light-dark(#fbeae8, #3d2320);
-  --glass: light-dark(rgb(255 253 248 / .66), rgb(43 43 39 / .62)); --glass-strong: light-dark(rgb(255 253 248 / .86), rgb(43 43 39 / .88));
+  --glass-strong: light-dark(rgb(255 253 248 / .86), rgb(43 43 39 / .88));
   --yellow-light: light-dark(rgb(242 199 68 / .28), rgb(242 199 68 / .16)); --sand-light: light-dark(rgb(222 204 168 / .55), rgb(110 98 70 / .34));
   --white-light: light-dark(rgb(255 255 255 / .7), rgb(255 255 255 / .04));
   --ambient: radial-gradient(52rem 34rem at 8% -6%, var(--yellow-light), transparent 62%), radial-gradient(46rem 38rem at 104% 104%, var(--sand-light), transparent 60%),
@@ -87,7 +87,7 @@ main.out { --column: 420px; padding-top: 48px }
 /* The top bar: sticky in the page's flow, its glass on its ::before. */
 .bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-height: 64px; padding: 10px var(--gutter);
   margin-inline: calc(var(--gap) + var(--side-w)) var(--gap) }
-.bar::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+.bar::before { content: ''; position: absolute; inset: 0; z-index: -1; background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-bottom: 1px solid var(--line) }
 .bar .refusal { flex-basis: 100%; margin: 0 }
 .menu, .rail-toggle, .side-close { flex: none; width: 44px; padding: 0; border-color: transparent }
@@ -185,7 +185,8 @@ details.card[open] { padding-bottom: 16px }
 .shops td.shop a { color: var(--text); font-weight: 650; text-decoration: none }
 @media (hover: hover) { .shops td.shop a:hover { text-decoration: underline } }
 .shops td.shop small { font-size: 13px; line-height: 18px }
-.shops .unresolved { margin-inline-start: 8px; color: var(--text); font-size: 13px }
+/* Whole or on the next line, never broken between its words (the overview's state column is narrow). */
+.shops .unresolved { display: inline-block; margin-inline-start: 8px; color: var(--text); font-size: 13px; white-space: nowrap }
 /* Only the identifier and the name may break inside a word; short values and headings keep theirs. */
 .shops th, .shops td:not(.shop) { overflow-wrap: normal }
 /* Numbers line up by their units, as a table of counts is read (D-POLISH-004). The cards below label each value instead. */
@@ -196,6 +197,8 @@ details.card[open] { padding-bottom: 16px }
   .shops td.shop { max-width: 0 }
   .shops td.shop :is(a, small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
   .shops td.shop a { line-height: 44px }
+  /* A date is not broken at its hyphens: in the overview's narrower column it would make a row taller than the others. */
+  .shops td[data-label='Last poster'] { white-space: nowrap }
 }
 /* Below 600 px each shop is a card in one column: the shop first, then each value with its column's name; long values
    wrap there. */
@@ -207,6 +210,49 @@ details.card[open] { padding-bottom: 16px }
   .shops td, .shops td.shop { width: auto; height: auto; padding: 0; border: 0 }
   .shops td + td { margin-top: 4px }
   .shops td[data-label]::before { content: attr(data-label) ': '; color: var(--faint) }
+}
+
+/* The overview (D-REDESIGN-006). The four figures: one card whose 1 px gaps, on --line over --surface, are the hairlines
+   between them in every arrangement; one column, two by two from 600 px, four across over 1180 px. */
+.kpis { display: grid; gap: 1px; padding: 0; overflow: hidden; background: linear-gradient(var(--line) 0 0) var(--surface) }
+.kpi { display: grid; gap: 4px; align-content: start; padding: 18px 20px; background: var(--surface) }
+.kpi dt { font-size: 13px; color: var(--muted) }
+.kpi dd { margin: 0; font-size: 14px; color: var(--faint) }
+.kpi .value { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -.01em; color: var(--text) }
+.kpi .value small { display: inline; font-size: 14px; font-weight: 500 }
+.meter { height: 6px; margin-top: 4px; border-radius: 999px; background: var(--raised); overflow: hidden }
+.meter i { display: block; height: 100%; border-radius: inherit; background: var(--text) }
+/* « Needs you », the full width under the figures: its heading and its sentences on one slim line; its lines in as many
+   columns as the width holds, each a 44 px link on a hairline. */
+.needs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px }
+.needs h2, .needs p { margin: 0 }
+.needs ul { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); column-gap: 24px; margin: 0 }
+.needs li, .needs li:first-child { padding: 4px 0; border-top: 1px solid var(--line) }
+/* Below it: the shops and the service, then the payments; two columns over 1180 px. */
+.cols { display: grid; gap: 0 16px; align-items: start }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; margin-bottom: 4px }
+.head h2 { margin: 0 }
+.head a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted) }
+.needs a { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; text-decoration: none }
+/* The lists as dense as the table beside them. */
+:is(.needs, .paid) :is(strong, p) { font-size: 14px }
+:is(.needs, .paid) small { font-size: 13px }
+.paid .amount { white-space: nowrap; font-variant-numeric: tabular-nums }
+.facts { margin: 0 }
+.facts div { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px }
+.facts div:first-child { border-top: 0 }
+.facts dt { color: var(--faint) }
+.facts dd { margin: 0 }
+@media (width >= 600px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .table-card > :is(.head, .pad) { padding-inline: 16px }
+  .paid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center }
+  .facts div { display: flex; justify-content: space-between; gap: 12px }
+  .facts dd { text-align: right }
+}
+@media (width > 1180px) {
+  .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)) }
+  .cols { grid-template-columns: minmax(0, 1fr) 340px }
 }
 
 dialog { width: min(32rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 20px 24px; border: 1px solid var(--line); border-radius: 24px;

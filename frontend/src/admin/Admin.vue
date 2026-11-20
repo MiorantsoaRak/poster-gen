@@ -1,24 +1,23 @@
 <script setup lang="ts">
-// The operator's dashboard (D-ADMIN-005): sign-in, the shops, one shop's money and access, the service, the payments. The
-// view comes from the address's hash (admin.ts route). A 401 shows the sign-in form in place of the view, which stays
+// The operator's dashboard (D-ADMIN-005): sign-in, the overview (the home, D-REDESIGN-006), the shops, one shop's money and
+// access, the service, the payments. The view comes from the address's hash (admin.ts route). A 401 shows the sign-in
+// form in place of the view, which stays
 // mounted with what was typed; never with a password the server made or a shop's data (leave). The shell around the
 // views (D-REDESIGN-005): a sidebar, a rail or a drawer, a sticky top bar, the theme switch.
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import Confirm, { type Question } from './Confirm.vue'
+import Overview from './Overview.vue'
 import Payments from './Payments.vue'
 import Service from './Service.vue'
 import { AdminError, call, newEpoch } from './adminApi'
 import {
   CAP_WARNING, PENDING, UNSTORED, WHOLE, concession, correctionRequest, count, describe, dollars, grantRequest, grouped,
   headroom, inHistory, moveRequest, newCorrection, newGrant, newMove, route as read, recorded, release, repayment, sentence,
-  settle, signed, stored, uncertain, when,
+  settle, signed, state, stored, uncertain, when,
   type CorrectionDraft, type Existing, type Form, type GrantDraft, type Headroom, type Item, type JobItem, type Kept, type MoveDraft, type Pending,
+  type Shop,
 } from './admin'
 
-interface Shop {
-  id: number; identifier: string; name: string | null; state: 'active' | 'suspended'; has_password: boolean; created_at: string
-  available: number; pending: number; posters: number; last_poster_at: string | null; sessions: number
-}
 interface Limits { day_spent_micros: number; day_limit_micros: number; reads_today: number; reads_limit: number }
 interface Session { authenticated: boolean; configured?: boolean; actor?: string; expires_at?: string }
 
@@ -65,6 +64,7 @@ const pendingHere = computed(() => current.value ? kept[current.value.shop.id] :
 const others = computed(() => (shops.value ?? []).filter(shop => shop.id !== current.value?.shop.id))
 const correctionFold = ref<HTMLDetailsElement>(), reasonField = ref<HTMLTextAreaElement>(), payments = ref<InstanceType<typeof Payments>>()
 const service = ref<InstanceType<typeof Service>>(), purchaseDraft = ref<string>()  // the Service screen's text area
+const overview = ref<InstanceType<typeof Overview>>()
 // A money answer belongs to its shop and its form, as an access action's note does.
 const result = ref<{ shop: number; form: Form; lines: string[]; refused: boolean; warning?: string }>()
 const said = (form: Form, refused: boolean) => {
@@ -205,6 +205,7 @@ async function load() {
     if (drafts.value?.shop !== at.id) drafts.value = { shop: at.id, grant: newGrant(), correction: newCorrection(), move: newMove() }
     await Promise.all([loadShop(at.id), loadHistory(at.id), loadShops()])  // the shops: the move's destinations
   } else if (at.view === 'shops') await loadShops()
+  else if (at.view === 'overview') await overview.value?.read()
   else if (at.view === 'service') await service.value?.read()
   else await payments.value?.read()  // on its first opening each reads itself, once mounted
 }
@@ -260,7 +261,7 @@ async function signIn() {
   newEpoch()  // a new authentication state: nothing asked before it lands in it
   session.value = answer
   await nextTick(); heading.value?.focus()
-  await load()
+  if (route.value.view !== 'overview') await load()  // the overview, mounted just now, has started its own read
 }
 async function signOut() {
   if (signingOut.value) return
@@ -540,7 +541,7 @@ async function repay(job: JobItem) {
     <button ref="closeButton" type="button" class="side-close" aria-label="Close the menu" title="Close the menu" @click="closeDrawer">
       <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
     </button>
-    <a class="brand" href="#/shops" aria-label="Doka Studio — Shops">
+    <a class="brand" href="#/overview" aria-label="Doka Studio — Overview">
       <img class="lockup on-light" src="./doka-horizontal-charcoal.svg" width="220" height="79" alt="">
       <img class="lockup on-dark" src="./doka-horizontal-paper.svg" width="220" height="79" alt="">
       <img class="symbol" src="./doka-symbol.svg" width="40" height="40" alt="">
@@ -550,6 +551,9 @@ async function repay(job: JobItem) {
     </a>
     <p id="console-label" class="section">Console</p>
     <nav aria-labelledby="console-label">
+      <a href="#/overview" title="Overview" :aria-current="route.view === 'overview' ? 'page' : undefined">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-6h-5v6H4Z" /></svg><span class="label">Overview</span>
+      </a>
       <a href="#/shops" title="Shops" :aria-current="route.view === 'shops' ? 'page' : undefined">
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5 5.5 4h13L20 9.5M4 9.5h16M4 9.5V20h16V9.5M9 20v-5h6v5" /></svg><span class="label">Shops</span>
       </a>
@@ -622,9 +626,7 @@ async function repay(job: JobItem) {
             <td class="shop"><a :href="`#/shops/${shop.id}`" :title="shop.identifier">{{ shop.identifier }}</a><small :title="shop.name ?? undefined">{{ shop.name ?? '—' }}</small></td>
             <!-- One state: suspended, else no password, else active; beside it the mark of an unanswered request. -->
             <td data-label="State">
-              <span v-if="shop.state === 'suspended'" class="badge bad">suspended</span>
-              <span v-else-if="!shop.has_password" class="badge warn">no password</span>
-              <span v-else class="badge ok">active</span>
+              <span class="badge" :class="state(shop).tone">{{ state(shop).word }}</span>
               <strong v-if="kept[shop.id]" class="unresolved">unresolved request</strong>
             </td>
             <td class="num" data-label="Available">{{ shop.available }}</td>
@@ -648,6 +650,11 @@ async function repay(job: JobItem) {
   <main v-else-if="route.view === 'service'" v-show="signedIn" :inert="drawer">
     <h1 ref="heading" tabindex="-1">Service</h1>
     <Service v-if="signedIn" ref="service" v-model:draft="purchaseDraft" :failure="failure" :ask="ask" :ended="ended" :reload="load" />
+  </main>
+
+  <main v-else-if="route.view === 'overview'" v-show="signedIn" class="wide" :inert="drawer">
+    <h1 ref="heading" tabindex="-1">Overview</h1>
+    <Overview v-if="signedIn" ref="overview" :failure="failure" :kept="kept" />
   </main>
 
   <main v-else v-show="signedIn" :inert="drawer">

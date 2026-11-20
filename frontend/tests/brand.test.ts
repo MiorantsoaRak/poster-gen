@@ -83,7 +83,7 @@ const TABLE: Record<string, [string, string]> = {
   'signal-edge': ['#d9b032', '#f2c744'], hue: ['#8f6b00', '#f2c744'],
   ok: ['#145c37', '#8fddb0'], 'ok-bg': ['#e2f2e8', '#1d3327'], warn: ['#6b4600', '#f0c26a'], 'warn-bg': ['#fdf0cf', '#3a2f14'],
   bad: ['#a3271f', '#ff9a8f'], 'bad-bg': ['#fbeae8', '#3d2320'],
-  glass: ['rgb(255 253 248 / .66)', 'rgb(43 43 39 / .62)'], 'glass-strong': ['rgb(255 253 248 / .86)', 'rgb(43 43 39 / .88)'],
+  'glass-strong': ['rgb(255 253 248 / .86)', 'rgb(43 43 39 / .88)'],
   'yellow-light': ['rgb(242 199 68 / .28)', 'rgb(242 199 68 / .16)'], 'sand-light': ['rgb(222 204 168 / .55)', 'rgb(110 98 70 / .34)'],
   'white-light': ['rgb(255 255 255 / .7)', 'rgb(255 255 255 / .04)'],
 }
@@ -120,4 +120,17 @@ it('keeps the sidebar’s texts at 4.5:1 on the frame’s tint, which the browse
     // The current item: --text on --active over that column.
     expect(contrast(rgba(tokens.text![theme]!), over(rgba(tokens.active![theme]!), column))).toBeGreaterThanOrEqual(4.5)
   }
+})
+
+it('keeps the texts at 4.5:1 on the one glass, whatever scrolls under it', () => {
+  // Content scrolls behind the top bar, and the browser checks cannot see what is under a sibling: the glass is judged
+  // over the two extremes, pure black and pure white.
+  const tokens = consoleTokens()
+  expect(tokens.glass, 'one glass only').toBeUndefined()
+  for (const theme of [0, 1])
+    for (const under of [[0, 0, 0, 1], [255, 255, 255, 1]]) {
+      const glass = over(rgba(tokens['glass-strong']![theme]!), under)
+      for (const name of ['text', 'muted', 'faint'])
+        expect(contrast(rgba(tokens[name]![theme]!), glass), `--${name}, theme ${theme}, over ${under[0] ? 'white' : 'black'}`).toBeGreaterThanOrEqual(4.5)
+    }
 })

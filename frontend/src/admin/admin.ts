@@ -2,10 +2,11 @@
 // operator (owner decision 10).
 import { AdminError } from './adminApi'
 
-export type Route = { view: 'shops' } | { view: 'shop'; id: number } | { view: 'money' } | { view: 'service' }
-/** The view of an address's hash: `#/shops/<id>` is one shop, `#/money` the payments, `#/service` the service, anything
- *  else the shop list. */
+export type Route = { view: 'overview' } | { view: 'shops' } | { view: 'shop'; id: number } | { view: 'money' } | { view: 'service' }
+/** The view of an address's hash: none, `#` or `#/overview` the overview (the home, D-REDESIGN-006), `#/shops/<id>` one
+ *  shop, `#/money` the payments, `#/service` the service, anything else the shop list. */
 export function route(hash: string): Route {
+  if (hash === '' || hash === '#' || hash === '#/overview') return { view: 'overview' }
   if (hash === '#/money') return { view: 'money' }
   if (hash === '#/service') return { view: 'service' }
   const found = /^#\/shops\/([1-9][0-9]{0,8})$/.exec(hash)
@@ -46,12 +47,39 @@ export const ariary = (n: number) => `${grouped(n)}\u00a0Ar`
 const credits = (n: number, kind = '') => `${grouped(n)} ${kind}${n === 1 ? 'credit' : 'credits'}`
 /** A stored UTC time as the operator reads it. */
 export const when = (at: string) => `${at.slice(0, 10)} ${at.slice(11, 16)} UTC`
+/** A shop's one state (D-REDESIGN-005): suspended, else no password, else active; with its badge's tone. */
+export const state = (shop: Pick<Shop, 'state' | 'has_password'>) =>
+  shop.state === 'suspended' ? { word: 'suspended', tone: 'bad' } : !shop.has_password ? { word: 'no password', tone: 'warn' } : { word: 'active', tone: 'ok' }
+/** An image's average cost, from micro-USD that may be fractional, to a tenth of a cent. */
+export const perImage = (micros: number) => `$${(micros / 1e6).toFixed(3)}`
 /** The current UTC month, as whole days (the payments' default period). */
 export function month(now = new Date()) {
   const day = (date: Date) => date.toISOString().slice(0, 10)
   return { start: day(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))),
            end: day(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }
 }
+
+// ---- The answers the screens read (backend admin.py) ----
+
+/** GET /api/admin/shops: its items, by identifier. */
+export interface Shop {
+  id: number; identifier: string; name: string | null; state: 'active' | 'suspended'; has_password: boolean; created_at: string
+  available: number; pending: number; posters: number; last_poster_at: string | null; sessions: number
+}
+export interface OperatorSession { actor: string; created_at: string; expires_at: string; address: string; agent: string | null; current: boolean }
+/** GET /api/admin/service. Micro-USD; `backup` is null when its marker cannot be read. */
+export interface ServiceView {
+  commit: string; migration: string; started_at: string; backup: { finished_at: string; age_hours: number; late: boolean } | null
+  spend: { recorded_micros: number; cap_micros: number; since: string }; failed_jobs_24h: number; paused_since: string | null
+  purchase_text: { stored: string | null; shown: string }; headroom: Headroom
+  limits: { shop_daily_spend_micros: number; reads_per_day: number }; operator_sessions: OperatorSession[]
+}
+/** A line of GET /api/admin/payments, in ledger order: a moved payment's three lines (+A, −A, +A) are all there. */
+export interface Payment {
+  line: number; shop_id: number; identifier: string; kind: string; origin: string | null; credits: number; amount_ar: number
+  method: string | null; ref: string; note: string | null; actor: string; at: string
+}
+export interface Payments { start: string; end: string; received_ar: number; items: Payment[] }
 
 // ---- Money requests (D-ADMIN-005, R-ADMIN-003) ----
 
@@ -282,6 +310,6 @@ export interface Headroom { cap: number; spent: number; left: number; outstandin
 /** The cap's headroom after a grant, as the command line prints it: what is left rounded down, the cost up. */
 export function headroom(room: Headroom): string {
   const unit = room.images ? `average of the last ${room.images} images` : 'ESTIMATE_SCENE_USD: no image cost yet'
-  return `Service cap ${dollars(room.cap)}: ${dollars(room.spent)} spent, ${dollars(room.left, Math.floor)} left. Credits outstanding in all shops: ${grouped(room.outstanding)} × $${(room.unit / 1e6).toFixed(3)} (${unit}) = ${dollars(room.cost, Math.ceil)}.`
+  return `Service cap ${dollars(room.cap)}: ${dollars(room.spent)} spent, ${dollars(room.left, Math.floor)} left. Credits outstanding in all shops: ${grouped(room.outstanding)} × ${perImage(room.unit)} (${unit}) = ${dollars(room.cost, Math.ceil)}.`
 }
 export const CAP_WARNING = 'Warning: the outstanding credits would cost more than what is left of the cap. Raise SPEND_CAP_USD (deploy/README.md).'

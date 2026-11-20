@@ -6,15 +6,8 @@
 import { onMounted, ref } from 'vue'
 import type { Question } from './Confirm.vue'
 import { AdminError, call } from './adminApi'
-import { CAP_WARNING, dollars, headroom, uncertain, when, type Headroom } from './admin'
+import { CAP_WARNING, dollars, headroom, uncertain, when, type ServiceView as View } from './admin'
 
-interface OperatorSession { actor: string; created_at: string; expires_at: string; address: string; agent: string | null; current: boolean }
-interface View {
-  commit: string; migration: string; started_at: string; backup: { finished_at: string; age_hours: number; late: boolean } | null
-  spend: { recorded_micros: number; cap_micros: number; since: string }; failed_jobs_24h: number; paused_since: string | null
-  purchase_text: { stored: string | null; shown: string }; headroom: Headroom
-  limits: { shop_daily_spend_micros: number; reads_per_day: number }; operator_sessions: OperatorSession[]
-}
 type Where = 'pause' | 'text' | 'sessions'
 
 // `reload` reads the Service screen that is on the page now: this one, or the one opened after the operator left and

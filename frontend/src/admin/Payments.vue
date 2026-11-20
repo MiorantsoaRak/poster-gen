@@ -4,22 +4,18 @@
 // A moved payment's three lines (+A, −A, +A) are all listed; the server's total counts it once.
 import { onMounted, ref } from 'vue'
 import { call } from './adminApi'
-import { ariary, month, signed, when } from './admin'
+import { ariary, month, signed, when, type Payments } from './admin'
 
-interface Payment {
-  line: number; shop_id: number; identifier: string; kind: string; origin: string | null; credits: number; amount_ar: number
-  method: string | null; ref: string; note: string | null; actor: string; at: string
-}
 const props = defineProps<{ failure: (error: unknown) => string }>()
 const period = ref(month())
-const shown = ref<{ start: string; end: string; received_ar: number; items: Payment[] }>(), message = ref('')
+const shown = ref<Payments>(), message = ref('')
 
 let reads = 0
 async function read() {
   const { start, end } = period.value, mine = ++reads  // the last read only is shown, in success and in failure
   message.value = ''
   try {
-    const answer = await call<{ start: string; end: string; received_ar: number; items: Payment[] }>(`/api/admin/payments?start=${start}&end=${end}`)
+    const answer = await call<Payments>(`/api/admin/payments?start=${start}&end=${end}`)
     if (mine === reads) shown.value = answer
   } catch (error) { const said = props.failure(error); if (mine === reads) message.value = said }
 }

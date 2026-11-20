@@ -22,9 +22,9 @@ const admin = Object.entries(sources).filter(([path]) => path.startsWith('../src
 const folder = Object.keys(import.meta.glob('../src/admin/*'))
 
 it('keeps the operator page and the shops apart: neither imports the other (D-ADMIN-005)', () => {
-  expect(folder.sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts',
+  expect(folder.sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Overview.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts',
     'Figtree-Variable.woff2', 'Figtree-OFL.txt', 'doka-horizontal-charcoal.svg', 'doka-horizontal-paper.svg', 'doka-symbol.svg'].map(name => `../src/admin/${name}`).sort())
-  expect(admin.length).toBe(8)
+  expect(admin.length).toBe(9)
   for (const [path, text] of admin)
     for (const name of imports(text)) expect(own(name), `${path} imports ${name}`).toBe(true)
   // The rule sees each way out of the folder, and lets the folder's own files through.
@@ -52,11 +52,27 @@ it('names the same bundle as the shops, so that the server refuses both old page
   expect(ADMIN_BUNDLE).toBe(BUNDLE)
 })
 
-it('reads the view from the hash: one shop by its id, the payments, the service, anything else the shop list', () => {
+// The router's cases apart (D-REDESIGN-006): the home, the list, the deep links, then what is malformed.
+it('opens the overview on no hash, on # and on #/overview: the console’s home', () => {
+  expect(route('')).toEqual({ view: 'overview' })
+  expect(route('#')).toEqual({ view: 'overview' })
+  expect(route('#/overview')).toEqual({ view: 'overview' })
+})
+
+it('opens the shop list on #/shops', () => {
+  expect(route('#/shops')).toEqual({ view: 'shops' })
+})
+
+it('reads the deep links: one shop by its id, the payments, the service', () => {
   expect(route('#/shops/12')).toEqual({ view: 'shop', id: 12 })
+  expect(route('#/shops/999999999')).toEqual({ view: 'shop', id: 999999999 })
   expect(route('#/money')).toEqual({ view: 'money' })
   expect(route('#/service')).toEqual({ view: 'service' })
-  for (const hash of ['', '#', '#/shops', '#/shops/', '#/shops/0', '#/shops/012', '#/shops/12/x', '#/shops/-1', '#/shops/1e3', '#/service/', '#/services'])
+})
+
+it('opens the shop list on a malformed hash, as before the overview', () => {
+  for (const hash of ['#/', '#/overview/', '#/Overview', '#overview', '#/shops/', '#/shops/0', '#/shops/012', '#/shops/12/x', '#/shops/-1',
+    '#/shops/1e3', '#/shops/1000000000', '#/service/', '#/services', '#/money/', '#/payments'])
     expect(route(hash), hash).toEqual({ view: 'shops' })
 })
 
