@@ -19,6 +19,7 @@
 | [format-export.md](format-export.md) | R-FORMAT-EXPORT-001 … 002 | Approved | [format-export](../designs/format-export.md) |
 | [creation-library.md](creation-library.md) | R-CREATION-LIBRARY-001 … 004 | 001–002: Approved; 003 (manage posters) and 004 (manage saved styles): Approved 2026-11-12 (ADR-060; "Confirmée" amended by ADR-061), design D-CREATION-LIBRARY-003/004 approved v2.1 (ADR-061) | [creation-library](../designs/creation-library.md) |
 | [hosted-pilot.md](hosted-pilot.md) | R-HOSTED-PILOT-001 … 006 | Approved 2026-11-13 with seven working defaults, under the user's autonomy grant (ADR-064); a seventh feature | [hosted-pilot](../designs/hosted-pilot.md) |
+| [interface-polish.md](interface-polish.md) | R-POLISH-001 … 005 | Approved v2 2026-11-20 by the lead under the autonomy grant (ADR-122), after a Codex REJECT and a devil's advocate on the design's v1 | [interface-polish](../designs/interface-polish.md) |
 
 Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → fidelity review → manual or prompted selected-text polish → server preview → confirm → download the same PNG. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
 
