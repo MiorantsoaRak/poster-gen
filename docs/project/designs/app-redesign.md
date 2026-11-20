@@ -57,15 +57,22 @@ Values of the mockup's `doka.css`, role for role:
 | Rings, chosen borders, progress (3:1) | `--hue` | `#8f6b00` (unchanged) | `#f2c744` (unchanged) |
 | States | `--ok`/`-bg`, `--warn`/`-bg`, `--bad`/`-bg` | `#145c37`/`#e2f2e8`, `#6b4600`/`#fdf0cf`, `#a3271f`/`#fbeae8` | `#8fddb0`/`#1d3327`, `#f0c26a`/`#3a2f14`, `#ff9a8f`/`#3d2320` |
 | The field behind the window | `--ambient` from three lights | yellow `.28`, sand `.55`, white `.7` on the ground | yellow `.16`, sand `.34`, white `.04` |
-| Glass of a bar | `--glass` | `rgb(255 253 248 / .66)` | `rgb(43 43 39 / .62)` |
-| Glass of a dialog, the drawer | `--glass-strong` | `rgb(255 253 248 / .86)` | `rgb(43 43 39 / .88)` |
+| Glass: a bar, a dialog, the drawer | `--glass-strong` | `rgb(255 253 248 / .86)` | `rgb(43 43 39 / .88)` |
+| The main action, hovered (new) | `--signal-hover` | `#d5b03f` | the same |
 | What floats | `--lift` | the mockup's | the mockup's |
 
 Where `style.css` has a token of the same role under another name, the name stays and the value changes; a new
 name is added only for a role marked (new).
 
+- **One glass, and it is the strong one.** The mockup's lighter glass (`.66` / `.62`) is not used: a poster or a
+  photo can scroll behind a bar, and over white the dark theme's muted text fell to 2.7:1 on it (code review of
+  T-REDESIGN-001). Every floating surface that carries text uses `--glass-strong`; the poster's badge, which sits
+  on the image, has an opaque backing. `tokens.test.ts` computes `--text`, `--muted` and `--faint` on
+  `--glass-strong` over pure black and pure white, 4.5:1 in both themes: the browser's checker cannot see what
+  scrolls under a bar.
 - **The main action.** `button.primary`, `a.primary` and `.download-button`: `--signal` fill, `--on-signal` text,
-  a 1.5 px `--signal-edge` border; hover mixes the yellow toward charcoal (`color-mix`, 86 %), never an opacity;
+  a 1.5 px `--signal-edge` border; hovered, `--signal-hover` (the yellow mixed 86 % toward charcoal, written as a
+  value: the checkers read `rgb()` only and now fail on any other computed colour), never an opacity;
   the busy and disabled rules keep their shape. `.download-button.secondary` and the final panel's ranking of
   « Partager » over the file stay as they are (share-poster.md).
 - **Secondary button**: transparent, `--edge` border, `--active` on hover. **Field**: `--surface`, `--control`
@@ -75,7 +82,8 @@ name is added only for a role marked (new).
   `.card`, `.group`, `.comparison figure`, `.shot`, `.facts`, `.job-state` (the shared list, `style.css` 227–228),
   and every field, chip and secondary button that uses `--glass-field`, become `--surface` with a `--line` hairline:
   no `backdrop-filter`, no shadow. The chat's composer and bubbles take the same swap (their restructure is
-  D-REDESIGN-003).
+  D-REDESIGN-003); the composer's box gets its `--control` border in this task, measured at rest and focused, so
+  the task can be released alone.
 - **What keeps blur and shadow, with its present structure and only new values:** the top bar's `::before`, the
   phone's bottom bar, dialogs and sheets, toasts, the editor's sticky and fixed bars, the review and final panels'
   action bars. The review and final panels themselves keep their opaque ground and their scrim shadow exactly: no
@@ -141,7 +149,10 @@ nav.phone-bar                  new, ≤ 720: v-if="shown && !chatting && !editin
 **Layout.**
 - `<html>` carries `data-shell` while `shown`, and `data-rail` when the rail applies: the kept choice, or `editing`
   (`doc && !chatting`) in every state of the editor, before and after a visual exists. CSS keys on them: `--side-w` is `0px`; over 1180 px with `data-shell` it is `288px`, with `data-rail`
-  `76px`; `--gap` is `12px` over 1180 px with `data-shell`, else `0px`.
+  `76px`; `--gap` is `12px` over 1180 px with `data-shell`, else `0px`, and `0px` in the step editor (implementation
+  of T-REDESIGN-002: with the gap, a Story poster at 1366 × 768 was 2 px taller than the screen; the editor is a work
+  surface, so its frame is flush with the window). The top bar shows the poster's name in the chat only: the step
+  editor already has its own title row.
 - Over 1180 px: `aside.side` is fixed at `inset-block: 12px; inset-inline-start: 12px; width: var(--side-w)` and
   scrolls inside itself on a short screen. `header.app-header` and `main` take `margin-inline: calc(var(--gap) +
   var(--side-w)) var(--gap)`; `body` takes `padding-block: var(--gap)`, `position: relative` and a minimum height of
@@ -210,8 +221,14 @@ nav.phone-bar                  new, ≤ 720: v-if="shown && !chatting && !editin
   today, and runs first. Then the drawer closes and nothing moves the focus to the menu button: the route gives it
   to the destination's `h1` (737), or to the question the departure raised (unsaved account, unsent photos), or to
   the dialog the destination opens.
-- It also closes when `shown` turns false, when the window becomes wider than 1180 px, and when a dialog opens.
+- It also closes when `shown` turns false, when the window becomes wider than 1180 px (the focus then moves from
+  « Fermer le menu » to the rail toggle), when a dialog opens, and on every route change, Back and Forward
+  included, before the route focuses anything.
+- Closed, it is `inert` at once, not when its exit animation ends.
+- The width conditions are complementary, in CSS and in `matchMedia`: `(width > 1180px)` and `(width <= 1180px)`,
+  `(width > 720px)` and `(width <= 720px)`: a zoomed window has fractional widths.
 - Its state is in memory. No history entry: Back acts on the page (owner decision 7).
+- (The last four points come from the code review of the console's drawer, T-REDESIGN-005, and bind both.)
 
 **The credits.**
 - One handler for the pill, the sidebar's and the drawer's credit card and the editor rail's button. In the creator
@@ -296,8 +313,8 @@ the server's sentences. Built on the shell (after T-REDESIGN-002).
 - **The composer** (`form.composer`): one `--surface` box, a `--control` border, 24 px corners, the soft shadow of
   the mockup (`0 1px 2px rgb(0 0 0 / .04), 0 10px 24px -18px rgb(0 0 0 / .22)`), no blur. Rows: `.tray`; the error
   lines; the textarea with no border of its own (the box is its boundary and takes the focus ring with
-  `:focus-within`); a tool row with the attach button (« Ajouter des images », its icon and the word « Photo » over
-  720 px), the style choices (`.style-pill` × 3 or the « comme votre inspiration » pill, in a strip that scrolls
+  `:focus-within`); a tool row with the attach button (« Ajouter des images », its icon and the word « Images » over
+  720 px: the visible word must be inside the accessible name, WCAG 2.5.3), the style choices (`.style-pill` × 3 or the « comme votre inspiration » pill, in a strip that scrolls
   sideways, while no poster exists), and `.send` at the right. `.chat-elsewhere-read` keeps its place. Whether the
   styles hide while typing does not change.
 - **Messages.** `.bubble.me`: `--invert` fill in the light theme, `--raised` in the dark, on the right.
@@ -405,6 +422,14 @@ together, on arrival, on « Refresh » and when the tab is shown again: `GET /ap
 
 - The four figures are one card split by hairlines, a label over each value, no icon: four across over 1180 px, two
   by two from 600 px, one column under.
+- **« Needs you » is a full-width block right under the figures**, at every width (the mockup has it at the top
+  right): on a phone it is read before the eight shop cards, and the order of the DOM, of the screen and of the
+  focus is the same everywhere. Its lines flow in columns on a wide screen; empty, it is one slim line. Below it:
+  Shops then Service on the left, the month's payments on the right. A shop's row carries today's mark of an
+  unanswered request, as the Shops table does.
+- « Nothing needs you » is said only when Shops and Service have both answered **in the present refresh**; while
+  one is still being read, the block says which.
+- The mount owns the Overview's first read: a sign-in sends one request to each of the three endpoints.
 - **Partial failure, one rule per input.** Each block renders from its own read; a failed read shows « Could not be
   read » and « Try again » in its blocks. « Needs you » has three inputs: Shops gives the missing passwords;
   Service gives the purchase text, the backup, the failed jobs and the cap warning; the page's memory gives the

@@ -145,7 +145,7 @@ Merge into `main`, push and deploy: the owner's word (the work lives on the bran
   the yellow main button in daylight, the dark theme's cards on a cheap screen, the drawer and the phone's top bar
   on an Android phone with a larger text size.
 - New French, drafts until the owner reads them: « Quelle affiche créons-nous ? », « Affiches récentes »,
-  « Photo », and the names of new controls: « Ouvrir le menu », « Fermer le menu », « Réduire le
+  « Images » (the attach button's visible word, inside its name « Ajouter des images »), and the names of new controls: « Ouvrir le menu », « Fermer le menu », « Réduire le
   menu », « Agrandir le menu ». « Nouvelle affiche » replaces « Créer » in the navigation (it is the app's word
   already).
 - Every existing test and smoke passes, changed only where it names a colour, a layout, a navigation item or a

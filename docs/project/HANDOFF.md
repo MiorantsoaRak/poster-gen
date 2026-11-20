@@ -2,6 +2,48 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
+## App redesign — Claude, 2026-11-21 (READ FIRST)
+
+No work order: the owner's own project. Goal: both interfaces follow the mockup he approved
+([mockups/doka-console/](mockups/doka-console/README.md)); ADR-123, [requirements](requirements/app-redesign.md),
+[design](designs/app-redesign.md) v2, tasks T-REDESIGN-001 … 007 in TODO.md.
+
+**State: all seven tasks are done and committed on the branch `redesign`, NOT on `main`, NOT pushed, NOT deployed.**
+The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `node_modules`, `.venv`; smoke ports
+5273/8100). `redesign-chat` (worktree `../affiche-ia-worktrees/chat`) and `redesign-console`
+(`../affiche-ia-worktrees/console`) are merged into it. `main` still holds the interface polish only
+(T-POLISH-001 … 005), also not pushed. The report: [reviews/app-redesign-after-2026-11-21.md](reviews/app-redesign-after-2026-11-21.md).
+
+**Proof, once on the merged branch:** Vitest 312; the build; all seven browser smokes; backend 1533 passed; 102
+captures in `../affiche-ia-worktrees/app/outputs/design-capture/redesign/`.
+
+**Exact next step: the owner's.**
+1. Look at it (from the worktree):
+   ```
+   cd ../affiche-ia-worktrees/app/frontend && corepack npm@10 run build
+   cd ../backend && uv run python ../frontend/tests/design_capture.py look
+   ```
+   then open `outputs/design-capture/look/sheets/` there.
+2. Decide the five points of « For the owner » in the report (placement of « Needs you », the cost sentence, « Images »,
+   « Payments », the theme switch in the phone drawer).
+3. On his word only: merge `redesign` into `main` (`git merge --no-ff redesign` from `main`; no conflict expected,
+   `main` has only docs since), push, deploy as an ordinary release (no migration).
+
+**Open, small (from the `DESIGN.md` rewrite, not yet tasks):** the console's yellow hover is a `color-mix()` (the
+shops' app uses `--signal-hover`); the two apps' blur values differ; the console's scrim is a literal; the console's
+badge dot may vanish in forced colours; two out-of-date contrast comments in `style.css` (~42, ~843); the console's
+top bar has no safe-area inset. Also: the phone bar shows on the « Pas à pas » intake before a poster exists; the
+sidebar's « Affiches récentes » shows the state as grey text, not a badge.
+
+**Landmarks:**
+- Owner's rule (2026-11-21): run the browser smokes only when product code changed, and only those that cover it;
+  the full suite once at the end.
+- Rule 1 of the design: nothing with blur, filter, transform or containment between a fixed element and the window
+  (the phone's review buttons are fixed from inside the review panel). The window is the page's scroller.
+- The worktrees are on disk next to the repo; delete them only after `redesign` is merged
+  (`git worktree remove ../affiche-ia-worktrees/<name>`).
+- The mockup's local server (port 8777) may still be running from 2026-11-20; it serves only the mockup folder.
+
 ## Interface polish — Claude, 2026-11-20 (READ FIRST)
 
 No work order or ClickUp ticket: the user's own project. Goal: the shop's interface and the operator's page read as one product in the Signal identity, with one frame on every screen and no text cut or faint (ADR-122; [requirements](requirements/interface-polish.md) v2, [design](designs/interface-polish.md) v2).
