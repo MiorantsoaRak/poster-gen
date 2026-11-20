@@ -4,6 +4,8 @@ import { api, ApiError } from './api'
 export interface LibraryItem { id: string; revision: number; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
 export interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 export const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
+// The badge of a poster's state in a list (D-REDESIGN-004): a draft plain, the rest by tone.
+export const stateBadges = { draft: 'badge', to_review: 'badge warn', approved: 'badge ok', confirmed: 'badge ok' }
 interface Attention { total: number; first_creation_id: string | null; first_creation_title?: string | null }
 export interface Summary {
   as_of: string; review: Attention; failed: Attention

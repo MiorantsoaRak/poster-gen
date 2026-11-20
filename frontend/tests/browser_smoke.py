@@ -3234,7 +3234,7 @@ def run():
                         # Managing the list (R-CREATION-LIBRARY-003): state in words, copy, remove with confirmation, restore.
                         rows = page.locator(".library-row")
                         before = rows.count()
-                        expect(page.locator(".library-item span").first).to_contain_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
+                        expect(page.locator(".library-item .badge").first).to_have_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
                         expect(page.locator("aside.side .nav a", has_text="Mes affiches")).to_contain_text(str(before))
                         rows.first.get_by_role("button", name=re.compile("^Dupliquer")).click()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()

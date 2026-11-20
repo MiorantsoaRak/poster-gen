@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, proxyRefs } from 'vue'
-import { sectionRead, stateNames, type Listing, type Summary } from './dashboard'
+import { sectionRead, stateBadges, stateNames, type Listing, type Summary } from './dashboard'
 import { credit, type Balance } from './generation'
 
 // The balance and the five latest posters are the application's, shared with its shell (D-REDESIGN-002).
@@ -47,7 +47,7 @@ defineExpose({ refresh })
     <p v-if="recent.data" class="meta">Liste vérifiée à {{ recent.checked }}.</p>
     <p v-if="recent.data && !recent.data.items.length" class="empty">Aucune affiche pour le moment.</p>
     <ul v-if="recent.data?.items.length" class="home-recent">
-      <li v-for="item in recent.data.items" :key="item.id"><button :disabled="busy" @click="emit('poster', item.id)"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" alt="" width="56" height="70" /><span v-else class="blank-poster" aria-hidden="true"></span><span><strong translate="no">{{ item.title }}</strong><small>{{ stateNames[item.state] }}</small></span></button></li>
+      <li v-for="item in recent.data.items" :key="item.id"><button :disabled="busy" @click="emit('poster', item.id)"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" alt="" width="56" height="70" /><span v-else class="blank-poster" aria-hidden="true"></span><span><strong translate="no">{{ item.title }}</strong><span :class="stateBadges[item.state]">{{ stateNames[item.state] }}</span></span></button></li>
     </ul>
     <a class="account-link" href="#compte">Mon compte</a>
   </section>
@@ -60,9 +60,10 @@ defineExpose({ refresh })
 .attention-row button { max-width: 100%; overflow-wrap: anywhere; text-align: start }
 .home-bal { margin: 24px 0 32px; padding: clamp(16px, 3vw, 32px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
 .home-numbers { justify-content: flex-start; gap: 36px; margin: 12px 0 }
-.home-numbers strong, .home-numbers span, .home-recent small { display: block }
+.home-numbers strong, .home-numbers span, .home-recent strong { display: block }
 .home-numbers strong { font-size: 2rem; line-height: 1.2; font-variant-numeric: tabular-nums }
-.home-numbers span, .home-recent small { color: var(--muted) }
+.home-numbers span { color: var(--muted) }
+.home-recent .badge { margin-top: 4px }
 a:not(.download-button) { display: inline-flex; min-height: 44px; align-items: center; color: var(--text) }
 .home-section { margin-bottom: 8px }
 .home-recent { padding: 0; margin: 0; list-style: none }

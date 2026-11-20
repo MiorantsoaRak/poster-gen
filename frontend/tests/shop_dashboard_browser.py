@@ -145,6 +145,31 @@ def walk_header(browser):
         context.close()
 
 
+# A poster's state in a list (D-REDESIGN-004): the four states on the first four rows, each row's word and tone.
+STATES = (("draft", "Brouillon", "badge"), ("to_review", "À vérifier", "badge warn"), ("approved", "Approuvée", "badge ok"), ("confirmed", "Confirmée", "badge ok"))
+# A row's title, badge and details in the document's order, with where each is drawn.
+ROW_JS = """row => [...row.querySelectorAll('strong, .badge, .details')].map(e => { const box = e.getBoundingClientRect()
+  return { kind: e.matches('strong') ? 'title' : e.matches('.badge') ? 'badge' : 'details', text: e.textContent.trim(), tone: e.className, top: box.top, bottom: box.bottom } })"""
+
+
+def four_states(route):
+    listing = route.fetch().json()
+    for item, (state, _, _) in zip(listing["items"], STATES):
+        item["state"] = state
+    route.fulfill(json=listing)
+
+
+def check_states(rows, details):
+    """Each row reads its title, then its state's badge, then its details (none on Accueil), one under the other."""
+    for index, (_, word, tone) in enumerate(STATES):
+        parts = rows.nth(index).evaluate(ROW_JS)
+        assert [part["kind"] for part in parts] == ["title", "badge", "details"][:3 if details else 2], parts
+        assert (parts[1]["text"], parts[1]["tone"]) == (word, tone), parts
+        assert all(after["top"] >= before["bottom"] - 1 for before, after in zip(parts, parts[1:])), parts
+        if details:
+            assert " Ar · " in parts[2]["text"] and word not in parts[2]["text"], parts
+
+
 # The frame of the shop's five screens (D-POLISH-003). A title: its type, and what shows its focus.
 TITLE_JS = """e => { const style = getComputedStyle(e)
   return [style.fontSize, style.lineHeight, style.fontWeight, style.outlineStyle, e.matches(':focus-visible'), style.textDecorationLine,
@@ -468,6 +493,13 @@ def walk(browser, out):
         expect(poster).to_be_visible()
         expect(home.locator(".home-recent button")).to_have_count(5)
         expect(home.locator(".home-recent")).not_to_contain_text("Casque de la boutique")
+        page.route("**/api/creations?limit=5", four_states)
+        home.get_by_role("button", name="Actualiser").click()
+        expect(home.locator(".home-recent .badge.ok")).to_have_count(2)
+        check_states(home.locator(".home-recent button"), details=False)
+        page.unroute("**/api/creations?limit=5")
+        home.get_by_role("button", name="Actualiser").click()
+        expect(home.locator(".home-recent .badge.ok")).to_have_count(0)
         for button, target, title in ((review_action, made["id"], "Casque de la boutique"),
                                       (home.get_by_role("button", name="Génération échouée"), recent_id, "Affiche 5"),
                                       (poster, recent_id, "Affiche 5")):
@@ -527,13 +559,21 @@ def walk(browser, out):
         expect(gallery.get_by_role("button", name="Réessayer la liste")).to_be_visible()
         expect(gallery.locator(".empty, .meta")).to_have_count(0)
         page.unroute(gallery_url)
+        page.route(gallery_url, four_states)
         gallery.get_by_role("button", name="Réessayer la liste").click()
         expect(gallery.locator(".library-item")).to_have_count(6)
+        check_states(gallery.locator(".library-item"), details=True)
         # From an open poster, a successful creator reload must yield to the later choice of the gallery.
         page.set_viewport_size({"width": 1366, "height": 768})
+        check_states(gallery.locator(".library-item"), details=True)
         # In the 860 px frame a row's state, price and date are whole, under its title: beside it they were cut (D-POLISH-003).
-        cut = page.eval_on_selector_all(".library-item span", "spans => spans.filter(span => span.scrollWidth > span.clientWidth || !span.textContent.includes(' Ar · ')).map(span => span.textContent)")
+        cut = page.eval_on_selector_all(".library-item :is(.badge, .details)", "parts => parts.filter(part => part.scrollWidth > part.clientWidth || !part.matches('.badge') && !part.textContent.includes(' Ar · ')).map(part => part.textContent)")
         assert not cut, cut
+        for scheme in ("light", "dark"):
+            set_theme(page, scheme)
+            expect(gallery.locator(".library-item .badge").first).to_be_visible()
+            smoke.check_contrast(page, f"Mes affiches 1366 with the four states, {scheme}")
+        page.unroute(gallery_url)
         gallery.get_by_role("button", name="Affiche 5 Brouillon", exact=False).click()
         expect(page.get_by_label("Titre", exact=True)).to_have_value("Affiche 5")
         page.route("**/api/capabilities", lambda route: pending_caps.append(route))

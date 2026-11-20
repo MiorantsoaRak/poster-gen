@@ -10,7 +10,7 @@ import ShopCredits from './ShopCredits.vue'
 import ShopAccount from './ShopAccount.vue'
 import signalHorizontal from './assets/doka-horizontal.svg'
 import signalReverse from './assets/doka-horizontal-reverse.svg'
-import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
+import { sectionRead, stateBadges, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
@@ -2303,7 +2303,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
       <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div v-if="hasLibrary" class="rows"><div v-for="item in library" :key="item.id" class="library-row">
-        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
+        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span v-if="!showRemoved" :class="stateBadges[item.state]">{{ stateNames[item.state] }}</span><span class="details">{{ [showRemoved && 'Retirée', `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
         <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
       </div></div>
       <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>

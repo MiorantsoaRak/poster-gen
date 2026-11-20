@@ -371,9 +371,14 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 @media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--active) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 /* The state, price and date go under the title at every width: beside it they were cut short in the 860 px frame (D-POLISH-003). */
+/* The state is a badge on its own line between the title and the details (D-REDESIGN-004); « Retirée » stays in the details. */
+.library-item { row-gap: 4px }
 .library-item > :first-child { grid-row: 1 / span 2 }
-.library-item span { grid-column: 2; grid-row: 2; color: var(--faint); font-weight: 500; line-height: 20px }
+.library-item .badge { grid-column: 2; grid-row: 2; justify-self: start }
+.library-item .details { grid-column: 2; grid-row: 2; color: var(--faint); font-weight: 500; line-height: 20px }
+.library-item .badge + .details { grid-row: 3 }
 .library-item > :last-child { grid-column: 3; grid-row: 1 / span 2 }
+.library-item:has(.badge) > :is(:first-child, :last-child) { grid-row: 1 / span 3 }
 .library-item svg { color: var(--faint); justify-self: center }
 /* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
 .library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
