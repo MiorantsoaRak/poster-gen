@@ -470,7 +470,8 @@ it('writes a shop key nowhere but through shopStorage; plain writes are the devi
   const sources = import.meta.glob<string>('../src/*.{ts,vue}', { query: '?raw', import: 'default', eager: true })
   const plain = Object.entries(sources).filter(([path]) => path !== '../src/api.ts')
     .flatMap(([path, text]) => [...text.matchAll(/localStorage\.(?:setItem|removeItem)\((\w+)/g)].map(match => `${path} ${match[1]}`))
-  expect(plain.sort()).toEqual(['../src/App.vue START_KEY', '../src/App.vue THEME_KEY'])
+  // RAIL_KEY twice: set when the rail is chosen, removed when the sidebar comes back (D-REDESIGN-002).
+  expect(plain.sort()).toEqual(['../src/App.vue RAIL_KEY', '../src/App.vue RAIL_KEY', '../src/App.vue START_KEY', '../src/App.vue THEME_KEY'])
 })
 // P2-5: the cleanup at sign-out is by prefix, listed afresh, and says when it is unfinished.
 it('forgets every key of a shop by its prefix, with no exception, and shop 1’s keys from before the shops; unfinished when anything refuses', async () => {

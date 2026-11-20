@@ -26,7 +26,7 @@ let key = threadKey(state.creation?.id), kept = true, checking = false, later: R
 // null until the lock is answered; false: the chat is open in another tab of this device. Without Web Locks there is no
 // chat: two tabs could each pay for the same wish. `closed`: unmounted; nothing that was on its way acts any more.
 const owner = ref<boolean | null>(null), lockless = !navigator.locks
-let release: (() => void) | undefined, closed = false, token = 0
+let release: (() => void) | undefined, closed = false, token = 0, heldAtClose = false
 // Each hold of the lock has its own token: work begun under an earlier one stays stopped even when this tab holds the
 // lock again (the thread may have moved on meanwhile, in the other tab).
 const mine = (at = token) => !closed && !!owner.value && at === token
@@ -247,8 +247,28 @@ async function ask() {
     if (card.kind !== 'unclear') supersede(items.value)
     app(text_fr, changes(card) ? { ...normal(card), said: record.text } : card)
   } catch (reason) {
-    if (!mine(at) || key !== from) return
     const code = reason instanceof ApiError ? reason.code : ''
+    if (!mine(at) || key !== from) {
+      // The session ended here (a 401): the gate closed and unmounted this chat, releasing its lock, before the answer's
+      // body came back. Its card is still kept, so that the thread restored after the sign-in says to sign in and offers
+      // « Réessayer » (multi-shop.md), but only under the chat's lock taken again, only while the stored request is still
+      // this one, and added to the thread as it is stored: another tab that took the chat meanwhile owns it (review r3).
+      // shopStorage writes nothing once another tab has signed out (api.ts).
+      if (code === 'unauthenticated' && closed && heldAtClose && at === token && key === from && navigator.locks) {
+        const thread = key, line = (reason as Error).message
+        void navigator.locks.request('affiche-chat', { ifAvailable: true }, lock => {
+          if (!lock) return
+          try {
+            if (readPending(localStorage.getItem(pendingKey()))?.key !== record.key) return
+            const saved = readThread(localStorage.getItem(thread))
+            if (saved.moved) return
+            const card: Item = { id: crypto.randomUUID(), role: 'app', text: line, at: Date.now(), card: { kind: 'failed', code, retry: record.text } as Card }
+            if (storeThread(localStorage, shopStorage, thread, JSON.stringify({ at: Date.now(), items: trim([...saved.items, card]), draft: saved.draft }))) shopStorage.removeItem(pendingKey())
+          } catch { /* no shop open on this page any more: nothing of it is written */ }
+        })
+      }
+      return
+    }
     // The server's sentence for a refused value is the editor's (brand and subtitle): the chat has its own.
     const sentence = code === 'validation_error' ? 'Ce message ne peut pas être lu tel quel. Écrivez-le plus court : le produit et son prix, ou le changement voulu.'
       : reason instanceof Error ? reason.message : 'La demande a échoué.'
@@ -426,8 +446,9 @@ async function reconcile() {
 // The chat fills what is left of the visible screen (the keyboard shrinks it), so the composer is always in view.
 function measure() {
   if (!root.value) return
-  const nav = document.querySelector<HTMLElement>('.nav'), fixed = nav && getComputedStyle(nav).position === 'fixed' ? nav.offsetHeight : 0
-  height.value = Math.max(0, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - fixed - 12))
+  // The page's bottom padding: the frame's gap over 1180 px (D-REDESIGN-002).
+  const bottom = parseFloat(getComputedStyle(document.body).paddingBottom) || 0
+  height.value = Math.max(0, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - bottom - 12))
 }
 function focused() { typing.value = matchMedia('(pointer: coarse)').matches }
 // A tap elsewhere takes the focus before its click lands: the layout stays as it is until the tap is over, otherwise the
@@ -485,7 +506,7 @@ watch(() => [items.value.length, waitLine.value], () => nextTick(() => { if (thr
 watch(() => [state.height, typing.value, !!shown.value, listed.value, state.error, state.notice], resized)
 onMounted(() => window.addEventListener('resize', resized))
 // Ownership goes before the lock: what was on its way when the view closed finds it closed, and does nothing.
-onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTimeout(later); window.removeEventListener('resize', resized); tray.value.forEach(item => URL.revokeObjectURL(item.url)) })
+onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner.value = false; release?.(); clearTimeout(later); window.removeEventListener('resize', resized); tray.value.forEach(item => URL.revokeObjectURL(item.url)) })
 </script>
 
 <template>

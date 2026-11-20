@@ -97,6 +97,22 @@ it('keeps the text of what floats at 4.5:1 whatever is behind it, black or white
   }
 })
 
+// The sidebar's column is painted by the frame, a pseudo-element of body that the browser's contrast check cannot see.
+it('keeps the sidebar’s secondary text at 4.5:1 on its tint over the ground', () => {
+  for (const [theme, all] of [['dark', dark], ['light', light]] as const) {
+    const column = over(colour(all['side-bg']!), colour(all.ground!))
+    for (const role of ['muted', 'faint']) expect(ratio(colour(all[role]!), column), `${role} on the ${theme} sidebar`).toBeGreaterThanOrEqual(4.5)
+  }
+})
+
+// The rail is the device's choice, applied before the first paint (D-REDESIGN-002): read inside a try, so that a storage
+// that refuses leaves the sidebar, and before the application's script.
+it('applies the kept rail in the inline script, before the app', () => {
+  const page = files['../index.html']!, inline = /<script>([\s\S]*?)<\/script>/.exec(page)!
+  expect(inline[1]).toMatch(/try \{ if \(localStorage\.getItem\('affiche\.rail'\) === '1'\) document\.documentElement\.dataset\.rail = '' \} catch \(e\) \{\}/)
+  expect(inline.index).toBeLessThan(page.indexOf('<script type="module"'))
+})
+
 it('gives the browser’s bar the theme’s ground in both pages', () => {
   for (const page of ['../index.html', '../public/donnees.html']) {
     expect(files[page], page).toContain('<meta name="theme-color" content="#f5f1e8" media="(prefers-color-scheme: light)" />')

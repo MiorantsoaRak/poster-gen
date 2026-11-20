@@ -12,6 +12,8 @@
       var picked = chosen === 'clair' || chosen === 'sombre', theme = picked ? chosen : matchMedia('(prefers-color-scheme: light)').matches ? 'clair' : 'sombre'
       document.documentElement.dataset.theme = theme
       if (picked) document.querySelectorAll('meta[name=theme-color]').forEach(function (meta) { meta.content = theme === 'clair' ? '#f5f1e8' : '#20201d' })
+      // The sidebar reduced to its rail, the device's choice (D-REDESIGN-002).
+      try { if (localStorage.getItem('affiche.rail') === '1') document.documentElement.dataset.rail = '' } catch (e) {}
     })()</script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- The Signal kit's files, unmodified (docs/project/brand/doka-studio-signal/web; D-POLISH-001). -->

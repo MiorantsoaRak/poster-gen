@@ -67,19 +67,20 @@ def run():
                     page.get_by_role('textbox', name='Nom de la boutique', exact=True).fill('Boutique test')
                     page.get_by_role('textbox', name='Contact', exact=True).fill('034 00 000 00')
                     page.locator('.identity-import input[type=file]').set_input_files(out / 'logo.png')
-                    # The form is a copy: the shop's profile (its name in the header) changes only on « Ajouter ».
-                    expect(page.locator('.shop-label')).to_have_text('Votre boutique')
+                    # The form is a copy: the shop's profile (its name in the sidebar's account row) changes only on « Ajouter ».
+                    shop_name = page.locator('aside.side a.account .label')
+                    expect(shop_name).to_have_text('Votre boutique')
                     draft_url = smoke.ORIGIN + '/api/creations/' + page.url.split('#')[1]
                     before_import = page.request.get(draft_url).json()['document']
                     page.route('**/api/shop-profile', lambda route: route.fulfill(status=409, content_type='application/json', body='{"error":{"code":"revision_conflict","message_fr":"Profil modifié ailleurs","retryable":false}}') if route.request.method == 'PUT' else route.continue_())
                     page.get_by_role('button', name='Ajouter à cette affiche', exact=True).click()
                     expect(page.get_by_role('alert')).to_contain_text('Profil modifié ailleurs')
-                    expect(page.locator('.shop-label')).to_have_text('Votre boutique')
+                    expect(shop_name).to_have_text('Votre boutique')
                     assert page.request.get(draft_url).json()['document'] == before_import
                     page.unroute('**/api/shop-profile')
                     page.get_by_role('button', name='Ajouter à cette affiche', exact=True).click()
                     expect(page.get_by_text('Informations ajoutées.', exact=False)).to_be_visible()
-                    expect(page.locator('.shop-label')).to_have_text('Boutique test')
+                    expect(shop_name).to_have_text('Boutique test')
                     for name in ('Logo', 'Contact', 'Nom de la boutique'):
                         expect(page.get_by_role('checkbox', name=name, exact=True)).not_to_be_checked()
                     page.get_by_role('checkbox', name='Logo', exact=True).check()

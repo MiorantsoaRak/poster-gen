@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, proxyRefs } from 'vue'
 import { sectionRead, stateNames, type Listing, type Summary } from './dashboard'
 import { credit, type Balance } from './generation'
 
-const props = defineProps<{ funds: ReturnType<typeof sectionRead<Balance>>; busy: boolean }>()
+// The balance and the five latest posters are the application's, shared with its shell (D-REDESIGN-002).
+const props = defineProps<{ funds: ReturnType<typeof sectionRead<Balance>>; recent: ReturnType<typeof sectionRead<Listing>>; busy: boolean }>()
 const emit = defineEmits<{ poster: [id: string]; terms: [] }>()
 const summary = proxyRefs(sectionRead<Summary>('/api/shop-dashboard'))
-const recent = proxyRefs(sectionRead<Listing>('/api/creations?limit=5'))
+const recent = proxyRefs(props.recent)
 const funds = proxyRefs(props.funds)
 const blocker = computed(() => credit(funds.data, 'scene'))
 const attention = computed(() => summary.data ? [
@@ -15,7 +16,7 @@ const attention = computed(() => summary.data ? [
 ].filter(item => item.group.first_creation_id) : [])
 function refresh() { void summary.read(); void recent.read(); void funds.read() }
 onMounted(refresh)
-onBeforeUnmount(() => { summary.clear(); recent.clear() })
+onBeforeUnmount(() => summary.clear())
 defineExpose({ refresh })
 </script>
 

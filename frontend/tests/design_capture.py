@@ -160,7 +160,7 @@ def run():
                             shoot(browser, name, origin + path, sign_in=pilot)
                         # A confirmed poster's address opens its final panel: closed, the chat behind it shows.
                         shoot(browser, "client-chat-poster", origin + f"/#message-{made[0]}", sign_in=pilot,
-                              after=lambda page: page.get_by_role("button", name="Fermer").first.click())
+                              after=lambda page: page.get_by_role("button", name="Fermer", exact=True).first.click())
                         shoot(browser, "client-conditions", origin + "/#accueil", sign_in=shop_in(SHOP2, SHOP2_PASSWORD))
                         shoot(browser, "admin-signin", origin + "/admin/")
                         for name, path in [("admin-shops", "/admin/#/shops"), ("admin-shop", "/admin/#/shops/1"),

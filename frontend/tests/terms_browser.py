@@ -121,6 +121,7 @@ def shows_conditions(page, heading="Conditions d’utilisation", version=None):
     expect(dialog.get_by_role("button", name="Se déconnecter")).to_have_count(0)
     page.wait_for_function(FOCUS_IN, arg=TERMS)
     expect(page.locator(".app-header")).to_have_attribute("inert", "")
+    expect(page.locator("aside.side")).to_have_attribute("inert", "")  # « Se déconnecter » is out of reach behind it
     return dialog
 
 
@@ -211,7 +212,7 @@ def walk_journey(browser, engine, errors, product, model):
     # A fresh chat card (the form's product, no read paid): « Lire les conditions » in place of « Créer l’affiche »,
     # and no /scenes request leaves. The button opens the dialog; « Plus tard » gives the focus back to it.
     made = count(posts, "/scenes")  # the first poster's
-    page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Créer").click()
+    smoke.go(page, "Nouvelle affiche")
     expect(page.get_by_label("Photos du produit")).to_be_enabled()  # not while the page is busy loading
     page.get_by_label("Photos du produit").set_input_files(product)
     expect(page.locator(".photo-strip img")).to_have_count(1)
@@ -568,7 +569,7 @@ def walk_keyboard(browser, engine, errors, product, model, first):
     page.route("**/scenes", lambda route: held.append((route, route.fetch())))
     card.get_by_role("button", name="Réessayer").click()
     until(page, lambda: held)
-    page.locator(".app-header .sign-out").click()
+    smoke.go(page, "Se déconnecter")
     confirmation = page.locator("[aria-labelledby=titre-confirmation]")
     expect(confirmation).to_contain_text("Se déconnecter ?")
     page.wait_for_function(FOCUS_IN, arg="[aria-labelledby=titre-confirmation]")

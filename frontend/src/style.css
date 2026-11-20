@@ -102,7 +102,7 @@ button.primary[aria-busy=true]:disabled { background: var(--signal); border-colo
 @keyframes appear { to { opacity: 1 } }
 @keyframes disappear { to { opacity: 0 } }
 /* The top progress line (point 3): fixed at the top, outside every blurred or transformed element. */
-.load-line { position: fixed; z-index: 70; top: 0; left: 0; right: 0; height: 3px; overflow: hidden; pointer-events: none }
+.load-line { position: fixed; z-index: 70; top: 0; left: calc(var(--gap) + var(--side-w)); right: var(--gap); height: 3px; overflow: hidden; pointer-events: none }
 .load-line span { position: absolute; top: 0; left: 0; width: 30%; height: 100%; background: var(--hue); animation: travel 1.2s cubic-bezier(.4, 0, .2, 1) infinite }
 :where(button:disabled) { color: var(--faint); cursor: not-allowed }
 :where(button[aria-busy=true]:disabled) { color: var(--text); cursor: progress }
@@ -204,41 +204,131 @@ details[open] > summary { color: var(--text) }
 .checks-row { display: flex; flex-wrap: wrap; gap: 0 18px }
 .wide { width: 100%; margin-top: 16px }
 
-/* Shell: a glass top bar over the lights, real destinations */
-.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left));
-  background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
-.wordmark { display: inline-flex; align-items: center; flex: none; min-height: 44px; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
+/* Shell (D-REDESIGN-002; the mockup doka-console/client.html): over 1180 px a sidebar or its rail and a frame, at 1180 px
+   and under a drawer, at 720 px and under a bottom bar as well. No wrapper: the window stays the page's scroller, and
+   nothing that holds a fixed or sticky element blurs, moves or clips. The frame is body::before, which scrolls with the
+   page; the top bar's glass is its own ::before. Each width condition has its complement (a zoom gives fractional widths). */
+:root { --side-w: 0px; --gap: 0px }
+.app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; min-height: calc(64px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left)) }
+.app-header::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
 .signal-symbol { width: 32px; height: 32px; padding: 6px; background: var(--signal) }
-.signal-horizontal { display: none }
-@media (min-width: 1440px) {
-  .wordmark { padding-inline: 4px }
-  .wordmark .signal-symbol, .wordmark span { display: none }
-  .signal-horizontal { display: block; width: 220px; height: auto }
-}
-.shop-label { color: var(--muted); font-size: 13px; font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.nav { display: flex; gap: 4px; margin-right: auto; flex-wrap: wrap }
-.nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px; color: var(--muted); font-weight: 650; text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
-@media (hover: hover) { .nav a:hover { background: var(--active); color: var(--text) } }
-.nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--active); box-shadow: inset 0 0 0 1.5px var(--line) }
-.count { color: var(--faint); font-weight: 500 }
-.app-header .count { color: var(--muted) }
-.nav .short { display: none }
+.app-header .mark { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px }
+.app-header .mark img { display: block }
+.top-title { min-width: 0; margin: 0 0 0 4px; font-size: 17px; line-height: 24px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.app-header .grow { flex: 1 }
+.app-header > :is(button, .seg) { flex: none }
+.credits-pill { display: inline-flex; flex: none; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1.5px solid var(--edge); border-radius: 999px; color: var(--text); font-weight: 700; text-decoration: none; white-space: nowrap }
+@media (hover: hover) { .credits-pill:hover { background: var(--active) } }
+.new-poster { display: none }
 .theme-toggle { margin-left: auto }
-.nav + .theme-toggle { margin-left: 0 }
+.gate-logo { display: block; width: 220px; height: auto; margin: clamp(16px, 5vh, 48px) auto 8px }
+.scrim, .phone-bar { display: none }
+/* The sidebar's content, the same in the drawer. */
+.side { display: flex; flex-direction: column; gap: 4px; padding: 18px 14px 14px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin }
+.side .brand { display: block; align-self: flex-start; padding: 4px 4px 10px; border-radius: 10px }
+.side .brand img { display: block }
+.side .brand .lockup { width: 220px; height: auto }
+.side .brand .signal-symbol { display: none; width: 40px; height: 40px; padding: 8px }
+.side .new { width: 100%; justify-content: center; margin: 4px 0 10px }
+.nav { display: grid; gap: 2px }
+.nav a, .side :is(.sign-out, .theme-toggle) { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 12px; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
+@media (hover: hover) { :is(.nav a, .side .sign-out, .side .theme-toggle, .recent a, .account):hover { background: var(--active); color: var(--text) } }
+.nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--active) }
+.count { color: var(--faint); font-weight: 500 }
+.nav .count { margin-left: auto; font-size: 13px; font-weight: 600 }
+/* On a hovered or current row's tint --faint falls under 4.5:1 where the yellow light is under the sidebar (4.37:1 light). */
+:is(.nav a, .recent a):is(:hover, [aria-current]) :is(.count, b + span) { color: var(--muted) }
+.recent h2 { margin: 0; padding: 16px 12px 6px; font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: 0; color: var(--faint) }
+.recent ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none }
+.recent a { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 52px; padding: 6px 12px; border-radius: 14px; color: var(--text); text-decoration: none }
+.recent a[aria-current] { background: var(--active) }
+.recent img, .recent .blank-poster { display: block; width: 32px; height: 40px; object-fit: cover; border-radius: 6px; background: var(--raised) }
+.recent b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650 }
+.recent b + span { display: block; font-size: 12.5px; line-height: 18px; color: var(--faint) }
+.side-foot { display: grid; gap: 6px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line) }
+.credit-card { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--text); font-weight: 700; text-decoration: none }
+.credit-card .number { display: none }
+.account { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 48px; padding: 6px 8px; border-radius: 14px; color: var(--text); font-weight: 700; text-decoration: none }
+.account[aria-current] { background: var(--active) }
+.account .avatar { display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--invert); color: var(--invert-ink) }
+.account .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.side :is(.sign-out, .theme-toggle) { background: none; font-weight: 600 }
+.side .theme-toggle { display: none; margin: 0 }
+@media (width > 1180px) {
+  :root[data-shell] { --side-w: 288px; --gap: 12px }
+  :root[data-shell][data-rail] { --side-w: 76px }
+  /* The step editor is a work surface: the frame is flush with the window (the 12 px went to the poster's height). */
+  :root[data-shell][data-editing] { --gap: 0px }
+  :root[data-shell][data-editing] body::before { border: 0; border-radius: 0 }
+  :root[data-shell][data-editing] .app-header::before { border-start-end-radius: 0 }
+  :root[data-shell] body { position: relative; min-height: 100vh; padding-block: var(--gap) }
+  :root[data-shell] body::before { content: ''; position: absolute; inset: var(--gap); z-index: -1; pointer-events: none; border: 1px solid var(--line); border-radius: 28px;
+    background: linear-gradient(to right, var(--side-bg) var(--side-w), var(--line) var(--side-w) calc(var(--side-w) + 1px), transparent calc(var(--side-w) + 1px)) }
+  :root[data-shell] :is(.app-header, main) { margin-inline: calc(var(--gap) + var(--side-w)) var(--gap) }
+  :root[data-shell] main { max-width: none }
+  :root[data-shell] .editor { max-width: 1440px; margin-inline: auto }
+  :root[data-shell] .app-header::before { border-start-end-radius: 28px }
+  .app-header .menu, .app-header .mark, .side-close { display: none }
+  .side { position: fixed; z-index: 6; inset-block: var(--gap); inset-inline-start: var(--gap); width: var(--side-w) }
+  /* The rail: icons, each named by its words (visually hidden) and its title; the D in place of the logo. */
+  :root[data-rail] .side { align-items: center; padding: 14px 8px }
+  :root[data-rail] .side :is(.label, .count) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+  :root[data-rail] .side :is(.recent, .brand .lockup) { display: none }
+  :root[data-rail] .side .brand { align-self: center; padding: 0 0 10px }
+  :root[data-rail] .side .brand .signal-symbol { display: block }
+  :root[data-rail] .side .new { width: 48px; padding: 0 }
+  :root[data-rail] .side :is(.nav a, .sign-out, .account) { justify-content: center; width: 44px; min-height: 44px; padding: 0 }
+  :root[data-rail] .side :is(.nav, .side-foot) { justify-items: center; width: 100% }
+  :root[data-rail] .side .credit-card { justify-content: center; flex-direction: column; gap: 2px; width: 56px; padding: 10px 4px; font-size: 13px }
+  :root[data-rail] .side .credit-card .number { display: block }
+}
+@media (width <= 1180px) {
+  .app-header .rail-toggle { display: none }
+  /* The drawer: glass, blurred and moved by itself (it holds nothing fixed); inert as soon as it is closed (App.vue). */
+  /* Above the page's messages (40), under the dialogs (45, 50): it closes when one opens. */
+  .side { position: fixed; z-index: 42; inset-block: 0; inset-inline-start: 0; width: min(320px, 86vw); padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-inline-end: 1px solid var(--line); border-radius: 0 24px 24px 0; box-shadow: var(--lift);
+    transform: translateX(-105%); visibility: hidden; transition: transform .28s cubic-bezier(.2, .8, .2, 1), visibility 0s .28s }
+  .side.open { transform: none; visibility: visible; transition: transform .28s cubic-bezier(.2, .8, .2, 1) }
+  .side-close { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 8px }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 41; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .2s ease-out }
+  .scrim.open { opacity: 1; pointer-events: auto }
+  .app-header .mark { margin-left: -4px }
+}
+@media (width <= 720px) {
+  .app-header { padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)) }
+  /* The phone's top bar: the menu, the D and the credits; in the chat the menu, the switch, « Nouvelle affiche » and the
+     credits. The theme switch is in the drawer. */
+  :root[data-shell] .app-header .theme-toggle, .top-title, .app-header.chatting .mark { display: none }
+  .side .theme-toggle { display: flex }
+  .new-poster { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 999px; color: var(--text) }
+  /* The bottom bar outside the chat and the editor (R-REDESIGN-003): five columns, « Nouvelle affiche » in the centre. */
+  .phone-bar { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
+  .phone-bar a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 58px; padding: 0 2px; border-radius: var(--field); color: var(--muted); font-size: 12.5px; line-height: 16px; font-weight: 650; text-align: center; text-decoration: none }
+  .phone-bar a[aria-current] { color: var(--text); font-weight: 700 }
+  .phone-bar .i { width: 58px; height: 32px; padding: 7px 20px; border-radius: 999px }
+  .phone-bar a[aria-current] .i { background: var(--accent-soft); color: var(--accent-ink) }
+  /* Each label on one line (R-POLISH-003): a count, or the long words behind a short label, leave the eye, not the name. */
+  .phone-bar a > span { white-space: nowrap }
+  .phone-bar :is(.count, .long) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+  .phone-bar .make { justify-self: center; width: 56px; height: 56px; min-height: 0; padding: 0; border: 1.5px solid var(--signal-edge); border-radius: 50%; background: var(--signal); color: var(--on-signal); box-shadow: var(--lift) }
+  .phone-bar .make .i { width: 24px; height: 24px; padding: 0; stroke-width: 2 }
+}
 main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, env(safe-area-inset-right)); max-width: 1480px; margin: auto; padding: 8px var(--gutter-r) max(64px, env(safe-area-inset-bottom)) var(--gutter-l) }
 /* Accueil, Mes affiches, Styles, Mes crédits and Mon compte share one frame (D-POLISH-003): this width and one title. The
    title takes the focus on arrival, for a screen reader: no box; a focus moved with the keyboard is underlined. */
 :root { --page: 860px }
 .page-title { font-size: 26px; line-height: 32px; font-weight: 800 }
-.page-title:focus { outline: none }
+.page-title:focus, .poster-title:focus { outline: none }
 :root[data-keys] .page-title:focus-visible { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 6px }
-.message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
+.message { position: fixed; z-index: 40; left: calc(50% + var(--side-w) / 2); transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
 .message::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok) }
 .message.error { bottom: max(20px, env(safe-area-inset-bottom)) }
 .message.error::before { background: var(--bad) }
-.message.notice { top: 64px }
+.message.notice { top: calc(64px + var(--gap) + env(safe-area-inset-top, 0px)) }
 .message .text-button { color: inherit; flex: none }
 .demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px; font-weight: 550 }
 
@@ -610,14 +700,8 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .stage.peek :is(.help, figcaption) { color: var(--muted) }
 }
 @media (max-width: 720px) {
-  /* The header holds the fixed navigation bar: its colour stays on it, its blur moves to a pseudo-element behind it. */
-  .app-header { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)); -webkit-backdrop-filter: none; backdrop-filter: none }
-  .app-header::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
-  .shop-label { display: none }
-  /* « Se déconnecter » is its icon here; the words stay its name. In the editor the header leaves: the bar has it. */
-  .sign-out { width: 44px; padding: 0 }
+  /* In the editor the header leaves: the editor's bar has « Se déconnecter ». */
   .bar-sign-out { display: inline-flex }
-  .sign-out span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
   main { --gutter-l: max(12px, env(safe-area-inset-left)); --gutter-r: max(12px, env(safe-area-inset-right)); padding: 4px var(--gutter-r) max(56px, env(safe-area-inset-bottom)) var(--gutter-l) }
   /* The five screens of the frame keep 16 px from the edges; the chat and the editor keep 12 (the editor's bars use it). */
   main:has(> :is(.shop-home, .shop-account, .gallery, div.credits-container)) { --gutter-l: max(16px, env(safe-area-inset-left)); --gutter-r: max(16px, env(safe-area-inset-right)) }
@@ -678,18 +762,6 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .progress { display: none }
   /* iOS zooms the page on a field under 16px. */
   input, textarea, select { font-size: 16px }
-  .nav + .theme-toggle { margin-left: auto }
-  /* Outside the editor the three destinations are a bar at the bottom of the screen (R-POSTER-EDITOR-007). It stays in
-     the header's markup, so the header must not blur here: a blurred ancestor becomes the containing block of a fixed bar. */
-  .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
-  .nav a, .nav a[aria-current] { flex-direction: column; justify-content: center; gap: 3px; min-height: 58px; padding: 0 4px; border-radius: var(--field); background: none; box-shadow: none; font-size: 12.5px; line-height: 16px; text-align: center }
-  .nav .i { width: 58px; height: 32px; padding: 7px 20px; border-radius: 999px }
-  .nav a[aria-current] .i { background: var(--accent-soft); color: var(--accent-ink) }
-  /* Each label on one line (R-POLISH-003): a count, or the long words behind a short label, leave the eye, not the name. */
-  .nav a > span { white-space: nowrap }
-  .nav :is(.count, .long) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
-  .nav .short { display: inline }
   main:not(.editing) { padding-bottom: calc(88px + env(safe-area-inset-bottom)) }
   /* The format and the file type never change: on a phone only the price is worth a row before the points. */
   .facts div:not(:last-child) { display: none }
@@ -708,7 +780,6 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
 .seg { display: flex; padding: 3px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line) }
 .seg button { min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap }
 .seg button[aria-pressed=true] { background: var(--invert); color: var(--invert-ink) }
-.seg + .theme-toggle { margin-left: 0 }
 .bubble.bot, .composer, .chat-side { background: var(--surface); border: 1px solid var(--line) }
 
 .chat-elsewhere { display: grid; gap: 14px; justify-items: start; max-width: 680px; margin: 6vh auto 0 }
@@ -802,15 +873,15 @@ main.chatting:not(.editing) { padding-bottom: 0 }
   .seg { margin-left: auto }
   /* The editor's bar stands for the header here: it holds the way back to the chat. */
   .bar .to-chat { display: inline-flex; flex: none }
-  /* The keyboard is open: the style row and the navigation bar make room, the images stay on one line. */
-  .chat.typing .style-row, body:has(.chat.typing) .nav { display: none }
+  /* The keyboard is open: the style row makes room, the images stay on one line. */
+  .chat.typing .style-row { display: none }
   .chat.typing .tray { flex-wrap: nowrap; overflow-x: auto }
 }
 @media (max-width: 420px) {
   .app-header:has(.seg) { column-gap: 4px }
-  .app-header:has(.seg) .wordmark { gap: 4px }
-  .app-header:has(.seg) .wordmark span { width: min-content; line-height: 17px }
-  .app-header:has(.seg) .sign-out, .app-header .seg button { min-height: 44px; padding-inline: 6px }
+  .app-header .seg button { min-height: 44px; padding-inline: 6px }
+  /* The chat's row at 360 px with five digits: menu 44, switch 137, plus 44, pill 93 and three gaps of 4 (measured). */
+  .app-header .credits-pill { gap: 6px; padding-inline: 12px }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
@@ -841,8 +912,5 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 }
 
 .rail .creator-credits { display: block; margin-inline-start: auto; min-height: 44px }
-@media (max-width: 720px) {
-  .nav:has(.creator-credits) { grid-template-columns: repeat(5, minmax(0, 1fr)) }
-}
 dialog.credits-container { width: min(680px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 4px 20px 16px; color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: var(--radius); overscroll-behavior: contain }
 dialog.credits-container::backdrop { background: var(--scrim) }

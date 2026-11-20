@@ -113,6 +113,51 @@ def say(page, text):
     page.get_by_role("button", name="Envoyer").click()
 
 
+# A 401 to the chat's read whose body is held until the test lets it go: its headers alone close the gate (api.ts).
+LATE_401 = """const real = window.fetch; window.bodyGate = new Promise(done => { window.releaseBody = done })
+window.fetch = (input, init) => !(window.hold401 && String(input).includes('/api/reads')) ? real(input, init) : Promise.resolve(new Response(
+  new ReadableStream({ async start(out) { await window.bodyGate; out.enqueue(new TextEncoder().encode(JSON.stringify({ error: { code: 'unauthenticated',
+    message_fr: 'Connectez-vous pour continuer.', retryable: false } }))); out.close() } }), { status: 401, headers: { 'Content-Type': 'application/json' } }))"""
+
+
+def walk_late_401(browser, errors, session):
+    """Tab A's read meets a 401 whose body comes late: A's chat leaves with the gate and lets the chat go; tab B takes it
+    and writes the thread. When A's body arrives, A writes nothing: B's thread and request stay as B left them (review
+    r3, 2). The one-tab case, the card « Connectez-vous pour continuer. », is walk_changes'."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light", storage_state=session)
+    shop_keys = "() => Object.fromEntries(Object.keys(localStorage).filter(key => key.startsWith('affiche.shop1.chat.')).map(key => [key, localStorage.getItem(key)]))"
+    try:
+        first = context.new_page()
+        first.set_default_timeout(10000)
+        first.on("pageerror", lambda error: errors.append(str(error)))
+        first.add_init_script(LATE_401)
+        first.goto(smoke.ORIGIN + "/#message")
+        expect(first.get_by_label("Votre message")).to_be_visible()
+        first.evaluate("window.hold401 = true")
+        say(first, "Casque d’essai, 90 000 Ar")
+        expect(first.locator(".chat")).to_have_count(0)  # the gate closed on the 401's headers
+        expect(first.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        second = context.new_page()
+        second.set_default_timeout(10000)
+        second.on("pageerror", lambda error: errors.append(str(error)))
+        second.goto(smoke.ORIGIN + "/#message")
+        expect(second.get_by_label("Votre message")).to_be_visible()
+        expect(second.get_by_text("Le chat est ouvert dans un autre onglet.")).to_have_count(0)  # it holds the chat
+        # B finds A's read interrupted and sends it again itself: its answer settles it in B's thread.
+        log = second.get_by_role("log")
+        expect(log).to_contain_text("L’envoi a été interrompu.")
+        log.get_by_role("button", name="Réessayer", exact=True).click()
+        second.wait_for_function("() => !localStorage.getItem('affiche.shop1.chat.pending')")  # its read answered
+        second.wait_for_timeout(500)
+        written = second.evaluate(shop_keys)
+        first.evaluate("window.releaseBody()")
+        first.wait_for_timeout(1000)
+        assert second.evaluate(shop_keys) == written, "the late 401 wrote over the other tab's chat"
+        assert "Connectez-vous pour continuer." not in json.dumps(written, ensure_ascii=False) and "Connectez-vous pour continuer." not in json.dumps(second.evaluate(shop_keys), ensure_ascii=False)
+    finally:
+        context.close()
+
+
 def walk_desktop(browser, errors, product, inspiration):
     held = {"on": False}
     reads, scenes, fonts = [], [], []
@@ -281,7 +326,7 @@ def walk_desktop(browser, errors, product, inspiration):
     assert len(reads) == 1, reads
 
     # « Mes affiches » opens a poster in the chat when the chat is the start view; the switch shows the same poster in the editor.
-    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    smoke.go(page, "Mes affiches")
     page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
     page.wait_for_url(f"**/#message-{poster}")
     # As in the editor, a confirmed poster opens on its file, ready to download again.
@@ -298,7 +343,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(page.locator(".editor")).to_have_count(0)
 
     # A new poster shows nothing of the one just opened.
-    page.get_by_role("link", name="Créer").click()
+    smoke.go(page, "Nouvelle affiche")
     page.wait_for_url("**/#message")
     expect(thread.locator(".bubble")).to_have_count(1)
     expect(page.locator(".chat-side, .chat-poster")).to_have_count(0)
@@ -489,7 +534,7 @@ def walk_changes(browser, errors, session, data):
     page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
 
     def open_poster():
-        page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+        smoke.go(page, "Mes affiches")
         page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
         page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
         page.get_by_role("button", name="Fermer").click()  # a confirmed poster opens on its file
@@ -980,7 +1025,7 @@ def walk_changes(browser, errors, session, data):
     assert lost == reads[-1]
 
     def open_other():
-        page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+        smoke.go(page, "Mes affiches")
         page.get_by_role("button", name=re.compile("Casque JBL")).first.click()
         page.wait_for_url(re.compile(r"#message-(?!%s)[a-f0-9-]{36}$" % poster))
     open_other()
@@ -1079,13 +1124,15 @@ def walk_changes(browser, errors, session, data):
     # « Réessayer » sends the message.
     context.clear_cookies()
     say(page, "fond rouge")
-    expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+    expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
     page.get_by_label("Identifiant de la boutique", exact=True).fill(smoke.IDENTIFIER)
     page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
     page.wait_for_url("**/#accueil")
     page.goto(f"{smoke.ORIGIN}/#message-{other}")
+    # The chat left the page with the session (D-REDESIGN-002 r1, 2); its card says why all the same.
     expect(thread.locator(".bubble.bot").last).to_contain_text("Connectez-vous pour continuer.")
+    expect(thread.get_by_text("L’envoi a été interrompu.")).to_have_count(0)
     thread.get_by_role("button", name="Réessayer", exact=True).click()
     expect(thread.locator(".bubble.bot").last).to_contain_text("Scène : « fond rouge »")
     state = context.storage_state()
@@ -1098,10 +1145,10 @@ def walk_changes(browser, errors, session, data):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
-    page.get_by_role("link", name=re.compile("Mes affiches")).tap()
+    smoke.go(page, "Mes affiches", tap=True)
     page.get_by_role("button", name=re.compile("WH-1000XM6 Max")).first.tap()  # the title a message gave it
     page.wait_for_url(f"**/#message-{poster}")
-    page.get_by_role("button", name="Fermer").tap()
+    page.get_by_role("button", name="Fermer", exact=True).tap()  # not « Fermer le menu », whose drawer is closing
     side = page.locator(".chat-side")
     mods, toggle = side.locator(".mod"), side.get_by_role("button", name="Modifications (9)")
     expect(side).to_contain_text("Version 9 · à vérifier")
@@ -1125,8 +1172,10 @@ def walk_changes(browser, errors, session, data):
     mods.nth(7).tap()
     expect(side).to_contain_text("Version 2 · approuvée")
     expect(mods.nth(7)).to_have_attribute("aria-current", "true")
-    composer, nav = page.locator(".composer").bounding_box(), page.locator(".nav").bounding_box()
-    assert composer["y"] + composer["height"] <= nav["y"], "the composer stays above the navigation bar with the list open"
+    # No bottom bar in the chat (D-REDESIGN-002): the composer ends inside the visible screen with the list open.
+    expect(page.locator(".phone-bar")).to_have_count(0)
+    composer = page.locator(".composer").bounding_box()
+    assert composer["y"] + composer["height"] <= page.evaluate("visualViewport.height"), "the composer stays in view with the list open"
     both_themes(page, "list of modifications, 360 px", "chat-mods-360")
     context.close()
 
@@ -1184,30 +1233,34 @@ def walk_phone(browser, errors, session):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
-    chat, nav, composer = page.locator(".chat"), page.locator(".nav"), page.locator(".composer")
+    chat, composer = page.locator(".chat"), page.locator(".composer")
+    # The visible area (visualViewport): with a keyboard open, innerHeight can stay taller than what is seen.
+    in_view = "() => { const box = document.querySelector('.composer').getBoundingClientRect(), seen = visualViewport.offsetTop + visualViewport.height; return box.bottom <= seen && box.top > visualViewport.offsetTop }"
     expect(chat).to_be_visible()
     expect(page.locator(".chat-side")).to_have_count(0)
     header = page.locator(".app-header").bounding_box()
-    assert header["height"] <= 64, header  # the mark, the switch and the theme button on one line
-    assert composer.bounding_box()["y"] + composer.bounding_box()["height"] <= nav.bounding_box()["y"], "the composer is above the navigation bar"
+    assert header["height"] <= 64, header  # the menu, the switch, « Nouvelle affiche » and the credits on one line
+    # No bottom bar in the chat (D-REDESIGN-002): the composer takes its place, inside the visible screen.
+    expect(page.locator(".phone-bar")).to_have_count(0)
+    page.wait_for_function(in_view)
     both_themes(page, "chat, 360 px", "chat-360")
     # The keyboard: the visible height shrinks, the field has the focus.
     page.set_viewport_size({"width": 360, "height": 420})
     page.get_by_label("Votre message").tap()
-    expect(nav).to_be_hidden()
+    expect(page.locator(".phone-bar")).to_have_count(0)
     expect(page.locator(".style-row")).to_be_hidden()
-    page.wait_for_function("() => { const box = document.querySelector('.composer').getBoundingClientRect(); return box.bottom <= innerHeight && box.top > 0 }")
+    page.wait_for_function(in_view)
     send = page.get_by_role("button", name="Envoyer").bounding_box()
     assert send["y"] + send["height"] <= 420, send
     looks_right(page, "chat with the keyboard, 360 px", "chat-360-keyboard.png")
     # A poster made by message, on the phone: the strip on top, the thread under it.
     page.set_viewport_size({"width": 360, "height": 740})
     page.get_by_label("Votre message").blur()
-    expect(nav).to_be_visible()
-    page.get_by_role("link", name=re.compile("Mes affiches")).tap()
+    page.wait_for_function(in_view)
+    smoke.go(page, "Mes affiches", tap=True)
     page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.tap()
     page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
-    page.get_by_role("button", name="Fermer").tap()
+    page.get_by_role("button", name="Fermer", exact=True).tap()  # not « Fermer le menu », whose drawer is closing
     side, thread = page.locator(".chat-side"), page.get_by_role("log")
     expect(side).to_contain_text("Version 1 · approuvée")
     assert side.bounding_box()["y"] + side.bounding_box()["height"] <= thread.bounding_box()["y"], "phone: the strip is above the thread"
@@ -1307,7 +1360,7 @@ def walk_guards(browser, errors, session):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(smoke.ORIGIN + "/#creer")
     page.wait_for_url("**/#message")
-    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    smoke.go(page, "Mes affiches")
     page.get_by_role("button", name=re.compile("Enceinte Sony XB100")).first.click()
     page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
     poster = page.url.split("#message-")[1]
@@ -1736,13 +1789,14 @@ def walk_sign_out(browser, errors, product):
     sign_in(page)
     page.get_by_role("link", name="Créer une affiche").tap()
     page.get_by_role("button", name="Pas à pas", exact=True).tap()
+    expect(page.get_by_label("Photos du produit")).to_be_visible()  # the form, before the shell's way to a new poster
     thread = page.get_by_role("log")
     dialog = page.get_by_role("dialog")
     create = thread.get_by_role("button", name="Créer l’affiche")
 
     def recap(name):
         """A recap from the form, its « Créer l’affiche » not tapped yet."""
-        page.get_by_role("link", name=re.compile("Créer")).tap()
+        smoke.go(page, "Nouvelle affiche", tap=True)
         page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Pas à pas").tap()
         page.get_by_label("Photos du produit").set_input_files(product)
         page.get_by_label("Nom du produit", exact=True).fill(name)
@@ -1794,7 +1848,7 @@ def walk_sign_out(browser, errors, product):
     expect(thread.get_by_role("button", name="Reprendre")).to_be_visible()  # the chat read again: its kept request
     page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Message").tap()  # the start view again
     assert page.evaluate(START) == "chat"
-    page.get_by_role("button", name="Se déconnecter").tap()
+    smoke.go(page, "Se déconnecter", tap=True)
     expect(dialog).to_contain_text(WAITING_LINE)
     for scheme, theme in (("dark", "sombre"), ("light", "clair")):
         page.emulate_media(color_scheme=scheme)
@@ -1830,14 +1884,14 @@ def walk_sign_out(browser, errors, product):
         page.wait_for_timeout(500)
     assert before["served"] >= 1, before  # the shop's list, read at its load
     before["on"] = False
-    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    smoke.go(page, "Mes affiches")
     item = page.locator(".library-item", has_text="Casque Garde Un")
     expect(item).to_contain_text("À vérifier")
     # Opened again while the list cannot be read: it says so, and the list shown stays.
-    page.get_by_role("link", name=re.compile("^Créer")).click()
+    smoke.go(page, "Nouvelle affiche")
     expect(page.get_by_label("Votre message")).to_be_visible()
     page.route(listing, lambda route: route.abort("failed"))
-    page.get_by_role("link", name=re.compile("^Mes affiches")).click()
+    smoke.go(page, "Mes affiches")
     expect(page.locator(".message.error")).to_contain_text("Connexion interrompue. Vos modifications restent dans cet onglet.")
     expect(item).to_contain_text("À vérifier")
     page.unroute(listing)
@@ -1873,7 +1927,7 @@ def walk_sign_out(browser, errors, product):
         other.set_default_timeout(10000)
         other.goto(smoke.ORIGIN + "/#creer")
         expect(other.locator("main:not(.gate)")).to_be_visible()
-        other.get_by_role("button", name="Se déconnecter").click()
+        smoke.go(other, "Se déconnecter")
         expect(other.get_by_role("dialog")).to_contain_text(WAITING_LINE)
         with smoke.replaced(other):
             other.get_by_role("dialog").get_by_role("button", name="Se déconnecter quand même").click()
@@ -2196,6 +2250,7 @@ def run():
                         walk_slow_read(browser, errors, session)
                         walk_uploads(browser, errors, session, small, broken, animated)
                         walk_guards(browser, errors, session)
+                        walk_late_401(browser, errors, session)
                         walk_changes(browser, errors, session, data)  # last of this server: it signs in again
                         walk_rest(browser, errors, product, inspiration)  # its own session; it fills the shop's profile
                         walk_choice_phone(browser, errors)
