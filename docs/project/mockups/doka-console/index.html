@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doka Studio — maquettes</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="doka.css">
+<style>
+.wrap { width: min(100%, 980px); margin: 0 auto; padding: 32px 20px 60px; display: grid; gap: 28px }
+.wrap > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap } .wrap > header img { width: 220px; height: auto }
+.wrap > header div { flex: 1; min-width: 240px }
+.set { display: grid; gap: 12px } .links { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px }
+.links a { border-radius: 20px; padding: 16px 18px; text-decoration: none; display: grid; gap: 4px } .links b { font-size: 16px } .links span { color: var(--muted); font-size: 14px }
+@media (hover: hover) { .links a:hover { background: var(--tint) } }
+.notes { border-radius: 20px; padding: 18px 20px; display: grid; gap: 8px } .notes li { margin: 4px 0 } .notes ul { margin: 0; padding-left: 20px }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img class="on-light" src="assets/doka-horizontal-charcoal.svg" alt="Doka Studio"><img class="on-dark" src="assets/doka-horizontal-paper.svg" alt="Doka Studio">
+    <div><h1>Maquettes — atelier et console</h1><p class="hint">20 novembre 2026 · un seul système pour les deux entrées · données d’exemple · rien n’est envoyé</p></div>
+    <button type="button" data-theme-toggle aria-label="Passer au thème sombre"><svg class="i"><use href="#i-moon"/></svg>Thème</button>
+    <button type="button" data-primary-toggle><svg class="i"><use href="#i-palette"/></svg>Bouton principal : jaune / charbon</button>
+  </header>
+
+  <section class="set"><h2>L’atelier des boutiques</h2>
+    <div class="links">
+      <a class="glass" href="client.html?view=chat"><b>Nouvelle affiche</b><span>Le message vide : l’accueil d’un chat, la zone de saisie et ses outils.</span></a>
+      <a class="glass" href="client.html?view=talk"><b>Une conversation</b><span>Le récapitulatif avant de payer un crédit, le résultat, l’affiche à côté sur grand écran.</span></a>
+      <a class="glass" href="client.html?view=home"><b>Accueil</b><span>Ce qui attend, les crédits, les affiches récentes ; la barre du bas sur téléphone.</span></a>
+      <a class="glass" href="client.html?view=talk&rail=1"><b>Menu réduit</b><span>La colonne réduite à ses icônes : plus de place pour l’affiche.</span></a>
+    </div>
+  </section>
+
+  <section class="set"><h2>La console de l’opérateur</h2>
+    <div class="links">
+      <a class="glass" href="admin.html?view=overview"><b>Overview</b><span>Les quatre chiffres, les boutiques, ce qui demande une action, le service.</span></a>
+      <a class="glass" href="admin.html?view=shops"><b>Shops</b><span>La liste complète ; un clic sur une boutique ouvre sa fiche sur le côté.</span></a>
+      <a class="glass" href="admin.html?view=overview&rail=1"><b>Collapsed sidebar</b><span>La barre latérale réduite à ses icônes.</span></a>
+    </div>
+  </section>
+
+  <section class="notes glass"><h2>À regarder</h2>
+    <ul>
+      <li><b>Le logo.</b> Le logo horizontal du kit Signal, à sa largeur minimale de 220 px, dans le menu ; le D seul quand la place manque (menu réduit, téléphone). Le nom n’est plus tapé à côté du symbole.</li>
+      <li><b>Le thème.</b> Papier, charbon et jaune du kit, tels quels ; le thème sombre est sur le charbon du kit. Le jaune marque l’action principale, avec du charbon dessus. Le bouton ci-dessus montre l’autre lecture : action principale en charbon.</li>
+      <li><b>La navigation.</b> Un menu latéral identique dans les deux entrées, réductible. Sur téléphone : un tiroir, et pour l’atelier une barre du bas avec « créer » au centre. Les crédits sont toujours en haut à droite.</li>
+      <li><b>Le chat.</b> Comme les chats d’IA courants : une question d’accueil, une seule zone de saisie avec ses outils dedans, l’envoi en bas à droite, des suggestions, la réponse sans bulle, l’affiche dans un panneau à côté.</li>
+      <li>Réduisez la fenêtre sous 900 px, ou utilisez le mode téléphone du navigateur, pour voir la version mobile.</li>
+    </ul>
+  </section>
+</div>
+<script src="doka.js"></script>
+</body>
+</html>

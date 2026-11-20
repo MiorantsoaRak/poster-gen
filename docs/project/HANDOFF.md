@@ -14,6 +14,8 @@ No work order or ClickUp ticket: the user's own project. Goal: the shop's interf
 - One frame for Accueil, Mes affiches, Styles, Mes crédits and Mon compte: `.page-title`, `--page: 860px`, a 16 px phone gutter. The phone's bottom bar shows « Affiches » and the credits as a number alone; the accessible names keep the full words. One hidden title for the chat route.
 - `DESIGN.md` at the root records the system as built. `frontend/tests/design_capture.py` takes the 102 captures again.
 
+**Also done, 2026-11-20: a mockup of both entries** ([mockups/doka-console/](mockups/doka-console/README.md), T-MOCKUP-CONSOLE): the shops' app (chat first, sidebar, glass) and an operator console with a collapsible sidebar, on one stylesheet, in the Signal kit's colours as given. It shows a yellow main action, the dark theme on the kit's charcoal and a new phone bottom bar, three things ADR-122 held back: the owner's verdict decides whether the app follows. Serve it with `python3 -m http.server 8777 --bind 127.0.0.1 --directory docs/project/mockups/doka-console`.
+
 **Exact next step: the user's.** Nothing is in progress.
 1. Look at the polish locally before any deploy: from `frontend/`, `corepack npm@10 run build`; from `backend/`, `uv run python ../frontend/tests/design_capture.py look`, then open `outputs/design-capture/look/sheets/`.
 2. Decide the six points of « For the owner » in the after report (the typeface, a yellow main button, the dark ground, « Affiches » and the bare number in the phone bar, two new titles for screen readers, the name typed beside the mark).

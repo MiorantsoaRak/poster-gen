@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Doka Studio · Operator console — mockup</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="doka.css">
+<style>
+/* The console: denser than the shops' app, the same tokens, glass kept for the shell and the cards. */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px }
+.kpi { border-radius: 20px; padding: 16px 18px; display: grid; gap: 4px; align-content: start }
+.kpi dt { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--muted) } .kpi dt .i { width: 18px; height: 18px }
+.kpi dd { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 800; letter-spacing: -.02em } .kpi dd small { font-size: 15px; font-weight: 650; color: var(--muted) }
+.kpi p { font-size: 13px; color: var(--faint) }
+.meter { height: 8px; border-radius: 999px; background: var(--raised); overflow: hidden; margin-top: 6px } .meter i { display: block; height: 100%; border-radius: inherit; background: var(--text) }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start }
+.panel { border-radius: var(--r-l); overflow: hidden }
+.panel > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 14px 18px; border-bottom: 1px solid var(--line) } .panel > header h2 { flex: 1; white-space: nowrap }
+.panel .find { position: relative; width: 220px } .panel .find input { min-height: 38px; padding: 6px 12px 6px 36px; border-radius: 999px; font-size: 14px } .panel .find .i { position: absolute; left: 12px; top: 10px; width: 18px; height: 18px; color: var(--faint) }
+table { width: 100%; border-collapse: collapse; font-size: 14px }
+th, td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line); white-space: nowrap }
+th { font-size: 12.5px; font-weight: 700; color: var(--faint) } tbody tr:last-child td { border-bottom: 0 }
+.num { text-align: right } td a { font-weight: 700; text-decoration: none } td small { display: block }
+@media (hover: hover) { tbody tr:hover { background: var(--tint) } }
+.stack { display: grid; gap: 20px }
+.list { display: grid } .list > * { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); text-decoration: none } .list > :last-child { border-bottom: 0 }
+.list b { display: block; font-size: 14px } .list span { font-size: 13px; color: var(--faint) } .list .i { color: var(--muted) }
+.dot { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; background: var(--raised) } .dot.warn { background: var(--warn-bg); color: var(--warn) } .dot.ok { background: var(--ok-bg); color: var(--ok) }
+.facts2 { display: grid; gap: 0; padding: 4px 18px 14px } .facts2 div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px } .facts2 div:last-child { border: 0 } .facts2 dt { color: var(--faint) } .facts2 dd { margin: 0; font-weight: 650; text-align: right }
+code { font: 13px ui-monospace, monospace; background: var(--raised); padding: 1px 6px; border-radius: 6px }
+/* One shop: a sheet over the page, the list still behind it. */
+.sheet { position: fixed; inset: 12px 12px 12px auto; width: min(460px, calc(100vw - 24px)); z-index: 60; border-radius: var(--r-l); padding: 20px; display: grid; gap: 16px; align-content: start; overflow: auto; transform: translateX(110%); transition: transform .28s var(--ease); background: var(--glass-strong) }
+:root[data-sheet] .sheet { transform: none } :root[data-sheet] .scrim { opacity: 1; pointer-events: auto }
+.sheet header { display: flex; align-items: flex-start; gap: 12px } .sheet header div { flex: 1 }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--raised); width: 100% } .seg button { flex: 1; min-height: 38px; border: 0; font-size: 14px } .seg [aria-pressed=true] { background: var(--surface); box-shadow: var(--shadow) }
+@media (max-width: 1180px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) } .cols { grid-template-columns: 1fr } }
+@media (max-width: 900px) {
+  .kpi dd { font-size: 24px } .panel .find { display: none }
+  /* Under 900 px each shop is a card that names its values: a table of nine columns does not fit a phone. */
+  table, tbody, tr, td { display: block } thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
+  tr { padding: 12px 18px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px } tbody tr:last-child { border: 0 }
+  td { padding: 0; border: 0; white-space: normal; text-align: left } td:first-child { grid-column: 1 / -1 } td[data-l]::before { content: attr(data-l) ' '; color: var(--faint); font-size: 13px }
+  .top .search, .crumb .root { display: none } td.num { text-align: left } .seg button { min-height: 44px }
+}
+.top .search { position: relative; width: min(320px, 30vw) } .top .search input { min-height: 40px; padding: 6px 12px 6px 38px; border-radius: 999px; border-color: var(--line); background: var(--glass) } .top .search .i { position: absolute; left: 12px; top: 10px; color: var(--faint) }
+.top .mark { display: none } @media (max-width: 900px) { .top .mark { display: block; width: 32px; height: 32px } }
+</style>
+</head>
+<body data-view="overview">
+<div class="scrim" data-sheet-close></div>
+<div class="shell">
+  <aside class="side" aria-label="Console menu">
+    <div class="side-in glass">
+      <a class="brand" href="#overview" data-view="overview" aria-label="Doka Studio — operator console">
+        <img class="lockup on-light" src="assets/doka-horizontal-charcoal.svg" width="220" height="79" alt="">
+        <img class="lockup on-dark" src="assets/doka-horizontal-paper.svg" width="220" height="79" alt="">
+        <img class="symbol" src="assets/favicon.svg" width="40" height="40" alt="">
+      </a>
+      <button class="primary new" type="button" title="New shop"><svg class="i"><use href="#i-plus"/></svg><span class="label">New shop</span></button>
+      <nav aria-label="Console">
+        <a href="#overview" data-view="overview" title="Overview"><svg class="i"><use href="#i-home"/></svg><span class="label">Overview</span></a>
+        <a href="#shops" data-view="shops" title="Shops"><svg class="i"><use href="#i-store"/></svg><span class="label">Shops</span><span class="count">2</span></a>
+        <a href="#" title="Payments"><svg class="i"><use href="#i-wallet"/></svg><span class="label">Payments</span></a>
+        <a href="#" title="Service"><svg class="i"><use href="#i-pulse"/></svg><span class="label">Service</span><span class="count">1</span></a>
+      </nav>
+      <div class="side-foot">
+        <button class="row" type="button" data-theme-toggle aria-label="Switch theme" title="Switch theme"><svg class="i"><use href="#i-moon"/></svg><span class="label">Theme</span></button>
+        <button class="row who" type="button" title="Operator — sign out"><span class="avatar" aria-hidden="true"><svg class="i"><use href="#i-user"/></svg></span><span><b>Operator</b><span>Session ends 21:31 UTC</span></span><svg class="i"><use href="#i-out"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="top">
+      <button class="icon-btn menu-btn" type="button" data-drawer-open aria-label="Open the menu"><svg class="i"><use href="#i-menu"/></svg></button>
+      <button class="icon-btn rail-btn" type="button" data-rail-toggle aria-expanded="true" aria-label="Collapse or expand the menu"><svg class="i"><use href="#i-panel"/></svg></button>
+      <img class="mark" src="assets/favicon.svg" alt="">
+      <p class="crumb"><span class="root">Console / </span><b data-title-slot>Overview</b></p>
+      <span class="grow"></span>
+      <label class="search"><span class="vh">Search a shop or a payment reference</span><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="Shop or payment reference"></label>
+      <span class="badge ok">Service running</span>
+    </header>
+
+    <main data-screen="overview" data-title="Overview">
+      <div class="page wide">
+        <h1 class="vh">Overview</h1>
+        <dl class="kpis">
+          <div class="kpi glass"><dt><svg class="i"><use href="#i-store"/></svg>Active shops</dt><dd>2 <small>of 2</small></dd><p>1 has not accepted the conditions</p></div>
+          <div class="kpi glass"><dt><svg class="i"><use href="#i-coins"/></svg>Credits outstanding</dt><dd>122</dd><p>≈ $7.08 at $0.058 an image</p></div>
+          <div class="kpi glass"><dt><svg class="i"><use href="#i-wallet"/></svg>Received in November</dt><dd>40 000 <small>Ar</small></dd><p>1 payment · 20 credits</p></div>
+          <div class="kpi glass"><dt><svg class="i"><use href="#i-pulse"/></svg>Provider spend</dt><dd>$1.61 <small>of $15.00</small></dd><div class="meter" role="img" aria-label="11% of the cap spent"><i style="width:11%"></i></div></div>
+        </dl>
+        <div class="cols">
+          <div class="stack">
+          <section class="panel glass" aria-labelledby="t-shops">
+            <header><h2 id="t-shops">Shops</h2><label class="find"><span class="vh">Filter shops</span><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="Filter"></label><a class="btn small" href="#shops" data-view="shops">All shops</a></header>
+            <table>
+              <thead><tr><th>Shop</th><th>State</th><th class="num">Available</th><th class="num">Pending</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
+              <tbody>
+                <tr><td><a href="#" data-sheet-open>originalphone</a><small>Original Phone Madagascar</small></td><td data-l="State"><span class="badge ok">Active</span></td><td class="num" data-l="Available">117</td><td class="num" data-l="Pending">0</td><td class="num" data-l="Posters">7</td><td data-l="Last poster">2026-11-20</td><td class="num" data-l="Sessions">4</td></tr>
+                <tr><td><a href="#" data-sheet-open>boutiquetana</a><small>Boutique Tana Mobile</small></td><td data-l="State"><span class="badge warn">Conditions pending</span></td><td class="num" data-l="Available">5</td><td class="num" data-l="Pending">0</td><td class="num" data-l="Posters">0</td><td data-l="Last poster">—</td><td class="num" data-l="Sessions">1</td></tr>
+              </tbody>
+            </table>
+          </section>
+          <section class="panel glass" aria-labelledby="t-service">
+            <header><h2 id="t-service">Service</h2><span class="badge ok">New AI requests: running</span><button class="small" type="button">Pause…</button></header>
+            <dl class="facts2" style="padding-top:8px">
+              <div><dt>Version</dt><dd><code>2944ea0</code> · schema <code>0017</code></dd></div>
+              <div><dt>Started</dt><dd>2026-11-20 09:30 UTC</dd></div>
+              <div><dt>Daily limit per shop</dt><dd>$2.00 · 100 messages read</dd></div>
+              <div><dt>Purchase text</dt><dd>Not set · <a href="#">Write it</a></dd></div>
+            </dl>
+          </section>
+          </div>
+          <div class="stack">
+            <section class="panel glass" aria-labelledby="t-todo">
+              <header><h2 id="t-todo">Needs you</h2><span class="badge warn plain">1</span></header>
+              <div class="list">
+                <a href="#"><span class="dot warn"><svg class="i"><use href="#i-pencil"/></svg></span><span><b>No purchase text</b><span>Shops read the fallback sentence</span></span><svg class="i"><use href="#i-right"/></svg></a>
+                <div><span class="dot ok"><svg class="i"><use href="#i-shield"/></svg></span><span><b>Backup 6 minutes ago</b><span>Nightly at 00:40 UTC</span></span><span></span></div>
+                <div><span class="dot ok"><svg class="i"><use href="#i-check"/></svg></span><span><b>No failed job</b><span>Last 24 hours</span></span><span></span></div>
+              </div>
+            </section>
+            <section class="panel glass" aria-labelledby="t-pay">
+              <header><h2 id="t-pay">Recent payments</h2></header>
+              <div class="list">
+                <div><span class="dot"><svg class="i"><use href="#i-wallet"/></svg></span><span><b>+40 000 Ar · originalphone</b><span>20 credits · mvola · MV-48213</span></span><span class="hint">20 Nov</span></div>
+                <div><span class="dot"><svg class="i"><use href="#i-coins"/></svg></span><span><b>+30 offered · originalphone</b><span>pilot-opening</span></span><span class="hint">20 Nov</span></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <main data-screen="shops" data-title="Shops" hidden>
+      <div class="page wide">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:8px"><h1>Shops</h1><button class="primary" type="button"><svg class="i"><use href="#i-plus"/></svg>New shop</button></div>
+        <section class="panel glass" aria-label="All shops">
+          <header><h2>2 shops</h2><label class="find"><span class="vh">Filter shops</span><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="Filter"></label></header>
+          <table>
+            <thead><tr><th>Shop</th><th>State</th><th class="num">Available</th><th class="num">Pending</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th><th>Today</th></tr></thead>
+            <tbody>
+              <tr><td><a href="#" data-sheet-open>originalphone</a><small>Original Phone Madagascar</small></td><td data-l="State"><span class="badge ok">Active</span></td><td class="num" data-l="Available">117</td><td class="num" data-l="Pending">0</td><td class="num" data-l="Posters">7</td><td data-l="Last poster">2026-11-20</td><td class="num" data-l="Sessions">4</td><td data-l="Today">$0.00 of $2.00</td></tr>
+              <tr><td><a href="#" data-sheet-open>boutiquetana</a><small>Boutique Tana Mobile</small></td><td data-l="State"><span class="badge warn">Conditions pending</span></td><td class="num" data-l="Available">5</td><td class="num" data-l="Pending">0</td><td class="num" data-l="Posters">0</td><td data-l="Last poster">—</td><td class="num" data-l="Sessions">1</td><td data-l="Today">$0.00 of $2.00</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="sheet glass" aria-label="Shop originalphone">
+  <header><span class="avatar" aria-hidden="true">OP</span><div><h2>originalphone</h2><p class="hint">Original Phone Madagascar · 4 live sessions</p></div><button class="icon-btn" type="button" data-sheet-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></header>
+  <dl class="kpis" style="grid-template-columns:1fr 1fr">
+    <div class="kpi solid"><dt>Available</dt><dd>117</dd></div><div class="kpi solid"><dt>Pending</dt><dd>0</dd></div>
+  </dl>
+  <form class="stack" style="gap:14px" onsubmit="return false">
+    <h2>Grant credits</h2>
+    <div class="seg" role="group" aria-label="Bought or offered"><button type="button" aria-pressed="true">Bought</button><button type="button" aria-pressed="false">Offered</button></div>
+    <div class="two"><label>Credits<input inputmode="numeric" value="20"></label><label>Amount received (Ar)<input inputmode="numeric" value="40 000"></label></div>
+    <div class="two"><label>Method<select><option>mvola</option><option>orange</option><option>airtel</option><option>cash</option></select></label><label>Payment reference<input value="MV-48214"></label></div>
+    <p class="hint">Exactly as the payment shows it. Case and spaces do not count.</p>
+    <button class="primary" type="button">Grant 20 credits…</button>
+  </form>
+  <section class="panel solid" aria-label="History">
+    <header><h2>History</h2></header>
+    <div class="list">
+      <div><span class="dot"><svg class="i"><use href="#i-wallet"/></svg></span><span><b>+20 credits · bought</b><span>40 000 Ar · mvola · MV-48213</span></span><span class="hint">20 Nov</span></div>
+      <div><span class="dot"><svg class="i"><use href="#i-coins"/></svg></span><span><b>+30 credits · offered</b><span>pilot-opening</span></span><span class="hint">20 Nov</span></div>
+    </div>
+  </section>
+</aside>
+<script src="doka.js"></script>
+<script>
+document.addEventListener('click', event => {
+  if (event.target.closest('[data-sheet-open]')) { event.preventDefault(); document.documentElement.dataset.sheet = '' }
+  else if (event.target.closest('[data-sheet-close]')) delete document.documentElement.dataset.sheet
+})
+document.addEventListener('keydown', event => { if (event.key === 'Escape') delete document.documentElement.dataset.sheet })
+</script>
+</body>
+</html>
