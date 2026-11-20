@@ -1,5 +1,5 @@
 /* Doka Studio, the shops' interface (ADR-050, ADR-077, D-POSTER-EDITOR-005 part B). A warm light ground (clair) or a warm near-black one
-   (sombre), frosted glass on every surface over three soft colour patches, an ink main button, the brand amber as the
+   (sombre), frosted glass on every surface over three soft colour patches, an ink main button, Signal Yellow as the
    only accent. The theme follows the device until the owner picks one (index.html, App.vue). The poster is the one
    lifted thing, with a short shadow. Glass rules and their solid fallback: see the tokens and the end of this file.
    Interface type: Figtree, bundled with its licence; nothing is fetched from another site. The poster keeps its own fonts. */
@@ -10,9 +10,11 @@
 
 :root {
   --ground: #100f0e; --surface: #1b1a18; --raised: #2a2825; --line: #302d2a; --control: #57524c;
-  --text: #f5f2ee; --muted: #bdb6ad; --faint: #a39b91; --hue: #f2a33d; --accent-soft: #3b2a13; --accent-ink: #f8c27a;
+  --text: #f5f1e8; --muted: #bdb6ad; --faint: #a39b91; --hue: #f2c744; --accent-soft: #3b3113; --accent-ink: #f8d97a;
   --ok: #8fddb0; --ok-bg: #16261d; --warn: #e9b458; --warn-bg: #2a2212; --bad: #ef7d74; --bad-bg: #331a18;
-  --invert: #f5f2ee; --invert-ink: #100f0e; --scrim: #000000cc; --radius: 24px; --field: 16px;
+  --invert: #f5f1e8; --invert-ink: #100f0e; --scrim: #000000cc; --radius: 24px; --field: 16px;
+  /* Signal Yellow is a fill, always under --on-signal (D-POLISH-002); --hue is the line: a ring, a border, a progress mark. */
+  --signal: #f2c744; --on-signal: #20201d;
   --lift: 0 1px 2px rgb(0 0 0 / .5), 0 10px 28px -10px rgb(0 0 0 / .7); --poster-shadow: 0 8px 20px -8px rgb(0 0 0 / .6);
   /* Glass: bars and sheets over content (--glass), panels and tiles (--glass-panel), fields, chips and secondary buttons
      (--glass-field), a chosen segment (--glass-strong). Each is opaque enough for 4.5:1 over the whole backdrop. */
@@ -27,10 +29,11 @@
   font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark; -webkit-font-smoothing: antialiased;
 }
 :root[data-theme=clair] {
-  --ground: #f4f1ec; --surface: #ffffff; --raised: #ebe5dc; --line: #e2dacf; --control: #c9c0b4;
-  --text: #1b1815; --muted: #5c554d; --faint: #67605a; --hue: #e58e1a; --accent-soft: #fcead0; --accent-ink: #7a4300;
+  --ground: #f5f1e8; --surface: #ffffff; --raised: #ebe5dc; --line: #e2dacf; --control: #c9c0b4;
+  /* A yellow line on paper is 1.4:1: the line is a dark ochre of its hue (3.9:1 on --raised, 4.4 on --ground, 4.9 on --surface). */
+  --text: #20201d; --muted: #5c554d; --faint: #67605a; --hue: #8f6b00; --accent-soft: #fcf1d0; --accent-ink: #7a5c00;
   --ok: #145c37; --ok-bg: #e2f2e8; --warn: #6b4600; --warn-bg: #fff1d6; --bad: #a3271f; --bad-bg: #fbeae8;
-  --invert: #1b1815; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
+  --invert: #20201d; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
   --lift: 0 1px 2px rgb(40 28 14 / .06), 0 10px 28px -10px rgb(40 28 14 / .18); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
   --glass: rgb(255 255 255 / .86); --glass-panel: rgb(255 255 255 / .74); --glass-field: rgb(255 255 255 / .62); --glass-strong: rgb(255 255 255 / .92);
   --glass-line: rgb(255 255 255 / .75); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3); --warn-glass: rgb(255 241 214 / .8);
@@ -117,7 +120,8 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-w
   background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); color: var(--text); font-size: 15px; font-weight: 550; transition: border-color .15s ease-out }
 @media (hover: hover) { :where(input, textarea, select):hover { border-color: var(--control) } }
 :where(input, textarea, select):focus { border-color: var(--text) }
-input::placeholder, textarea::placeholder { color: var(--faint); opacity: .8 }
+/* 4.5:1 on every field, lighter and thinner than a typed value (D-POLISH-002): --faint is 4.19:1 on a dark field over --raised. */
+input::placeholder, textarea::placeholder { color: var(--muted); font-weight: 400 }
 textarea { resize: vertical }
 input:is([type=color], [type=range], [type=checkbox], [type=file]) { -webkit-backdrop-filter: none; backdrop-filter: none }
 input[type=color] { padding: 4px; width: 56px; cursor: pointer }
@@ -185,7 +189,7 @@ details[open] > summary { color: var(--text) }
 .app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left));
   background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
 .wordmark { display: inline-flex; align-items: center; flex: none; min-height: 44px; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
-.signal-symbol { width: 32px; height: 32px; padding: 6px; background: #f2c744 }
+.signal-symbol { width: 32px; height: 32px; padding: 6px; background: var(--signal) }
 .signal-horizontal { display: none }
 @media (min-width: 1440px) {
   .wordmark { padding-inline: 4px }
@@ -250,7 +254,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
 @media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--glass-field) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.library-item span { color: var(--faint); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.library-item span { color: var(--faint); font-weight: 500; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .library-item svg { color: var(--faint); justify-self: center }
 /* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
 .library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
@@ -378,7 +382,8 @@ details.new-look[open] { padding-bottom: 14px }
 .gen-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--hue); animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
 .canvas-host.generating .frame .badge { display: inline-flex }
-@keyframes pulse { 50% { opacity: .3 } }
+/* The dot breathes in size, not in opacity: a fainter dot fell under 3:1 against the pill (D-POLISH-002). */
+@keyframes pulse { 50% { scale: .6 } }
 .coach { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--muted) }
 .coach svg { margin-top: 2px }
 .coach b { color: var(--text) }
@@ -563,7 +568,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
   .editor:not(.stepping) :is(.version img, button.version.new .add) { width: calc(70px * var(--poster-ratio, .8)); height: 70px }
   .editor:not(.stepping) .version.new small { display: none }
-  /* Tools: the four groups as a glass row of icons with their labels, the active one marked by an amber pill behind its icon. */
+  /* Tools: the four groups as a glass row of icons with their labels, the active one marked by a yellow pill behind its icon. */
   .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 6px; margin-bottom: 12px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 28px }
   .editor:not(.stepping) .tab { flex-direction: column; gap: 3px; min-height: 58px; padding: 4px 2px; font-size: 12.5px; line-height: 16px; font-weight: 650; border-radius: 22px }
   .editor:not(.stepping) .tab[aria-selected=true] { background: none; box-shadow: none; color: var(--text) }
@@ -753,7 +758,7 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .compose-row { display: flex; align-items: flex-end; gap: 6px }
 .compose-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 120px; padding: 11px 4px; border: 0; background: none; resize: none; font-size: 16px; line-height: 22px; outline: none }
 .compose-row textarea:focus-visible { outline: none }  /* the composer's own edge shows the focus */
-.chat .send { --spin-x: 50%; flex: none; width: 44px; min-height: 44px; padding: 0; border: 0; background: var(--hue); color: #1b1815 }
+.chat .send { --spin-x: 50%; flex: none; width: 44px; min-height: 44px; padding: 0; border: 0; background: var(--signal); color: var(--on-signal) }
 .chat .send:disabled { background: var(--control); opacity: .6 }
 @media (min-width: 880px) {
   /* Wide: the poster has its own column on the right. */
@@ -782,13 +787,14 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important }
   .gen-pill i { animation: none }
-  .wait-rail.moving span { animation: none; width: 100%; opacity: .6 }
-  /* A press is a change of colour, not of size: a background step, or a ring where the fill is the ink itself or a
-     picture. The progress line stands still. */
+  /* Still, not dimmed: a still line keeps its 3:1 (D-POLISH-002). */
+  .wait-rail.moving span { animation: none; width: 100% }
+  /* A press is a change of colour, not of size: a background step, or a ring where the fill is the ink itself, the
+     Signal or a picture. The progress line stands still. */
   :where(button, a[href], .format-choice label.chip):active { transform: none }
-  :is(button:not(.primary, .thumb, .new), a[href]:not(.download-button), .format-choice label.chip:not(:has(input:disabled))):active:not(:disabled) { background-color: var(--raised) }
-  :is(button.primary, a.download-button, button.thumb, button.version.new):active:not(:disabled) { box-shadow: 0 0 0 3px var(--hue) }
-  .load-line span { animation: none; width: 100%; opacity: .5 }
+  :is(button:not(.primary, .thumb, .new, .send), a[href]:not(.download-button), .format-choice label.chip:not(:has(input:disabled))):active:not(:disabled) { background-color: var(--raised) }
+  :is(button.primary, a.download-button, button.thumb, button.version.new, .chat .send):active:not(:disabled) { box-shadow: 0 0 0 3px var(--hue) }
+  .load-line span { animation: none; width: 100% }
   .chat-wait i, .pic[aria-busy]::after { animation-duration: 2.4s }
 }
 

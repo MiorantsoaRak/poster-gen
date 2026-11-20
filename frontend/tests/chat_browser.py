@@ -43,22 +43,47 @@ def sign_in(page):
     page.get_by_role("button", name="Ouvrir l’atelier").click()
 
 
-def looks_right(page, where, name=None):
-    """No sideways scroll, readable text, one blur per surface; a picture for a person to judge."""
+def looks_right(page, where, name=None, marks=(), placeholders=()):
+    """No sideways scroll, readable text, placeholders and accent marks (those named must be measured), one blur per
+    surface; a picture for a person to judge."""
     assert page.evaluate(smoke.NO_SIDEWAYS), f"sideways scroll on {where}"
     page.wait_for_function("document.documentElement.scrollHeight <= innerHeight + 1")  # the page never scrolls behind the chat
-    smoke.check_contrast(page, where)
+    smoke.check_contrast(page, where, *marks, placeholders=placeholders)
     smoke.check_one_blur(page, where)
     if name:
         page.screenshot(path=str(OUT / name))
 
 
-def both_themes(page, where, name):
+def both_themes(page, where, name, marks=(), placeholders=()):
     first = smoke.theme_of(page)
     for theme in (first, "clair" if first == "sombre" else "sombre"):
         if smoke.theme_of(page) != theme:
             smoke.toggle_theme(page, "Passer au thème clair" if theme == "clair" else "Passer au thème sombre")
-        looks_right(page, f"{where}, {theme}", f"{name}-{theme}.png")
+        looks_right(page, f"{where}, {theme}", f"{name}-{theme}.png", marks, placeholders)
+
+
+SEND, ARROW = ".chat .send:not(:disabled)", ".chat .send:not(:disabled) svg path"
+
+
+def pressed_send(page, where):
+    """With reduced motion a pressed « Envoyer » keeps its Signal fill and wears a ring of the line colour: the arrow's own
+    stroke at 4.5:1 on the fill, the ring at 3:1 on what is around it, in both themes (D-POLISH-002)."""
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("DOM.enable")
+    cdp.send("CSS.enable")
+    toggle = lambda theme: smoke.toggle_theme(page, "Passer au thème clair" if theme == "clair" else "Passer au thème sombre")
+    first = smoke.theme_of(page)
+    for theme in (first, "clair" if first == "sombre" else "sombre"):
+        if smoke.theme_of(page) != theme:
+            toggle(theme)
+        def read():
+            fill = page.eval_on_selector(SEND, "e => getComputedStyle(e).backgroundColor")
+            assert fill == "rgb(242, 199, 68)", (where, theme, fill)  # the Signal, not the grey step of other buttons
+            smoke.check_marks(page, f"pressed « Envoyer », {where}, {theme}", ARROW, SEND, show=True,
+                              marks=[[ARROW, "stroke", "self", 4.5], [SEND, "boxShadow", "parent", 3]])
+        smoke.pressed_look(page, cdp, SEND, reduced=True, read=read)
+    toggle(first)
+    cdp.detach()
 
 
 def say(page, text):
@@ -131,7 +156,7 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(chat).to_be_visible()
     page.wait_for_url("**/#message")
     expect(home).to_have_count(0)
-    both_themes(page, "empty chat, desktop", "chat-empty-1366")
+    both_themes(page, "empty chat, desktop", "chat-empty-1366", placeholders=(".compose-row textarea",))
 
     # The unsent text survives a reload.
     field.fill("Sony WH-1000XM6 noir, 700 000 Ar")
@@ -188,7 +213,7 @@ def walk_desktop(browser, errors, product, inspiration):
     # The card holds its poster and its job; the new thread's key says where the thread went.
     assert spent[0]["creation"] == poster and re.fullmatch(r"[a-f0-9-]{36}", spent[0]["job"]), spent
     assert json.loads(page.evaluate("localStorage.getItem('affiche.shop1.chat.new')")) == {"moved": poster}
-    both_themes(page, "creation, desktop", "chat-wait-1366")
+    both_themes(page, "creation, desktop", "chat-wait-1366", marks=(".chat-wait i",))
     # A reload in the middle: the job is followed again, the spent card has no button, nothing is asked twice.
     page.reload()
     expect(wait).to_contain_text("Je dessine l’affiche…")
@@ -206,7 +231,8 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(side).to_contain_text("Version 1 · à vérifier")
     assert side.bounding_box()["x"] > thread.bounding_box()["x"] + thread.bounding_box()["width"], "wide: the poster has the right column"
     assert thread.locator(".chat-poster img").evaluate("e => e.complete && e.naturalWidth > 0 && e.src.includes('display=true')")
-    both_themes(page, "result, desktop", "chat-result-1366")
+    both_themes(page, "result, desktop", "chat-result-1366", marks=(ARROW,))  # « fond plus sombre » typed
+    pressed_send(page, "result, desktop")
     # « Vérifier » is the editor's own review, with the photo; its approval turns the card into « Télécharger ou partager ».
     verify.click()
     expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()

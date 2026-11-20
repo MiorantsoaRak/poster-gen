@@ -29,14 +29,18 @@ names one. The interface typeface: Figtree stays (ADR-077, ADR-122).
   Charcoal `#20201D`; in the dark theme the main text is Warm Paper. The dark theme keeps its present greys (ADR-091):
   the kit sets no ground for a dark interface.
 - [ ] The accent is Signal Yellow `#F2C744`, replacing the amber of before the identity. It is used as a fill under
-  charcoal (the send button, the mark), and as the tint of the navigation's active item. Yellow is never a text
+  charcoal (the send button, the mark), and as the tint of the phone navigation's active item (the desktop one keeps its neutral glass). Yellow is never a text
   colour on a light ground, and never carries white text.
 - [ ] Every ring, border and progress mark that used the amber keeps at least 3:1 against what is behind it in both
   themes: a paid generation in progress stays as visible as today.
-- [ ] The main button does not change: charcoal on paper, paper on charcoal. A yellow main button waits for the
-  owner's look at a phone in daylight.
-- [ ] Every text and every placeholder is at least 4.5:1 against what is behind it in both themes, measured on the
-  rendered screens, over the darkest and the lightest point of the backdrop.
+- [ ] The main button does not change its role or its look: charcoal on paper, paper on charcoal (its exact fill
+  follows `--invert`, which takes the kit's values). A yellow main button waits for the owner's look at a phone in
+  daylight.
+- [ ] Every text is at least 4.5:1 against what is behind it in both themes, or 3:1 when it is large as WCAG AA
+  defines it (from 24 px, or from 18.66 px in bold), the rule the interface was built on; every placeholder is at
+  least 4.5:1 whatever its size. Measured on the rendered screens, over the darkest and the lightest point of the
+  backdrop, and in every state, a pressed control and reduced motion included. (Amended after the code review of
+  T-POLISH-002: v2 said 4.5:1 for every text.)
 - [ ] States keep their own colours and meanings (success, warning, failure).
 - [ ] A poster is unchanged: the bytes of a confirmed file, and the pixels of the poster in the editor.
 

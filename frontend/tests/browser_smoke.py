@@ -80,14 +80,15 @@ def check_material_pixels(page, document):
     textured_price.save(OUTPUT / "capsule-material-test.png")
 
 
-# Contrast of every visible text against the colour behind it (WCAG: 4.5:1, or 3:1 from 24 px, or from 18.66 px
-# in bold). Not measured: disabled controls, text over an image (the poster itself), placeholders.
+# Contrast of every visible text and placeholder against the colour behind it (WCAG: 4.5:1, or 3:1 from 24 px, or from
+# 18.66 px in bold; a placeholder 4.5:1 whatever its size, its colour and opacity together, and under a typed value's ratio).
+# Not measured: disabled controls, text over an image (the poster itself).
 # Glass is translucent over soft colour patches (ADR-077): a text must read over the darkest and the lightest point of
 # that backdrop, so it is measured over the bare ground and over each patch at its strongest, and the worst ratio counts.
 # The patches are the colours of a gradient background, or of the fixed ::before layer of the page. A glass surface's
 # saturate() acts on what is behind it before its fill is laid over (sRGB matrix of Filter Effects, as Chromium draws
 # it); its blur only averages the backdrop towards less extreme colours, so leaving it out keeps the worst case.
-CONTRAST_JS = r"""() => {
+BACKDROP_JS = r"""
   const parse = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
   const channel = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4 }
   const luminance = c => .2126 * channel(c[0]) + .7152 * channel(c[1]) + .0722 * channel(c[2])
@@ -114,7 +115,14 @@ CONTRAST_JS = r"""() => {
     }
     return fold(layers, [parse(getComputedStyle(document.documentElement).backgroundColor)])
   }
-  const failures = [], seen = new Set()
+  // The worst ratio of a colour laid over each point of a backdrop, and that point.
+  const lowest = (colour, bases) => bases.map(base => {
+    const a = luminance(over(colour, base)), b = luminance(base)
+    return [(Math.max(a, b) + .05) / (Math.min(a, b) + .05), base]
+  }).reduce((low, item) => item[0] < low[0] ? item : low)
+"""
+CONTRAST_JS = "(expected = []) => {" + BACKDROP_JS + r"""
+  const failures = [], seen = new Set(), measured = []
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const element = node.parentElement, text = node.textContent.trim()
@@ -124,14 +132,81 @@ CONTRAST_JS = r"""() => {
     if (!box.width || !box.height || style.visibility !== 'visible' || !element.checkVisibility({ opacityProperty: true })) continue
     const behind = backdrop(element)
     if (!behind) continue
-    const [ratio, worst] = behind.map(base => {
-      const a = luminance(over(parse(style.color), base)), b = luminance(base)
-      return [(Math.max(a, b) + .05) / (Math.min(a, b) + .05), base]
-    }).reduce((low, item) => item[0] < low[0] ? item : low)
+    const [ratio, worst] = lowest(parse(style.color), behind)
     const size = parseFloat(style.fontSize), needed = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700) ? 3 : 4.5
     if (ratio < needed) failures.push(`${ratio.toFixed(2)} < ${needed}: "${text.slice(0, 40)}" <${element.tagName.toLowerCase()} class="${element.className}"> ${style.color} on rgb(${worst.map(Math.round)})`)
   }
+  for (const field of document.querySelectorAll('input:placeholder-shown, textarea:placeholder-shown')) {
+    if (field.closest(':disabled, [aria-disabled=true], [inert]')) continue
+    const style = getComputedStyle(field), box = field.getBoundingClientRect()
+    if (!box.width || !box.height || style.visibility !== 'visible' || !field.checkVisibility({ opacityProperty: true })) continue
+    const behind = backdrop(field)
+    if (!behind) continue
+    measured.push(field)
+    const hint = getComputedStyle(field, '::placeholder'), colour = parse(hint.color)
+    colour[3] *= Number(hint.opacity)
+    const [ratio, worst] = lowest(colour, behind), typed = lowest(parse(style.color), behind)[0]
+    if (ratio < 4.5 || ratio >= typed) failures.push(`placeholder ${ratio.toFixed(2)} < 4.5 or not under the typed value's ${typed.toFixed(2)}: "${field.placeholder.slice(0, 40)}" ${hint.color} at opacity ${hint.opacity} on rgb(${worst.map(Math.round)})`)
+  }
+  // A walk that knows an empty field is on screen names it: a placeholder not measured is a failure, not a pass.
+  for (const selector of expected) if (!measured.some(field => field.matches(selector))) failures.push(`no placeholder measured for ${selector}`)
   return failures
+}"""
+
+# The accent's marks (D-POLISH-002): a line (--hue) at least 3:1 against what is behind it, a glyph on a Signal fill 4.5:1.
+# Behind a mark: its parent's backdrop (a border, an outer ring), its own (an inset ring, a spinner's arc, a glyph on its
+# fill), or what lies under a fixed line at the line's own place. What is painted is measured: the colour times the
+# opacity of the mark and of its ancestors, a box that is not empty, a border that is drawn, a shadow that spreads. A
+# repeating mark is read at a known frame, the given fraction of its animation: the dot at the smallest of its pulse, a
+# moving segment half-way. The wait bar's moving part against its track: before the Signal colours the amber gave 1.85:1
+# light and 6.57:1 dark (measured 2026-11-20); no less now, and in the light theme a line's 3:1 is the stricter.
+MARKS = [
+    [".load-line span", "backgroundColor", "under", 3, .5],
+    [".chip[aria-pressed=true]", "borderTopColor", "parent", 3],
+    [".format-choice label.chip:has(input:checked)", "borderTopColor", "parent", 3],
+    [".layer-list button[aria-pressed=true]", "borderTopColor", "parent", 3],
+    [".gen-pill i", "backgroundColor", "parent", 3, .5],
+    [".wait-rail.moving span", "backgroundColor", "parent", {"clair": 3, "sombre": 6.57}, .5],
+    [".wait-steps .now .n", "boxShadow", "self", 3],
+    [".chat-wait i", "borderTopColor", "self", 3],
+    [".chat .send:not(:disabled) svg path", "stroke", "self", 4.5],
+]
+MARKS_JS = "marks => {" + BACKDROP_JS + r"""
+  const theme = document.documentElement.dataset.theme, seen = new Set(), failures = [], ratios = {}
+  for (const [selector, property, against, needed, at] of marks) {
+    for (const e of document.querySelectorAll(selector)) {
+      if (!e.checkVisibility({ visibilityProperty: true })) continue
+      seen.add(selector)
+      // A repeating mark is held at its frame for the reading, then put back where it was, also if the reading throws.
+      const held = at === undefined ? [] : e.getAnimations().filter(a => a.playState === 'running').map(a => [a, a.currentTime])
+      let style, box, value, found, drawn, behind, opacity = 1
+      try {
+        held.forEach(([a]) => { a.pause(); a.currentTime = at * a.effect.getTiming().duration })
+        style = getComputedStyle(e), box = e.getBoundingClientRect()
+        // Of several shadows the first, the one painted on top: its colour and its own spread (the fourth length).
+        value = property === 'boxShadow' ? style.boxShadow.split(/,(?![^(]*\))/)[0] : style[property]
+        found = value.match(/rgba?\([^)]*\)/)
+        drawn = property === 'borderTopColor' ? !['none', 'hidden'].includes(style.borderTopStyle) && parseFloat(style.borderTopWidth) > 0
+          : property === 'boxShadow' ? parseFloat((value.replace(found?.[0], '').match(/-?[\d.]+px/g) || [])[3]) > 0
+          : property === 'stroke' ? parseFloat(style.strokeWidth) > 0 : true
+        for (let a = e; a; a = a.parentElement) opacity *= Number(getComputedStyle(a).opacity)
+        if (property === 'stroke') opacity *= Number(style.strokeOpacity)
+        const x = Math.min(innerWidth - 1, Math.max(0, box.left + box.width / 2)), y = box.top + box.height / 2
+        behind = backdrop(against === 'self' ? e : against === 'parent' ? e.parentElement
+          : document.elementsFromPoint(x, y).find(under => !under.contains(e)) ?? e.parentElement)
+      } finally { held.forEach(([a, time]) => { a.currentTime = time; a.play() }) }
+      if (!found || !behind || !box.width || !box.height || !drawn) {
+        failures.push(`${selector}: not painted (${property} ${value}, ${box.width} × ${box.height} px), or an image behind`)
+        continue
+      }
+      const colour = parse(found[0]), floor = typeof needed === 'number' ? needed : needed[theme]
+      colour[3] *= opacity
+      const [ratio, worst] = lowest(colour, behind)
+      ratios[selector] = Math.min(ratios[selector] ?? Infinity, ratio)
+      if (ratio < floor) failures.push(`${ratio.toFixed(2)} < ${floor}: ${selector} ${property} ${found[0]} at opacity ${opacity.toFixed(2)} on rgb(${worst.map(Math.round)})`)
+    }
+  }
+  return { seen: [...seen], failures, ratios }
 }"""
 
 # Every tappable element of the editor is at least 44 × 44 px on a phone (ADR-077). A box in a label is tapped through
@@ -152,7 +227,23 @@ NESTED_BLUR_JS = r"""() => {
     .map(e => `<${e.tagName.toLowerCase()} class="${e.className}"> ${(e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 30)}`)
 }"""
 NO_SIDEWAYS = "document.documentElement.scrollWidth <= innerWidth"
-GROUNDS = {"clair": "#f4f1ec", "sombre": "#100f0e"}
+# The editor's poster as drawn, and whatever between it and the stage would change how it looks: an opacity under 1, a
+# filter or a blend mode, and from the canvas up to its frame a ::before or ::after laid over it (none while nothing runs).
+POSTER_JS = r"""() => {
+  const canvas = document.querySelector('.poster-canvas canvas'), frame = canvas.closest('.frame'), veiled = []
+  for (let e = canvas; e && e !== canvas.closest('.stage').parentElement; e = e.parentElement) {
+    const style = getComputedStyle(e)
+    if (style.opacity !== '1' || style.filter !== 'none' || style.mixBlendMode !== 'normal')
+      veiled.push(`<${e.tagName.toLowerCase()} class="${e.className}"> opacity ${style.opacity}, filter ${style.filter}, blend ${style.mixBlendMode}`)
+    if (frame.contains(e)) for (const pseudo of ['::before', '::after']) {
+      const over = getComputedStyle(e, pseudo)
+      if (over.content !== 'none' && over.display !== 'none' && !(parseFloat(over.width) === 0 || parseFloat(over.height) === 0))
+        veiled.push(`<${e.tagName.toLowerCase()} class="${e.className}">${pseudo} content ${over.content}, ${over.width} × ${over.height}`)
+    }
+  }
+  return [canvas.toDataURL(), veiled]
+}"""
+GROUNDS = {"clair": "#f5f1e8", "sombre": "#100f0e"}
 # The controls keep their place while a poster is made (T-WAIT-DEFORM, user report 2026-11-14): the rail's size and its
 # place in its column, each row of the open tab inside the rail, the poster's size and the bottom bar's size. On one
 # column the waiting block sits above the controls (D-POSTER-EDITOR-006): there the rail's place down the column is left out.
@@ -204,12 +295,27 @@ RAIL_FITS_JS = """() => {
 }"""
 
 
-def check_contrast(page, where):
+def check_marks(page, where, *expected, marks=MARKS, show=False):
+    """The accent's marks on screen, measured; those expected must be among them. Returns the selectors measured; `show`
+    prints the lowest ratio of each, for the record."""
+    found = page.evaluate(MARKS_JS, marks)
+    assert not found["failures"], f"accent marks on {where}:\n" + "\n".join(found["failures"])
+    missing = [selector for selector in expected if selector not in found["seen"]]
+    assert not missing, f"not on screen to be measured on {where}: {missing}"
+    if show:
+        print(f"Marks on {where}: " + ", ".join(f"{selector} {ratio:.2f}:1" for selector, ratio in found["ratios"].items()), flush=True)
+    return set(found["seen"])
+
+
+def check_contrast(page, where, *marks, placeholders=()):
+    """Texts, placeholders (those of the fields named must be measured) and accent marks (those named must be on screen)."""
     page.wait_for_function(SETTLED, polling=100)
-    failures = page.evaluate(CONTRAST_JS)
+    failures = page.evaluate(CONTRAST_JS, list(placeholders))
     assert not failures, f"contrast on {where}:\n" + "\n".join(failures)
+    seen = check_marks(page, where, *marks)
     outside = page.evaluate(RAIL_FITS_JS)
     assert not outside, f"panel contents outside the panel on {where}:\n" + "\n".join(outside)
+    return seen
 
 
 def shot(page, name, full_page=True):
@@ -293,7 +399,7 @@ def walk_look(browser, session, scheme, errors):
     assert device.evaluate("getComputedStyle(document.body).fontFamily").startswith("Figtree")
     device.wait_for_function("document.fonts.check('16px Figtree')")
     check_one_blur(device, f"intake at 360 px, {theme}")
-    check_contrast(device, f"intake at 360 px, {theme}, no stored choice")
+    check_contrast(device, f"intake at 360 px, {theme}, no stored choice", placeholders=("input[name=product]", "input[name=price]"))
     shot(device, f"look-360-{theme}-creer.png", full_page=False)
     expect(device.get_by_label("Photos du produit")).to_be_enabled()  # the page's opening is over (perform drops a busy tap)
     device.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
@@ -303,11 +409,12 @@ def walk_look(browser, session, scheme, errors):
     device.get_by_label("Les photos correspondent").check()
     device.get_by_role("button", name="Préparer mon affiche").tap()
     proceed = device.get_by_role("button", name="Continuer", exact=True)
+    marks = set()
     for number, step in ((2, "textes"), (3, "boutique"), (4, "style")):
         expect(device.locator(".step-count")).to_have_text(f"Étape {number} sur 4")
         device.wait_for_function(NO_SIDEWAYS)
         check_one_blur(device, f"step {step} at 360 px, {theme}")
-        check_contrast(device, f"step {step} at 360 px, {theme}")
+        marks |= check_contrast(device, f"step {step} at 360 px, {theme}", placeholders=("input[name=brand]", "input[name=subtitle]") if step == "textes" else ())
         check_targets(device, f"step {step} at 360 px, {theme}")
         shot(device, f"look-360-{theme}-etape-{step}.png", full_page=False)
         if step != "style":
@@ -332,9 +439,11 @@ def walk_look(browser, session, scheme, errors):
         expect(device.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
         device.wait_for_function(NO_SIDEWAYS)
         check_one_blur(device, f"tab {name} at 360 px, {theme}")
-        check_contrast(device, f"tab {name} at 360 px, {theme}")
+        marks |= check_contrast(device, f"tab {name} at 360 px, {theme}")
         check_targets(device, f"tab {name} at 360 px, {theme}")
         shot(device, f"look-360-{theme}-onglet-{name.lower().replace('é', 'e')}.png", full_page=False)
+    # The chosen word chip was measured on the way (D-POLISH-002); the chosen element is in run()'s editor.
+    assert ".chip[aria-pressed=true]" in marks, (theme, marks)
     poster = device.url.split("#")[1]
     device.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
     shot(device, f"look-360-{theme}-affiche.png", full_page=False)
@@ -402,7 +511,7 @@ def walk_wait(browser, session, errors):
         page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
         page.wait_for_function(NO_SIDEWAYS)
         check_one_blur(page, f"{where}, {theme}")
-        check_contrast(page, f"{where}, {theme}")
+        check_contrast(page, f"{where}, {theme}", ".gen-pill i", ".wait-rail.moving span", ".wait-steps .now .n")
 
     context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark", storage_state=session)
     watch(context)
@@ -460,11 +569,15 @@ def walk_wait(browser, session, errors):
     waiting_checks(device, "first generation at 360 px", "sombre", "dark")
     check_targets(device, "first generation at 360 px")
     shot(device, "wait-360-sombre-premiere.png", full_page=False)
-    # Reduced motion: nothing repeats, the rail is a still line.
-    device.emulate_media(reduced_motion="reduce")
-    device.wait_for_function("document.getAnimations().length === 0")
-    assert block.locator(".wait-rail span").evaluate("e => getComputedStyle(e).opacity") == "0.6"
-    device.emulate_media(reduced_motion="no-preference")
+    # Reduced motion: nothing repeats; the rail is a still line and the dot a still dot, as visible as when they move (still,
+    # not dimmed). With motion: the dot at the smallest of its pulse, the segment half-way. Both themes (D-POLISH-002).
+    for motion in ("reduce", "no-preference"):
+        device.emulate_media(reduced_motion=motion)
+        for scheme, theme in (("light", "clair"), ("dark", "sombre")):
+            device.emulate_media(color_scheme=scheme)
+            device.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+            device.wait_for_function("document.getAnimations().length === 0" if motion == "reduce" else SETTLED, polling=100)
+            check_marks(device, f"waiting at 360 px, {theme}, motion {motion}", ".gen-pill i", ".wait-rail.moving span", show=True)
     # A lost poll is its own state: the job is kept, no error, no new request; the first answer brings the state back.
     held["lost"] = True
     expect(block.locator(".offline")).to_contain_text("Connexion interrompue. La demande continue")
@@ -632,6 +745,15 @@ def check_working(page, control, held, posts, where, picture, *also, sized=True)
     assert took < 450, f"{where}: working after {took:.0f} ms"
     assert page.locator(".load-line").get_attribute("role") == "progressbar"
     page.screenshot(path=str(OUTPUT / picture))  # not shot(): the spinner's start never settles while it works
+    scheme = "dark" if page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches") else "light"
+    # The line against what is under it, in both themes: moving (held half-way), then still (D-POLISH-002).
+    for other in ("light", "dark"):
+        page.emulate_media(color_scheme=other)
+        page.wait_for_function("theme => document.documentElement.dataset.theme === theme", arg="clair" if other == "light" else "sombre")
+        for motion in ("no-preference", "reduce"):
+            page.emulate_media(reduced_motion=motion)
+            check_marks(page, f"{where}, {other}, motion {motion}", ".load-line span", show=True)
+    page.emulate_media(color_scheme=scheme, reduced_motion="no-preference")
     count = len(posts)
     control.tap(force=True)  # disabled, or the same address: nothing new is asked
     page.wait_for_timeout(300)
@@ -643,18 +765,20 @@ def check_working(page, control, held, posts, where, picture, *also, sized=True)
     expect(page.locator(".load-line")).to_have_count(0)
 
 
-def pressed_look(page, cdp, selector, reduced=False):
-    """The computed look of an element with :active forced through the DevTools protocol."""
+def pressed_look(page, cdp, selector, reduced=False, read=None):
+    """The computed look of an element with :active forced through the DevTools protocol (or what `read` returns then)."""
     page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
     root = cdp.send("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
     node = cdp.send("DOM.querySelector", {"nodeId": root, "selector": selector})["nodeId"]
     assert node, selector
     cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": ["active"]})
-    page.wait_for_timeout(300)  # past the 160 ms ease
-    look = page.eval_on_selector(selector, "e => [getComputedStyle(e).transform, getComputedStyle(e).opacity, getComputedStyle(e).backgroundColor]")
-    cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": []})
-    page.emulate_media(reduced_motion="no-preference")
-    return look
+    try:  # a failed reading must not leave the press or the media forced for the checks after it
+        if not reduced:
+            page.wait_for_timeout(300)  # past the 160 ms ease; reduced motion has no transition
+        return read() if read else page.eval_on_selector(selector, "e => [getComputedStyle(e).transform, getComputedStyle(e).opacity, getComputedStyle(e).backgroundColor]")
+    finally:
+        cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": []})
+        page.emulate_media(reduced_motion="no-preference")
 
 
 def walk_tap(browser, session, errors):
@@ -704,6 +828,13 @@ def walk_tap(browser, session, errors):
     undo = "button[aria-label=Annuler]"
     expect(page.locator(undo)).to_be_disabled()
     assert pressed_look(page, cdp, undo)[0] == "none"
+    # With reduced motion the pressed main button wears a ring of the line colour (D-POLISH-002), in both themes.
+    main = ".main-action button.primary"
+    expect(page.locator(main)).to_be_enabled()
+    for scheme, theme in (("light", "clair"), ("dark", "sombre")):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
+        pressed_look(page, cdp, main, reduced=True, read=lambda: check_marks(page, f"pressed main button, {theme}", main, marks=[[main, "boxShadow", "parent", 3]]))
     for where in ("editor", "list"):
         if where == "list":
             page.locator(".back-link").tap()
@@ -1206,7 +1337,7 @@ def walk_formats(browser, errors):
             expect(screen.get_by_role("radio", name="Story 9:16", exact=True)).to_be_enabled()
             screen.wait_for_function(NO_SIDEWAYS)
             check_one_blur(screen, f"Style step, story at {width} px, {theme}")
-            check_contrast(screen, f"Style step, story at {width} px, {theme}")
+            check_contrast(screen, f"Style step, story at {width} px, {theme}", ".format-choice label.chip:has(input:checked)")
             if phone:
                 check_targets(screen, f"Style step, story at {width} px, {theme}")
             shot(screen, f"format-story-{width}-{theme}-etape-style.png", full_page=False)
@@ -2389,7 +2520,7 @@ def run():
                         page.emulate_media(reduced_motion="reduce")
                         assert page.evaluate(blur, ".app-header") == "none" and page.evaluate(blur, ".intake") == "none"
                         assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
-                        check_contrast(page, "intake, solid chrome")
+                        check_contrast(page, "intake, solid chrome", placeholders=("input[name=product]", "input[name=price]"))
                         page.emulate_media(reduced_motion="no-preference")
                         # The browser's own file control (« Choose Files ») is not shown: the label shows a French button.
                         expect(page.locator(".upload-zone .pick-button")).to_have_text("Ajouter des photos")
@@ -2526,7 +2657,14 @@ def run():
                         page.get_by_role("button", name="Enregistrer ce style").click()
                         page.get_by_role("button", name="Créer le style").click()
                         expect(page.get_by_text("Style « Vagues bleues » enregistré", exact=False)).to_be_visible(timeout=15000)
-                        check_contrast(page, "notice")
+                        # The style's name, emptied by the save, is a field on a field: the lightest field ground of the
+                        # dark theme. Its placeholder is measured in both themes (D-POLISH-002).
+                        check_contrast(page, "notice", placeholders=("input[name=look]",))
+                        page.emulate_media(color_scheme="light")
+                        page.wait_for_function("document.documentElement.dataset.theme === 'clair'")
+                        check_contrast(page, "notice, light theme", placeholders=("input[name=look]",))
+                        page.emulate_media(color_scheme="dark")
+                        page.wait_for_function("document.documentElement.dataset.theme === 'sombre'")
                         shot(page, "notice.png", full_page=False)
                         expect(page.get_by_role("button", name="Vagues bleues")).to_have_attribute("aria-pressed", "true")
                         expect(page.get_by_label("Ambiance (modifiable)")).to_have_value(re.compile("vagues translucides"))
@@ -2696,10 +2834,10 @@ def run():
                             expect(page.get_by_role("tabpanel")).to_have_count(1)
                             expect(page.locator(".poster-canvas canvas").first).to_be_in_viewport()
                             expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_in_viewport()
-                            check_contrast(page, f"tab {name}")
+                            check_contrast(page, f"tab {name}", ".layer-list button[aria-pressed=true]")
                             shot(page, f"tab-{name.lower().replace('é', 'e')}.png")
                         page.get_by_role("button", name="Passer au thème clair").click()
-                        check_contrast(page, "editor, light theme")
+                        check_contrast(page, "editor, light theme", ".layer-list button[aria-pressed=true]")
                         shot(page, "desktop-clair.png")
                         page.get_by_role("button", name="Passer au thème sombre").click()
                         page.set_viewport_size({"width": 390, "height": 844})
@@ -3341,6 +3479,7 @@ def run():
                                 expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
                             else:
                                 expect(screen.get_by_label("Photos du produit")).to_be_attached()
+                            pixels = set()
                             for theme, scheme in (("clair", "light"), ("sombre", "dark")):
                                 screen.emulate_media(color_scheme=scheme)
                                 screen.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
@@ -3348,6 +3487,12 @@ def run():
                                 check_one_blur(screen, f"{name} at 1366 px, {theme}")
                                 check_contrast(screen, f"{name} at 1366 px, {theme}")
                                 shot(screen, f"look-1366-{theme}-{name}.png", full_page=False)
+                                if name == "editeur":
+                                    drawn, veiled = screen.evaluate(POSTER_JS)
+                                    assert not veiled, f"the poster is veiled at 1366 px, {theme}:\n" + "\n".join(veiled)
+                                    pixels.add(drawn)
+                            # A page token never reaches the poster (R-POLISH-002): the same pixels in both themes.
+                            assert name != "editeur" or len(pixels) == 1, "the poster's pixels change with the theme"
                         desk.close()
                         assert not errors, errors
                         # A poster's address opened without a session: after the sign-in the owner is on that poster.

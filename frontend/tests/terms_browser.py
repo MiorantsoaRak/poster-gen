@@ -480,7 +480,7 @@ def data_page(page):
     page.wait_for_url(f"{smoke.ORIGIN}/donnees.html")
     expect(page.get_by_role("heading", name="Vos données", level=1)).to_be_visible()
     expect(page.locator("script")).to_have_count(0)
-    for scheme, ground in (("dark", "rgb(16, 15, 14)"), ("light", "rgb(244, 241, 236)")):
+    for scheme, ground in (("dark", "rgb(16, 15, 14)"), ("light", "rgb(245, 241, 232)")):
         page.emulate_media(color_scheme=scheme)
         assert page.evaluate("getComputedStyle(document.documentElement).backgroundColor") == ground, scheme
         assert page.evaluate(smoke.NO_SIDEWAYS), f"the data page scrolls sideways, {scheme}"
