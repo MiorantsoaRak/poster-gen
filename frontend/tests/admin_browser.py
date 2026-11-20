@@ -347,10 +347,20 @@ def walk(browser, playwright, engine, errors):
         assert len([path for method, path in writes if path.endswith("/suspend")]) == 2, writes  # the two of the shop above
         page.get_by_role("link", name="← Shops", exact=True).click()
 
+        # At 360 px the shops are cards that label each value: no number is pushed to the right there.
+        expect(page.locator(".shops td.num").first).to_be_visible()  # the list is read again on arrival
+        assert page.evaluate("[...document.querySelectorAll('.shops .num')].every(cell => getComputedStyle(cell).textAlign !== 'right')")
         # At 1280 px the shops are a table.
         page.set_viewport_size({"width": 1280, "height": 800})
         expect(page.get_by_role("columnheader", name="Identifier")).to_be_visible()
         check_layout(page, "the shop list at 1280 px, dark")
+        # Numbers are right-aligned with tabular figures, headers and cells; the other columns are not (D-POLISH-004).
+        # Each column by its position: the eight headers, then the eight cells of the first shop.
+        aligned = page.evaluate("""() => [...document.querySelectorAll('.shops th, .shops tbody tr:first-child td')].map(cell => {
+            const style = getComputedStyle(cell)
+            return [cell.cellIndex, style.textAlign === 'right' && style.fontVariantNumeric.includes('tabular-nums')] })""")
+        numeric = {3, 4, 5, 7}  # Available, En attente, Posters, Sessions
+        assert len(aligned) == 16 and all(right == (column in numeric) for column, right in aligned), aligned
         page.screenshot(path=str(OUTPUT / "shops-1280-dark.png"), full_page=True)
 
         # Sign out: back to the form, nothing shown, typed or read left behind, also through the history.

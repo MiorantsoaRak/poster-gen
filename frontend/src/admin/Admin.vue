@@ -479,17 +479,17 @@ async function repay(job: JobItem) {
       </details>
       <p class="refusal" role="alert">{{ listMessage }}</p>
       <table v-if="shops?.length" class="shops">
-        <thead><tr><th>Identifier</th><th>Name</th><th>State</th><th>Available</th><th lang="fr">En attente</th><th>Posters</th><th>Last poster</th><th>Sessions</th></tr></thead>
+        <thead><tr><th>Identifier</th><th>Name</th><th>State</th><th class="num">Available</th><th class="num" lang="fr">En attente</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
         <tbody>
           <tr v-for="shop in shops" :key="shop.id">
             <td><a :href="`#/shops/${shop.id}`">{{ shop.identifier }}</a><strong v-if="kept[shop.id]"> · unresolved request</strong></td>
             <td data-label="Name">{{ shop.name ?? '—' }}</td>
             <td data-label="State">{{ shop.state }}<template v-if="!shop.has_password"> · no password</template></td>
-            <td data-label="Available">{{ shop.available }}</td>
-            <td data-label="En attente">{{ shop.pending }}</td>
-            <td data-label="Posters">{{ shop.posters }}</td>
+            <td class="num" data-label="Available">{{ shop.available }}</td>
+            <td class="num" data-label="En attente">{{ shop.pending }}</td>
+            <td class="num" data-label="Posters">{{ shop.posters }}</td>
             <td data-label="Last poster">{{ shop.last_poster_at?.slice(0, 10) ?? '—' }}</td>
-            <td data-label="Sessions">{{ shop.sessions }}</td>
+            <td class="num" data-label="Sessions">{{ shop.sessions }}</td>
           </tr>
         </tbody>
       </table>

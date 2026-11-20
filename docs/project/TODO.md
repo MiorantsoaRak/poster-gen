@@ -123,8 +123,9 @@
   - verify: `cd frontend && corepack npm@10 test && corepack npm@10 run build && cd ../backend && uv run python ../frontend/tests/browser_smoke.py && uv run python ../frontend/tests/chat_browser.py` → pass
 - [ ] T-POLISH-003 (D-POLISH-003) One frame for every screen of the shop: one title size on the five dashboard screens with no box on a focused title, one accessible title for the chat in every branch, one 860 px width and a 16 px phone gutter on those five screens, bottom-bar labels never cut or wrapped at 360 px.
   - verify: the design's test list in `shop_dashboard_browser.py` and `chat_browser.py`; `editor_refinements_browser.py` and the chat's 360 px geometry unchanged.
-- [ ] T-POLISH-004 (D-POLISH-004) The operator's numbers: right-aligned tabular figures in the Shops table from 600 px.
-  - verify: `admin_browser.py` checks headers and cells at 1280 px and the cards at 360 px.
+- [x] T-POLISH-004 (D-POLISH-004; done 2026-11-20 by the lead, a class and one CSS rule, not reviewed by Codex) The operator's numbers: right-aligned tabular figures in the Shops table from 600 px (Available, En attente, Posters, Sessions; headers and cells); the cards under 600 px unchanged.
+  - verified on Linux, stub: the build; `admin_browser.py` passes with the two new checks (the eight columns by position at 1280 px; no number pushed right at 360 px). Its first run failed at the lead's own new 360 px check, which read the table before the list had loaded: the check now waits for the list.
+  - verify: `cd backend && uv run python ../frontend/tests/admin_browser.py` → pass
 - [ ] T-POLISH-005 (D-POLISH-005) The record and the proof: the capture script kept as `frontend/tests/design_capture.py`, the captures and both checkers run again on the final build, `reviews/design-after-<date>.md` over the 16 findings, `DESIGN.md` at the root.
   - verify: the report and `DESIGN.md`.
 - [x] T-DESIGN-BASELINE (user request 2026-11-20: polish the look of the client and operator interfaces with the impeccable, design-taste and ui-ux-pro-max skills; "go ahead" on step 1) The state before any change: 102 screenshots (17 screens, 360/768/1440 px, both themes) of a local stub build, Impeccable's detector and design-taste's app inspector on static snapshots of the signed-in screens, and the lead's reading. No application code changed.

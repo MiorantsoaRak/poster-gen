@@ -66,6 +66,8 @@ th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px
 th { color: var(--muted); font-size: 14px }
 /* Only the identifier and the name may break inside a word; short values and headings keep theirs. */
 .shops th, .shops td:nth-child(n+3) { overflow-wrap: normal }
+/* Numbers line up by their units, as a table of counts is read (D-POLISH-004). The cards below label each value instead. */
+@media (min-width: 600px) { .shops .num { text-align: right; font-variant-numeric: tabular-nums } }
 /* Below 600 px each shop is a card: its identifier first, then each value with its column's name. */
 @media (max-width: 599px) {
   .shops thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
