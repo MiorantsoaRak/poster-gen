@@ -12,21 +12,40 @@ afterEach(() => { vi.unstubAllGlobals() })
 // Every source file and entry page as text (Vite's glob: the project has no Node types).
 const sources = import.meta.glob<string>(['../src/**/*.{ts,vue,css}', '../index.html', '../render.html', '../admin/index.html'],
   { query: '?raw', import: 'default', eager: true })
-const imports = (text: string) => [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|url\(\s*)['"]([^'"]+)['"]/g)].map(found => found[1]!)
+// Every address a file asks for: a script's from and import(), a stylesheet's @import and url() (quoted or not), a
+// template's static src.
+const imports = (text: string) => [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*|\bsrc=)['"]([^'"]+)['"]|\burl\(\s*['"]?([^'")\s]+)/g)].map(found => found[1] ?? found[2]!)
+const own = (name: string) => name === 'vue' || /^\.\/[^/]+$/.test(name)
 const links = (page: string) => [...sources[page]!.matchAll(/\b(?:src|href)="([^"]+)"/g)].map(found => found[1]!)
 const admin = Object.entries(sources).filter(([path]) => path.startsWith('../src/admin/'))
+// Every file of the folder, whatever its kind: the console's own copies of the font and the logo included (D-REDESIGN-005).
+const folder = Object.keys(import.meta.glob('../src/admin/*'))
 
 it('keeps the operator page and the shops apart: neither imports the other (D-ADMIN-005)', () => {
-  expect(admin.map(([path]) => path).sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts'].map(name => `../src/admin/${name}`).sort())
+  expect(folder.sort()).toEqual(['Admin.vue', 'Confirm.vue', 'Payments.vue', 'Service.vue', 'admin.css', 'admin.ts', 'adminApi.ts', 'main.ts',
+    'Figtree-Variable.woff2', 'Figtree-OFL.txt', 'doka-horizontal-charcoal.svg', 'doka-horizontal-paper.svg', 'doka-symbol.svg'].map(name => `../src/admin/${name}`).sort())
+  expect(admin.length).toBe(8)
   for (const [path, text] of admin)
-    // A data: address is the file's own bytes (the mark in admin.css, D-POLISH-001): it asks the server for nothing.
-    for (const name of imports(text)) expect(name === 'vue' || /^\.\/[^/]+$/.test(name) || name.startsWith('data:image/svg+xml,'), `${path} imports ${name}`).toBe(true)
+    for (const name of imports(text)) expect(own(name), `${path} imports ${name}`).toBe(true)
+  // The rule sees each way out of the folder, and lets the folder's own files through.
+  for (const outside of ["@font-face { src: url(../outside.woff2) }", '@import "../style.css";', "@import url('/src/style.css');",
+    '<img src="../assets/doka-horizontal.svg">', "import { BUNDLE } from '../api'", "const page = import('../App.vue')"])
+    expect(imports(outside).length > 0 && !imports(outside).every(own), outside).toBe(true)
+  for (const inside of ["src: url(./Figtree-Variable.woff2)", '<img src="./doka-symbol.svg" alt="">', "import Confirm from './Confirm.vue'"])
+    expect(imports(inside).length > 0 && imports(inside).every(own), inside).toBe(true)
   const shops = Object.entries(sources).filter(([path]) => path.startsWith('../src/') && !path.startsWith('../src/admin/'))
   expect(shops.length).toBeGreaterThan(10)
   for (const [path, text] of shops)
     for (const name of imports(text)) expect(/(^|\/)admin(\/|$)/.test(name), `${path} imports ${name}`).toBe(false)
   expect(links('../admin/index.html')).toEqual(['/src/admin/main.ts'])
   for (const page of ['../index.html', '../render.html']) expect(links(page).filter(link => link.includes('admin'))).toEqual([])
+})
+
+it('splits each width by complementary conditions, in the stylesheet and the script, so a fractional width is on one side', () => {
+  // Under zoom a width can be 1180.5 px: (max-width: 1180px) and (min-width: 1181px) would both miss it (D-REDESIGN-005).
+  const queries = [...sources['../src/admin/admin.css']!.matchAll(/@media \(([^)]*width[^)]*)\)/g)].map(found => found[1])
+  expect(new Set(queries)).toEqual(new Set(['width > 1180px', 'width <= 1180px', 'width >= 600px', 'width < 600px']))
+  expect(sources['../src/admin/Admin.vue']).toContain("matchMedia('(width > 1180px)')")
 })
 
 it('names the same bundle as the shops, so that the server refuses both old pages together (ADR-103)', () => {

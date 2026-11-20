@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// The Money screen (D-ADMIN-005, R-ADMIN-003): the payments recorded in a period of whole UTC days, and what was received.
+// The Payments screen (D-ADMIN-005, R-ADMIN-003; « Money » until D-REDESIGN-005, still at #/money): the payments recorded
+// in a period of whole UTC days, and what was received.
 // A moved payment's three lines (+A, −A, +A) are all listed; the server's total counts it once.
 import { onMounted, ref } from 'vue'
 import { call } from './adminApi'
@@ -27,15 +28,17 @@ defineExpose({ read })  // read again when the tab comes back (D-ADMIN-005: fres
 </script>
 
 <template>
-  <form class="stack" @submit.prevent="read">
-    <label for="period-start">First day (UTC)</label>
-    <input id="period-start" v-model="period.start" type="date" required :max="period.end">
-    <label for="period-end">Last day, included</label>
-    <input id="period-end" v-model="period.end" type="date" required :min="period.start">
-    <button class="primary">Show</button>
-    <p class="refusal" role="alert">{{ message }}</p>
-  </form>
-  <section v-if="shown" aria-labelledby="payments-title">
+  <div class="card">
+    <form class="stack" @submit.prevent="read">
+      <label for="period-start">First day (UTC)</label>
+      <input id="period-start" v-model="period.start" type="date" required :max="period.end">
+      <label for="period-end">Last day, included</label>
+      <input id="period-end" v-model="period.end" type="date" required :min="period.start">
+      <button class="primary">Show</button>
+      <p class="refusal" role="alert">{{ message }}</p>
+    </form>
+  </div>
+  <section v-if="shown" class="card" aria-labelledby="payments-title">
     <h2 id="payments-title">Payments from {{ shown.start }} to {{ shown.end }}</h2>
     <p><strong>Received: {{ ariary(shown.received_ar) }}</strong></p>
     <ul v-if="shown.items.length" class="lines">

@@ -91,7 +91,7 @@ def ask(page, opener, title, action):
 def new_shop_form(page):
     """Opens « New shop » when it is folded (its fold keeps its state across views)."""
     if not page.locator("details", has=page.locator("summary", has_text="New shop")).evaluate("e => e.open"):
-        page.get_by_text("New shop", exact=True).click()
+        page.locator("summary", has_text="New shop").click()  # not the sidebar's link of the same name
 
 
 def wait_until(page, ready):
@@ -103,11 +103,54 @@ def wait_until(page, ready):
     raise AssertionError("never ready")
 
 
+# Every visible field under 16 px: a phone zooms into it (D-ADMIN-005, « At 360 px »).
+SMALL_FIELDS_JS = r"""() => [...document.querySelectorAll('input, select, textarea')].filter(e => e.checkVisibility({ visibilityProperty: true }))
+  .filter(e => parseFloat(getComputedStyle(e).fontSize) < 16)
+  .map(e => `${getComputedStyle(e).fontSize} <${e.tagName.toLowerCase()}> ${e.id || e.name || e.placeholder}`)"""
+
+
 def check_layout(page, where):
     page.wait_for_function(NO_SIDEWAYS)
     small = page.evaluate(SMALL_TARGETS_JS)
     assert not small, f"targets under 44 px on {where}:\n" + "\n".join(small)
+    small = page.evaluate(SMALL_FIELDS_JS)
+    assert not small, f"fields under 16 px on {where}:\n" + "\n".join(small)
     smoke.check_contrast(page, where)
+
+
+# The console's paint as the browser computes it (D-REDESIGN-001, D-REDESIGN-005): the ground; and, named per screen, the
+# surface and the main action that screen holds, so that another element of the page cannot answer for them.
+GROUND = {"light": "rgb(245, 241, 232)", "dark": "rgb(32, 32, 29)"}
+SURFACE = {"light": "rgb(255, 253, 248)", "dark": "rgb(43, 43, 39)"}
+SIGNAL = ["rgb(242, 199, 68)", "rgb(32, 32, 29)"]  # the main action's fill and text, in both themes
+PAINT_JS = r"""([surface, primary]) => {
+  const paint = selector => {
+    const e = selector && [...document.querySelectorAll(selector)].find(e => e.checkVisibility({ visibilityProperty: true }))
+    return e ? [getComputedStyle(e).backgroundColor, getComputedStyle(e).color] : null
+  }
+  return { ground: getComputedStyle(document.body).backgroundColor, surface: paint(surface), primary: paint(primary) }
+}"""
+
+
+def paint(page, surface=None, primary=None):
+    page.mouse.move(0, 0)  # no hovered control: a hover changes a fill
+    page.wait_for_function(smoke.SETTLED, polling=100)
+    return page.evaluate(PAINT_JS, [surface, primary])
+
+
+def emulate(page, scheme):
+    """The device's scheme, nothing stored: the page follows it, in its computed ground."""
+    page.emulate_media(color_scheme=scheme)
+    seen = paint(page)
+    assert seen["ground"] == GROUND[scheme], (scheme, seen)
+
+
+def go(page, name):
+    """A destination of the sidebar, through the drawer at 1180 px and under."""
+    menu = page.get_by_role("button", name="Open the menu", exact=True)
+    if menu.is_visible():
+        menu.click()
+    page.locator("aside.side").get_by_role("link", name=name, exact=True).click()
 
 
 def tab_to(page, target, back=False):
@@ -159,11 +202,16 @@ def walk(browser, playwright, engine, errors):
             conn.execute(text("DELETE FROM login_failures"))
         sign_in(page)
         expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
-        expect(page.get_by_text(re.compile(r"^dashboard:[0-9a-f]{8}$"))).to_be_visible()
+        # At 360 px the session's actor is in the drawer, with « Sign out ».
+        menu = page.get_by_role("button", name="Open the menu", exact=True)
+        menu.click()
+        expect(page.locator("aside.side").get_by_text(re.compile(r"^dashboard:[0-9a-f]{8}$"))).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(menu).to_be_focused()
         expect(page.get_by_role("link", name=smoke.IDENTIFIER, exact=True)).to_be_visible()
 
         # A shop with the widest values, its password shown once and copied.
-        page.get_by_text("New shop", exact=True).click()
+        page.locator("summary", has_text="New shop").click()
         page.get_by_label("Identifier", exact=True).fill(WIDE_ID)
         page.get_by_label("Name (optional)", exact=True).fill(WIDE_NAME)
         expect(page.get_by_label("Welcome credits", exact=True)).to_have_value("5")
@@ -180,11 +228,12 @@ def walk(browser, playwright, engine, errors):
         assert page.evaluate("navigator.clipboard.readText()") == first
         assert shop_signs_in(api, WIDE_ID, first) == 200  # the shop signs in at once
         row = page.locator("tr", has=page.get_by_role("link", name=WIDE_ID, exact=True))
-        expect(row.locator("td[data-label=Name]")).to_have_text(WIDE_NAME)
+        expect(row.locator("td.shop small")).to_have_text(WIDE_NAME)  # the name under the identifier, on a 360 px card
+        expect(row.locator(".badge")).to_have_text(["active"])
         expect(row.locator("td[data-label=Available]")).to_have_text("5")
         expect(row.locator("td[data-label=Sessions]")).to_have_text("0")  # read at its creation: no polling (D-ADMIN-005)
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"the shop list at 360 px, {scheme}, a password shown")
             page.screenshot(path=str(OUTPUT / f"shops-360-{scheme}.png"), full_page=True)
         panel.get_by_role("button", name="Close", exact=True).click()
@@ -204,7 +253,7 @@ def walk(browser, playwright, engine, errors):
         dialog, confirm = ask(page, page.get_by_role("button", name="Set a new password", exact=True), "Set a new password?", "Set a new password")
         expect(dialog).to_have_accessible_description(f"A new password for {WIDE_ID}. Its 1 session ends.")
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             page.wait_for_function(NO_SIDEWAYS)
             for button in (dialog.get_by_role("button", name="Cancel"), confirm):
                 expect(button).to_be_in_viewport(ratio=1)
@@ -250,7 +299,7 @@ def walk(browser, playwright, engine, errors):
         expect(page.get_by_text("active · 0 live sessions", exact=True)).to_be_visible()
         assert [method for method, path in writes if path.endswith(("/suspend", "/enable"))] == ["POST", "POST"], writes  # once each
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"one shop at 360 px, {scheme}")
             page.screenshot(path=str(OUTPUT / f"shop-360-{scheme}.png"), full_page=True)
 
@@ -285,13 +334,13 @@ def walk(browser, playwright, engine, errors):
             route.fulfill(status=409, json={"error": {"code": "operator_refused", "message_fr": "Refusé : rien n’a été écrit.",
                                                       "retryable": False, "detail": WIDE_REFUSAL}, "request_id": "r"})
         page.route("**/api/admin/shops", refuse)
-        page.get_by_text("New shop", exact=True).click()
+        page.locator("summary", has_text="New shop").click()
         page.get_by_label("Identifier", exact=True).fill("refused")
         page.get_by_role("button", name="Create the shop", exact=True).click()
         expect(page.get_by_role("alert").filter(has_text=WIDE_REFUSAL)).to_be_visible()
         expect(page.get_by_label("Identifier", exact=True)).to_have_value("refused")  # what was typed stays
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"a 300-character refusal at 360 px, {scheme}")
         page.unroute("**/api/admin/shops", refuse)
 
@@ -350,17 +399,24 @@ def walk(browser, playwright, engine, errors):
         # At 360 px the shops are cards that label each value: no number is pushed to the right there.
         expect(page.locator(".shops td.num").first).to_be_visible()  # the list is read again on arrival
         assert page.evaluate("[...document.querySelectorAll('.shops .num')].every(cell => getComputedStyle(cell).textAlign !== 'right')")
+        # One column: each value of a card starts below the one before it; the long name wraps, nothing of it cut.
+        overlaps = page.evaluate("""() => [...document.querySelectorAll('.shops tbody tr')].flatMap(row => [...row.cells].slice(1)
+            .filter(cell => cell.getBoundingClientRect().top < cell.previousElementSibling.getBoundingClientRect().bottom - .5)
+            .map(cell => `${row.cells[0].querySelector('a').textContent}: ${cell.dataset.label}`))""")
+        assert not overlaps, overlaps
+        assert page.locator(f"td.shop small[title='{WIDE_NAME}']").evaluate("e => e.scrollWidth <= e.clientWidth")
         # At 1280 px the shops are a table.
         page.set_viewport_size({"width": 1280, "height": 800})
-        expect(page.get_by_role("columnheader", name="Identifier")).to_be_visible()
+        expect(page.get_by_role("columnheader", name="Shop", exact=True)).to_be_visible()
         check_layout(page, "the shop list at 1280 px, dark")
         # Numbers are right-aligned with tabular figures, headers and cells; the other columns are not (D-POLISH-004).
-        # Each column by its position: the eight headers, then the eight cells of the first shop.
+        # Each column by its position: the seven headers, then the seven cells of the first shop (the shop, its state,
+        # Available, En attente, Posters, Last poster, Sessions).
         aligned = page.evaluate("""() => [...document.querySelectorAll('.shops th, .shops tbody tr:first-child td')].map(cell => {
             const style = getComputedStyle(cell)
             return [cell.cellIndex, style.textAlign === 'right' && style.fontVariantNumeric.includes('tabular-nums')] })""")
-        numeric = {3, 4, 5, 7}  # Available, En attente, Posters, Sessions
-        assert len(aligned) == 16 and all(right == (column in numeric) for column, right in aligned), aligned
+        numeric = {2, 3, 4, 6}  # Available, En attente, Posters, Sessions
+        assert len(aligned) == 14 and all(right == (column in numeric) for column, right in aligned), aligned
         page.screenshot(path=str(OUTPUT / "shops-1280-dark.png"), full_page=True)
 
         # Sign out: back to the form, nothing shown, typed or read left behind, also through the history.
@@ -453,7 +509,7 @@ def walk(browser, playwright, engine, errors):
         expect(password_field(page)).to_be_focused()
 
         # The page asked only for its own files and the operator's routes.
-        own = [url for url in requested if not re.match(rf"{re.escape(smoke.ORIGIN)}/(admin/|api/admin/)", url) and not url.endswith("/favicon.ico")]
+        own = [url for url in requested if not re.match(rf"{re.escape(smoke.ORIGIN)}/(admin/|api/admin/)", url) and url != f"{smoke.ORIGIN}/favicon.ico"]
         assert not own, own
         # Back from another page: still signed out, nothing of the session.
         page.goto(f"{smoke.ORIGIN}/")
@@ -604,12 +660,12 @@ def walk_money(browser, engine, errors):
         page.route("**/api/admin/shops/*/history*", fail_history_once)
         dialog, confirm = grant(page, f"Grant 10 bought credits to {WIDE_ID} ({WIDE_NAME})? 20 000 Ar by {METHOD40.lower()}, reference {REF100}.")
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             page.wait_for_function(NO_SIDEWAYS)
             for button in (dialog.get_by_role("button", name="Cancel"), confirm):
                 expect(button).to_be_in_viewport(ratio=1)
             page.screenshot(path=str(OUTPUT / f"grant-confirm-360-{scheme}.png"))
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
         # The request was frozen when « Grant… » was pressed: a change to the form behind the dialog is not sent.
         page.locator("#grant-credits").evaluate("field => { field.value = '99'; field.dispatchEvent(new Event('input')) }")
         confirm.evaluate("button => { button.click(); button.click() }")  # a double tap
@@ -632,10 +688,10 @@ def walk_money(browser, engine, errors):
         page.unroute(grants, lose)
         page.unroute("**/api/admin/shops/*/history*", fail_history_once)
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"a kept request with a 100-character reference at 360 px, {scheme}")
             page.screenshot(path=str(OUTPUT / f"kept-360-{scheme}.png"), full_page=True)
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
         page.get_by_role("button", name="Send again", exact=True).evaluate("button => { button.click(); button.click() }")
         status, alert = answers(page, "Grant credits")
         expect(status).to_have_text(f"Already recorded as line {written.id}, as sent. Nothing more to do.")
@@ -650,10 +706,10 @@ def walk_money(browser, engine, errors):
         expect(widest).to_contain_text(f"+20 000 Ar by {METHOD40.lower()}")
         expect(widest).to_contain_text(NOTE500)
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"the history with the widest values at 360 px, {scheme}")
             page.screenshot(path=str(OUTPUT / f"history-360-{scheme}.png"), full_page=True)
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
 
         # The same reference with other credits only: no second line; the way out is a correction, never another reference.
         fill_grant(page, "7", amount="20000", method=METHOD40, ref=REF100)
@@ -679,9 +735,9 @@ def walk_money(browser, engine, errors):
         expect(money_form(page, "Grant…").get_by_label("Credits", exact=True)).to_have_value("1")  # what was typed stays
         assert pending(page) is None  # a refusal is definite
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"a 300-character money refusal at 360 px, {scheme}")
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
         page.unroute(grants)
 
         # An offered grant answered 503, then the page reloaded: the shop's money forms reopen on the same request, no
@@ -912,8 +968,8 @@ def walk_money(browser, engine, errors):
 
         # The payments of a period: every line that carries ariary this UTC month, and the total received; an empty
         # period shows its zero.
-        page.evaluate("location.hash = '#/money'")
-        expect(page.get_by_role("heading", name="Money", level=1)).to_be_focused()
+        page.evaluate("location.hash = '#/money'")  # « Payments » now, at the same address
+        expect(page.get_by_role("heading", name="Payments", level=1)).to_be_focused()
         now = datetime.now(UTC)
         first = now.date().replace(day=1)
         last = (first + timedelta(days=31)).replace(day=1) - timedelta(days=1)
@@ -927,10 +983,10 @@ def walk_money(browser, engine, errors):
         expect(page.locator(".lines li", has_text="MV-MOVE")).to_have_count(3)  # moved: +A, −A, +A, counted once
         expect(page.locator(".lines li", has_text="MV-SPENT")).to_contain_text("+20 000 Ar · boutiquesix · grant bought · line ")
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"the payments at 360 px, {scheme}")
             page.screenshot(path=str(OUTPUT / f"payments-360-{scheme}.png"), full_page=True)
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
         page.get_by_label("First day (UTC)", exact=True).fill("2020-01-01")
         page.get_by_label("Last day, included", exact=True).fill("2020-01-31")
         page.get_by_role("button", name="Show", exact=True).click()
@@ -970,6 +1026,21 @@ def walk_no_storage(browser, engine, errors):
         expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
         expect(page.locator(".kept .note")).to_have_text(unstored)  # its own line, shown from before the request left
         page.unroute(grants, unanswered_503)
+        # The theme switch and the rail work for this page alone; a navigation still finds the unanswered request.
+        page.set_viewport_size({"width": 1280, "height": 800})
+        side = page.locator("aside.side")
+        side.get_by_role("button", name="Switch to dark theme", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+        assert paint(page)["ground"] == GROUND["dark"]
+        page.get_by_role("button", name="Collapse the menu", exact=True).click()
+        expect(page.get_by_role("button", name="Expand the menu", exact=True)).to_be_visible()
+        assert side.bounding_box()["width"] == 76
+        side.get_by_role("link", name="Shops", exact=True).click()
+        expect(page.locator("tr", has=page.get_by_role("link", name="boutiquedeux", exact=True))).to_contain_text("unresolved request")
+        page.get_by_role("link", name="boutiquedeux", exact=True).click()
+        expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
+        page.get_by_role("button", name="Expand the menu", exact=True).click()
+        page.set_viewport_size({"width": 360, "height": 640})
         page.get_by_role("button", name="Send again", exact=True).click()
         expect(section.get_by_role("status")).to_contain_text("Granted: line ")
         assert len(lines_of(engine, made)) == 1
@@ -1090,8 +1161,11 @@ def walk_service(browser, engine, errors):
         page.goto(ADMIN)
         sign_in(page)
         expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
-        link = page.get_by_role("link", name="Service", exact=True)
-        tab_to(page, link)  # the keyboard alone
+        # The keyboard alone, through the drawer: at 360 px the sidebar's links are in it.
+        tab_to(page, page.get_by_role("button", name="Open the menu", exact=True), back=True)
+        page.keyboard.press("Enter")
+        link = page.locator("aside.side").get_by_role("link", name="Service", exact=True)
+        tab_to(page, link)
         page.keyboard.press("Enter")
         expect(page.get_by_role("heading", name="Service", level=1)).to_be_focused()
         expect(link).to_have_attribute("aria-current", "page")
@@ -1127,11 +1201,11 @@ def walk_service(browser, engine, errors):
                                                       "reading messages. What was admitted finishes. Shops can still edit and download.")
         expect(dialog.get_by_role("button", name="Cancel", exact=True)).to_be_focused()
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             page.wait_for_function(NO_SIDEWAYS)
             for button in (dialog.get_by_role("button", name="Cancel"), dialog.get_by_role("button", name="Pause", exact=True)):
                 expect(button).to_be_in_viewport(ratio=1)
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
         page.keyboard.press("Escape")
         expect(dialog).to_be_hidden()
         expect(toggle).to_be_focused()
@@ -1167,14 +1241,14 @@ def walk_service(browser, engine, errors):
         expect(dialog).to_have_accessible_description("New requests reach the AI again, for every shop.")
         confirm.click()
         wait_until(page, lambda: held)
-        page.get_by_role("link", name="Shops", exact=True).click()
+        go(page, "Shops")
         expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_focused()
         route, response = held.pop()
         route.fulfill(response=response)
         page.wait_for_timeout(500)  # an absence: the late answer gets its chance to land
         expect(page.get_by_text("Resumed.")).to_have_count(0)
         page.unroute("**/api/admin/service/resume")
-        link.click()
+        go(page, "Service")
         expect(state).to_contain_text("Running: new requests reach the AI.")  # read afresh
         expect(status).to_have_text("")
         with engine.connect() as conn:
@@ -1210,10 +1284,10 @@ def walk_service(browser, engine, errors):
         with engine.connect() as conn:
             assert conn.execute(text("SELECT value FROM meta WHERE key='purchase_text_fr'")).scalar() == TEXT500
         for scheme in ("light", "dark"):
-            page.emulate_media(color_scheme=scheme)
+            emulate(page, scheme)
             check_layout(page, f"the Service screen at 360 px, {scheme}, a 500-character text and a 200-character browser")
             page.screenshot(path=str(OUTPUT / f"service-360-{scheme}.png"), full_page=True)
-        page.emulate_media(color_scheme="light")
+        emulate(page, "light")
 
         # This session ended elsewhere while a text was typed: the sign-in form, then the same screen with what was typed
         # (no secret), nothing saved.
@@ -1266,6 +1340,266 @@ def walk_service(browser, engine, errors):
         other.close()
 
 
+# Figtree is really used: a face of that family has loaded (document.fonts.check() alone passes on a fallback).
+FIGTREE_JS = "[...document.fonts].some(face => face.family.replace(/[\"']/g, '') === 'Figtree' && face.status === 'loaded')"
+# The sidebar's logo as shown: its file, its intrinsic width (0 when it did not load) and its width on screen.
+LOGO_JS = r"""() => [...document.querySelectorAll('aside .brand img')].filter(img => img.checkVisibility())
+  .map(img => [img.getAttribute('src'), img.naturalWidth, Math.round(img.getBoundingClientRect().width)])"""
+IN_DRAWER_JS = "() => [!!document.activeElement?.closest('aside.side'), document.activeElement?.outerHTML.slice(0, 80)]"
+OUTDATED = {"error": {"code": "bundle_outdated", "message_fr": "…", "retryable": False}, "request_id": "r"}
+
+
+def logo(page, scheme):
+    """The kit's horizontal logo of the theme, loaded, at least 220 px wide; the one shown."""
+    [[src, natural, width]] = page.evaluate(LOGO_JS)
+    assert natural > 0 and width >= 220 and ("charcoal" if scheme == "light" else "paper") in src, (scheme, src, natural, width)
+
+
+def walk_shell(browser, engine, errors):
+    """T-REDESIGN-005: the sidebar's links by exact name and aria-current; every screen at 1280 and 360 px in both themes;
+    Figtree and the logo of the theme at 1181 and 1440 px; the table's states, its widest cell and « Filter shops »;
+    « New shop » from the sidebar; the rail; the drawer at 1024 and 360 px (focus in, Tab inside it never reaching the
+    banner or a shown password, Escape, the scrim, its close button, a destination, a resize); the theme switch kept
+    across the device's scheme and a reload."""
+    with write_tx(engine) as conn:  # with no password: suspended, its one state is « suspended »; active, « no password »
+        quiet = shops.create_shop(conn, "sanspasse", "Boutique sans mot de passe", None)
+        shops.suspend(conn, quiet)
+        shops.create_shop(conn, "ouverte", "Boutique ouverte", None)
+    deux = shop_ids(engine)["boutiquedeux"]
+    context = browser.new_context(viewport={"width": 1280, "height": 800}, color_scheme="light")
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    reads = []
+    page.on("request", lambda request: reads.append(request.url) if "/api/admin/" in request.url else None)
+    side = page.locator("aside.side")
+    try:
+        page.goto(ADMIN)
+        sign_in(page)
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_focused()
+
+        # Figtree, really: its face loaded, and a button's family starts with it.
+        page.wait_for_function(FIGTREE_JS)
+        family = side.get_by_role("button", name="Sign out", exact=True).evaluate("e => getComputedStyle(e).fontFamily")
+        assert family.startswith("Figtree"), family
+        # The logo of the theme over 1180 px, and no name typed beside it.
+        for width in (1181, 1440):
+            page.set_viewport_size({"width": width, "height": 800})
+            for scheme in ("light", "dark"):
+                emulate(page, scheme)
+                logo(page, scheme)
+        expect(side.get_by_text("Doka Studio")).to_have_count(0)
+
+        # The sidebar's links by their exact names; each destination is the current page and takes the focus.
+        page.set_viewport_size({"width": 1280, "height": 800})
+        emulate(page, "light")
+        expect(side.get_by_role("link")).to_have_count(5)
+        for name in ("Doka Studio — Shops", "New shop", "Shops", "Payments", "Service"):
+            expect(side.get_by_role("link", name=name, exact=True)).to_be_visible()
+        expect(side.get_by_role("navigation", name="Console", exact=True)).to_be_visible()
+        for name, address in (("Payments", "#/money"), ("Service", "#/service"), ("Shops", "#/shops")):
+            link = side.get_by_role("link", name=name, exact=True)
+            link.click()
+            expect(page.get_by_role("heading", name=name, level=1)).to_be_focused()
+            assert page.evaluate("location.hash") == address
+            expect(link).to_have_attribute("aria-current", "page")
+            expect(side.locator("[aria-current]")).to_have_count(1)
+
+        # Every screen at 1280 and 360 px, in both themes, nothing stored: the device decides. Each screen's own surface
+        # and main action are read: the table (a card per shop on a phone), a section, the period's form; on Shops the
+        # sidebar's « New shop » where it shows, and none on a phone.
+        screens = (("#/shops", "Shops", page.locator(".shops"), (".table-card", ".shops tbody tr"), ("aside .new", None)),
+                   (f"#/shops/{deux}", "boutiquedeux", page.get_by_role("heading", name="History"), ("main section.card",) * 2, ("main button.primary",) * 2),
+                   ("#/money", "Payments", page.get_by_text(re.compile(r"^Received: ")), ("main div.card",) * 2, ("main button.primary",) * 2),
+                   ("#/service", "Service", page.get_by_role("heading", name="Health"), ("main section.card",) * 2, ("main button.primary",) * 2))
+        for phone, (width, height) in enumerate(((1280, 800), (360, 640))):
+            page.set_viewport_size({"width": width, "height": height})
+            for address, title, ready, surfaces, actions in screens:
+                page.evaluate(f"location.hash = '{address}'")
+                expect(page.get_by_role("heading", name=title, level=1)).to_be_visible()
+                expect(ready).to_be_visible()
+                for scheme in ("light", "dark"):
+                    emulate(page, scheme)
+                    seen = paint(page, surfaces[phone], actions[phone])
+                    assert seen["surface"] and seen["surface"][0] == SURFACE[scheme], (title, width, scheme, seen)
+                    assert (seen["primary"] == SIGNAL) if actions[phone] else seen["primary"] is None, (title, width, scheme, seen)
+                    check_layout(page, f"{title} at {width} px, {scheme}")
+        emulate(page, "light")
+
+        # The table at 1280 px: the shop's cell the widest of its row, rows of one height with the longest identifier and
+        # name the fields accept; one state per shop, exactly the right one.
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.evaluate("location.hash = '#/shops'")
+        rows = page.locator(".shops tbody tr")
+        total = len(shop_ids(engine))
+        expect(rows).to_have_count(total)
+        boxes = page.evaluate("() => [...document.querySelectorAll('.shops tbody tr')].map(row => [row.getBoundingClientRect().height, ...[...row.cells].map(cell => cell.getBoundingClientRect().width)])")
+        assert all(row[1] == max(row[1:]) for row in boxes), boxes
+        heights = [row[0] for row in boxes]
+        assert max(heights) - min(heights) < 1, heights
+        expect(page.get_by_role("link", name=WIDE_ID, exact=True)).to_have_attribute("title", WIDE_ID)
+        expect(page.locator("td.shop small", has_text=WIDE_NAME)).to_have_attribute("title", WIDE_NAME)
+        with engine.connect() as conn:
+            states = {shop.identifier: "suspended" if shop.state == "suspended" else "active" if shop.has_password else "no password"
+                      for shop in shops.list_shops(conn)}
+        assert set(states.values()) == {"suspended", "no password", "active"}, states
+        for identifier, word in states.items():
+            expect(page.locator("tr", has=page.get_by_role("link", name=identifier, exact=True)).locator(".badge")).to_have_text([word])
+
+        # « Filter shops »: on the page, no request; by identifier and by name, in any case; none; cleared.
+        field = page.get_by_label("Filter shops", exact=True)
+        before = len(reads)
+        field.fill("QUEDEUX")  # in the identifier boutiquedeux, not in its name « Boutique Deux »
+        expect(rows).to_have_count(1)
+        expect(rows.get_by_role("link")).to_have_text("boutiquedeux")
+        field.fill("sans mot")  # in the name only
+        expect(rows).to_have_count(1)
+        expect(rows.get_by_role("link")).to_have_text("sanspasse")
+        field.fill("no such shop")
+        expect(rows).to_have_count(0)
+        expect(page.get_by_text("No shop matches.", exact=True)).to_be_visible()
+        field.fill("")
+        expect(rows).to_have_count(total)
+        assert len(reads) == before, reads[before:]
+
+        # « New shop » in the sidebar: the list, its fold open, its first field focused; also when already on Shops.
+        new = side.get_by_role("link", name="New shop", exact=True)
+        fold = page.locator("details", has=page.locator("summary", has_text="New shop"))
+        page.evaluate("location.hash = '#/money'")
+        expect(page.get_by_role("heading", name="Payments", level=1)).to_be_focused()
+        new.click()
+        expect(page.get_by_label("Identifier", exact=True)).to_be_focused()
+        assert page.evaluate("location.hash") == "#/shops" and fold.evaluate("e => e.open")
+        page.locator("summary", has_text="New shop").click()
+        assert not fold.evaluate("e => e.open")
+        new.click()
+        expect(page.get_by_label("Identifier", exact=True)).to_be_focused()
+        assert fold.evaluate("e => e.open")
+
+        # The rail, by one button: 76 px, every link keeps its name, the D alone; in memory only, so a reload undoes it.
+        page.get_by_role("button", name="Collapse the menu", exact=True).click()
+        expect(page.get_by_role("button", name="Expand the menu", exact=True)).to_be_visible()
+        assert side.bounding_box()["width"] == 76
+        for name in ("New shop", "Shops", "Payments", "Service"):
+            expect(side.get_by_role("link", name=name, exact=True)).to_be_visible()
+        for name in ("Switch to dark theme", "Sign out"):
+            expect(side.get_by_role("button", name=name, exact=True)).to_be_visible()
+        [[_, natural, width]] = page.evaluate(LOGO_JS)
+        assert natural > 0 and width == 40, (natural, width)
+        check_layout(page, "the rail at 1280 px")
+        page.reload()
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Collapse the menu", exact=True)).to_be_visible()
+        assert side.bounding_box()["width"] == 288
+
+        # The drawer at 1024 and 360 px, with a password shown once and the reload banner at the root of the page: both
+        # behind the drawer, out of the keyboard's reach while it is open.
+        page.set_viewport_size({"width": 1024, "height": 768})
+        new_shop_form(page)
+        page.get_by_label("Identifier", exact=True).fill("tiroir")
+        page.get_by_role("button", name="Create the shop", exact=True).click()
+        expect(page.locator(".shown")).to_be_visible()
+        page.route("**/api/admin/shops", lambda route: route.fulfill(status=409, json=OUTDATED) if route.request.method == "POST" else route.fallback())
+        new_shop_form(page)
+        page.get_by_label("Identifier", exact=True).fill("tiroirdeux")
+        page.get_by_role("button", name="Create the shop", exact=True).click()
+        expect(page.locator(".banner")).to_be_visible()
+        page.unroute("**/api/admin/shops")
+        menu = page.get_by_role("button", name="Open the menu", exact=True)
+        close = page.get_by_role("button", name="Close the menu", exact=True)
+        for width, height in ((1024, 768), (360, 640)):
+            page.set_viewport_size({"width": width, "height": height})
+            expect(side).to_be_hidden()
+            expect(menu).to_have_attribute("aria-expanded", "false")
+            menu.click()
+            expect(close).to_be_focused()
+            expect(menu).to_have_attribute("aria-expanded", "true")
+            for behind in (".banner", "header.bar", ".shown", "main"):
+                expect(page.locator(behind)).to_have_attribute("inert", "")
+            for key in ["Tab"] * 9 + ["Shift+Tab"] * 9:
+                page.keyboard.press(key)
+                inside, at = page.evaluate(IN_DRAWER_JS)
+                assert inside, f"{key} left the drawer at {width} px: {at}"
+            for scheme in ("light", "dark"):
+                emulate(page, scheme)
+                check_layout(page, f"the open drawer at {width} px, {scheme}")
+            emulate(page, "light")
+            page.keyboard.press("Escape")
+            assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Open the menu"
+            # At once, while it still slides away: the closing drawer is out of the keyboard's reach already.
+            page.keyboard.press("Shift+Tab")
+            inside, at = page.evaluate(IN_DRAWER_JS)
+            assert not inside, f"Shift+Tab entered the closing drawer at {width} px: {at}"
+            expect(side).to_be_hidden()
+            # A click on the drawer's plain text leaves the focus in it: Escape still closes it.
+            menu.click()
+            side.locator(".section").click()
+            page.keyboard.press("Escape")
+            expect(menu).to_be_focused()
+            expect(side).to_be_hidden()
+            menu.click()
+            page.locator(".scrim").click(position={"x": width - 10, "y": height - 10})
+            expect(menu).to_be_focused()
+            menu.click()
+            close.click()
+            expect(menu).to_be_focused()
+            expect(page.locator("main")).not_to_have_attribute("inert", "")
+            # A destination: the drawer closes and the page's h1 takes the focus.
+            menu.click()
+            side.get_by_role("link", name="Payments", exact=True).click()
+            expect(page.get_by_role("heading", name="Payments", level=1)).to_be_focused()
+            expect(side).to_be_hidden()
+            page.evaluate("location.hash = '#/shops'")
+            expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_focused()
+            # Back with the drawer open: the drawer closes, the previous page's h1 takes the focus.
+            menu.click()
+            expect(close).to_be_focused()
+            page.go_back()
+            expect(page.get_by_role("heading", name="Payments", level=1)).to_be_focused()
+            expect(page.locator(".scrim")).to_have_count(0)
+            expect(side).to_be_hidden()
+            page.go_forward()
+            expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_focused()
+        # Wider than 1180 px, an open drawer closes; the focus on « Close the menu », not shown there, goes to the rail toggle.
+        page.set_viewport_size({"width": 1024, "height": 768})
+        menu.click()
+        expect(close).to_be_focused()
+        page.set_viewport_size({"width": 1300, "height": 800})
+        expect(page.locator(".scrim")).to_have_count(0)
+        expect(page.locator("header.bar")).not_to_have_attribute("inert", "")
+        expect(page.get_by_role("button", name="Collapse the menu", exact=True)).to_be_focused()
+        page.set_viewport_size({"width": 1024, "height": 768})
+        expect(side).to_be_hidden()
+        page.locator(".shown").get_by_role("button", name="Close", exact=True).click()
+        page.locator(".banner").get_by_role("button", name="Reload", exact=True).click()
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+
+        # The theme switch, in the sidebar: the other theme, kept on this device; a change of the device's scheme and a
+        # reload leave it; the logo follows it either way.
+        page.set_viewport_size({"width": 1280, "height": 800})
+        emulate(page, "light")
+        side.get_by_role("button", name="Switch to dark theme", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+        assert page.evaluate("localStorage.getItem('affiche.admin.theme')") == "dark"
+        for device in ("dark", "light"):
+            page.emulate_media(color_scheme=device)
+            assert paint(page)["ground"] == GROUND["dark"], device
+            logo(page, "dark")
+        page.reload()
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+        assert paint(page)["ground"] == GROUND["dark"]
+        page.emulate_media(color_scheme="dark")
+        side.get_by_role("button", name="Switch to light theme", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", "light")
+        assert paint(page)["ground"] == GROUND["light"]
+        logo(page, "light")
+        page.reload()
+        expect(page.get_by_role("heading", name="Shops", exact=True)).to_be_visible()
+        assert paint(page)["ground"] == GROUND["light"] and page.evaluate("localStorage.getItem('affiche.admin.theme')") == "light"
+    finally:
+        context.close()
+
+
 def walk_shops_page(browser, errors):
     """The shops' page asks for nothing under /admin/ (D-ADMIN-005: no byte of the operator's page reaches it)."""
     page = browser.new_page(viewport={"width": 360, "height": 640})
@@ -1298,6 +1632,7 @@ def run():
                         walk_no_storage(browser, engine, errors)
                         walk_keyboard(browser, errors)
                         walk_service(browser, engine, errors)
+                        walk_shell(browser, engine, errors)
                         walk_shops_page(browser, errors)
                         assert not errors, errors
                     finally:
@@ -1324,7 +1659,9 @@ def run():
           "Service: its figures at 360 px with a 500-character text and a 200-character browser, the pause (Esc, Cancel, a 503 "
           "said as unknown, a double tap sent once) and its end, an answer after leaving the screen, the purchase text as "
           "text (blank refused, kept across a lost session), the operator sessions with this device marked, « End all "
-          "operator sessions » with a second device: both signed out.")
+          "operator sessions » with a second device: both signed out. Shell: the sidebar's links, every screen at 1280 and "
+          "360 px in both themes, Figtree and the logo of the theme, the table's states and filter, « New shop », the rail, "
+          "the drawer at 1024 and 360 px, the theme switch kept across the device's scheme and a reload.")
 
 
 if __name__ == "__main__":
