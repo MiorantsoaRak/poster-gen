@@ -169,7 +169,9 @@ rounded:
   poster: "5px"
   operator: "8px"
   thumb: "10px"
+  version-mark: "9px"
   chip: "12px"
+  chat-poster: "14px"
   operator-dialog: "12px"
   field: "16px"
   tile: "18px"
@@ -316,7 +318,7 @@ components:
 
 # Design System: Doka Studio
 
-As built at commit `dbdec2a` (2026-11-20), plus the uncommitted T-POLISH-003 changes (`.page-title`, `--page`, the 16 px phone gutter of the five frame screens, the phone bar's one-line labels), which are still in review.
+As built on 2026-11-20 at the end of the interface polish (T-POLISH-001 to 005, ADR-122), on the local stub build. The proof is in docs/project/reviews/design-after-2026-11-20.md; the screens are captured again with `uv run python ../frontend/tests/design_capture.py <label>` from `backend/`.
 
 ## Overview
 
@@ -455,7 +457,7 @@ The smokes test these rules on rendered screens, in both themes, over the darkes
 **The narrow no-break space.** Figtree has no U+202F, the French thousands separator in « 90 000 ». A second `@font-face` named Figtree maps `NotoSans-Regular.ttf` to `unicode-range: U+202F` only, so a price has the same spacing on every phone. The other font files in `public/fonts/` (Noto Sans Bold, Noto Serif, Montserrat Black Italic, and the same Noto Sans Regular as « Affiche Noto Sans ») are the poster's, listed in `font-manifest.json`.
 
 ### Hierarchy (shops' app)
-- **Page title** (800, 26px, 32px): `.page-title`, the `h1` of Accueil, Mes affiches, Styles, Mes crédits and Mon compte. The sign-in and intake titles use the same size (`.sign-in h1, .intake h1`).
+- **Page title** (800, 26px, 32px): `.page-title`, the `h1` of Accueil, Mes affiches, Styles, Mes crédits and Mon compte. It takes the focus on arrival for a screen reader and shows no box; a 2px underline 6px under it appears only after a key was pressed (`:root[data-keys]`, set in `main.ts` on `keydown` and cleared on `pointerdown`): until the first tap a browser counts a script's focus as the keyboard's, and the title of every page opened would be underlined. The sign-in and intake titles use the same size (`.sign-in h1, .intake h1`).
 - **Heading 1** (800, 22px, 28px, -0.01em, `text-wrap: balance`): every other `h1`. In the phone editor's bar (`.bar h1`) the title is 16px/22px at 700.
 - **Heading 2** (800, 18px, 24px, -0.01em): `h2`. A review section's heading is 21px/27px. The versions column heading is 13px/700 in `--muted`.
 - **Heading 3** (700, 14px): `h3`, with an icon gap of 8px.
@@ -537,7 +539,7 @@ Header 5 · editor top bar 6 · bottom action bar and phone navigation 20 · lar
 
 ## Shapes
 
-Actions and chosen states are pills (999px). A choice not yet made is a rounded square. Containers have large, soft corners. Fields: 16px (`--field`). Cards, lists, toasts and the credits dialog: 24px (`--radius`). Confirmation and review dialogs, the phone tool row and the sticky step row: 28px. Groups, facts, switch groups, the wait block and the « done » banner: 20px. Style tiles and chat bubbles: 18px; a bubble's corner toward its speaker is 6px. Composer: 22px. Unchosen chips and poster elements: 12px. Version thumbnails: 10px. The poster and its small previews: 5px. Photos: 12 to 16px. Text buttons: 4px. Status dots, swatches and step numbers are circles.
+Actions and chosen states are pills (999px). A choice not yet made is a rounded square. Containers have large, soft corners. Fields: 16px (`--field`). In the chat, a poster and a reused picture: 14px; the version mark of a change (« V1 »): 9px. Cards, lists, toasts and the credits dialog: 24px (`--radius`). Confirmation and review dialogs, the phone tool row and the sticky step row: 28px. Groups, facts, switch groups, the wait block and the « done » banner: 20px. Style tiles and chat bubbles: 18px; a bubble's corner toward its speaker is 6px. Composer: 22px. Unchosen chips and poster elements: 12px. Version thumbnails: 10px. The poster and its small previews: 5px. Photos: 12 to 16px. Text buttons: 4px. Status dots, swatches and step numbers are circles.
 
 Strokes: 1.5px for control borders and inner rings, 1px for separators and glass edges, 2px dashed for drop zones and the « new » tile. Icons are one outline set: 16px viewBox, stroke 1.5, round caps and joins, `currentColor`, inline paths in `App.vue` with no icon dependency (ADR-050). In the chat they are 20px at stroke 2.
 
@@ -587,7 +589,7 @@ Every `button` starts from one zero-specificity reset (`:where(button)`), so one
 - **Facts** (`.facts`): a three-column glass strip with `--line` between cells. The label is 13px `--faint` and the value 16px/700. On a phone only the price row stays.
 
 ### List rows
-- **Poster list** (`.rows` > `.library-row` > `.library-item`): one 24px glass panel. Rows are at least 76px high and separated by 1px `--line`. Columns: a 48 × 60 thumbnail (8px corners, `object-fit: contain`), title (ellipsis), meta in `--faint` 500, and a 16px chevron. Hover: `--glass-field`. Press: `--raised`, no scale. On a phone the meta goes under the title. Rows off screen use `content-visibility: auto`.
+- **Poster list** (`.rows` > `.library-row` > `.library-item`): one 24px glass panel. Rows are at least 76px high and separated by 1px `--line`. Columns: a 48 × 60 thumbnail (8px corners, `object-fit: contain`), title (ellipsis) with the meta under it in `--faint` 500, whole at every width (state · price · date · variant), and a 16px chevron. Hover: `--glass-field`. Press: `--raised`, no scale. Rows off screen use `content-visibility: auto`.
 - **Accueil's recent posters** (`.home-recent`): transparent rows with a bottom `--line`, padding 10px 2px, a 44 × 55 thumbnail on `--raised`.
 - **Credit history** (`ShopCredits.vue li`): padding 10px 0, a bottom `--line`, time and note in `--muted`, tabular figures.
 

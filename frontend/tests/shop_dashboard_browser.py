@@ -199,6 +199,12 @@ def walk_frame(browser):
         nav.get_by_role("link", name=re.compile("^Styles")).click()
         expect(title).to_be_focused()
         assert title.evaluate(TITLE_JS)[3:6] == ["none", False, "none"]
+        # A page opened directly: until the first tap a browser counts the script's focus as the keyboard's, and the title
+        # must still show nothing (every shop opening the app saw its title underlined; found in the after captures).
+        page.reload()
+        expect(title).to_have_accessible_name("Styles")
+        expect(title).to_be_focused()
+        assert title.evaluate(TITLE_JS)[3] == "none" and title.evaluate(TITLE_JS)[5] == "none", title.evaluate(TITLE_JS)
 
         page.set_viewport_size({"width": 360, "height": 740})
         for route, name, loaded in (("accueil", "Accueil", page.get_by_text("Aucune affiche pour le moment.")),
@@ -448,6 +454,9 @@ def walk(browser, out):
         expect(gallery.locator(".library-item")).to_have_count(6)
         # From an open poster, a successful creator reload must yield to the later choice of the gallery.
         page.set_viewport_size({"width": 1366, "height": 768})
+        # In the 860 px frame a row's state, price and date are whole, under its title: beside it they were cut (D-POLISH-003).
+        cut = page.eval_on_selector_all(".library-item span", "spans => spans.filter(span => span.scrollWidth > span.clientWidth || !span.textContent.includes(' Ar · ')).map(span => span.textContent)")
+        assert not cut, cut
         gallery.get_by_role("button", name="Affiche 5 Brouillon", exact=False).click()
         expect(page.get_by_label("Titre", exact=True)).to_have_value("Affiche 5")
         page.route("**/api/capabilities", lambda route: pending_caps.append(route))

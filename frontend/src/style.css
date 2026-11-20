@@ -212,7 +212,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 :root { --page: 860px }
 .page-title { font-size: 26px; line-height: 32px; font-weight: 800 }
 .page-title:focus { outline: none }
-.page-title:focus-visible { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 6px }
+:root[data-keys] .page-title:focus-visible { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 6px }
 .message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
   border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
@@ -256,12 +256,15 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .row-actions button { min-height: 36px; padding: 0 14px; font-weight: 600 }
 .more { margin: 14px 0 0; text-align: center }
 .gallery .titlerow label.check { padding: 0 }
-.library-item { display: grid; align-items: center;grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); text-align: left; justify-content: stretch }
+.library-item { display: grid; align-items: center; grid-template-columns: 48px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); text-align: left; justify-content: stretch }
 /* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
 .library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
 @media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--glass-field) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.library-item span { color: var(--faint); font-weight: 500; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* The state, price and date go under the title at every width: beside it they were cut short in the 860 px frame (D-POLISH-003). */
+.library-item > :first-child { grid-row: 1 / span 2 }
+.library-item span { grid-column: 2; grid-row: 2; color: var(--faint); font-weight: 500; line-height: 20px }
+.library-item > :last-child { grid-column: 3; grid-row: 1 / span 2 }
 .library-item svg { color: var(--faint); justify-self: center }
 /* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
 .library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
@@ -654,11 +657,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .facts div + div { border-left: 0; border-top: 1px solid var(--line) }
   .library-row { grid-template-columns: 1fr }
   .row-actions { padding: 0 12px 10px }
-  /* The state, price and date go under the title instead of disappearing. */
-  .library-item { grid-template-columns: 48px minmax(0, 1fr) 16px; padding: 8px 12px }
-  .library-item > :first-child { grid-row: 1 / span 2 }
-  .library-item span { grid-column: 2; grid-row: 2; white-space: normal }
-  .library-item > :last-child { grid-column: 3; grid-row: 1 / span 2 }
+  .library-item { padding: 8px 12px }
   .progress { display: none }
   /* iOS zooms the page on a field under 16px. */
   input, textarea, select { font-size: 16px }
