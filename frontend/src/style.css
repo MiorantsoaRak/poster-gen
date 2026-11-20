@@ -1,7 +1,8 @@
-/* Doka Studio, the shops' interface (ADR-050, ADR-077, D-POSTER-EDITOR-005 part B). A warm light ground (clair) or a warm near-black one
-   (sombre), frosted glass on every surface over three soft colour patches, an ink main button, Signal Yellow as the
-   only accent. The theme follows the device until the owner picks one (index.html, App.vue). The poster is the one
-   lifted thing, with a short shadow. Glass rules and their solid fallback: see the tokens and the end of this file.
+/* Doka Studio, the shops' interface (ADR-050, ADR-077, D-POSTER-EDITOR-005 part B, D-REDESIGN-001). Warm Paper (clair)
+   or Charcoal (sombre) over three soft lights; cards, fields and chips opaque with a hairline; glass only on what floats
+   (bars, sheets, toasts); the main action charcoal on Signal Yellow. The theme follows the device until the owner picks
+   one (index.html, App.vue). The poster is the one lifted thing, with a short shadow. Glass and its solid fallback: see
+   the tokens and the end of this file.
    Interface type: Figtree, bundled with its licence; nothing is fetched from another site. The poster keeps its own fonts. */
 @font-face { font-family: Figtree; src: url('/fonts/Figtree-Variable.woff2') format('woff2'); font-weight: 300 900; font-display: swap }
 /* Figtree has no narrow no-break space (U+202F), the French thousands separator of « 90 000 »: the bundled Noto Sans
@@ -9,45 +10,54 @@
 @font-face { font-family: Figtree; src: url('/fonts/NotoSans-Regular.ttf') format('truetype'); font-weight: 300 900; font-display: swap; unicode-range: U+202F }
 
 :root {
-  --ground: #100f0e; --surface: #1b1a18; --raised: #2a2825; --line: #302d2a; --control: #57524c;
-  --text: #f5f1e8; --muted: #bdb6ad; --faint: #a39b91; --hue: #f2c744; --accent-soft: #3b3113; --accent-ink: #f8d97a;
-  --ok: #8fddb0; --ok-bg: #16261d; --warn: #e9b458; --warn-bg: #2a2212; --bad: #ef7d74; --bad-bg: #331a18;
+  /* The role table of D-REDESIGN-001 (the mockup's doka.css), pinned by tokens.test.ts. --line is a card's or a row's
+     hairline, --control a field's boundary (3:1), --edge a button's or a chip's own edge (its label names it), --active
+     a hover and the current item, --raised a track or a segment's trough, --side-bg the sidebar's column. */
+  --ground: #20201d; --surface: #2b2b27; --raised: #36362f; --line: rgb(245 241 232 / .10); --control: #8f8b80;
+  --edge: rgb(245 241 232 / .22); --active: rgb(245 241 232 / .10); --side-bg: rgb(0 0 0 / .22);
+  --text: #f5f1e8; --muted: #d6d0c3; --faint: #c2bcaf; --hue: #f2c744; --accent-soft: #3b3113; --accent-ink: #f8d97a;
+  --ok: #8fddb0; --ok-bg: #1d3327; --warn: #f0c26a; --warn-bg: #3a2f14; --bad: #ff9a8f; --bad-bg: #3d2320;
   --invert: #f5f1e8; --invert-ink: #100f0e; --scrim: #000000cc; --radius: 24px; --field: 16px;
   /* Signal Yellow is a fill, always under --on-signal (D-POLISH-002); --hue is the line: a ring, a border, a progress mark. */
-  --signal: #f2c744; --on-signal: #20201d;
-  --lift: 0 1px 2px rgb(0 0 0 / .5), 0 10px 28px -10px rgb(0 0 0 / .7); --poster-shadow: 0 8px 20px -8px rgb(0 0 0 / .6);
-  /* Glass: bars and sheets over content (--glass), panels and tiles (--glass-panel), fields, chips and secondary buttons
-     (--glass-field), a chosen segment (--glass-strong). Each is opaque enough for 4.5:1 over the whole backdrop. */
-  --glass: rgb(27 26 24 / .86); --glass-panel: rgb(30 28 26 / .58); --glass-field: rgb(255 255 255 / .07); --glass-strong: rgb(70 66 62 / .7);
-  --glass-line: rgb(255 255 255 / .1); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 12px 32px -14px rgb(0 0 0 / .65); --warn-glass: rgb(42 34 18 / .8);
-  --blur-panel: blur(26px) saturate(1.5); --blur-field: blur(16px) saturate(1.4);
-  /* The backdrop: neutral, almost flat, no colour (user decision 2026-11-14, ADR-091). The glass is on the elements. */
-  --patch-1: #191816; --patch-2: #121110; --patch-3: #0d0c0b;
-  /* The chat (ADR-091): a sheen from one corner on its glass, a neutral bubble for the owner, a soft shadow under a message. */
-  --glass-hi: rgb(74 70 65 / .72); --bubble: #34312d; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3);
+  --signal: #f2c744; --on-signal: #20201d; --signal-edge: #f2c744;
+  --lift: 0 2px 4px rgb(0 0 0 / .45), 0 28px 60px -28px rgb(0 0 0 / .9); --poster-shadow: 0 8px 20px -8px rgb(0 0 0 / .6);
+  /* Glass, only on what floats over content (a bar, a toast, a dialog, a sheet): opaque enough for 4.5:1 for --text,
+     --muted and --faint whatever is behind, black or white (tokens.test.ts). The design's lighter bar glass (.62) fell
+     to 2.74:1 over a white poster (code review r1). */
+  --glass-strong: rgb(43 43 39 / .88);
+  --blur-panel: blur(26px) saturate(1.5);
+  /* The main action under a hovering pointer: the Signal mixed 86 % toward Charcoal, computed (color-mix() would compute to
+     a color() the contrast checks do not read). */
+  --signal-hover: #d5b03f;
+  /* The field behind the window: three soft lights on the ground (yellow, sand, white). */
+  --patch-1: rgb(242 199 68 / .16); --patch-2: rgb(110 98 70 / .34); --patch-3: rgb(255 255 255 / .04);
+  /* The chat (ADR-091): a neutral bubble for the owner, a soft shadow under the composer. */
+  --bubble: #34312d; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3);
   font-family: Figtree, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
   font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark; -webkit-font-smoothing: antialiased;
 }
 :root[data-theme=clair] {
-  --ground: #f5f1e8; --surface: #ffffff; --raised: #ebe5dc; --line: #e2dacf; --control: #c9c0b4;
+  --ground: #f5f1e8; --surface: #fffdf8; --raised: #ece6d8; --line: rgb(32 32 29 / .10); --control: #7d786d;
+  --edge: rgb(32 32 29 / .20); --active: rgb(32 32 29 / .08); --side-bg: rgb(32 32 29 / .045);
   /* A yellow line on paper is 1.4:1: the line is a dark ochre of its hue (3.9:1 on --raised, 4.4 on --ground, 4.9 on --surface). */
-  --text: #20201d; --muted: #5c554d; --faint: #67605a; --hue: #8f6b00; --accent-soft: #fcf1d0; --accent-ink: #7a5c00;
-  --ok: #145c37; --ok-bg: #e2f2e8; --warn: #6b4600; --warn-bg: #fff1d6; --bad: #a3271f; --bad-bg: #fbeae8;
+  --text: #20201d; --muted: #4d4940; --faint: #5f5a50; --hue: #8f6b00; --accent-soft: #fcf1d0; --accent-ink: #7a5c00;
+  --ok: #145c37; --ok-bg: #e2f2e8; --warn: #6b4600; --warn-bg: #fdf0cf; --bad: #a3271f; --bad-bg: #fbeae8;
   --invert: #20201d; --invert-ink: #ffffff; --scrim: #15130f99; color-scheme: light;
-  --lift: 0 1px 2px rgb(40 28 14 / .06), 0 10px 28px -10px rgb(40 28 14 / .18); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
-  --glass: rgb(255 255 255 / .86); --glass-panel: rgb(255 255 255 / .74); --glass-field: rgb(255 255 255 / .62); --glass-strong: rgb(255 255 255 / .92);
-  --glass-line: rgb(255 255 255 / .75); --glass-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 12px 32px -14px rgb(40 28 14 / .3); --warn-glass: rgb(255 241 214 / .8);
-  --patch-1: #f7f5f1; --patch-2: #f2efe9; --patch-3: #eae6df;
-  --glass-hi: rgb(255 255 255 / .96); --bubble: #e4dfd7; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 4px 18px -10px rgb(40 28 14 / .12);
+  --signal-edge: #d9b032;
+  --lift: 0 2px 4px rgb(60 44 16 / .08), 0 28px 60px -28px rgb(60 44 16 / .45); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
+  --glass-strong: rgb(255 253 248 / .86);
+  --patch-1: rgb(242 199 68 / .28); --patch-2: rgb(222 204 168 / .55); --patch-3: rgb(255 255 255 / .7);
+  --bubble: #e4dfd7; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 4px 18px -10px rgb(40 28 14 / .12);
 }
 /* A press: at once, back with a strong ease-out (D-POSTER-EDITOR-007; the property only, never `all`). */
 :root { --press: transform 160ms cubic-bezier(.23, 1, .32, 1) }
-:root { --ambient: linear-gradient(155deg, var(--patch-1), var(--patch-2) 50%, var(--patch-3)) }
+:root { --ambient: radial-gradient(52rem 34rem at 8% -6%, var(--patch-1), transparent 62%), radial-gradient(46rem 38rem at 104% 104%, var(--patch-2), transparent 60%),
+  radial-gradient(34rem 26rem at 62% 34%, var(--patch-3), transparent 70%) }
 
 * { box-sizing: border-box }
 html { scroll-behavior: smooth; scroll-padding: 64px 0 80px; -webkit-tap-highlight-color: transparent }
-/* What the glass blurs: the neutral backdrop, fixed on the page ground; never a blurred copy of the poster (a dark product blurs
-   to grey). The body stays transparent so that they show. */
+/* What the glass blurs: the three soft lights, fixed on the page ground; never a blurred copy of the poster (a dark product
+   blurs to grey). The body stays transparent so that they show. */
 html::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--ambient) }
 /* In the editor a focused field is never under what stays at the top (measured in App.vue: top bar, and the poster in the tabs). */
 html:has(main.editing) { scroll-padding-top: calc(var(--sticky-top, 56px) + 8px) }
@@ -62,16 +72,16 @@ small { display: block }
 .sub { font-size: 13px; font-weight: 700; color: var(--muted); margin: 18px 0 6px }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round }
 
-/* Controls: one reset that any single class overrides (:where has no weight), pills, three levels (filled, glass, text). */
+/* Controls: one reset that any single class overrides (:where has no weight), pills, three levels (Signal, outlined, text). */
 button, input, textarea, select { font: inherit }
 button, a, input, select, textarea, summary, label { touch-action: manipulation }
 :where(button) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 20px; border-radius: 999px;
-  border: 1.5px solid var(--line); background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field);
+  border: 1.5px solid var(--edge); background: transparent;
   color: var(--text); font-weight: 700; line-height: 1.2; cursor: pointer;
   transition: background-color .15s ease-out, border-color .15s ease-out, opacity .15s ease-out, var(--press) }
 /* Hover looks only where there is a hovering pointer: on a touch screen the finger stays where the next button is
    drawn and the look sticks to it (« Générer l’affiche » appeared under « Continuer » and read as disabled). */
-@media (hover: hover) { :where(button:hover:not(:disabled)) { background-color: var(--raised) } }
+@media (hover: hover) { :where(button:hover:not(:disabled)) { background-color: var(--active) } }
 /* Press (R-POSTER-EDITOR-009): every pressable answers at the touch, before any network answer. Leaf controls only: a
    transform on an element that holds a fixed one would pin that one to it. Full-width rows and switch rows take a
    background step instead (a scaled row reads as a jump). iOS Safari needs a touch listener for :active (main.ts). */
@@ -81,7 +91,7 @@ button, a, input, select, textarea, summary, label { touch-action: manipulation 
 label.switch:active:not(:has(input:disabled)) { background: var(--raised) }
 /* The control that started a slow action (point 2): its own colours, not the others' disabled grey, and after 120 ms a
    spinner in its icon's place (measured in App.vue), or over its label's end within its padding. It keeps its size. */
-button.primary[aria-busy=true]:disabled { background: var(--invert); border-color: var(--invert); color: var(--invert-ink) }
+button.primary[aria-busy=true]:disabled { background: var(--signal); border-color: var(--signal-edge); color: var(--on-signal) }
 :is(button, a)[aria-busy=true] { position: relative }
 :is(button, a)[aria-busy=true]::after { content: ''; position: absolute; top: calc(var(--spin-y, 50%) - 7px); left: calc(var(--spin-x, 100% - 11px) - 7px); width: 14px; height: 14px; box-sizing: border-box;
   border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; opacity: 0; pointer-events: none; animation: spin .7s linear infinite, appear 0s .12s forwards }
@@ -97,12 +107,13 @@ button.primary[aria-busy=true]:disabled { background: var(--invert); border-colo
 :where(button:disabled) { color: var(--faint); cursor: not-allowed }
 :where(button[aria-busy=true]:disabled) { color: var(--text); cursor: progress }
 button.primary, button.secondary { min-height: 48px; font-size: 15px }
-button.primary, .download-button { background: var(--invert); border-color: var(--invert); color: var(--invert-ink); -webkit-backdrop-filter: none; backdrop-filter: none }
-@media (hover: hover) { button.primary:hover:not(:disabled), .download-button:hover { background: var(--invert); opacity: .86 } }
+/* The main action: charcoal on Signal Yellow with a 1.5 px edge of its hue, never an opacity (D-REDESIGN-001). */
+button.primary, a.primary, .download-button { background: var(--signal); border-color: var(--signal-edge); color: var(--on-signal) }
+@media (hover: hover) { :is(button.primary, .chat .send):hover:not(:disabled), a.primary:hover, .download-button:not(.secondary):hover { background: var(--signal-hover) } }
 button.primary:disabled { background: var(--raised); border-color: var(--raised); color: var(--faint); opacity: 1 }
-button.ghost { border-color: transparent; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); font-weight: 500; padding: 0 12px }
+button.ghost { border-color: transparent; background: none; color: var(--text); font-weight: 500; padding: 0 12px }
 button.icon { width: 44px; min-height: 44px; padding: 0 }
-button.text-button { min-height: 32px; padding: 0 4px; border: 0; border-radius: 4px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--muted); font-weight: 600; text-decoration: underline; text-underline-offset: 2px }
+button.text-button { min-height: 32px; padding: 0 4px; border: 0; border-radius: 4px; background: none; color: var(--muted); font-weight: 600; text-decoration: underline; text-underline-offset: 2px }
 @media (hover: hover) { button.text-button:hover:not(:disabled) { color: var(--text); background: none } }
 :is(button, input, select, textarea, summary, a, .poster-canvas):focus-visible { outline: 2px solid var(--text); outline-offset: 2px }
 /* A chosen style or version already wears this ring: the focus ring goes outside it. */
@@ -116,14 +127,13 @@ main:focus, [role=dialog]:focus, .panel:focus { outline: none }
 .skip:focus-visible { left: 12px; top: 8px }
 
 label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); margin-bottom: 14px }
-:where(input, textarea, select) { width: 100%; min-height: 48px; border: 1.5px solid var(--line); border-radius: var(--field); padding: 10px 16px;
-  background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); color: var(--text); font-size: 15px; font-weight: 550; transition: border-color .15s ease-out }
-@media (hover: hover) { :where(input, textarea, select):hover { border-color: var(--control) } }
+/* A field: opaque, its boundary at 3:1 at rest (--control), the text colour when focused. */
+:where(input, textarea, select) { width: 100%; min-height: 48px; border: 1.5px solid var(--control); border-radius: var(--field); padding: 10px 16px;
+  background: var(--surface); color: var(--text); font-size: 15px; font-weight: 550; transition: border-color .15s ease-out }
 :where(input, textarea, select):focus { border-color: var(--text) }
 /* 4.5:1 on every field, lighter and thinner than a typed value (D-POLISH-002): --faint is 4.19:1 on a dark field over --raised. */
 input::placeholder, textarea::placeholder { color: var(--muted); font-weight: 400 }
 textarea { resize: vertical }
-input:is([type=color], [type=range], [type=checkbox], [type=file]) { -webkit-backdrop-filter: none; backdrop-filter: none }
 input[type=color] { padding: 4px; width: 56px; cursor: pointer }
 input[type=range] { margin: 0; padding: 0; min-height: 28px; accent-color: var(--text); border: 0; background: none }
 input[type=file] { font-size: 13px; border-style: dashed; cursor: pointer }
@@ -144,16 +154,25 @@ label.switch input:disabled { opacity: .45; cursor: not-allowed }
   label.switch input { appearance: auto; -webkit-appearance: auto; width: 22px; height: 22px; min-height: 22px; box-shadow: none }
   label.switch input::before { content: none }
 }
-/* Switches read as a list of settings: one glass group, a line between rows. */
-.checks-row.switches { display: grid; gap: 0; margin: 0 0 14px; padding: 0 16px; border-radius: 20px; background: var(--glass-panel); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+/* Switches read as a list of settings: one group with a hairline, a line between rows. */
+.checks-row.switches { display: grid; gap: 0; margin: 0 0 14px; padding: 0 16px; border-radius: 20px; background: var(--surface); border: 1px solid var(--line) }
 .checks-row.switches .switch + .switch { border-top: 1px solid var(--line) }
 /* A choice among a few values: word chips and colour swatches, the chosen one marked by aria-pressed, by its shape as
    well as its colour (a pill among rounded squares, a ring). */
 .choice { display: grid; gap: 6px; margin: 14px 0; font-size: 13px; font-weight: 650; color: var(--muted) }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
-.chip { min-height: 40px; min-width: 44px; padding: 0 15px; border-radius: 12px; border-color: var(--line); color: var(--muted); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; transition: border-radius .2s ease-out, background-color .15s ease-out, border-color .15s ease-out, var(--press) }
+/* A chip: opaque, its own edge; a step of colour under a hovering pointer. */
+.chip { min-height: 40px; min-width: 44px; padding: 0 15px; border-radius: 12px; border-color: var(--edge); background: var(--surface); color: var(--muted); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; transition: border-radius .2s ease-out, background-color .15s ease-out, border-color .15s ease-out, var(--press) }
 .chip[aria-pressed=true] { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
-.sw { width: 36px; min-height: 36px; padding: 0; border: 3px solid var(--surface); box-shadow: 0 0 0 1.5px var(--control); -webkit-backdrop-filter: none; backdrop-filter: none }
+@media (hover: hover) { :is(button.chip, .layer-list button):not([aria-pressed=true]):hover:not(:disabled) { background-color: var(--raised) } }
+/* A state in words (D-REDESIGN-001): a pill on the state's pale ground in its dark text, with one dot; neutral without a
+   state. The dot is a border, so that forced colours keep it. The pill over the poster (.frame .badge) keeps its look. */
+.badge { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 10px; border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12.5px; font-weight: 700; white-space: nowrap }
+.badge.ok { background: var(--ok-bg); color: var(--ok) }
+.badge.warn { background: var(--warn-bg); color: var(--warn) }
+.badge.bad { background: var(--bad-bg); color: var(--bad) }
+.badge:not(.frame *)::before { content: ''; flex: none; border: 3px solid currentColor; border-radius: 50% }
+.sw { width: 36px; min-height: 36px; padding: 0; border: 3px solid var(--surface); box-shadow: 0 0 0 1.5px var(--control) }
 .sw[aria-pressed=true] { box-shadow: 0 0 0 2.5px var(--text) }
 label.other { flex-direction: row; align-items: center; gap: 8px; margin: 0; font-weight: 500 }
 label.other input { width: 36px; min-height: 36px; border-radius: 999px }
@@ -161,7 +180,7 @@ label.other.on input { border-color: var(--text); box-shadow: 0 0 0 1px var(--te
 @media (pointer: coarse) { .chip, .sw, label.other input { min-height: 44px } .sw { width: 44px } label.other input { width: 44px } }
 /* The poster's format (ADR-080): native radios dressed as chips, the chosen one a pill. Each radio covers its label,
    transparent, for touch, keyboard and screen readers. */
-.format-choice label.chip { position: relative; flex-direction: row; align-items: center; justify-content: center; margin: 0; border: 1.5px solid var(--line); background: var(--glass-field); cursor: pointer }
+.format-choice label.chip { position: relative; flex-direction: row; align-items: center; justify-content: center; margin: 0; border: 1.5px solid var(--edge); cursor: pointer }
 .format-choice label.chip input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; opacity: 0; cursor: inherit }
 .format-choice label.chip:has(input:checked) { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
 .format-choice label.chip:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px }
@@ -169,8 +188,8 @@ label.other.on input { border-color: var(--text); box-shadow: 0 0 0 1px var(--te
 .format-choice label.chip:has(input:disabled:not(:checked)) { color: var(--faint) }
 .format-choice .help, .format-choice .row { margin: 4px 0 0 }
 .format-choice .help { font-weight: 500 }
-/* A model of another shape asks under its picker; no blur, it sits on the rail's. */
-.format-ask { margin: 12px 0 14px; padding: 12px 14px; background: var(--glass-field); border-radius: var(--field) }
+/* A model of another shape asks under its picker. */
+.format-ask { margin: 12px 0 14px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--field) }
 .format-ask p { margin: 0; color: var(--text); font-size: 13.5px; font-weight: 600 }
 .unit { position: relative; display: block }
 .unit::after { content: 'Ar'; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--faint); font-weight: 600 }
@@ -185,9 +204,9 @@ details[open] > summary { color: var(--text) }
 .checks-row { display: flex; flex-wrap: wrap; gap: 0 18px }
 .wide { width: 100%; margin-top: 16px }
 
-/* Shell: a glass top bar over the patches, real destinations */
+/* Shell: a glass top bar over the lights, real destinations */
 .app-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; min-height: 56px; padding: max(6px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 6px max(20px, env(safe-area-inset-left));
-  background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
+  background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
 .wordmark { display: inline-flex; align-items: center; flex: none; min-height: 44px; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text); text-decoration: none }
 .signal-symbol { width: 32px; height: 32px; padding: 6px; background: var(--signal) }
 .signal-horizontal { display: none }
@@ -199,8 +218,8 @@ details[open] > summary { color: var(--text) }
 .shop-label { color: var(--muted); font-size: 13px; font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .nav { display: flex; gap: 4px; margin-right: auto; flex-wrap: wrap }
 .nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px; color: var(--muted); font-weight: 650; text-decoration: none; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
-@media (hover: hover) { .nav a:hover { background: var(--glass-field); color: var(--text) } }
-.nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--glass-field); box-shadow: inset 0 0 0 1.5px var(--line) }
+@media (hover: hover) { .nav a:hover { background: var(--active); color: var(--text) } }
+.nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--active); box-shadow: inset 0 0 0 1.5px var(--line) }
 .count { color: var(--faint); font-weight: 500 }
 .app-header .count { color: var(--muted) }
 .nav .short { display: none }
@@ -214,24 +233,24 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .page-title:focus { outline: none }
 :root[data-keys] .page-title:focus-visible { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 6px }
 .message { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(94vw, 680px); display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 18px;
-  border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--lift); color: var(--text); font-weight: 700 }
 /* The kind of message is a coloured mark and its place (errors at the bottom, notices at the top), not the text colour. */
 .message::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok) }
 .message.error { bottom: max(20px, env(safe-area-inset-bottom)) }
 .message.error::before { background: var(--bad) }
 .message.notice { top: 64px }
 .message .text-button { color: inherit; flex: none }
-.demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); color: var(--warn); font-size: 13px; font-weight: 550 }
+.demo-notice { padding: 10px 16px; border-radius: var(--field); margin-bottom: 14px; background: var(--warn-bg); color: var(--warn); font-size: 13px; font-weight: 550 }
 
-/* Sign-in, new poster, galleries: glass panels on the patches */
-.sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state { background: var(--glass-panel); box-shadow: var(--glass-shadow) }
-.sign-in, .intake, .empty, .look-card, .rows, .group, .comparison figure, .shot, .facts, .job-state { -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+/* Sign-in, new poster, galleries, the editor's panel: cards at rest, opaque with a hairline, no blur, no shadow
+   (D-REDESIGN-001; browser_smoke.py's check_resting). */
+.sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state { background: var(--surface); border: 1px solid var(--line) }
 .sign-in { max-width: 420px; padding: 28px; margin: 10vh auto; border-radius: var(--radius) }
 .sign-in h1, .intake h1 { font-size: 26px; line-height: 32px; margin-bottom: 8px }
 .intake-layout { max-width: 640px; margin: 20px auto }
 .intake { border-radius: var(--radius); padding: 28px }
 .intro { color: var(--muted); margin-bottom: 22px; max-width: 52ch }
-.upload-zone { background: var(--glass-field); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); border: 2px dashed var(--control); border-radius: var(--field); padding: 22px; cursor: pointer; color: var(--text); font-size: 14px; transition: border-color .15s ease-out }
+.upload-zone { background: var(--surface); border: 2px dashed var(--control); border-radius: var(--field); padding: 22px; cursor: pointer; color: var(--text); font-size: 14px; transition: border-color .15s ease-out }
 @media (hover: hover) { .upload-zone:hover { border-color: var(--text) } }
 .upload-zone span { font-size: 13px; font-weight: 500; color: var(--faint) }
 .upload-zone input { border: 0; padding: 0; background: none; min-height: 0 }
@@ -241,7 +260,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .file-pick { position: relative }
 .file-pick input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; min-height: 0; padding: 0; border: 0 }
 .file-pick:focus-within { outline: 2px solid var(--text); outline-offset: 2px }
-.file-pick .pick-button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 20px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--glass-strong); color: var(--text); font-size: 14px; font-weight: 700 }
+.file-pick .pick-button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0 20px; border-radius: 999px; border: 1.5px solid var(--edge); color: var(--text); font-size: 14px; font-weight: 700 }
 .file-pick:has(input:disabled) .pick-button { color: var(--faint); border-color: var(--line) }
 .photo-strip { display: flex; gap: 10px; margin: 10px 0 16px }
 .photo-strip:empty { display: none }
@@ -256,10 +275,10 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .row-actions button { min-height: 36px; padding: 0 14px; font-weight: 600 }
 .more { margin: 14px 0 0; text-align: center }
 .gallery .titlerow label.check { padding: 0 }
-.library-item { display: grid; align-items: center; grid-template-columns: 48px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); text-align: left; justify-content: stretch }
+.library-item { display: grid; align-items: center; grid-template-columns: 48px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; justify-content: stretch }
 /* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
 .library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
-@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--glass-field) } }
+@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--active) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 /* The state, price and date go under the title at every width: beside it they were cut short in the 860 px frame (D-POLISH-003). */
 .library-item > :first-child { grid-row: 1 / span 2 }
@@ -270,7 +289,7 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
 .empty { color: var(--muted); border-radius: var(--radius); padding: 28px }
 .look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px }
-.look-card { margin: 0; border: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
+.look-card { margin: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
 .look-card span { padding: 0 6px }
 .look-wall img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 18px; display: block }
 .look-card span { font-weight: 700 }
@@ -303,58 +322,56 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .work { display: grid; grid-template-columns: 360px minmax(0, 1fr) 156px; gap: 14px; align-items: start }
 .card { border-radius: var(--radius); padding: 20px 22px; min-width: 0 }
 .rail { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start }  /* an auto column grew to the step tabs' width and pushed the panel and its bar out by 17 px (user, 2026-11-14) */
-/* The rail holds the phone's fixed bottom bar, and a blurred element is the containing block of its fixed
-   descendants (part A): the rail carries the colour, a pseudo-element behind it carries the blur. */
-.rail { position: relative }
-.rail::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+/* The rail holds the phone's fixed bottom bar: no blur, filter, transform or containment on it (a blurred element is the
+   containing block of its fixed descendants, part A). It is a card at rest. */
 .rail.card { padding-bottom: 0 }
 .step-count { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--muted) }
 /* Steps and tabs are the same row: steps carry their number and open once visited, tabs are all open. The chosen one
    is a raised pill, the others have no shape. */
-.tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--glass-field); box-shadow: inset 0 0 0 1.5px var(--line); border-radius: 999px; overflow-x: auto }
+.tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--raised); box-shadow: inset 0 0 0 1.5px var(--line); border-radius: 999px; overflow-x: auto }
 .tabs [role=tablist] { display: flex; gap: 2px; flex: 3 1 auto; min-width: 0 }
-.tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 8px; gap: 5px; border: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap }
+.tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 8px; gap: 5px; border: 0; background: none; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap }
 .stepping .tab { flex: 1 1 auto; padding: 0 6px; gap: 4px }
-.tab[aria-selected=true] { background: var(--glass-strong); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
-@media (hover: hover) { .tab[aria-selected=true]:hover { background: var(--glass-strong) } }
+.tab[aria-selected=true] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
+@media (hover: hover) { .tab[aria-selected=true]:hover { background: var(--surface) } }
 span.tab { display: inline-flex; align-items: center; justify-content: center }
 .tab .n { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--line); font-size: 11px; line-height: 1; font-weight: 700 }
 .tab[aria-selected=true] .n { background: var(--text); color: var(--surface) }
 .panel { min-width: 0; padding-bottom: 20px }
 .lead { margin-bottom: 14px }
 .panel > .check:last-child { margin-bottom: -8px }
-.refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-glass); border-radius: var(--field) }
+.refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-bg); border-radius: var(--field) }
 .ambiance { margin-top: 16px }
 /* « Retour » and « Continuer » stay in reach at the bottom of the step, however long it is. */
 .main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px;
-  background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
+  background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
 .step-nav .primary { margin-left: auto }
 .step-nav .why { margin: 0; text-align: left }
 .see, .see-big, .stage .back, .back-link, .demo-badge, .side-choice, .tab .tool, .panel-theme, .to-chat { display: none }
 
-/* Styles: glass tiles; the chosen one is ringed and ticked. */
+/* Styles: tiles with a hairline; the chosen one is ringed and ticked. */
 .look-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
-.look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 5px 5px 8px; border: 0; border-radius: 18px;
-  background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); color: var(--muted); font-size: 12.5px; line-height: 16px; font-weight: 600; text-align: left }
+.look { position: relative; display: grid; gap: 6px; align-content: start; justify-content: stretch; min-height: 0; padding: 5px 5px 8px; border: 1px solid var(--line); border-radius: 18px;
+  background: var(--surface); color: var(--muted); font-size: 12.5px; line-height: 16px; font-weight: 600; text-align: left }
 .look > span:not(.add) { padding: 0 4px }
-@media (hover: hover) { .look:hover:not(:disabled) { background: var(--glass-panel); color: var(--text) } }
+@media (hover: hover) { .look:hover:not(:disabled) { color: var(--text) } }
 .look img, .add { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 13px; display: grid; place-items: center }
-.add { border: 2px dashed var(--control); background: var(--glass-field); color: var(--muted) }
+.add { border: 2px dashed var(--control); background: var(--surface); color: var(--muted) }
 /* The ring is a shadow, so that the focus ring (an outline) still shows around a chosen style. */
 .look.selected { color: var(--text); font-weight: 700; box-shadow: 0 0 0 2px var(--ground), 0 0 0 5px var(--text) }
 .look.selected::before { content: ''; position: absolute; z-index: 1; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--invert) }
 .look.selected::after { content: ''; position: absolute; z-index: 1; top: 15px; right: 19px; width: 5px; height: 10px; border: solid var(--invert-ink); border-width: 0 2px 2px 0; transform: rotate(45deg) }
-details.new-look { border: 0; margin-top: 4px; padding: 0 14px; background: var(--glass-field); border-radius: var(--field) }
+details.new-look { border: 1px solid var(--line); margin-top: 4px; padding: 0 14px; background: var(--surface); border-radius: var(--field) }
 details.new-look[open] { padding-bottom: 14px }
 /* The poster's elements: chips, the chosen one a pill. */
 .layer-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px }
-.layer-list button { min-height: 36px; padding: 0 14px; border-radius: 12px; font-weight: 600; color: var(--muted); border-color: var(--line); transition: border-radius .2s ease-out, background-color .15s ease-out, var(--press) }
+.layer-list button { min-height: 36px; padding: 0 14px; border-radius: 12px; font-weight: 600; color: var(--muted); border-color: var(--edge); background: var(--surface); transition: border-radius .2s ease-out, background-color .15s ease-out, var(--press) }
 .layer-list button[aria-pressed=true] { border-radius: 999px; background: var(--accent-soft); border-color: var(--hue); color: var(--accent-ink) }
 .selection { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px }
 .selection p { margin: 0; text-align: center }
 /* « Retirer de l’affiche » is the one dark pill near the poster. */
-.selection .remove { min-height: 40px; padding: 0 16px; background: var(--invert); border-color: var(--invert); color: var(--invert-ink); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: var(--lift) }
-.plan { padding: 14px; background: var(--glass-field); border-radius: var(--field); margin-top: 14px }
+.selection .remove { min-height: 40px; padding: 0 16px; background: var(--invert); border-color: var(--invert); color: var(--invert-ink); box-shadow: var(--lift) }
+.plan { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--field); margin-top: 14px }
 
 /* The stage has no surface of its own: the poster sits on the patches, the one lifted thing on the screen. */
 .stage { display: grid; gap: 14px; justify-items: stretch; align-content: start; position: sticky; top: 64px; min-width: 0; padding: 14px 20px 20px; border-radius: var(--radius); background: none }
@@ -379,16 +396,16 @@ details.new-look[open] { padding-bottom: 14px }
 /* A pill or badge over the poster is always in front of it (user, 2026-11-13, ADR-076): an explicit order, not the
    DOM's. The « Aperçu » pill says the draft is a preview (the scene comes at generation); the badge names the version.
    Only on one column, where the poster is small: on a wide screen and in the large view it would hide the corner of
-   the poster from the pointer. Glass blurs the poster under the pill only. */
+   the poster from the pointer. It sits on the picture itself, so its ground is opaque (any poster is behind it). */
 .frame .badge { display: none; position: absolute; z-index: 2; top: 8px; left: 8px; align-items: center; gap: 6px; min-height: 28px; margin: 0; padding: 0 11px; border-radius: 999px;
-  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700;
+  background: var(--surface); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700;
   max-width: calc(100% - 16px); white-space: normal }  /* on a narrow poster (a Story, 142 px at 360) it wraps inside it */
 .tap-open { position: absolute; inset: 0; z-index: 1; cursor: zoom-in }
-/* While a scene is made (D-POSTER-EDITOR-006) the poster says so itself: a glass pill with the state word and a pulsing
-   dot in the one hue, in front like the badge; the badge names what is shown (the draft, or the version kept), at every
-   width while it lasts. */
+/* While a scene is made (D-POSTER-EDITOR-006) the poster says so itself: an opaque pill with the state word and a
+   pulsing dot in the one hue, in front like the badge; the badge names what is shown (the draft, or the version kept), at
+   every width while it lasts. */
 .gen-pill { position: absolute; z-index: 3; left: 50%; bottom: 10px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 12px; border-radius: 999px;
-  background: var(--glass); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
+  background: var(--surface); box-shadow: var(--lift); color: var(--text); font-size: 12.5px; line-height: 18px; font-weight: 700; white-space: nowrap }
 .gen-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--hue); animation: pulse 1.6s ease-in-out infinite }
 .canvas-host.generating .poster-canvas { opacity: .55 }
 .canvas-host.generating .frame .badge { display: inline-flex }
@@ -420,17 +437,16 @@ details.new-look[open] { padding-bottom: 14px }
 .wait .note { color: var(--faint) }
 .wait button { justify-self: start }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
-.issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-glass); border-radius: var(--field) }
+.issues { margin: 0; padding: 10px 14px 10px 30px; font-size: 13px; max-height: 150px; overflow: auto; background: var(--warn-bg); border-radius: var(--field) }
 .issues .text-button { color: var(--warn) }
 .issues .blocking .text-button { color: var(--bad); font-weight: 700 }
-.save-recovery, .polish-preview { padding: 12px 14px; background: var(--warn-glass); color: var(--warn); border-radius: var(--field); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px }
-.issues, .save-recovery, .polish-preview, .refusal { -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field) }
+.save-recovery, .polish-preview { padding: 12px 14px; background: var(--warn-bg); color: var(--warn); border-radius: var(--field); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px }
 .stage > .help { margin: 0; text-align: center }
 
 .versions { display: grid; gap: 12px; align-content: start; min-width: 0 }
 .versions h2 { font-size: 13px; font-weight: 700; letter-spacing: 0; color: var(--muted); white-space: nowrap }
 .version { display: grid; gap: 4px; font-size: 12px; line-height: 16px; color: var(--muted); min-width: 0 }
-.version .thumb { display: block; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none }
+.version .thumb { display: block; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none }
 /* Each version and the « Nouvelle version » tile in the poster's shape (--poster-ratio, width / height, set on the
    editor), never taller than a Publication's in the same place (--thumb-h). */
 .versions { --thumb-h: 195px }
@@ -443,7 +459,7 @@ details.new-look[open] { padding-bottom: 14px }
 .state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--warn) }
 .state.approved::before { background: var(--ok) }
 .state.rejected::before { background: var(--bad) }
-button.version.new { justify-items: stretch; justify-content: stretch; text-align: left; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); font-size: 12px; font-weight: 700 }
+button.version.new { justify-items: stretch; justify-content: stretch; text-align: left; min-height: 0; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--text); font-size: 12px; font-weight: 700 }
 @media (hover: hover) {
   button.version.new:hover:not(:disabled) { background: none }
   button.version.new:hover:not(:disabled) .add { border-color: var(--text); color: var(--text) }
@@ -453,7 +469,7 @@ button.version.new small { font-size: 12px; font-weight: 500 }
 
 /* Confirmation of a paid action, the fidelity check and the final check open in front of the page */
 .confirm-sheet { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--scrim); overflow: auto; overscroll-behavior: contain; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px) }
-.confirm { width: min(100%, 440px); background: var(--glass); border: 1px solid var(--glass-line); border-radius: 28px; padding: 24px; display: grid; gap: 10px; box-shadow: var(--glass-shadow) }  /* its sheet already blurs the page behind */
+.confirm { width: min(100%, 440px); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 28px; padding: 24px; display: grid; gap: 10px; box-shadow: var(--lift) }  /* its sheet already blurs the page behind */
 .confirm p { margin: 0; color: var(--muted) }
 .confirm .cost { color: var(--text); font-weight: 700 }
 /* The conditions of use: over the panels and the messages, under a confirmation (the sign-out's keeps the front). Their
@@ -503,10 +519,10 @@ button.version.new small { font-size: 12px; font-weight: 500 }
 p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 14px 18px; border-radius: 20px; background: var(--ok-bg); color: var(--ok); font-weight: 650 }
 .after { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px }
 .after .help { flex-basis: 100%; margin: 0 }
-.download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 1.5px solid var(--invert); border-radius: 999px; font-weight: 700; text-decoration: none; transition: opacity .15s ease-out, var(--press) }
-/* Where « Partager » is the main action (D-SHARE-004), the download is the second one: a glass pill like button.secondary. */
-.download-button.secondary { background: var(--glass-field); border-color: var(--line); color: var(--text); -webkit-backdrop-filter: var(--blur-field); backdrop-filter: var(--blur-field) }
-@media (hover: hover) { .download-button.secondary:hover { background: var(--raised); opacity: 1 } }
+a.primary, .download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 1.5px solid var(--signal-edge); border-radius: 999px; font-weight: 700; text-decoration: none; transition: background-color .15s ease-out, var(--press) }
+/* Where « Partager » is the main action (D-SHARE-004), the download is the second one: outlined like button.secondary. */
+.download-button.secondary { background: transparent; border-color: var(--edge); color: var(--text) }
+@media (hover: hover) { .download-button.secondary:hover { background: var(--active) } }
 .after .why { text-align: left }
 .after > .count { align-self: center; font-size: 13px }
 
@@ -524,7 +540,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   html { scroll-padding-bottom: 150px }
   .editor { padding-bottom: 150px }
   .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 12px max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 }
   /* The bottom bar's buttons: 52 px, bold 15.5 px (ADR-077). At 360 px « Retour », « Voir l’affiche » and « Générer
      l’affiche » fit on one line only with 16 px paddings and an icon button 44 px wide (measured: 4 px to spare). */
   .main-action button:not(.text-button) { min-height: 52px; padding: 0 16px; font-size: 15.5px }
@@ -558,14 +574,14 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .stage:not(.peek) { display: contents }
   .editor:not(.stepping) .stage:not(.peek) > * { order: -4 }
   .editor:not(.stepping) .stage:not(.peek) > .pin { order: -5; position: sticky; top: var(--bar-h, 0px); z-index: 4; gap: 8px; margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: 8px var(--gutter-r) 8px var(--gutter-l);
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
   .editor:not(.stepping) .stage:not(.peek) > :is(.stage-head, .help) { order: 2 }
   .editor:not(.stepping) .versions { order: -3 }
   .editor:not(.stepping):not(.versions-open) .versions { display: none }
   .preview-tools { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center }
   .preview-tools button { min-height: 44px; padding: 4px 12px; font-size: 13px }
   .editor.preview-hidden .stage:not(.peek) .proof, .editor.preview-hidden .stage:not(.peek) .layer-list { display: none }
-  .editor:not(.stepping) .steps-row { position: sticky; top: var(--preview-bottom, 56px); z-index: 5; margin: 0 0 12px; padding: 4px; background: var(--ground); border-radius: 28px }
+  .editor:not(.stepping) .steps-row { position: sticky; top: var(--preview-bottom, 56px); z-index: 5; margin: 0 0 12px; padding: 4px; background: var(--surface); border-radius: 28px }
   .editor:not(.stepping) .steps-row .tabs { margin-bottom: 0 }
   .editor:not(.stepping) .stage:not(.peek) .photo { display: none }
   .editor:not(.stepping) .stage:not(.peek) .layer-list { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none }
@@ -578,14 +594,14 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .editor:not(.stepping) .versions { grid-auto-columns: 84px; gap: 8px 10px }
   .editor:not(.stepping) :is(.version img, button.version.new .add) { width: calc(70px * var(--poster-ratio, .8)); height: 70px }
   .editor:not(.stepping) .version.new small { display: none }
-  /* Tools: the four groups as a glass row of icons with their labels, the active one marked by a yellow pill behind its icon. */
-  .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 6px; margin-bottom: 12px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 28px }
+  /* Tools: the four groups as a row of icons with their labels, the active one marked by a yellow pill behind its icon. */
+  .editor:not(.stepping) .tabs { position: relative; z-index: 2; padding: 6px; margin-bottom: 12px; background: var(--surface); border-radius: 28px }
   .editor:not(.stepping) .tab { flex-direction: column; gap: 3px; min-height: 58px; padding: 4px 2px; font-size: 12.5px; line-height: 16px; font-weight: 650; border-radius: 22px }
   .editor:not(.stepping) .tab[aria-selected=true] { background: none; box-shadow: none; color: var(--text) }
   .tab .tool { display: block; width: 54px; height: 32px; padding: 6px 17px; border-radius: 999px; transition: background-color .15s ease-out }
   .tab[aria-selected=true] .tool { background: var(--accent-soft); color: var(--accent-ink) }
   .stage.peek { position: fixed; inset: 0; z-index: 25; overflow: auto; overscroll-behavior: contain; border-radius: 0; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
   .stage.peek .back { display: inline-flex; justify-self: start }
   .stage.peek .main-action { display: none }
   .frame .badge { display: inline-flex }
@@ -611,7 +627,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .app-header.editing, main.editing .demo-notice { display: none }
   main.editing { padding-top: 0 }
   .titlerow.bar { position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; gap: 4px; min-height: calc(56px + env(safe-area-inset-top)); margin: 0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); padding: env(safe-area-inset-top) max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--glass-line) }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-bottom: 1px solid var(--line) }
   .bar .what { flex: 1 }
   .bar h1 { font-size: 16px; line-height: 22px; font-weight: 700; letter-spacing: 0; margin: 0 }
   .bar :is(h1, .meta) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
@@ -632,9 +648,8 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   /* Two styles to a row, large enough to judge (the approved mockup). */
   .look-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
   /* The review and the final check are two screens tall on a phone: their decision stays at the bottom of the screen. */
-  .review-panel { padding-bottom: calc(176px + env(safe-area-inset-bottom)) }
   .review-panel .actions { position: fixed; z-index: 1; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
   /* Side by side, « Tout est conforme, approuver » wrapped on three lines at 360 px: one full-width button per row,
      the decision that moves forward on top. */
   .review-panel .actions .count { flex-basis: 100%; order: -2 }
@@ -645,11 +660,13 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   .proof .photo img { width: 72px; height: 72px }
   .canvas-host { width: 100% }
   .review-panel { inset: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)) }
+  /* After the shorthand above, which used to erase it: the last point to check must end above the fixed decision bar. */
+  .review-panel:has(.actions) { padding-bottom: calc(176px + env(safe-area-inset-bottom)) }
   .comparison, .final-grid { grid-template-columns: 1fr }
   /* One image at a time, at full width, « La version » first; « Votre photo » shows the owner's photos one under the other. */
-  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--glass-panel); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); box-shadow: var(--glass-shadow); border-radius: 999px }
-  .side-choice button { border: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; font-weight: 600; color: var(--muted) }
-  .side-choice button[aria-pressed=true] { background: var(--glass-strong); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
+  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--raised); border-radius: 999px }
+  .side-choice button { border: 0; background: none; font-weight: 600; color: var(--muted) }
+  .side-choice button[aria-pressed=true] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
   .comparison.side-version figure:first-child, .comparison.side-photo figure:last-child, .zoom-hint { display: none }
   .comparison figure { padding: 8px }
   .comparison img { height: auto }
@@ -665,7 +682,7 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   /* Outside the editor the three destinations are a bar at the bottom of the screen (R-POSTER-EDITOR-007). It stays in
      the header's markup, so the header must not blur here: a blurred ancestor becomes the containing block of a fixed bar. */
   .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-    background: var(--glass); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
+    background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line) }
   .nav a, .nav a[aria-current] { flex-direction: column; justify-content: center; gap: 3px; min-height: 58px; padding: 0 4px; border-radius: var(--field); background: none; box-shadow: none; font-size: 12.5px; line-height: 16px; text-align: center }
   .nav .i { width: 58px; height: 32px; padding: 7px 20px; border-radius: 999px }
   .nav a[aria-current] .i { background: var(--accent-soft); color: var(--accent-ink) }
@@ -686,14 +703,13 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
   button.primary, button.secondary, .download-button, textarea, select, input:not([type=checkbox], [type=range], [type=color], [type=file]) { min-height: 52px }
 }
 /* Creation by message (D-TEXT-FIRST-001 and 003; mockup chat-first): the start choice, the header's switch, and the chat
-   (poster strip, thread, composer). Neutral bubbles; glass on the elements, with a sheen from one corner. Nothing in
-   the chat is fixed, so its surfaces blur themselves; their controls do not blur again. After the touch sizes above:
-   the small controls of the chat keep their own. */
-.seg { display: flex; padding: 3px; border-radius: 999px; background: var(--glass-field); box-shadow: inset 0 0 0 1px var(--line) }
+   (poster strip, thread, composer). Neutral bubbles; opaque surfaces with a hairline, no blur; the composer keeps a
+   soft shadow (R-REDESIGN-001). After the touch sizes above: the small controls of the chat keep their own. */
+.seg { display: flex; padding: 3px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line) }
 .seg button { min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap }
 .seg button[aria-pressed=true] { background: var(--invert); color: var(--invert-ink) }
 .seg + .theme-toggle { margin-left: 0 }
-.bubble.bot, .composer, .chat-side { background: linear-gradient(140deg, var(--glass-hi), var(--glass-panel) 60%); border: 1px solid var(--glass-line); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel) }
+.bubble.bot, .composer, .chat-side { background: var(--surface); border: 1px solid var(--line) }
 
 .chat-elsewhere { display: grid; gap: 14px; justify-items: start; max-width: 680px; margin: 6vh auto 0 }
 .chat-elsewhere p { margin: 0; color: var(--text); font-weight: 600 }
@@ -701,7 +717,6 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
 main.chatting:not(.editing) { padding-bottom: 0 }
 .chat { display: grid; grid-template: "side" auto "thread" minmax(0, 1fr) "composer" auto / minmax(0, 1fr); gap: 10px; max-width: 680px; margin: 0 auto; font-size: 15px; line-height: 22px }
 .chat, .chat * { scrollbar-width: thin; scrollbar-color: var(--control) transparent }
-.chat :is(button, textarea) { -webkit-backdrop-filter: none; backdrop-filter: none }
 .chat svg.i { width: 20px; height: 20px; stroke-width: 2 }
 .chat small { font-size: 13px; line-height: 18px; color: var(--muted) }
 .chat .why { flex-basis: auto; margin: 0; text-align: left }
@@ -714,16 +729,16 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 /* A change card lists one field per line (the server's text). */
 .bubble p.lines { white-space: pre-line }
 .bubble.me { align-self: flex-end; background: var(--bubble); border-bottom-right-radius: 6px }
-.bubble.bot { align-self: flex-start; border-bottom-left-radius: 6px; box-shadow: var(--msg-shadow) }
+.bubble.bot { align-self: flex-start; border-bottom-left-radius: 6px }
 .bubble.chat-wait { display: flex; align-items: center; gap: 10px }
 .chat-wait i { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--control); border-top-color: var(--hue); animation: spin .8s linear infinite }
 .pics, .tray { display: flex; flex-wrap: wrap; gap: 8px }
 .pic { position: relative; display: grid; gap: 3px; justify-items: center; width: 68px; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted) }
 .pic img { display: block; width: 68px; height: 68px; object-fit: cover; border-radius: 12px; background: var(--surface); border: 1px solid var(--line) }
 .pic[aria-busy] img { opacity: .45 }
-.chat .pic.reuse { width: 96px; min-height: 0; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-field); color: var(--text); text-align: center }
+.chat .pic.reuse { width: 96px; min-height: 0; padding: 6px; border: 1px solid var(--edge); border-radius: 14px; background: var(--surface); color: var(--text); text-align: center }
 .pic[aria-busy]::after { content: ''; position: absolute; top: 26px; left: 26px; width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--text); border-right-color: transparent; animation: spin .7s linear infinite }
-.chat .pic-role { min-height: 28px; padding: 0 8px; border: 1px solid var(--line); font-size: 11px; line-height: 14px; font-weight: 600 }
+.chat .pic-role { min-height: 28px; padding: 0 8px; border: 1px solid var(--edge); font-size: 11px; line-height: 14px; font-weight: 600 }
 .chat .pic-role.inspiration { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink) }
 .chat .pic-drop { position: absolute; top: -6px; right: -6px; width: 24px; min-height: 24px; padding: 0; border: 0; background: var(--invert); color: var(--invert-ink) }
 .chat .pic-drop svg { width: 12px; height: 12px; stroke-width: 3 }
@@ -742,14 +757,14 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat-side p { display: grid; flex: 1; min-width: 0; margin: 0 }
 .chat-side span { color: var(--muted); font-size: 13px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 /* The list of modifications: folded behind its button beside the small poster, open in the wide column. */
-.chat .mods-toggle { flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); background: var(--glass-field); font-size: 13px; font-weight: 600 }
+.chat .mods-toggle { flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--edge); background: var(--surface); font-size: 13px; font-weight: 600 }
 .mods { display: none; flex-basis: 100%; gap: 2px; max-height: 34vh; overflow-y: auto; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line) }
 /* One column no wider than the list: a long label (the words of a new scene) is cut, it does not widen the rows. */
 .mods.open { display: grid; grid-template-columns: minmax(0, 1fr) }
 .mods h2 { display: none; margin: 0; padding: 0 8px 4px; font-size: 13px; line-height: 18px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
 .chat .mod { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-height: 44px; padding: 6px 8px; border: 0; border-radius: 12px; background: none; text-align: left; font-size: 14px; line-height: 20px; font-weight: 500 }
 .chat .mod[aria-current=true] { background: var(--bubble) }
-.mod i { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 9px; background: var(--glass-field); font-style: normal; font-size: 12px; font-weight: 800 }
+.mod i { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-style: normal; font-size: 12px; font-weight: 800 }
 .mod span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text) }
 .mod small { flex: none }
 .chat .mod small.approved { color: var(--ok) }
@@ -757,21 +772,22 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat-limit { font-weight: 600 }
 .chat-stale { flex-basis: 100%; display: grid; gap: 6px; justify-items: start }
 .chat-side .chat-stale p { display: block }
-.composer { grid-area: composer; display: grid; gap: 8px; padding: 8px; border-radius: 22px }
+/* The composer is a field: its boundary at 3:1 at rest (R-REDESIGN-001), the text colour while its words are focused. */
+.composer { grid-area: composer; display: grid; gap: 8px; padding: 8px; border-color: var(--control); border-radius: 22px; box-shadow: var(--msg-shadow) }
 .composer:focus-within { border-color: var(--text) }
 .chat-elsewhere-read { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 4px 6px 0; font-size: 13px; line-height: 18px }
 .chat .chat-elsewhere-read button { min-height: 36px; font-size: 13px }
 .tray { padding: 6px 6px 0 }
 .style-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none }
-.chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 3px 12px 3px 3px; border: 1px solid var(--line); background: var(--glass-field); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
+.chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 3px 12px 3px 3px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
 .style-pill img { display: block; width: 26px; height: 26px; border-radius: 50%; object-fit: cover }
 .chat .style-pill[aria-pressed=true] { border-color: var(--text); color: var(--text) }
 .chat .style-pill.plain { padding: 7px 12px }
 .compose-row { display: flex; align-items: flex-end; gap: 6px }
 .compose-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 120px; padding: 11px 4px; border: 0; background: none; resize: none; font-size: 16px; line-height: 22px; outline: none }
 .compose-row textarea:focus-visible { outline: none }  /* the composer's own edge shows the focus */
-.chat .send { --spin-x: 50%; flex: none; width: 44px; min-height: 44px; padding: 0; border: 0; background: var(--signal); color: var(--on-signal) }
-.chat .send:disabled { background: var(--control); opacity: .6 }
+.chat .send { --spin-x: 50%; flex: none; width: 44px; min-height: 44px; padding: 0; border-color: var(--signal-edge); background: var(--signal); color: var(--on-signal) }
+.chat .send:disabled { background: var(--control); border-color: var(--control); opacity: .6 }
 @media (min-width: 880px) {
   /* Wide: the poster has its own column on the right. */
   .chat.has-poster { max-width: 1080px; grid-template: "thread side" minmax(0, 1fr) "composer side" auto / minmax(0, 1fr) 340px; column-gap: 24px }
@@ -810,20 +826,17 @@ main.chatting:not(.editing) { padding-bottom: 0 }
   .chat-wait i, .pic[aria-busy]::after { animation-duration: 2.4s }
 }
 
-/* Glass blurs once. A control or a tile on a surface that already blurs keeps its translucent fill but not a blur of its
-   own: it would show nothing more and cost a compositing layer each (code review, 2026-11-14). Controls directly on the
-   page keep theirs; the pill over the poster blurs the poster; a sticky or fixed bar is its own surface. */
-:is(.app-header, .titlerow.bar, .rail, .main-action, .sign-in, .intake, .empty, .rows, .look-card, .group, .comparison figure, .shot, .facts, .job-state, .message, .confirm-sheet, .stage.peek, .review-panel .actions)
-  :is(button, input, textarea, select, .upload-zone, .look, .tabs, .switches, .issues, .save-recovery, .polish-preview, .refusal) { -webkit-backdrop-filter: none; backdrop-filter: none }
-@media (max-width: 1080px) { .editor:not(.stepping) .stage:not(.peek) > .pin button { -webkit-backdrop-filter: none; backdrop-filter: none } }
+/* Glass blurs once (code review, 2026-11-14): only what floats blurs (a sticky or fixed bar, a sheet, a toast), and nothing
+   inside it blurs again. Cards, fields, chips, buttons and the pills over the poster are opaque and never blur
+   (D-REDESIGN-001). */
 
-/* Solid glass. Where the browser cannot blur, or the person asked for less transparency or less motion, every surface
-   is opaque and nothing blurs: one switch, the tokens below. forced-colors needs nothing here. */
+/* Solid glass. Where the browser cannot blur, or the person asked for less transparency or less motion, what floats is
+   opaque and nothing blurs: one switch, the tokens below. forced-colors needs nothing here. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root:root { --glass: var(--surface); --glass-panel: var(--surface); --glass-hi: var(--surface); --glass-field: var(--ground); --glass-strong: var(--surface); --warn-glass: var(--warn-bg); --glass-line: var(--line) }
+  :root:root { --glass-strong: var(--surface) }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
-  :root:root { --glass: var(--surface); --glass-panel: var(--surface); --glass-hi: var(--surface); --glass-field: var(--ground); --glass-strong: var(--surface); --warn-glass: var(--warn-bg); --glass-line: var(--line); --blur-panel: none; --blur-field: none }
+  :root:root { --glass-strong: var(--surface); --blur-panel: none }
   .confirm-sheet { -webkit-backdrop-filter: none; backdrop-filter: none }
 }
 

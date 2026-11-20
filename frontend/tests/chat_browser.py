@@ -63,6 +63,28 @@ def both_themes(page, where, name, marks=(), placeholders=()):
 
 
 SEND, ARROW = ".chat .send:not(:disabled)", ".chat .send:not(:disabled) svg path"
+COMPOSER = [[".composer", "borderTopColor", "parent", 3]]
+
+
+def composer_edge(page, where):
+    """The composer is a field: its boundary is 3:1 against what is around it at rest and while its words have the
+    keyboard's focus, in both themes (R-REDESIGN-001)."""
+    field, edge = page.get_by_label("Votre message"), "e => getComputedStyle(e).borderTopColor"
+
+    def check(theme):
+        field.evaluate("e => e.blur()")
+        page.wait_for_function(smoke.SETTLED, polling=100)
+        assert page.locator(".composer").evaluate(edge) == smoke.PAINT[theme]["control"], f"the composer's edge at rest, {where}, {theme}"
+        smoke.check_marks(page, f"the composer's boundary, {where}, {theme}", ".composer", marks=COMPOSER)
+        field.focus()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        assert field.evaluate("e => e === document.activeElement && e.matches(':focus-visible')"), f"the composer's field not focused by the keyboard, {where}"
+        page.wait_for_function(smoke.SETTLED, polling=100)
+        assert page.locator(".composer").evaluate(edge) == smoke.PAINT[theme]["text"], f"the focused composer's edge, {where}, {theme}"
+        smoke.check_marks(page, f"the composer's boundary, focused, {where}, {theme}", ".composer", marks=COMPOSER)
+    smoke.both_themes(page, check)
+    field.evaluate("e => e.blur()")
 
 
 def pressed_send(page, where):
@@ -157,6 +179,7 @@ def walk_desktop(browser, errors, product, inspiration):
     page.wait_for_url("**/#message")
     expect(home).to_have_count(0)
     both_themes(page, "empty chat, desktop", "chat-empty-1366", placeholders=(".compose-row textarea",))
+    composer_edge(page, "empty chat, desktop")
 
     # The unsent text survives a reload.
     field.fill("Sony WH-1000XM6 noir, 700 000 Ar")

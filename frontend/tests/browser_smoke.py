@@ -92,11 +92,17 @@ def check_material_pixels(page, document):
 # saturate() acts on what is behind it before its fill is laid over (sRGB matrix of Filter Effects, as Chromium draws
 # it); its blur only averages the backdrop towards less extreme colours, so leaving it out keeps the worst case.
 BACKDROP_JS = r"""
-  const parse = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
+  // Only rgb() and rgba() are read. Any other computed colour (a color-mix() computes to color(srgb …), and lab(), oklch()…)
+  // stops the check with its value: a colour it cannot read must never become a passing ratio.
+  const unread = value => { if (/\b(?:color|color-mix|lab|lch|oklab|oklch|hsla?|hwb)\(/.test(value)) throw new Error(`a computed colour the check cannot read: ${value}`) }
+  const parse = value => {
+    unread(value)
+    if (!/^rgba?\(/.test(value.trim())) throw new Error(`a computed colour the check cannot read: ${value}`)
+    const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
   const channel = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4 }
   const luminance = c => .2126 * channel(c[0]) + .7152 * channel(c[1]) + .0722 * channel(c[2])
   const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3]))
-  const patches = style => (style.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(parse).filter(colour => colour[3] > 0)
+  const patches = style => { unread(style.backgroundImage); return (style.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(parse).filter(colour => colour[3] > 0) }
   const spread = (bases, colours) => bases.flatMap(base => [base, ...colours.map(colour => over(colour, base))])
   const saturation = e => { const found = [getComputedStyle(e).backdropFilter, getComputedStyle(e, '::before').backdropFilter].join(' ').match(/saturate\(([\d.]+)(%?)\)/); return found ? Number(found[1]) / (found[2] ? 100 : 1) : 1 }
   const saturate = (c, s) => [[.213 + .787 * s, .715 - .715 * s, .072 - .072 * s], [.213 - .213 * s, .715 + .285 * s, .072 - .072 * s], [.213 - .213 * s, .715 - .715 * s, .072 + .928 * s]]
@@ -173,6 +179,8 @@ MARKS = [
     [".wait-steps .now .n", "boxShadow", "self", 3],
     [".chat-wait i", "borderTopColor", "self", 3],
     [".chat .send:not(:disabled) svg path", "stroke", "self", 4.5],
+    # The main action's label and icon on its Signal fill (D-REDESIGN-001).
+    [":is(button.primary:not(:disabled), a.primary, .download-button:not(.secondary))", "color", "self", 4.5],
 ]
 MARKS_JS = "marks => {" + BACKDROP_JS + r"""
   const theme = document.documentElement.dataset.theme, seen = new Set(), failures = [], ratios = {}
@@ -188,6 +196,7 @@ MARKS_JS = "marks => {" + BACKDROP_JS + r"""
         style = getComputedStyle(e), box = e.getBoundingClientRect()
         // Of several shadows the first, the one painted on top: its colour and its own spread (the fourth length).
         value = property === 'boxShadow' ? style.boxShadow.split(/,(?![^(]*\))/)[0] : style[property]
+        unread(value)
         found = value.match(/rgba?\([^)]*\)/)
         drawn = property === 'borderTopColor' ? !['none', 'hidden'].includes(style.borderTopStyle) && parseFloat(style.borderTopWidth) > 0
           : property === 'boxShadow' ? parseFloat((value.replace(found?.[0], '').match(/-?[\d.]+px/g) || [])[3]) > 0
@@ -246,7 +255,36 @@ POSTER_JS = r"""() => {
   }
   return [canvas.toDataURL(), veiled]
 }"""
-GROUNDS = {"clair": "#f5f1e8", "sombre": "#100f0e"}
+GROUNDS = {"clair": "#f5f1e8", "sombre": "#20201d"}
+# D-REDESIGN-001 as Chromium computes it, read on the rendered elements in each theme. The main action is charcoal on
+# Signal Yellow with its edge; a secondary action (« Télécharger » beside « Partager ») is outlined, not yellow.
+SIGNAL, ON_SIGNAL, CLEAR = "rgb(242, 199, 68)", "rgb(32, 32, 29)", "rgba(0, 0, 0, 0)"
+PAINT = {
+    "clair": {"ground": "rgb(245, 241, 232)", "surface": "rgb(255, 253, 248)", "text": "rgb(32, 32, 29)", "line": "rgba(32, 32, 29, 0.1)",
+              "edge": "rgba(32, 32, 29, 0.2)", "control": "rgb(125, 120, 109)", "signal-edge": "rgb(217, 176, 50)"},
+    "sombre": {"ground": "rgb(32, 32, 29)", "surface": "rgb(43, 43, 39)", "text": "rgb(245, 241, 232)", "line": "rgba(245, 241, 232, 0.1)",
+               "edge": "rgba(245, 241, 232, 0.22)", "control": "rgb(143, 139, 128)", "signal-edge": "rgb(242, 199, 68)"},
+}
+PAINT_JS = r"""e => { const style = getComputedStyle(e)
+  return { fill: style.backgroundColor, text: style.color, edge: style.borderTopColor, off: !!e.disabled || !!e.closest('[inert]'), label: e.textContent.trim().slice(0, 40) } }"""
+# Cards, lists and panels at rest: an opaque fill of the surface, a hairline on each side, no blur and no shadow on
+# themselves or their ::before and ::after.
+RESTING = ".sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state, .rail"
+RESTING_JS = r"""([selectors, surface, line]) => [...document.querySelectorAll(selectors)].filter(e => e.checkVisibility()).flatMap(e => {
+  const style = getComputedStyle(e), faults = []
+  if (style.backgroundColor !== surface) faults.push(`fill ${style.backgroundColor}`)
+  for (const side of ['Top', 'Right', 'Bottom', 'Left'])
+    if (style[`border${side}Style`] !== 'solid' || !(parseFloat(style[`border${side}Width`]) > 0) || style[`border${side}Color`] !== line)
+      faults.push(`border-${side.toLowerCase()} ${style[`border${side}Width`]} ${style[`border${side}Style`]} ${style[`border${side}Color`]}`)
+  for (const [part, look] of [['itself', style], ['::before', getComputedStyle(e, '::before')], ['::after', getComputedStyle(e, '::after')]])
+    for (const property of ['backdropFilter', 'boxShadow']) if (look[property] !== 'none') faults.push(`${part} ${property} ${look[property]}`)
+  return faults.length ? [`<${e.tagName.toLowerCase()} class="${e.className}"> ${faults.join('; ')}`] : []
+})"""
+SHOWN_JS = "selector => [...document.querySelectorAll(selector)].some(e => e.checkVisibility())"
+# Where a tap at a control's centre lands, and whether the control is wholly inside the visible viewport.
+REACH_JS = r"""e => { const b = e.getBoundingClientRect(), v = visualViewport
+  return { inside: b.left >= v.offsetLeft - .5 && b.top >= v.offsetTop - .5 && b.right <= v.offsetLeft + v.width + .5 && b.bottom <= v.offsetTop + v.height + .5,
+    hit: e.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)), box: [b.x, b.y, b.width, b.height].map(Math.round) } }"""
 # The controls keep their place while a poster is made (T-WAIT-DEFORM, user report 2026-11-14): the rail's size and its
 # place in its column, each row of the open tab inside the rail, the poster's size and the bottom bar's size. On one
 # column the waiting block sits above the controls (D-POSTER-EDITOR-006): there the rail's place down the column is left out.
@@ -376,6 +414,105 @@ def check_still(page, before, where, samples=1):
 def check_one_blur(page, where):
     nested = page.evaluate(NESTED_BLUR_JS)
     assert not nested, f"blur inside a blurred surface on {where}:\n" + "\n".join(nested)
+
+
+def both_themes(page, check):
+    """`check(theme)` in the theme shown, then in the other one, set on the page itself (the owner's choice and the
+    device's are left alone); the theme shown is put back, also after a failure."""
+    first = theme_of(page)
+    try:
+        for theme in (first, "clair" if first == "sombre" else "sombre"):
+            page.evaluate("theme => { document.documentElement.dataset.theme = theme }", theme)
+            page.wait_for_function(SETTLED, polling=100)
+            ground = page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
+            assert ground == PAINT[theme]["ground"], f"the page is painted {ground}, not the {theme} ground"
+            check(theme)
+    finally:
+        page.evaluate("theme => { document.documentElement.dataset.theme = theme }", first)
+        page.wait_for_function(SETTLED, polling=100)
+
+
+def check_primary(page, where, action, secondary=None):
+    """The named main action (a locator inside the form or the dialog in use) is charcoal on Signal Yellow with its edge,
+    on screen, usable, out of hover, in both themes; the named secondary action is outlined, in the text colour, not
+    yellow (R-REDESIGN-001)."""
+    for control in filter(None, (action, secondary)):
+        control.scroll_into_view_if_needed()
+        expect(control).to_be_in_viewport()
+    page.mouse.move(0, 0)
+
+    def check(theme):
+        paint = action.evaluate(PAINT_JS)
+        assert not paint["off"], f"the main action « {paint['label']} » on {where} is disabled or inert"
+        assert (paint["fill"], paint["text"], paint["edge"]) == (SIGNAL, ON_SIGNAL, PAINT[theme]["signal-edge"]), f"main action on {where}, {theme}: {paint}"
+        if secondary:
+            paint = secondary.evaluate(PAINT_JS)
+            assert (paint["fill"], paint["text"], paint["edge"]) == (CLEAR, PAINT[theme]["text"], PAINT[theme]["edge"]), f"secondary action on {where}, {theme}: {paint}"
+    both_themes(page, check)
+
+
+def check_field(page, selector, where):
+    """An empty field's boundary is 3:1 against what is around it, at rest and focused by the keyboard, in both themes
+    (R-REDESIGN-001). A field that is not there fails."""
+    field = page.locator(selector)
+    expect(field).to_have_value("")
+    mark, paint = [[selector, "borderTopColor", "parent", 3]], "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).borderTopColor]"
+    page.mouse.move(0, 0)
+
+    def check(theme):
+        field.evaluate("e => e.blur()")
+        field.scroll_into_view_if_needed()
+        expect(field).to_be_in_viewport(ratio=1)
+        page.wait_for_function(SETTLED, polling=100)
+        assert field.evaluate(paint) == [PAINT[theme]["surface"], PAINT[theme]["control"]], f"{selector} at rest on {where}, {theme}: {field.evaluate(paint)}"
+        check_marks(page, f"the boundary of {selector} on {where}, {theme}", selector, marks=mark)
+        field.focus()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        assert field.evaluate("e => e === document.activeElement && e.matches(':focus-visible')"), f"{selector} not focused by the keyboard on {where}"
+        page.wait_for_function(SETTLED, polling=100)
+        assert field.evaluate(paint) == [PAINT[theme]["surface"], PAINT[theme]["text"]], f"{selector} focused on {where}, {theme}: {field.evaluate(paint)}"
+        check_marks(page, f"the boundary of {selector}, focused, on {where}, {theme}", selector, marks=mark)
+    both_themes(page, check)
+    field.evaluate("e => e.blur()")
+
+
+def check_resting(page, where, *required):
+    """Every card, list or panel at rest on screen is opaque in the surface colour with a hairline on each side, and
+    neither it nor its ::before or ::after blurs or casts a shadow, in both themes (R-REDESIGN-001). Those named must be
+    on screen."""
+    missing = [selector for selector in required if not page.evaluate(SHOWN_JS, selector)]
+    assert not missing, f"not on screen to be checked on {where}: {missing}"
+
+    def check(theme):
+        found = page.evaluate(RESTING_JS, [RESTING, PAINT[theme]["surface"], PAINT[theme]["line"]])
+        assert not found, f"a surface at rest on {where}, {theme}:\n" + "\n".join(found)
+    both_themes(page, check)
+
+
+def check_reach(page, panel, where, *controls):
+    """A panel taller than the screen, scrolled from its top to its end: each of its decisions stays where it was on the
+    screen (fixed to it, not in the panel's flow), wholly inside the visible viewport, and is what a tap at its centre
+    reaches (rule 1 of D-REDESIGN-001); and at the end nothing of the panel is left under the decisions' bar. The panel
+    goes back to its top."""
+    box = page.locator(panel)
+    assert box.evaluate("e => e.scrollHeight > e.clientHeight"), f"{where}: the panel is not long enough to scroll"
+    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
+    starts = [control.evaluate(REACH_JS)["box"] for control in controls]
+    box.evaluate("e => e.scrollTo({ top: e.scrollHeight, behavior: 'instant' })")
+    assert box.evaluate("e => e.scrollTop > 0 && Math.ceil(e.scrollTop + e.clientHeight) >= e.scrollHeight"), f"{where}: the panel did not scroll to its end"
+    for control, start in zip(controls, starts):
+        reach = control.evaluate(REACH_JS)
+        assert reach["inside"] and reach["hit"] and same_boxes(start, reach["box"]), f"{where}: « {control.inner_text().strip()} » from {start} to {reach}"
+    # The bar is fixed, so it takes no room in the panel: what comes last (a point to check, the form of a refusal)
+    # must end above it. Measured on everything shown in the panel that is neither the bar nor a box holding it.
+    under = box.evaluate("""e => {
+      const bar = e.querySelector('.actions'), top = bar.getBoundingClientRect().top
+      const parts = [...e.querySelectorAll('*')].filter(n => !bar.contains(n) && !n.contains(bar) && n.checkVisibility() && n.getBoundingClientRect().height)
+      return [parts.length, Math.max(...parts.map(n => n.getBoundingClientRect().bottom)), top]
+    }""")
+    assert under[0] > 3 and under[1] <= under[2] + 0.5, f"{where}: the panel's content ends at {under[1]}, under its decisions' bar (top {under[2]})"
+    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
 
 
 def bar_colour(page):
@@ -555,6 +692,7 @@ def walk_wait(browser, session, errors):
     device.wait_for_function("scrollY === 0")
     check_still(device, still, "while the first generation is queued at 360 px")
     expect(block).to_be_in_viewport()
+    check_resting(device, "waiting at 360 px", ".job-state")
     assert topmost(pill) and topmost(badge)
     expect(device.locator(".frame[aria-busy=true]")).to_have_count(1)
     # Screen readers hear the state when it changes, not the time every second.
@@ -2491,6 +2629,9 @@ def run():
                         page.get_by_role("button", name="Réessayer").click()
                         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
                         check_contrast(page, "sign-in")
+                        check_primary(page, "sign-in", page.locator("form.sign-in").get_by_role("button", name="Ouvrir l’atelier"))
+                        check_field(page, "input[name=username]", "sign-in")
+                        check_resting(page, "sign-in", ".sign-in")
                         # A dark device and no choice stored: the dark theme, and the browser's bar says so (it took the
                         # light colour before T-THEME-COLOR).
                         assert theme_of(page) == "sombre" and bar_colour(page) == GROUNDS["sombre"], (theme_of(page), bar_colour(page))
@@ -2515,16 +2656,25 @@ def run():
                         page.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
                         check_contrast(page, "intake")
+                        check_primary(page, "intake", page.locator("form.intake").get_by_role("button", name="Préparer mon affiche"))
+                        check_field(page, "input[name=product]", "intake")
+                        check_resting(page, "intake", ".intake")
                         page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
-                        # Glass on every surface, the header and the panels alike (ADR-077); all solid for a person who
-                        # asked for less motion (R-POSTER-EDITOR-006).
+                        # Glass on what floats (the header), none on a card at rest (D-REDESIGN-001); all solid for a
+                        # person who asked for less motion (R-POSTER-EDITOR-006).
                         blur = "selector => getComputedStyle(document.querySelector(selector)).backdropFilter"
-                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") != "none"
+                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") == "none"
                         page.emulate_media(reduced_motion="reduce")
                         assert page.evaluate(blur, ".app-header") == "none" and page.evaluate(blur, ".intake") == "none"
                         assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
                         check_contrast(page, "intake, solid chrome", placeholders=("input[name=product]", "input[name=price]"))
                         page.emulate_media(reduced_motion="no-preference")
+                        # Accueil before the first poster: its empty list is a card at rest too.
+                        page.locator(".nav a", has_text="Accueil").click()
+                        expect(page.locator(".shop-home .empty")).to_be_visible()
+                        check_resting(page, "Accueil", ".empty")
+                        page.locator(".nav a", has_text="Créer").click()
+                        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         # The browser's own file control (« Choose Files ») is not shown: the label shows a French button.
                         expect(page.locator(".upload-zone .pick-button")).to_have_text("Ajouter des photos")
                         assert page.locator("#champ-photos").evaluate("e => getComputedStyle(e).opacity") == "0"
@@ -2588,6 +2738,7 @@ def run():
                         expect(page.get_by_text("Vous choisirez celle à exporter.", exact=False)).to_be_visible()
                         assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
                         check_contrast(page, "step Textes")
+                        check_resting(page, "step editor at 1440 px", ".rail")
                         shot(page, "step-textes.png")
                         # "Brand as plain text" is offered only once a brand is typed.
                         plain_brand = page.get_by_label("Écrire la marque en texte simple", exact=False)
@@ -2745,6 +2896,7 @@ def run():
                         expect(page.locator(".review-checks .points li")).to_have_count(6)
                         expect(page.locator(".review-panel input[type=checkbox]")).to_have_count(0)
                         page.screenshot(path=str(OUTPUT / "review.png"))
+                        check_resting(page, "review at 1440 px", ".comparison figure", ".group")
                         page.get_by_role("button", name="Signaler un problème").click()
                         expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
                         page.get_by_role("button", name="Tout est conforme, approuver").click()
@@ -2968,6 +3120,12 @@ def run():
                         expect(page.locator(".final-preview img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "final-mobile.png"))
                         check_contrast(page, "final screen at phone width")
+                        confirm_final = page.locator(".final-preview").get_by_role("button", name="Tout est conforme, confirmer", exact=True)
+                        expect(confirm_final).to_be_enabled()
+                        check_primary(page, "final panel", confirm_final)
+                        check_resting(page, "final panel", ".shot", ".facts", ".group")
+                        page.set_viewport_size({"width": 360, "height": 640})
+                        check_reach(page, ".final-preview", "final panel at 360 × 640", confirm_final)
                         page.set_viewport_size({"width": 1440, "height": 1050})
                         page.screenshot(path=str(OUTPUT / "final.png"))
                         page.set_viewport_size({"width": 390, "height": 844})
@@ -3011,6 +3169,7 @@ def run():
                         thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
                         check_contrast(page, "Mes affiches")
+                        check_resting(page, "Mes affiches", ".rows")
                         # At 360 px the list's title row wraps instead of squeezing its subtitle to one word per line under the checkbox.
                         page.set_viewport_size({"width": 360, "height": 740})
                         heading = page.get_by_role("heading", name="Mes affiches", exact=True).bounding_box()
@@ -3129,6 +3288,9 @@ def run():
                         expect(approve).to_be_in_viewport()
                         expect(page.get_by_role("button", name="Signaler un problème")).to_be_in_viewport()
                         shot(page, "review-mobile.png", full_page=False)
+                        page.set_viewport_size({"width": 360, "height": 640})
+                        check_reach(page, ".review-panel", "review at 360 × 640", approve, page.get_by_role("button", name="Signaler un problème"))
+                        page.set_viewport_size({"width": 360, "height": 740})
                         approve.click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
                         page.set_viewport_size({"width": 1440, "height": 1000})
@@ -3201,6 +3363,7 @@ def run():
                         page.locator(".nav a", has_text="Styles").click()
                         cards = page.locator(".look-card")
                         expect(cards).to_have_count(4)
+                        check_resting(page, "Styles", ".look-card")
                         cards.filter(has_text="Studio clair").click()
                         panel = page.get_by_role("dialog")
                         expect(panel).to_contain_text("ne peut pas être renommé ni retiré")

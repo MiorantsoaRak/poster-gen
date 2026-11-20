@@ -1226,6 +1226,8 @@ def sharing(browser, errors, data, product):
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
         assert panel.evaluate("e => e.scrollWidth <= e.clientWidth"), "the panel scrolls sideways"
         page.screenshot(path=str(OUT / f"share-360-{scheme}.png"))
+    # « Partager » is the main action, charcoal on yellow; the file beside it is the second one, outlined (D-REDESIGN-001).
+    smoke.check_primary(page, "share, 360 px", share, panel.get_by_role("link", name="Télécharger le PNG confirmé"))
     page.emulate_media(color_scheme="light")
     expect(field).to_have_value(caption)
     field.focus()
@@ -1252,6 +1254,7 @@ def sharing(browser, errors, data, product):
     expect(other_panel.get_by_role("link", name="Télécharger le PNG confirmé")).not_to_have_class(re.compile(r"\bsecondary\b"))
     assert other.evaluate("() => window.toBlobs") == 0
     smoke.check_contrast(other, "cannot share")
+    smoke.check_primary(other, "cannot share", other_panel.get_by_role("link", name="Télécharger le PNG confirmé"))  # the main action there
     other.screenshot(path=str(OUT / "share-cannot-1366.png"))
     other.close()
 
