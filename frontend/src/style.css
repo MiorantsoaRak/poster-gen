@@ -31,8 +31,8 @@
   --signal-hover: #d5b03f;
   /* The field behind the window: three soft lights on the ground (yellow, sand, white). */
   --patch-1: rgb(242 199 68 / .16); --patch-2: rgb(110 98 70 / .34); --patch-3: rgb(255 255 255 / .04);
-  /* The chat (ADR-091): a neutral bubble for the owner, a soft shadow under the composer. */
-  --bubble: #34312d; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .07), 0 4px 18px -10px rgb(0 0 0 / .3);
+  /* The chat (ADR-091): the version shown in the list of modifications. */
+  --bubble: #34312d;
   font-family: Figtree, system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); background: var(--ground);
   font-synthesis: none; font-variant-numeric: tabular-nums; color-scheme: dark; -webkit-font-smoothing: antialiased;
 }
@@ -47,7 +47,7 @@
   --lift: 0 2px 4px rgb(60 44 16 / .08), 0 28px 60px -28px rgb(60 44 16 / .45); --poster-shadow: 0 1px 2px rgb(40 28 14 / .08), 0 6px 16px -6px rgb(40 28 14 / .16);
   --glass-strong: rgb(255 253 248 / .86);
   --patch-1: rgb(242 199 68 / .28); --patch-2: rgb(222 204 168 / .55); --patch-3: rgb(255 255 255 / .7);
-  --bubble: #e4dfd7; --msg-shadow: inset 0 1px 0 rgb(255 255 255 / .7), 0 4px 18px -10px rgb(40 28 14 / .12);
+  --bubble: #e4dfd7;
 }
 /* A press: at once, back with a strong ease-out (D-POSTER-EDITOR-007; the property only, never `all`). */
 :root { --press: transform 160ms cubic-bezier(.23, 1, .32, 1) }
@@ -780,7 +780,7 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
 .seg { display: flex; padding: 3px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line) }
 .seg button { min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap }
 .seg button[aria-pressed=true] { background: var(--invert); color: var(--invert-ink) }
-.bubble.bot, .composer, .chat-side { background: var(--surface); border: 1px solid var(--line) }
+.composer, .chat-side { background: var(--surface); border: 1px solid var(--line) }
 
 .chat-elsewhere { display: grid; gap: 14px; justify-items: start; max-width: 680px; margin: 6vh auto 0 }
 .chat-elsewhere p { margin: 0; color: var(--text); font-weight: 600 }
@@ -795,12 +795,21 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat-thread { grid-area: thread; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding: 4px 2px }
 .chat-thread:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 18px }
 .chat-thread > :first-child { margin-top: auto }
+/* An empty conversation: the D, the question, the greeting, centred (D-REDESIGN-003). */
+.chat-thread > .hello { margin-block: auto; display: grid; gap: 8px; justify-items: center; padding: 24px 0 8px; text-align: center; text-wrap: balance }
+.hello img { width: 56px; height: 56px; margin-bottom: 12px }
+.hello p { margin: 0; color: var(--muted); font-size: 16px; line-height: 24px }
+.hello .hello-q { color: var(--text); font-size: clamp(26px, 3.4vw, 32px); line-height: 1.15; font-weight: 750; letter-spacing: -.02em }
 .bubble { display: grid; gap: 8px; max-width: min(86%, 460px); padding: 10px 14px; border-radius: 18px; overflow-wrap: anywhere }
 .bubble p { margin: 0 }
 /* A change card lists one field per line (the server's text). */
 .bubble p.lines { white-space: pre-line }
-.bubble.me { align-self: flex-end; background: var(--bubble); border-bottom-right-radius: 6px }
-.bubble.bot { align-self: flex-start; border-bottom-left-radius: 6px }
+.bubble.me { align-self: flex-end; background: var(--raised); color: var(--text); border-bottom-right-radius: 6px }
+:root[data-theme=clair] .bubble.me { background: var(--invert); color: var(--invert-ink) }
+.bubble.me .pic { color: inherit }
+/* The assistant speaks on the ground, under the D (decorative, painted: no element to announce). */
+.bubble.bot { position: relative; align-self: stretch; max-width: none; padding: 4px 0 4px 40px; justify-items: start }
+.bubble.bot::before { content: ''; position: absolute; top: 4px; left: 0; width: 28px; height: 28px; background: url(/favicon.svg) center / contain no-repeat }
 .bubble.chat-wait { display: flex; align-items: center; gap: 10px }
 .chat-wait i { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--control); border-top-color: var(--hue); animation: spin .8s linear infinite }
 .pics, .tray { display: flex; flex-wrap: wrap; gap: 8px }
@@ -813,9 +822,16 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat .pic-role.inspiration { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink) }
 .chat .pic-drop { position: absolute; top: -6px; right: -6px; width: 24px; min-height: 24px; padding: 0; border: 0; background: var(--invert); color: var(--invert-ink) }
 .chat .pic-drop svg { width: 12px; height: 12px; stroke-width: 3 }
-.recap { display: grid; gap: 2px }
+/* The facts as cells of one surface, split by hairlines (the box's line colour shows through 1 px gaps). */
+.recap { display: grid; grid-auto-flow: column; gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line) }
+.recap > * { display: flex; align-items: center; padding: 10px 14px; background: var(--surface) }
+@media (max-width: 480px) {
+  /* The name and the price each on their line; the style and the identity side by side. */
+  .recap { grid-auto-flow: row; grid-template-columns: 1fr 1fr }
+  .recap > :is(b, .recap-price), .recap > :last-child:nth-child(3) { grid-column: span 2 }
+}
 .recap b { font-size: 16px; line-height: 22px; font-weight: 700 }
-.recap-price { font-size: 24px; line-height: 30px; font-weight: 800; letter-spacing: -.01em }
+.recap-price { font-size: 24px; line-height: 30px; font-weight: 800; letter-spacing: -.01em; overflow-wrap: normal }  /* never cut inside the amount */
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
 .chat-state { font-weight: 700 }
 .chat-state.approved { color: var(--ok) }
@@ -844,21 +860,26 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 .chat-stale { flex-basis: 100%; display: grid; gap: 6px; justify-items: start }
 .chat-side .chat-stale p { display: block }
 /* The composer is a field: its boundary at 3:1 at rest (R-REDESIGN-001), the text colour while its words are focused. */
-.composer { grid-area: composer; display: grid; gap: 8px; padding: 8px; border-color: var(--control); border-radius: 22px; box-shadow: var(--msg-shadow) }
+.composer { grid-area: composer; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 8px 8px 8px 10px; border-color: var(--control); border-radius: 24px; box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 10px 24px -18px rgb(0 0 0 / .22) }
 .composer:focus-within { border-color: var(--text) }
 .chat-elsewhere-read { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 4px 6px 0; font-size: 13px; line-height: 18px }
 .chat .chat-elsewhere-read button { min-height: 36px; font-size: 13px }
 .tray { padding: 6px 6px 0 }
-.style-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none }
+.tools { display: flex; align-items: center; gap: 4px }
+.chat .attach { flex: none; gap: 8px; min-height: 44px; padding: 0 10px; color: var(--muted); font-size: 14px; font-weight: 600 }
+.style-row { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px }
 .chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 3px 12px 3px 3px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
 .style-pill img { display: block; width: 26px; height: 26px; border-radius: 50%; object-fit: cover }
 .chat .style-pill[aria-pressed=true] { border-color: var(--text); color: var(--text) }
 .chat .style-pill.plain { padding: 7px 12px }
-.compose-row { display: flex; align-items: flex-end; gap: 6px }
-.compose-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 120px; padding: 11px 4px; border: 0; background: none; resize: none; font-size: 16px; line-height: 22px; outline: none }
-.compose-row textarea:focus-visible { outline: none }  /* the composer's own edge shows the focus */
-.chat .send { --spin-x: 50%; flex: none; width: 44px; min-height: 44px; padding: 0; border-color: var(--signal-edge); background: var(--signal); color: var(--on-signal) }
+.composer textarea { min-height: 44px; max-height: 120px; padding: 10px 10px 4px; border: 0; background: none; resize: none; font-size: 16px; line-height: 22px; outline: none }
+.composer textarea:focus-visible { outline: none }  /* the composer's own edge shows the focus */
+.chat .send { --spin-x: 50%; flex: none; margin-left: auto; width: 44px; min-height: 44px; padding: 0; border-color: var(--signal-edge); background: var(--signal); color: var(--on-signal) }
 .chat .send:disabled { background: var(--control); border-color: var(--control); opacity: .6 }
+@media (width > 1180px) {
+  /* An empty conversation: the welcome and the composer, one group in the middle of the column. */
+  .chat.welcome { grid-template-rows: auto auto auto; align-content: center }
+}
 @media (min-width: 880px) {
   /* Wide: the poster has its own column on the right. */
   .chat.has-poster { max-width: 1080px; grid-template: "thread side" minmax(0, 1fr) "composer side" auto / minmax(0, 1fr) 340px; column-gap: 24px }
@@ -871,6 +892,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 }
 @media (max-width: 720px) {
   .seg { margin-left: auto }
+  .chat .attach { width: 44px; padding: 0; justify-content: center }
+  .attach .lbl { display: none }
   /* The editor's bar stands for the header here: it holds the way back to the chat. */
   .bar .to-chat { display: inline-flex; flex: none }
   /* The keyboard is open: the style row makes room, the images stay on one line. */
