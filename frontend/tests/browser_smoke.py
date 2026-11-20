@@ -27,7 +27,10 @@ from affiche.visuals.gateway import StubProvider
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "outputs" / "editor-smoke"
-ORIGIN = "http://127.0.0.1:5173"
+# The two ports, from the environment when it names them (as frontend/vite.config.ts reads them): two checkouts can then
+# run their smokes at the same time. Every smoke takes them from here.
+WEB_PORT, API_PORT = int(os.environ.get("SMOKE_WEB_PORT", "5173")), int(os.environ.get("SMOKE_API_PORT", "8000"))
+ORIGIN = f"http://127.0.0.1:{WEB_PORT}"
 PASSWORD = os.urandom(12).hex()  # a throwaway credential per run against temporary stub data
 IDENTIFIER = "originalphone"  # the pilot shop's (migration 0013)
 SUPPORT = "l’administrateur au 034 00 000 00"  # SUPPORT_CONTACT_FR of the smokes' server
@@ -2404,13 +2407,13 @@ def accepted(conn, shop):
 
 
 def serve(data, **extra):
-    """The API on loopback port 8000 (where Vite proxies /api), stub providers, temporary data, the pilot shop funded;
+    """The API on loopback port API_PORT (8000 unless the environment says; Vite proxies /api there), stub providers, temporary data, the pilot shop funded;
     the defaults unless told."""
     settings = Settings(_env_file=None, image_provider="stub", planner_provider="stub", openai_api_key=None,
                         anthropic_api_key=None, spend_cap_usd="20", spend_cap_since="2026-11-06",
                         data_dir=data, app_origin=ORIGIN, shop_password_hash=PASSWORDS.hash(PASSWORD),
                         support_contact_fr=SUPPORT, **{"stub_fail": None, **extra})
-    server = uvicorn.Server(uvicorn.Config(create_app(settings, prepare=credited), host="127.0.0.1", port=8000, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(settings, prepare=credited), host="127.0.0.1", port=API_PORT, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):

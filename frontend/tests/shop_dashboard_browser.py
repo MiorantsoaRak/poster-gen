@@ -1241,7 +1241,7 @@ def run():
         server = smoke.serve(Path(data))
         try:
             vite = subprocess.Popen(["node", "node_modules/vite/bin/vite.js", "preview", "--host", "127.0.0.1",
-                                     "--port", "5173", "--strictPort"], cwd=smoke.ROOT / "frontend", stdout=log, stderr=log)
+                                     "--port", str(smoke.WEB_PORT), "--strictPort"], cwd=smoke.ROOT / "frontend", stdout=log, stderr=log)
             try:
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch()
