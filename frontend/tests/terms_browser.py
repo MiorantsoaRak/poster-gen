@@ -121,6 +121,7 @@ def shows_conditions(page, heading="Conditions d’utilisation", version=None):
     expect(dialog.get_by_role("button", name="Se déconnecter")).to_have_count(0)
     page.wait_for_function(FOCUS_IN, arg=TERMS)
     expect(page.locator(".app-header")).to_have_attribute("inert", "")
+    expect(page.locator("aside.side")).to_have_attribute("inert", "")  # « Se déconnecter » is out of reach behind it
     return dialog
 
 
@@ -211,7 +212,7 @@ def walk_journey(browser, engine, errors, product, model):
     # A fresh chat card (the form's product, no read paid): « Lire les conditions » in place of « Créer l’affiche »,
     # and no /scenes request leaves. The button opens the dialog; « Plus tard » gives the focus back to it.
     made = count(posts, "/scenes")  # the first poster's
-    page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Créer").click()
+    smoke.go(page, "Nouvelle affiche")
     expect(page.get_by_label("Photos du produit")).to_be_enabled()  # not while the page is busy loading
     page.get_by_label("Photos du produit").set_input_files(product)
     expect(page.locator(".photo-strip img")).to_have_count(1)
@@ -480,7 +481,7 @@ def data_page(page):
     page.wait_for_url(f"{smoke.ORIGIN}/donnees.html")
     expect(page.get_by_role("heading", name="Vos données", level=1)).to_be_visible()
     expect(page.locator("script")).to_have_count(0)
-    for scheme, ground in (("dark", "rgb(16, 15, 14)"), ("light", "rgb(245, 241, 232)")):
+    for scheme, ground in (("dark", "rgb(32, 32, 29)"), ("light", "rgb(245, 241, 232)")):
         page.emulate_media(color_scheme=scheme)
         assert page.evaluate("getComputedStyle(document.documentElement).backgroundColor") == ground, scheme
         assert page.evaluate(smoke.NO_SIDEWAYS), f"the data page scrolls sideways, {scheme}"
@@ -568,7 +569,7 @@ def walk_keyboard(browser, engine, errors, product, model, first):
     page.route("**/scenes", lambda route: held.append((route, route.fetch())))
     card.get_by_role("button", name="Réessayer").click()
     until(page, lambda: held)
-    page.locator(".app-header .sign-out").click()
+    smoke.go(page, "Se déconnecter")
     confirmation = page.locator("[aria-labelledby=titre-confirmation]")
     expect(confirmation).to_contain_text("Se déconnecter ?")
     page.wait_for_function(FOCUS_IN, arg="[aria-labelledby=titre-confirmation]")

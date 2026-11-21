@@ -92,11 +92,17 @@ def check_material_pixels(page, document):
 # saturate() acts on what is behind it before its fill is laid over (sRGB matrix of Filter Effects, as Chromium draws
 # it); its blur only averages the backdrop towards less extreme colours, so leaving it out keeps the worst case.
 BACKDROP_JS = r"""
-  const parse = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
+  // Only rgb() and rgba() are read. Any other computed colour (a color-mix() computes to color(srgb …), and lab(), oklch()…)
+  // stops the check with its value: a colour it cannot read must never become a passing ratio.
+  const unread = value => { if (/\b(?:color|color-mix|lab|lch|oklab|oklch|hsla?|hwb)\(/.test(value)) throw new Error(`a computed colour the check cannot read: ${value}`) }
+  const parse = value => {
+    unread(value)
+    if (!/^rgba?\(/.test(value.trim())) throw new Error(`a computed colour the check cannot read: ${value}`)
+    const n = (value.match(/[\d.]+/g) || []).map(Number); return n.length < 4 ? [...n, 1] : n }
   const channel = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4 }
   const luminance = c => .2126 * channel(c[0]) + .7152 * channel(c[1]) + .0722 * channel(c[2])
   const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3]))
-  const patches = style => (style.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(parse).filter(colour => colour[3] > 0)
+  const patches = style => { unread(style.backgroundImage); return (style.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(parse).filter(colour => colour[3] > 0) }
   const spread = (bases, colours) => bases.flatMap(base => [base, ...colours.map(colour => over(colour, base))])
   const saturation = e => { const found = [getComputedStyle(e).backdropFilter, getComputedStyle(e, '::before').backdropFilter].join(' ').match(/saturate\(([\d.]+)(%?)\)/); return found ? Number(found[1]) / (found[2] ? 100 : 1) : 1 }
   const saturate = (c, s) => [[.213 + .787 * s, .715 - .715 * s, .072 - .072 * s], [.213 - .213 * s, .715 + .285 * s, .072 - .072 * s], [.213 - .213 * s, .715 - .715 * s, .072 + .928 * s]]
@@ -173,6 +179,8 @@ MARKS = [
     [".wait-steps .now .n", "boxShadow", "self", 3],
     [".chat-wait i", "borderTopColor", "self", 3],
     [".chat .send:not(:disabled) svg path", "stroke", "self", 4.5],
+    # The main action's label and icon on its Signal fill (D-REDESIGN-001).
+    [":is(button.primary:not(:disabled), a.primary, .download-button:not(.secondary))", "color", "self", 4.5],
 ]
 MARKS_JS = "marks => {" + BACKDROP_JS + r"""
   const theme = document.documentElement.dataset.theme, seen = new Set(), failures = [], ratios = {}
@@ -188,6 +196,7 @@ MARKS_JS = "marks => {" + BACKDROP_JS + r"""
         style = getComputedStyle(e), box = e.getBoundingClientRect()
         // Of several shadows the first, the one painted on top: its colour and its own spread (the fourth length).
         value = property === 'boxShadow' ? style.boxShadow.split(/,(?![^(]*\))/)[0] : style[property]
+        unread(value)
         found = value.match(/rgba?\([^)]*\)/)
         drawn = property === 'borderTopColor' ? !['none', 'hidden'].includes(style.borderTopStyle) && parseFloat(style.borderTopWidth) > 0
           : property === 'boxShadow' ? parseFloat((value.replace(found?.[0], '').match(/-?[\d.]+px/g) || [])[3]) > 0
@@ -246,7 +255,36 @@ POSTER_JS = r"""() => {
   }
   return [canvas.toDataURL(), veiled]
 }"""
-GROUNDS = {"clair": "#f5f1e8", "sombre": "#100f0e"}
+GROUNDS = {"clair": "#f5f1e8", "sombre": "#20201d"}
+# D-REDESIGN-001 as Chromium computes it, read on the rendered elements in each theme. The main action is charcoal on
+# Signal Yellow with its edge; a secondary action (« Télécharger » beside « Partager ») is outlined, not yellow.
+SIGNAL, ON_SIGNAL, CLEAR = "rgb(242, 199, 68)", "rgb(32, 32, 29)", "rgba(0, 0, 0, 0)"
+PAINT = {
+    "clair": {"ground": "rgb(245, 241, 232)", "surface": "rgb(255, 253, 248)", "text": "rgb(32, 32, 29)", "line": "rgba(32, 32, 29, 0.1)",
+              "edge": "rgba(32, 32, 29, 0.2)", "control": "rgb(125, 120, 109)", "signal-edge": "rgb(217, 176, 50)"},
+    "sombre": {"ground": "rgb(32, 32, 29)", "surface": "rgb(43, 43, 39)", "text": "rgb(245, 241, 232)", "line": "rgba(245, 241, 232, 0.1)",
+               "edge": "rgba(245, 241, 232, 0.22)", "control": "rgb(143, 139, 128)", "signal-edge": "rgb(242, 199, 68)"},
+}
+PAINT_JS = r"""e => { const style = getComputedStyle(e)
+  return { fill: style.backgroundColor, text: style.color, edge: style.borderTopColor, off: !!e.disabled || !!e.closest('[inert]'), label: e.textContent.trim().slice(0, 40) } }"""
+# Cards, lists and panels at rest: an opaque fill of the surface, a hairline on each side, no blur and no shadow on
+# themselves or their ::before and ::after.
+RESTING = ".sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state, .rail"
+RESTING_JS = r"""([selectors, surface, line]) => [...document.querySelectorAll(selectors)].filter(e => e.checkVisibility()).flatMap(e => {
+  const style = getComputedStyle(e), faults = []
+  if (style.backgroundColor !== surface) faults.push(`fill ${style.backgroundColor}`)
+  for (const side of ['Top', 'Right', 'Bottom', 'Left'])
+    if (style[`border${side}Style`] !== 'solid' || !(parseFloat(style[`border${side}Width`]) > 0) || style[`border${side}Color`] !== line)
+      faults.push(`border-${side.toLowerCase()} ${style[`border${side}Width`]} ${style[`border${side}Style`]} ${style[`border${side}Color`]}`)
+  for (const [part, look] of [['itself', style], ['::before', getComputedStyle(e, '::before')], ['::after', getComputedStyle(e, '::after')]])
+    for (const property of ['backdropFilter', 'boxShadow']) if (look[property] !== 'none') faults.push(`${part} ${property} ${look[property]}`)
+  return faults.length ? [`<${e.tagName.toLowerCase()} class="${e.className}"> ${faults.join('; ')}`] : []
+})"""
+SHOWN_JS = "selector => [...document.querySelectorAll(selector)].some(e => e.checkVisibility())"
+# Where a tap at a control's centre lands, and whether the control is wholly inside the visible viewport.
+REACH_JS = r"""e => { const b = e.getBoundingClientRect(), v = visualViewport
+  return { inside: b.left >= v.offsetLeft - .5 && b.top >= v.offsetTop - .5 && b.right <= v.offsetLeft + v.width + .5 && b.bottom <= v.offsetTop + v.height + .5,
+    hit: e.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)), box: [b.x, b.y, b.width, b.height].map(Math.round) } }"""
 # The controls keep their place while a poster is made (T-WAIT-DEFORM, user report 2026-11-14): the rail's size and its
 # place in its column, each row of the open tab inside the rail, the poster's size and the bottom bar's size. On one
 # column the waiting block sits above the controls (D-POSTER-EDITOR-006): there the rail's place down the column is left out.
@@ -329,17 +367,56 @@ def shot(page, name, full_page=True):
     page.screenshot(path=str(OUTPUT / name), full_page=full_page)
 
 
+def open_drawer(page):
+    """The drawer at 1180 px and under (D-REDESIGN-002): opened by the top bar's menu button, which gives the focus to
+    « Fermer le menu »."""
+    page.get_by_role("button", name="Ouvrir le menu").click()
+    expect(page.get_by_role("button", name="Fermer le menu")).to_be_focused()
+    return page.locator("aside.side")
+
+
+# The shell's controls whose name in the sidebar is not the destination's: the account row is named by the shop, the
+# credit card by the balance.
+SIDE_ONLY = {"Mon compte": "a.account", "Mes crédits": "a.credit-card"}
+
+
+def go(page, name, tap=False):
+    """A destination or a control of the shell by its name, through what a person sees at the window's width
+    (D-REDESIGN-002): the bottom bar at 720 px and under when it is shown and holds it, else the sidebar over 1180 px,
+    else the drawer, opened first. A count after the name (« Mes affiches 3 ») is allowed."""
+    pattern = re.compile("^" + re.escape(name) + r"(?: -?\d+)?$")
+    press = (lambda control: control.tap()) if tap else (lambda control: control.click())
+    bar = page.locator("nav.phone-bar")
+    if bar.is_visible() and bar.get_by_role("link", name=pattern).count():
+        return press(bar.get_by_role("link", name=pattern))
+    # The phone's chat has « Nouvelle affiche » in its top bar; the phone's step editor has no top bar, and its own bar
+    # holds « Se déconnecter ».
+    for there in (page.locator(".app-header").get_by_role("link", name=pattern), page.locator(".bar").get_by_role("button", name=pattern)):
+        if there.count() and there.is_visible():
+            return press(there)
+    side = page.locator("aside.side")
+    if not side.is_visible():
+        open_drawer(page)
+    target = side.locator(SIDE_ONLY[name]) if name in SIDE_ONLY else side.get_by_role("link", name=pattern).or_(side.get_by_role("button", name=pattern))
+    press(target)
+
+
 def toggle_theme(page, name, hidden=False):
-    # A real click on the one visible theme button: the header's, or on a phone in the editor the one in « Réglages »
-    # (D-POSTER-EDITOR-005). During the steps on a phone there is no « Réglages » and the header gives way to the
-    # editor's bar: there, and only where the caller says so, the hidden header button receives the click event itself,
-    # so that the contrast of the steps can still be measured in both themes.
+    # A real click on the one visible theme button: the header's, or on a phone the drawer's (its menu then closed again
+    # by Escape), or in the editor on a phone the one in « Réglages » (D-POSTER-EDITOR-005). During the steps on a phone
+    # there is no « Réglages » and the header gives way to the editor's bar: there, and only where the caller says so, the
+    # hidden header button receives the click event itself, so that the contrast of the steps can still be measured in
+    # both themes.
     if hidden:
-        button = page.locator(".theme-toggle")
+        button = page.locator(".app-header .theme-toggle")
         expect(button).to_be_hidden()
         expect(button).to_have_attribute("aria-label", name)
         button.dispatch_event("click")
         expect(button).not_to_have_attribute("aria-label", name)
+    elif page.get_by_role("button", name=name, exact=True).count() == 0 and page.get_by_role("button", name="Ouvrir le menu").is_visible():
+        open_drawer(page).get_by_role("button", name=name, exact=True).click()
+        page.keyboard.press("Escape")
+        expect(page.locator("aside.side")).to_have_attribute("inert", "")
     else:
         page.get_by_role("button", name=name, exact=True).click()
         expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
@@ -376,6 +453,105 @@ def check_still(page, before, where, samples=1):
 def check_one_blur(page, where):
     nested = page.evaluate(NESTED_BLUR_JS)
     assert not nested, f"blur inside a blurred surface on {where}:\n" + "\n".join(nested)
+
+
+def both_themes(page, check):
+    """`check(theme)` in the theme shown, then in the other one, set on the page itself (the owner's choice and the
+    device's are left alone); the theme shown is put back, also after a failure."""
+    first = theme_of(page)
+    try:
+        for theme in (first, "clair" if first == "sombre" else "sombre"):
+            page.evaluate("theme => { document.documentElement.dataset.theme = theme }", theme)
+            page.wait_for_function(SETTLED, polling=100)
+            ground = page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
+            assert ground == PAINT[theme]["ground"], f"the page is painted {ground}, not the {theme} ground"
+            check(theme)
+    finally:
+        page.evaluate("theme => { document.documentElement.dataset.theme = theme }", first)
+        page.wait_for_function(SETTLED, polling=100)
+
+
+def check_primary(page, where, action, secondary=None):
+    """The named main action (a locator inside the form or the dialog in use) is charcoal on Signal Yellow with its edge,
+    on screen, usable, out of hover, in both themes; the named secondary action is outlined, in the text colour, not
+    yellow (R-REDESIGN-001)."""
+    for control in filter(None, (action, secondary)):
+        control.scroll_into_view_if_needed()
+        expect(control).to_be_in_viewport()
+    page.mouse.move(0, 0)
+
+    def check(theme):
+        paint = action.evaluate(PAINT_JS)
+        assert not paint["off"], f"the main action « {paint['label']} » on {where} is disabled or inert"
+        assert (paint["fill"], paint["text"], paint["edge"]) == (SIGNAL, ON_SIGNAL, PAINT[theme]["signal-edge"]), f"main action on {where}, {theme}: {paint}"
+        if secondary:
+            paint = secondary.evaluate(PAINT_JS)
+            assert (paint["fill"], paint["text"], paint["edge"]) == (CLEAR, PAINT[theme]["text"], PAINT[theme]["edge"]), f"secondary action on {where}, {theme}: {paint}"
+    both_themes(page, check)
+
+
+def check_field(page, selector, where):
+    """An empty field's boundary is 3:1 against what is around it, at rest and focused by the keyboard, in both themes
+    (R-REDESIGN-001). A field that is not there fails."""
+    field = page.locator(selector)
+    expect(field).to_have_value("")
+    mark, paint = [[selector, "borderTopColor", "parent", 3]], "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).borderTopColor]"
+    page.mouse.move(0, 0)
+
+    def check(theme):
+        field.evaluate("e => e.blur()")
+        field.scroll_into_view_if_needed()
+        expect(field).to_be_in_viewport(ratio=1)
+        page.wait_for_function(SETTLED, polling=100)
+        assert field.evaluate(paint) == [PAINT[theme]["surface"], PAINT[theme]["control"]], f"{selector} at rest on {where}, {theme}: {field.evaluate(paint)}"
+        check_marks(page, f"the boundary of {selector} on {where}, {theme}", selector, marks=mark)
+        field.focus()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        assert field.evaluate("e => e === document.activeElement && e.matches(':focus-visible')"), f"{selector} not focused by the keyboard on {where}"
+        page.wait_for_function(SETTLED, polling=100)
+        assert field.evaluate(paint) == [PAINT[theme]["surface"], PAINT[theme]["text"]], f"{selector} focused on {where}, {theme}: {field.evaluate(paint)}"
+        check_marks(page, f"the boundary of {selector}, focused, on {where}, {theme}", selector, marks=mark)
+    both_themes(page, check)
+    field.evaluate("e => e.blur()")
+
+
+def check_resting(page, where, *required):
+    """Every card, list or panel at rest on screen is opaque in the surface colour with a hairline on each side, and
+    neither it nor its ::before or ::after blurs or casts a shadow, in both themes (R-REDESIGN-001). Those named must be
+    on screen."""
+    missing = [selector for selector in required if not page.evaluate(SHOWN_JS, selector)]
+    assert not missing, f"not on screen to be checked on {where}: {missing}"
+
+    def check(theme):
+        found = page.evaluate(RESTING_JS, [RESTING, PAINT[theme]["surface"], PAINT[theme]["line"]])
+        assert not found, f"a surface at rest on {where}, {theme}:\n" + "\n".join(found)
+    both_themes(page, check)
+
+
+def check_reach(page, panel, where, *controls):
+    """A panel taller than the screen, scrolled from its top to its end: each of its decisions stays where it was on the
+    screen (fixed to it, not in the panel's flow), wholly inside the visible viewport, and is what a tap at its centre
+    reaches (rule 1 of D-REDESIGN-001); and at the end nothing of the panel is left under the decisions' bar. The panel
+    goes back to its top."""
+    box = page.locator(panel)
+    assert box.evaluate("e => e.scrollHeight > e.clientHeight"), f"{where}: the panel is not long enough to scroll"
+    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
+    starts = [control.evaluate(REACH_JS)["box"] for control in controls]
+    box.evaluate("e => e.scrollTo({ top: e.scrollHeight, behavior: 'instant' })")
+    assert box.evaluate("e => e.scrollTop > 0 && Math.ceil(e.scrollTop + e.clientHeight) >= e.scrollHeight"), f"{where}: the panel did not scroll to its end"
+    for control, start in zip(controls, starts):
+        reach = control.evaluate(REACH_JS)
+        assert reach["inside"] and reach["hit"] and same_boxes(start, reach["box"]), f"{where}: « {control.inner_text().strip()} » from {start} to {reach}"
+    # The bar is fixed, so it takes no room in the panel: what comes last (a point to check, the form of a refusal)
+    # must end above it. Measured on everything shown in the panel that is neither the bar nor a box holding it.
+    under = box.evaluate("""e => {
+      const bar = e.querySelector('.actions'), top = bar.getBoundingClientRect().top
+      const parts = [...e.querySelectorAll('*')].filter(n => !bar.contains(n) && !n.contains(bar) && n.checkVisibility() && n.getBoundingClientRect().height)
+      return [parts.length, Math.max(...parts.map(n => n.getBoundingClientRect().bottom)), top]
+    }""")
+    assert under[0] > 3 and under[1] <= under[2] + 0.5, f"{where}: the panel's content ends at {under[1]}, under its decisions' bar (top {under[2]})"
+    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
 
 
 def bar_colour(page):
@@ -555,6 +731,7 @@ def walk_wait(browser, session, errors):
     device.wait_for_function("scrollY === 0")
     check_still(device, still, "while the first generation is queued at 360 px")
     expect(block).to_be_in_viewport()
+    check_resting(device, "waiting at 360 px", ".job-state")
     assert topmost(pill) and topmost(badge)
     expect(device.locator(".frame[aria-busy=true]")).to_have_count(1)
     # Screen readers hear the state when it changes, not the time every second.
@@ -716,7 +893,7 @@ def walk_wait(browser, session, errors):
     expect(screen.locator(".wait [role=status]")).to_contain_text("Votre affiche prend forme.")
     held["signed_out"] = True
     expect(screen.get_by_label("Mot de passe", exact=True)).to_be_visible()
-    expect(screen.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+    expect(screen.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
     expect(screen.locator(".wait")).to_have_count(0)
     asked = len(polls)
     screen.wait_for_timeout(3000)
@@ -809,7 +986,7 @@ def walk_tap(browser, session, errors):
     page.set_viewport_size({"width": 1366, "height": 768})
     listing = "**/api/creations?limit=50&status=active"
     page.route(listing, lambda route: held.append(route))
-    check_working(page, page.locator(".nav a", has_text="Mes affiches"), held, posts, "the header's navigation link at 1366 px", "tap-1366-sombre-navigation.png", sized=False)
+    check_working(page, page.locator("aside.side .nav a", has_text="Mes affiches"), held, posts, "the sidebar's navigation link at 1366 px", "tap-1366-sombre-navigation.png", sized=False)
     page.unroute(listing)
     expect(rows).to_have_count(count + 1)
     page.set_viewport_size({"width": 360, "height": 740})
@@ -842,7 +1019,7 @@ def walk_tap(browser, session, errors):
         if where == "list":
             page.locator(".back-link").tap()
             expect(rows).to_have_count(count + 1)
-        for selector in ((tab,) if where == "editor" else (".nav a:not([aria-current])", ".row-actions button")):
+        for selector in ((tab,) if where == "editor" else (".phone-bar a:not([aria-current])", ".row-actions button")):
             assert pressed_look(page, cdp, selector)[0] == scaled, selector
             resting = page.eval_on_selector(selector, "e => getComputedStyle(e).backgroundColor")
             reduced = pressed_look(page, cdp, selector, reduced=True)
@@ -916,7 +1093,7 @@ def walk_words(browser, session, errors):
     assert len(scenes) == 1, scenes
     assert (scenes[-1]["headline"]["brand"], scenes[-1]["headline"]["subtitle"], scenes[-1]["headline"]["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), scenes[-1]
     # The form waits for the next product: nothing of A's photos, name, price or agreement is left in it.
-    page.locator(".nav a", has_text="Créer").click()
+    go(page, "Nouvelle affiche")
     expect(page.locator(".photo-strip img")).to_have_count(0)
     expect(page.get_by_label("Nom du produit", exact=True)).to_have_value("")
     expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("")
@@ -998,7 +1175,7 @@ def walk_formats(browser, errors):
     assert get("/api/capabilities")["formats_enabled"] == ["feed", "square", "story"]
 
     def make(name):
-        page.locator(".nav a", has_text="Créer").click()
+        go(page, "Nouvelle affiche")
         expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back from a poster is over
         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
         expect(page.locator(".photo-strip img")).to_have_count(1)
@@ -1310,7 +1487,7 @@ def walk_formats(browser, errors):
                     shot(screen, f"format-{value}-{width}-{theme}-grand.png", full_page=False)
                     press(sheet.get_by_role("button", name="Revenir aux réglages"))
                     expect(screen.get_by_role("dialog")).to_have_count(0)
-            # The library: each thumbnail whole, in its poster's shape, inside the same 48 × 60 place.
+            # The library: each thumbnail whole, in its poster's shape, inside the same 64 × 80 place.
             screen.goto(f"{ORIGIN}/#affiches")
             expect(screen.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
             for value, title in titles.items():
@@ -1318,7 +1495,7 @@ def walk_formats(browser, errors):
                 screen.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=picture.element_handle())
                 natural = picture.evaluate("e => e.naturalWidth / e.naturalHeight")
                 assert abs(natural - ratios[value]) / ratios[value] < .02 and picture.evaluate("e => getComputedStyle(e).objectFit") == "contain", (value, natural)
-                assert [round(side) for side in picture.evaluate(BOX_JS)] == [48, 60]
+                assert [round(side) for side in picture.evaluate(BOX_JS)] == [64, 80]
             check_contrast(screen, f"Mes affiches at {width} px, {theme}")
             shot(screen, f"format-mes-affiches-{width}-{theme}.png", full_page=False)
             # A Story poster in the steps: on one column its thumbnail is at most 130 px high and the first field stays high.
@@ -1351,7 +1528,8 @@ def walk_formats(browser, errors):
 OTHER_SHOP = "Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer."
 # While the gate is not open nothing of a shop is displayed or in the accessibility tree: the shop's part of the page is
 # absent or under `hidden`, and no word of either shop is in the page's text.
-GATE_CLOSED = """markers => [...document.querySelectorAll('.shop-label, .sign-out, .nav, .seg, main:not(.gate)')].every(e => e.closest('[hidden]'))
+GATE_CLOSED = """markers => !document.querySelector('aside.side, nav.phone-bar, .app-header :is(.credits-pill, .seg, .top-title, .menu)')
+  && [...document.querySelectorAll('main:not(.gate)')].every(e => e.closest('[hidden]'))
   && !markers.some(marker => document.body.innerText.includes(marker))"""
 # Shown or hidden: what the document holds of these words.
 HOLDS = "markers => markers.filter(marker => document.documentElement.outerHTML.includes(marker))"
@@ -1480,13 +1658,13 @@ def walk_two_shops(browser, errors, data):
         page.emulate_media(color_scheme="dark")
 
     def nav(page, name):
-        page.get_by_role("link", name=re.compile(name)).click()
+        go(page, name)
 
     def sign_out(page):
         """« Se déconnecter », to the fresh page bound to nobody: the old page may show the signed-out screen a moment
         before it is replaced (a request of its own refused once the session is gone)."""
         with replaced(page):
-            page.get_by_role("button", name="Se déconnecter").click()
+            go(page, "Se déconnecter")
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
 
     def ask_server(page):
@@ -1494,7 +1672,11 @@ def walk_two_shops(browser, errors, data):
         thumbnails are requests too: refused, they alone can sign the page out (review r2 P1-3) while the click is on its
         way, so the click is dispatched, not waited on; a page already signed out sends nothing (api.ts, gate_closed)."""
         nav(page, "Mes affiches")
-        page.get_by_label("Afficher les affiches retirées").dispatch_event("click")
+        # The list's own read may already have met the refusal: signed out, the shop's screen has left the page (r1, 2).
+        removed, form = page.get_by_label("Afficher les affiches retirées"), page.get_by_label("Mot de passe", exact=True)
+        expect(removed.or_(form)).not_to_have_count(0)
+        if removed.count():
+            removed.dispatch_event("click")
 
     def come_back(page):
         """The tab hidden and shown again: the session is asked again."""
@@ -1576,7 +1758,7 @@ def walk_two_shops(browser, errors, data):
     showing(one, b_words)
     one.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
     one.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
-    one.get_by_role("button", name="Se déconnecter").click()
+    go(one, "Se déconnecter")
     expect(one.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
     assert one.evaluate("fetch('/api/session').then(answer => answer.json())")["authenticated"] is False
     assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == ["affiche.shop1.style"] and one.evaluate(BOUND) == "none"
@@ -1618,7 +1800,7 @@ def walk_two_shops(browser, errors, data):
     deletes, posts = [], []
     one.route("**/api/session", lambda route: deletes.append(route) if route.request.method == "DELETE" else route.continue_())
     two.on("request", lambda request: posts.append(request.url) if request.method == "POST" and request.url.endswith("/api/session") else None)
-    one.get_by_role("button", name="Se déconnecter").click()
+    go(one, "Se déconnecter")
     until(one, lambda: deletes)
     sign_in(two, "Boutique Deux", password_b)
     two.wait_for_timeout(1500)
@@ -1748,7 +1930,7 @@ def walk_two_shops(browser, errors, data):
     sign_in(four, "Boutique Deux", password_b)
     showing(four, a_words)
     nav(four, "Mes affiches")
-    expect(four.get_by_text(b_title)).to_be_visible()
+    expect(four.locator("main").get_by_text(b_title)).to_be_visible()  # the sidebar's recent row has it too
     assert not four.evaluate(HOLDS, a_words) and not puts and revision(a_poster) == before, puts
 
     # 6. Suspension: the next action is the signed-out screen; signing in says why; enabled, a reload is A again.
@@ -1778,7 +1960,7 @@ def walk_two_shops(browser, errors, data):
                              data=current["document"]).ok
     title.fill(f"{a_title} ici")
     expect(one.get_by_text("Une autre version existe")).to_be_visible()
-    one.get_by_role("button", name="Se déconnecter").click()
+    go(one, "Se déconnecter")
     dialog = one.get_by_role("dialog")
     expect(dialog).to_contain_text("Des modifications de l’affiche n’ont pas pu être enregistrées : elles seront perdues.")
     expect(dialog).not_to_contain_text("Une image demandée")
@@ -1796,7 +1978,7 @@ def walk_two_shops(browser, errors, data):
     expect(chatting.get_by_label("Votre message")).to_be_visible()  # this tab holds the chat
     # Signing out from a tab that does not hold the chat (ADR-108): nothing of the shop stays, in either tab.
     with replaced(one):
-        one.get_by_role("button", name="Se déconnecter").click()
+        go(one, "Se déconnecter")
     expect(one.get_by_label("Mot de passe", exact=True)).to_be_visible()
     expect(chatting.get_by_label("Mot de passe", exact=True)).to_be_visible()
     assert one.evaluate(SHOP_KEYS, "affiche.shop1.") == [], one.evaluate(SHOP_KEYS, "affiche.shop1.")
@@ -1818,7 +2000,7 @@ def walk_two_shops(browser, errors, data):
     signed_out(second, a_words)
     held.pop().fulfill(status=200, json={"authenticated": True, "shop_id": 1})  # then its body
     showing(first, b_words)  # A, by its own explicit sign-in on that tab
-    first.get_by_role("button", name="Se déconnecter").click()
+    go(first, "Se déconnecter")
     until(first, lambda: held)  # the sign-out's answer held
     sign_in(second, "Boutique Deux", password_b)
     showing(second, a_words)
@@ -1899,7 +2081,7 @@ def walk_review_r2(browser, errors, data, only=()):
             route.abort("failed")  # the answer never reaches the page
         page.route("**/api/session", lose)
         with replaced(page):
-            page.get_by_role("button", name="Se déconnecter").click()
+            go(page, "Se déconnecter")
         signed_out(page)
         assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == []
         context.close()
@@ -1913,7 +2095,7 @@ def walk_review_r2(browser, errors, data, only=()):
         page.route("**/api/assets/**", lambda route: route.fulfill(status=401, json={"error": {"code": "unauthenticated", "message_fr": "Connectez-vous pour continuer.", "retryable": False}}))
         page.goto(f"{ORIGIN}/#{made}")
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
-        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
         context.close()
 
     def palette_refused():
@@ -1923,7 +2105,7 @@ def walk_review_r2(browser, errors, data, only=()):
         page.route("**/api/assets/**", lambda route: route.fulfill(status=401, json={"error": {"code": "unauthenticated", "message_fr": "Connectez-vous pour continuer.", "retryable": False}}))
         page.goto(f"{ORIGIN}/#{made}")
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
-        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
         context.close()
 
     def image_after_expiry():
@@ -1933,7 +2115,7 @@ def walk_review_r2(browser, errors, data, only=()):
             shops.end_sessions(conn, 1)
         page.evaluate("document.querySelector('main:not(.gate)').append(Object.assign(new Image(), { src: '/api/assets/' + 'f'.repeat(64) }))")
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
-        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
         context.close()
 
     def late_chat():
@@ -1947,7 +2129,7 @@ def walk_review_r2(browser, errors, data, only=()):
         until(page, lambda: held)
         page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
         page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")  # the page stays, its cleanup to finish
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
         expect(page.locator("main:not(.gate)")).to_have_count(0)  # the shop's part is gone from the page, its chat with it
         held.pop().continue_()
@@ -1970,7 +2152,7 @@ def walk_review_r2(browser, errors, data, only=()):
           window.restoreListing = () => { Object.keys = keys; Storage.prototype.key = key }
           Object.keys = value => { if (value instanceof Storage) throw new DOMException('denied', 'SecurityError'); return keys(value) }
           Storage.prototype.key = () => { throw new DOMException('denied', 'SecurityError') } }""")
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         # Storage that cannot be listed cannot say that nothing waits: the owner is asked (review r5 P2-3).
         expect(page.get_by_role("dialog")).to_contain_text("Une image demandée attend encore sa réponse.")
         page.get_by_role("dialog").get_by_role("button", name="Se déconnecter quand même").click()
@@ -1987,7 +2169,7 @@ def walk_review_r2(browser, errors, data, only=()):
         context, page = signed_in()
         page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
         page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
         other = context.new_page()
         other.set_default_timeout(10000)
@@ -2009,7 +2191,7 @@ def walk_review_r2(browser, errors, data, only=()):
           const remove = Storage.prototype.removeItem
           Storage.prototype.removeItem = function (key) { if (key === 'affiche.style' && sessionStorage.getItem('refuse')) throw new DOMException('denied', 'SecurityError'); return remove.call(this, key) }""")
         assert page.evaluate("localStorage.getItem('affiche.style')") is not None  # the move could not remove it
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
         page.evaluate("sessionStorage.removeItem('refuse')")
         with replaced(page):
@@ -2037,7 +2219,7 @@ def walk_review_r2(browser, errors, data, only=()):
         for route in held["routes"]:
             route.fulfill(**garbage)
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
-        expect(page.locator("main:not(.gate)")).to_have_attribute("hidden", "")
+        expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
         context.close()
 
     def canvas_undecodable():
@@ -2052,7 +2234,7 @@ def walk_review_r2(browser, errors, data, only=()):
         context, page = signed_in(script)
         page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
         page.evaluate(REFUSE_REMOVAL, r"^affiche\.shop1\.style$")
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         expect(page.locator("main.gate").get_by_text(LEFT_BEHIND)).to_be_visible()
         page.evaluate("restoreRemoval()")
         held = []
@@ -2089,7 +2271,7 @@ def walk_review_r2(browser, errors, data, only=()):
         context, page = signed_in()
         page.evaluate("localStorage.setItem('affiche.shop1.style', '{}')")
         page.route("**/api/session", lambda route: route.abort("failed") if route.request.method == "DELETE" else route.continue_())
-        page.get_by_role("button", name="Se déconnecter").click()
+        go(page, "Se déconnecter")
         expect(page.locator(".message.error")).to_contain_text("Déconnexion impossible : la connexion au serveur est interrompue. Réessayez.")
         expect(page.locator("main:not(.gate)")).to_be_visible()
         assert page.evaluate(SHOP_KEYS, "affiche.shop1.") == ["affiche.shop1.style"] and page.evaluate(BOUND) == "1"
@@ -2383,7 +2565,7 @@ def walk_credits(browser, errors, data, app):
     # « Mes affiches » lists the poster at zero.
     page.goto(f"{ORIGIN}/#affiches")
     expect(page.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
-    expect(page.get_by_text("Casque Kilo").first).to_be_visible()
+    expect(page.locator("main").get_by_text("Casque Kilo").first).to_be_visible()
     shown = page.locator("body").inner_text()
     assert "$" not in shown and "USD" not in shown, shown
     assert balance() | {"blocked": None} == {"available": 0, "pending": 0, "purchase_fr": purchase, "blocked": None}
@@ -2491,6 +2673,9 @@ def run():
                         page.get_by_role("button", name="Réessayer").click()
                         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
                         check_contrast(page, "sign-in")
+                        check_primary(page, "sign-in", page.locator("form.sign-in").get_by_role("button", name="Ouvrir l’atelier"))
+                        check_field(page, "input[name=username]", "sign-in")
+                        check_resting(page, "sign-in", ".sign-in")
                         # A dark device and no choice stored: the dark theme, and the browser's bar says so (it took the
                         # light colour before T-THEME-COLOR).
                         assert theme_of(page) == "sombre" and bar_colour(page) == GROUNDS["sombre"], (theme_of(page), bar_colour(page))
@@ -2515,16 +2700,26 @@ def run():
                         page.get_by_role("button", name="Ouvrir l’atelier").click()
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()
                         check_contrast(page, "intake")
+                        check_primary(page, "intake", page.locator("form.intake").get_by_role("button", name="Préparer mon affiche"))
+                        check_field(page, "input[name=product]", "intake")
+                        check_resting(page, "intake", ".intake")
                         page.screenshot(path=str(OUTPUT / "intake.png"), full_page=True)
-                        # Glass on every surface, the header and the panels alike (ADR-077); all solid for a person who
-                        # asked for less motion (R-POSTER-EDITOR-006).
+                        # Glass on what floats (the header, painted by its ::before since D-REDESIGN-002), none on a card
+                        # at rest (D-REDESIGN-001); all solid for a person who asked for less motion (R-POSTER-EDITOR-006).
                         blur = "selector => getComputedStyle(document.querySelector(selector)).backdropFilter"
-                        assert page.evaluate(blur, ".app-header") != "none" and page.evaluate(blur, ".intake") != "none"
+                        bar_glass = "property => getComputedStyle(document.querySelector('.app-header'), '::before')[property]"
+                        assert page.evaluate(bar_glass, "backdropFilter") != "none" and page.evaluate(blur, ".intake") == "none"
                         page.emulate_media(reduced_motion="reduce")
-                        assert page.evaluate(blur, ".app-header") == "none" and page.evaluate(blur, ".intake") == "none"
-                        assert page.evaluate("getComputedStyle(document.querySelector('.app-header')).backgroundColor").startswith("rgb(")
+                        assert page.evaluate(bar_glass, "backdropFilter") == "none" and page.evaluate(blur, ".intake") == "none"
+                        assert page.evaluate(bar_glass, "backgroundColor").startswith("rgb(")
                         check_contrast(page, "intake, solid chrome", placeholders=("input[name=product]", "input[name=price]"))
                         page.emulate_media(reduced_motion="no-preference")
+                        # Accueil before the first poster: its empty list is a card at rest too.
+                        go(page, "Accueil")
+                        expect(page.locator(".shop-home .empty")).to_be_visible()
+                        check_resting(page, "Accueil", ".empty")
+                        go(page, "Nouvelle affiche")
+                        expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         # The browser's own file control (« Choose Files ») is not shown: the label shows a French button.
                         expect(page.locator(".upload-zone .pick-button")).to_have_text("Ajouter des photos")
                         assert page.locator("#champ-photos").evaluate("e => getComputedStyle(e).opacity") == "0"
@@ -2588,6 +2783,7 @@ def run():
                         expect(page.get_by_text("Vous choisirez celle à exporter.", exact=False)).to_be_visible()
                         assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
                         check_contrast(page, "step Textes")
+                        check_resting(page, "step editor at 1440 px", ".rail")
                         shot(page, "step-textes.png")
                         # "Brand as plain text" is offered only once a brand is typed.
                         plain_brand = page.get_by_label("Écrire la marque en texte simple", exact=False)
@@ -2745,6 +2941,7 @@ def run():
                         expect(page.locator(".review-checks .points li")).to_have_count(6)
                         expect(page.locator(".review-panel input[type=checkbox]")).to_have_count(0)
                         page.screenshot(path=str(OUTPUT / "review.png"))
+                        check_resting(page, "review at 1440 px", ".comparison figure", ".group")
                         page.get_by_role("button", name="Signaler un problème").click()
                         expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
                         page.get_by_role("button", name="Tout est conforme, approuver").click()
@@ -2851,7 +3048,7 @@ def run():
                         # On a phone the editor's theme button is in « Réglages » (the header gives way to the editor's bar).
                         open_group("Réglages")
                         expect(page.locator(".panel .panel-theme")).to_be_visible()
-                        expect(page.locator(".theme-toggle")).to_be_hidden()
+                        expect(page.locator(".app-header .theme-toggle")).to_be_hidden()
                         toggle_theme(page, "Passer au thème clair")
                         check_contrast(page, "editor at phone width, light theme")
                         shot(page, "mobile-clair.png")
@@ -2968,6 +3165,12 @@ def run():
                         expect(page.locator(".final-preview img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "final-mobile.png"))
                         check_contrast(page, "final screen at phone width")
+                        confirm_final = page.locator(".final-preview").get_by_role("button", name="Tout est conforme, confirmer", exact=True)
+                        expect(confirm_final).to_be_enabled()
+                        check_primary(page, "final panel", confirm_final)
+                        check_resting(page, "final panel", ".shot", ".facts", ".group")
+                        page.set_viewport_size({"width": 360, "height": 640})
+                        check_reach(page, ".final-preview", "final panel at 360 × 640", confirm_final)
                         page.set_viewport_size({"width": 1440, "height": 1050})
                         page.screenshot(path=str(OUTPUT / "final.png"))
                         page.set_viewport_size({"width": 390, "height": 844})
@@ -3004,13 +3207,14 @@ def run():
                         # "Mes affiches" shows each poster itself: the confirmed one by its final preview.
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.set_viewport_size({"width": 1440, "height": 1000})
-                        page.locator(".nav a", has_text="Mes affiches").click()
+                        go(page, "Mes affiches")
                         # The view is in the address: a reload stays on the list.
                         assert page.url.endswith("#affiches"), page.url
                         page.reload()
                         thumbnail = page.locator('.library-item img[src^="/api/thumbnails/"]').first
                         expect(thumbnail).to_be_visible()
                         check_contrast(page, "Mes affiches")
+                        check_resting(page, "Mes affiches", ".rows")
                         # At 360 px the list's title row wraps instead of squeezing its subtitle to one word per line under the checkbox.
                         page.set_viewport_size({"width": 360, "height": 740})
                         heading = page.get_by_role("heading", name="Mes affiches", exact=True).bounding_box()
@@ -3030,12 +3234,12 @@ def run():
                         # Managing the list (R-CREATION-LIBRARY-003): state in words, copy, remove with confirmation, restore.
                         rows = page.locator(".library-row")
                         before = rows.count()
-                        expect(page.locator(".library-item span").first).to_contain_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
-                        expect(page.locator(".nav a", has_text="Mes affiches")).to_contain_text(str(before))
+                        expect(page.locator(".library-item .badge").first).to_have_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
+                        expect(page.locator("aside.side .nav a", has_text="Mes affiches")).to_contain_text(str(before))
                         rows.first.get_by_role("button", name=re.compile("^Dupliquer")).click()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
                         copy_id = page.url.split("#")[1]
-                        page.locator(".nav a", has_text="Mes affiches").click()
+                        go(page, "Mes affiches")
                         expect(rows).to_have_count(before + 1)
                         rows.first.get_by_role("button", name=re.compile("^Retirer")).click()
                         expect(page.get_by_role("dialog")).to_contain_text("Rien n’est effacé")
@@ -3052,7 +3256,7 @@ def run():
                         expect(rows).to_have_count(before + 1)
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
-                        page.locator(".nav a", has_text="Créer").click()
+                        go(page, "Nouvelle affiche")
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         page.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(page.locator(".photo-strip img")).to_have_count(1)
@@ -3129,6 +3333,9 @@ def run():
                         expect(approve).to_be_in_viewport()
                         expect(page.get_by_role("button", name="Signaler un problème")).to_be_in_viewport()
                         shot(page, "review-mobile.png", full_page=False)
+                        page.set_viewport_size({"width": 360, "height": 640})
+                        check_reach(page, ".review-panel", "review at 360 × 640", approve, page.get_by_role("button", name="Signaler un problème"))
+                        page.set_viewport_size({"width": 360, "height": 740})
                         approve.click()
                         expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
                         page.set_viewport_size({"width": 1440, "height": 1000})
@@ -3198,9 +3405,10 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/creations/{original_seal_id}").json() == original_seal
                         # Managing styles (R-CREATION-LIBRARY-004): open, rename with its refusals, remove with confirmation.
                         page.locator(".final-preview").wait_for(state="detached")
-                        page.locator(".nav a", has_text="Styles").click()
+                        go(page, "Styles")
                         cards = page.locator(".look-card")
                         expect(cards).to_have_count(4)
+                        check_resting(page, "Styles", ".look-card")
                         cards.filter(has_text="Studio clair").click()
                         panel = page.get_by_role("dialog")
                         expect(panel).to_contain_text("ne peut pas être renommé ni retiré")
@@ -3218,7 +3426,7 @@ def run():
                         expect(page.locator(".confirm")).to_contain_text("le gardent")
                         page.locator(".confirm").get_by_role("button", name="Retirer ce style").click()
                         expect(cards).to_have_count(3)
-                        expect(page.locator(".nav a", has_text="Styles")).to_contain_text("3")
+                        expect(page.locator("aside.side .nav a", has_text="Styles")).to_contain_text("3")
                         assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.screenshot(path=str(OUTPUT / "styles.png"))
@@ -3226,7 +3434,7 @@ def run():
                         (OUTPUT / "result.json").write_text(json.dumps({"ok": True, "revision": saved["revision"], "page_errors": errors}, indent=2), encoding="utf-8")
                         # A small product photo (first thing met on the live pilot, 2026-11-13: a 474 px picture). It is said at the
                         # upload, and the paid confirmation asks for the agreement itself instead of failing with a vague message.
-                        page.locator(".nav a", has_text="Créer").click()
+                        go(page, "Nouvelle affiche")
                         Image.new("RGB", (474, 474), (200, 200, 205)).save(OUTPUT / "small.png")
                         expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         page.get_by_label("Photos du produit").set_input_files(OUTPUT / "small.png")
@@ -3300,16 +3508,17 @@ def run():
                         mobile.goto(ORIGIN + "/#etapes")
                         no_sideways = "document.documentElement.scrollWidth <= innerWidth"
                         assert mobile.evaluate("matchMedia('(pointer: coarse)').matches")
-                        # Outside the editor « Créer », « Mes affiches » and « Styles » are a bar at the bottom, the current
-                        # one marked; the header does not blur (it would hold the bar), the bar does; the page ends above it.
-                        nav = mobile.locator(".nav")
+                        # Outside the editor the destinations are a bar at the bottom, the current one marked (« Nouvelle
+                        # affiche » never is: D-REDESIGN-002); the top bar blurs by its ::before only, the bar itself does;
+                        # the page ends above it.
+                        nav = mobile.locator(".phone-bar")
                         expect(nav).to_be_visible()
                         expect(mobile.get_by_label("Photos du produit")).to_be_attached()
                         bottom_bar = nav.bounding_box()
                         assert abs(bottom_bar["y"] + bottom_bar["height"] - 740) < 1 and bottom_bar["width"] == 360, bottom_bar
-                        expect(nav.locator("a[aria-current=page]")).to_have_text("Créer")
+                        expect(nav.locator("a[aria-current=page]")).to_have_count(0)
                         assert all(link.bounding_box()["height"] >= 44 for link in nav.locator("a").all())
-                        assert mobile.evaluate(blur, ".app-header") == "none" and mobile.evaluate(blur, ".nav") != "none"
+                        assert mobile.evaluate(blur, ".app-header") == "none" and mobile.evaluate(blur, ".phone-bar") != "none"
                         assert mobile.evaluate("parseFloat(getComputedStyle(document.querySelector('main')).paddingBottom)") >= bottom_bar["height"]
                         mobile.wait_for_function(no_sideways)
                         check_contrast(mobile, "intake at 360 px with the bottom navigation")
@@ -3317,9 +3526,9 @@ def run():
                         toggle_theme(mobile, "Passer au thème clair")
                         check_contrast(mobile, "intake at 360 px, light theme")
                         toggle_theme(mobile, "Passer au thème sombre")
-                        nav.locator("a", has_text="Mes affiches").tap()
+                        go(mobile, "Mes affiches", tap=True)
                         expect(nav.locator("a[aria-current=page]")).to_contain_text("Mes affiches")
-                        nav.locator("a", has_text="Créer").tap()
+                        go(mobile, "Nouvelle affiche", tap=True)
                         expect(mobile.get_by_label("Photos du produit")).to_be_enabled()  # the way back is over
                         mobile.get_by_label("Photos du produit").set_input_files(ROOT / "backend/fixtures/examples/phone-noir.jpg")
                         expect(mobile.locator(".photo-strip img")).to_have_count(1)

@@ -4,14 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#f5f1e8" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#100f0e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#20201d" media="(prefers-color-scheme: dark)" />
     <!-- The theme follows the device until the owner picks one; set before the first paint, with the bar colour of a
          picked theme (the grounds of style.css). App.vue keeps both in step afterwards. -->
     <script>(function () {
       var chosen; try { chosen = localStorage.getItem('affiche.theme') } catch (e) {}
       var picked = chosen === 'clair' || chosen === 'sombre', theme = picked ? chosen : matchMedia('(prefers-color-scheme: light)').matches ? 'clair' : 'sombre'
       document.documentElement.dataset.theme = theme
-      if (picked) document.querySelectorAll('meta[name=theme-color]').forEach(function (meta) { meta.content = theme === 'clair' ? '#f5f1e8' : '#100f0e' })
+      if (picked) document.querySelectorAll('meta[name=theme-color]').forEach(function (meta) { meta.content = theme === 'clair' ? '#f5f1e8' : '#20201d' })
+      // The sidebar reduced to its rail, the device's choice (D-REDESIGN-002).
+      try { if (localStorage.getItem('affiche.rail') === '1') document.documentElement.dataset.rail = '' } catch (e) {}
     })()</script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- The Signal kit's files, unmodified (docs/project/brand/doka-studio-signal/web; D-POLISH-001). -->

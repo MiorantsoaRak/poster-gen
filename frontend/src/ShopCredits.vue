@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, proxyRefs, ref } from 'vue'
-import { creditHistory, historyEntry, sectionRead, type Summary } from './dashboard'
+import { creditHistory, creditWord, historyEntry, sectionRead, type Summary } from './dashboard'
 import type { Balance } from './generation'
 
 const props = defineProps<{ funds: ReturnType<typeof sectionRead<Balance>>; panel: boolean; busy: boolean }>()
@@ -17,10 +17,10 @@ defineExpose({ refresh, unavailable })
 
 <template>
   <section class="shop-credits" aria-labelledby="titre-credits">
-    <header><h1 id="titre-credits" class="page-title" tabindex="-1">Mes crédits</h1><button v-if="panel" type="button" class="secondary" autofocus @click="emit('close')">Fermer</button><a v-else href="#accueil">Retour à l’accueil</a></header>
-    <section class="credit-balance" aria-labelledby="titre-solde">
+    <header><h1 id="titre-credits" class="page-title" tabindex="-1">Mes crédits</h1><button v-if="panel" type="button" class="secondary" autofocus @click="emit('close')">Fermer</button><a v-else class="back" href="#accueil">Retour à l’accueil</a></header>
+    <section class="credit-balance balance-card" aria-labelledby="titre-solde">
       <header><h2 id="titre-solde">Solde</h2><button type="button" class="secondary" @click="refresh">Actualiser</button></header>
-      <dl v-if="funds.data"><div><dt>Disponibles</dt><dd>{{ funds.data.available }}</dd></div><div><dt>En attente</dt><dd>{{ funds.data.pending }}</dd></div></dl>
+      <dl v-if="funds.data" class="balance-figures"><div><dt class="label">Disponibles</dt><dd class="value">{{ funds.data.available }} <span class="credit-unit">{{ creditWord(funds.data.available) }}</span></dd></div><div><dt class="label">En attente</dt><dd class="value">{{ funds.data.pending }} <span class="credit-unit">{{ creditWord(funds.data.pending) }}</span></dd></div></dl>
       <p v-if="funds.loading && !funds.data" role="status">Lecture du solde…</p>
       <p v-if="funds.error" role="status">Solde indisponible. {{ funds.error }} <button class="text-button" @click="funds.read">Réessayer le solde</button></p>
       <p v-if="funds.checked" class="meta">{{ funds.loading || funds.error ? 'Dernier solde connu à' : 'Solde vérifié à' }} {{ funds.checked }}.</p>
@@ -59,16 +59,19 @@ defineExpose({ refresh, unavailable })
 <style scoped>
 /* As a page, the frame's width; as the creator's panel, its dialog's 680 px (style.css). */
 .shop-credits { max-width: var(--page); margin: auto; padding: 16px 0; overflow-wrap: anywhere }
-header, li > div, dl { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+header, li > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
 h1, h2, h3, dl, dd, ul { margin: 0 }
 section > section { margin-top: 24px }
-.credit-balance { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
-dl { justify-content: flex-start; gap: 36px; margin: 14px 0 }
-dd { font-size: 1.8rem; font-weight: 700; line-height: 1.3; font-variant-numeric: tabular-nums }
+/* The balance: the card of Accueil (style.css .balance-card). How to get credits is its second part, under a hairline. */
+.credit-balance h3 { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line) }
 .instructions { white-space: pre-line }
 ul { list-style: none; padding: 0 }
 li { padding: 10px 0; border-bottom: 1px solid var(--line) }
 li span { font-variant-numeric: tabular-nums }
 li time, li small { display: block; color: var(--muted) }
 a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text) }
+/* The way back is shown before the title, on its own line (GOV.UK's back link; the console's « ← Shops »). It stays
+   after the title for the keyboard: the title has the focus on arrival, and the first Tab is the way back. */
+a.back { order: -1; flex-basis: 100%; gap: 8px; margin-bottom: -8px; color: var(--muted) }
+a.back::before { content: ''; flex: none; width: 7px; height: 7px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; rotate: 45deg }
 </style>

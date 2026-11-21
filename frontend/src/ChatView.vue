@@ -26,7 +26,7 @@ let key = threadKey(state.creation?.id), kept = true, checking = false, later: R
 // null until the lock is answered; false: the chat is open in another tab of this device. Without Web Locks there is no
 // chat: two tabs could each pay for the same wish. `closed`: unmounted; nothing that was on its way acts any more.
 const owner = ref<boolean | null>(null), lockless = !navigator.locks
-let release: (() => void) | undefined, closed = false, token = 0
+let release: (() => void) | undefined, closed = false, token = 0, heldAtClose = false
 // Each hold of the lock has its own token: work begun under an earlier one stays stopped even when this tab holds the
 // lock again (the thread may have moved on meanwhile, in the other tab).
 const mine = (at = token) => !closed && !!owner.value && at === token
@@ -71,6 +71,9 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…'
   : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: 'Je dessine l’affiche…', receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
   : state.job?.kind === 'render' ? 'Je prépare le fichier…'
   : starting.value ? state.paletteLoading ? 'Je lis les couleurs de la photo…' : 'Je prépare la scène…' : '')
+// Nothing in the thread and no poster: the greeting is the centred welcome (D-REDESIGN-003). A card imported from
+// « Pas à pas » or a stored assistant-only thread is a conversation already.
+const empty = computed(() => !shown.value && !items.value.length)
 const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
 const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
@@ -247,8 +250,28 @@ async function ask() {
     if (card.kind !== 'unclear') supersede(items.value)
     app(text_fr, changes(card) ? { ...normal(card), said: record.text } : card)
   } catch (reason) {
-    if (!mine(at) || key !== from) return
     const code = reason instanceof ApiError ? reason.code : ''
+    if (!mine(at) || key !== from) {
+      // The session ended here (a 401): the gate closed and unmounted this chat, releasing its lock, before the answer's
+      // body came back. Its card is still kept, so that the thread restored after the sign-in says to sign in and offers
+      // « Réessayer » (multi-shop.md), but only under the chat's lock taken again, only while the stored request is still
+      // this one, and added to the thread as it is stored: another tab that took the chat meanwhile owns it (review r3).
+      // shopStorage writes nothing once another tab has signed out (api.ts).
+      if (code === 'unauthenticated' && closed && heldAtClose && at === token && key === from && navigator.locks) {
+        const thread = key, line = (reason as Error).message
+        void navigator.locks.request('affiche-chat', { ifAvailable: true }, lock => {
+          if (!lock) return
+          try {
+            if (readPending(localStorage.getItem(pendingKey()))?.key !== record.key) return
+            const saved = readThread(localStorage.getItem(thread))
+            if (saved.moved) return
+            const card: Item = { id: crypto.randomUUID(), role: 'app', text: line, at: Date.now(), card: { kind: 'failed', code, retry: record.text } as Card }
+            if (storeThread(localStorage, shopStorage, thread, JSON.stringify({ at: Date.now(), items: trim([...saved.items, card]), draft: saved.draft }))) shopStorage.removeItem(pendingKey())
+          } catch { /* no shop open on this page any more: nothing of it is written */ }
+        })
+      }
+      return
+    }
     // The server's sentence for a refused value is the editor's (brand and subtitle): the chat has its own.
     const sentence = code === 'validation_error' ? 'Ce message ne peut pas être lu tel quel. Écrivez-le plus court : le produit et son prix, ou le changement voulu.'
       : reason instanceof Error ? reason.message : 'La demande a échoué.'
@@ -426,8 +449,9 @@ async function reconcile() {
 // The chat fills what is left of the visible screen (the keyboard shrinks it), so the composer is always in view.
 function measure() {
   if (!root.value) return
-  const nav = document.querySelector<HTMLElement>('.nav'), fixed = nav && getComputedStyle(nav).position === 'fixed' ? nav.offsetHeight : 0
-  height.value = Math.max(0, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - fixed - 12))
+  // The page's bottom padding: the frame's gap over 1180 px (D-REDESIGN-002).
+  const bottom = parseFloat(getComputedStyle(document.body).paddingBottom) || 0
+  height.value = Math.max(0, Math.floor(state.height - root.value.getBoundingClientRect().top - window.scrollY - bottom - 12))
 }
 function focused() { typing.value = matchMedia('(pointer: coarse)').matches }
 // A tap elsewhere takes the focus before its click lands: the layout stays as it is until the tap is over, otherwise the
@@ -485,13 +509,13 @@ watch(() => [items.value.length, waitLine.value], () => nextTick(() => { if (thr
 watch(() => [state.height, typing.value, !!shown.value, listed.value, state.error, state.notice], resized)
 onMounted(() => window.addEventListener('resize', resized))
 // Ownership goes before the lock: what was on its way when the view closed finds it closed, and does nothing.
-onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTimeout(later); window.removeEventListener('resize', resized); tray.value.forEach(item => URL.revokeObjectURL(item.url)) })
+onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner.value = false; release?.(); clearTimeout(later); window.removeEventListener('resize', resized); tray.value.forEach(item => URL.revokeObjectURL(item.url)) })
 </script>
 
 <template>
   <section v-if="lockless" class="empty chat-elsewhere" aria-label="Création par message"><p role="status">Ce navigateur ne permet pas le chat.</p><button type="button" class="primary" @click="emit('steps')">Pas à pas</button></section>
   <section v-else-if="owner === false" class="empty chat-elsewhere" aria-label="Création par message"><p role="status">Le chat est ouvert dans un autre onglet.</p><button type="button" class="primary" @click="takeOver">Continuer ici</button></section>
-  <section v-else-if="owner" ref="root" class="chat" :class="{ 'has-poster': !!shown, typing }" :style="{ height: `${height}px` }" aria-label="Création par message">
+  <section v-else-if="owner" ref="root" class="chat" :class="{ 'has-poster': !!shown, typing, welcome: empty }" :style="{ height: `${height}px` }" aria-label="Création par message">
     <aside v-if="shown" class="chat-side">
       <button type="button" class="chat-poster" aria-label="Agrandir l’affiche" @click="adapter.review(shown)"><img :src="displayUrl(shown.image_url)" :alt="`Affiche, version ${numberOf(shown)}`" /></button>
       <p><b>Version {{ numberOf(shown) }} · {{ stateNames[shown.status] }}</b><span translate="no">{{ shown.headline?.title ?? state.offer?.title }} · {{ price(shown.headline?.price_ar ?? state.offer?.price_ar) }}</span></p>
@@ -503,7 +527,8 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
       <div v-if="stale && !staleCard" class="chat-stale"><p class="why" role="status">{{ stale }}</p><button type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.')">Remettre les textes de l’image</button></div>
     </aside>
     <div ref="thread" class="chat-thread" role="log" aria-live="polite" aria-label="Conversation" tabindex="0">
-      <div class="bubble bot"><p>{{ greeting }}</p></div>
+      <div v-if="empty" class="hello"><img src="/favicon.svg" width="56" height="56" alt="" /><p class="hello-q">Quelle affiche créons-nous ?</p><p>{{ greeting }}</p></div>
+      <div v-else class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
         <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
@@ -532,9 +557,9 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
-            <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="warns(item) ? 'avertissement-' + item.id : undefined" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
+            <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, 'une-fois-' + item.id].filter(Boolean).join(' ')" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>
@@ -544,8 +569,8 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
             <button v-if="stale && item === staleCard" type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.', item)">Remettre les textes de l’image</button>
             <button v-if="item.card && !item.done && offersSteps(item.card)" type="button" class="secondary" @click="emit('steps')">Pas à pas</button>
           </div>
-          <small v-if="button === 'create' && !free(item)">{{ state.credit.text }}</small>
-          <small v-else-if="button === 'retry' || button === 'resume'">{{ ONCE }}</small>
+          <small v-if="button === 'create' && !free(item)" :id="'cout-' + item.id">{{ state.credit.text }}</small>
+          <small v-else-if="button === 'retry' || button === 'resume'" :id="'une-fois-' + item.id">{{ ONCE }}</small>
           <small v-if="button === 'create' && item.card?.kind === 'recap'">Une erreur ? Écrivez la correction.</small>
         </template>
       </div>
@@ -561,16 +586,16 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
         </span>
       </div>
       <p v-for="entry in tray.filter(item => item.error)" :key="entry.id" class="why" role="alert">{{ entry.error }}</p>
-      <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
-      <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
-        <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>
-        <button v-for="[id, name] in inspiration ? [] : STYLES" :key="id" type="button" class="style-pill" :aria-pressed="draft.style === id" @click="draft.style = id; save()"><img :src="`/styles/${id}.jpg`" width="26" height="26" alt="" />{{ name }}</button>
-      </div>
       <p v-if="elsewhere" class="chat-elsewhere-read" role="status">Un message attend encore sur une autre affiche.<button type="button" class="secondary" @click="toPending">Ouvrir cette affiche</button></p>
-      <div class="compose-row">
-        <button type="button" class="ghost icon" aria-label="Ajouter des images" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg></button>
-        <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
-          @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
+      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
+        @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
+      <div class="tools">
+        <button type="button" class="ghost attach" aria-label="Ajouter des images" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Images</span></button>
+        <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
+        <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
+          <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>
+          <button v-for="[id, name] in inspiration ? [] : STYLES" :key="id" type="button" class="style-pill" :aria-pressed="draft.style === id" @click="draft.style = id; save()"><img :src="`/styles/${id}.jpg`" width="26" height="26" alt="" />{{ name }}</button>
+        </div>
         <!-- mousedown is held back so that the tap keeps the focus, and the keyboard, on the field. -->
         <button type="submit" class="send" aria-label="Envoyer" :aria-busy="reading || undefined" :disabled="held || !!pending || tray.some(item => item.status !== 'done') || (!text.trim() && !tray.length)" @mousedown.prevent><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
       </div>

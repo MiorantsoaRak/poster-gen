@@ -10,7 +10,7 @@ import ShopCredits from './ShopCredits.vue'
 import ShopAccount from './ShopAccount.vue'
 import signalHorizontal from './assets/doka-horizontal.svg'
 import signalReverse from './assets/doka-horizontal-reverse.svg'
-import { sectionRead, stateNames, type LibraryItem, type Listing } from './dashboard'
+import { sectionRead, stateBadges, stateNames, type LibraryItem, type Listing } from './dashboard'
 import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
@@ -35,8 +35,12 @@ const caps = ref<Capabilities>(), library = ref<LibraryItem[]>([])
 const funds = sectionRead<Balance>('/api/balance')
 const balance = computed(() => funds.error.value ? null : funds.data.value)
 const readBalance = funds.read
-const creditView = ref<InstanceType<typeof ShopCredits> | null>(null), creditButton = ref<HTMLElement | null>(null)
+const creditView = ref<InstanceType<typeof ShopCredits> | null>(null)
 const creditsPanel = ref(false)
+// The shop's five latest posters (D-REDESIGN-002): one reader for the sidebar and Accueil, which shows it too.
+const recent = sectionRead<Listing>('/api/creations?limit=5')
+// A failed read leaves the section out, even after an earlier success (Accueil keeps its own retry).
+const recentItems = computed(() => recent.error.value ? [] : recent.data.value?.items ?? [])
 let beforeCredits = ''
 const balanceLabel = computed(() => balance.value ? balance.value.available + ' crédit' + (Math.abs(balance.value.available) === 1 ? '' : 's') : 'Mes crédits')
 const accountVisit = ref(0)
@@ -215,6 +219,7 @@ async function remakeIn(to: Format) {
   const source = await api<{ product_ref: string; name: string; variant: string; photo_assets: string[]; facts: string[] }>(`/api/product-inputs/${doc.value!.input_id}`)
   const input = await mutation<{ id: string }>('/api/product-inputs', { product_ref: source.product_ref, name: source.name, variant: source.variant, photo_assets: source.photo_assets, facts: source.facts })
   const copied = await mutation<Creation>(`/api/creations/${creation.value!.id}/copies`, { source_revision: saver!.revision, reason: 'replace_input', new_input_id: input.id })
+  madePoster()
   const words = { ...headline.value }
   let made = copied, failure: unknown
   try { made = await mutation<Creation>(`/api/creations/${copied.id}`, reformat(copied.document, to), copied.revision, undefined, 'PUT') }
@@ -446,6 +451,7 @@ const ICONS: Record<string, string> = {
   eye: 'M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z',
   spark: 'M8 2l1.4 4.1L13.5 7.5 9.4 8.9 8 13 6.6 8.9 2.5 7.5l4.1-1.4z', clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3.5l2 1.5',
   undo: 'M6 4L3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H7', redo: 'M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 0 0 0 7H9',
+  menu: 'M2.5 4h11M2.5 8h11M2.5 12h11', panel: 'M2.5 3h11v10h-11zM6.5 3v10', user: 'M8 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 13.5a5 5 0 0 1 10 0',
   pen: 'M3 13l.6-2.8L11 2.8l2.2 2.2-7.4 7.4zM9.8 4l2.2 2.2', chat: 'M2.5 3h11v8H7.5l-3 2.5V11h-2z', out: 'M6.5 2.5h-4v11h4M10.5 5l3 3-3 3M13.5 8H6',
   box: 'M3 3h10v10H3zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z', sun: 'M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1',
   moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z', back: 'M10 3.5L5.5 8l4.5 4.5',
@@ -604,9 +610,9 @@ const editing = computed(() => !!doc.value && !chatting.value)
 const shownStart = computed<Start>(() => doc.value || view.value === 'create' ? (chatting.value ? 'chat' : 'steps') : startView.value ?? 'steps')
 // The chat route's one title, for a screen reader (D-POLISH-003): the same in each of its branches, outside the conversation.
 const chatTitle = computed(() => !creation.value ? 'Créer une affiche' : doc.value?.offer.title.trim() || 'Votre affiche')
-function askToDiscardPhotos(run: () => Promise<void>) {
+function askToDiscardPhotos(run: () => Promise<void>, cancel?: () => void) {
   paid.value = { title: 'Quitter le message ?', text: 'Les photos jointes à ce message n’ont pas encore été envoyées avec lui.', cost: '',
-    label: 'Quitter sans les envoyer', run }
+    label: 'Quitter sans les envoyer', run, cancel }
 }
 function switchTo(to: Start, confirmed = false) {
   const id = creation.value?.id
@@ -625,6 +631,10 @@ let routeDue = false, discardedFor: string | null = null
 // A cancelled Back/Forward returns to the original entry without erasing either history branch.
 let position = Number(window.history.state?.position) || 0
 let accountPosition = position
+// The history position of the page on screen: a departure that is cancelled goes back there (review r2, B).
+let shownAt = position
+// The photo question of a departure, while it is open: another change of address makes it stale (review r3, 1).
+let photoQuestion: unknown = null
 let trackedHash = location.hash
 function replaceAddress(url: string, state = {}) { window.history.replaceState({ ...state, position }, '', url); trackedHash = location.hash }
 function pushAddress(url: string, state = {}) { window.history.pushState({ ...state, position: ++position }, '', url); trackedHash = location.hash }
@@ -687,6 +697,26 @@ function openCredits() {
   pushAddress('#credits', { creditsFrom: beforeCredits })
   creditsPanel.value = true
 }
+// The pill, the sidebar's or the drawer's credit card and the editor rail's button: in the creator the panel opens over the
+// work and remembers its opener; elsewhere the link goes to « Mes crédits ».
+let creditOpener: HTMLElement | null = null
+function toCredits(event: MouseEvent) {
+  if (view.value !== 'create' || event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  creditOpener = event.currentTarget as HTMLElement
+  openCredits()
+}
+// Closed: the dialog in front, else the opener while it is still on screen, else the menu button (the opener was in the
+// drawer), else the pill; on a phone's step editor, which has no top bar (a poster made behind the panel), the rail's button.
+function creditsClosed() {
+  if (front.value) return focusFront(front.value)
+  const shown = (element?: HTMLElement | null) => !!element?.isConnected && element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]')
+  const opener = creditOpener, menu = menuButton.value
+  if (shown(opener)) opener!.focus()
+  else if (shown(menu)) menu!.focus()
+  else if (shown(pill.value)) pill.value!.focus()
+  else document.querySelector<HTMLElement>('.rail .creator-credits')?.focus()
+}
 function openCreditPoster(id: string) {
   if (creditsPanel.value && creation.value?.id === id) { windowBack(); return }
   const open = async () => {
@@ -713,20 +743,32 @@ async function route() {
     const id = message ? message[1] : /^[a-f0-9-]{36}$/.test(hash) ? hash : undefined
     const creator = !!(id || message || hash === 'creer' || hash === 'etapes')
     const next = creator ? 'create' : VIEWS[hash] ?? 'accueil'
-    const staysInChat = !!message || (hash === 'creer' && preferChat.value)
+    // The conversation stays only when it is the same thread: another poster's, or a new one (« #message », « #creer »
+    // with the chat preferred) from a poster's, is a departure; the photos chosen here are not that thread's (review r1, 1).
+    const thread = message ? id ?? '' : hash === 'creer' && preferChat.value ? '' : null
+    const staysInChat = thread !== null && thread === (creation.value?.id ?? '')
     if (!staysInChat && was && chat.hasUnsentPhotos?.() && discardedFor !== hash) {
-      pushAddress(`#${here()}`)
-      askToDiscardPhotos(async () => { discardedFor = hash; window.history.back() })
+      // The address has moved already (a link, Back or Forward); the page has not. Asked first: confirmed, the route goes
+      // on from here; cancelled, the history goes back to the page's own entry, its other entries as the browser left them.
+      // Both act only while the address is still the one asked about (a later Back or Forward closes the question: onHash).
+      const back = shownAt - position, askedAt = position, still = () => window.location.hash.slice(1) === hash && position === askedAt
+      askToDiscardPhotos(async () => { if (!still()) return; discardedFor = hash; await route() },
+        () => { if (!still()) return; if (back) window.history.go(back); else if (window.location.hash.slice(1) !== here()) replaceAddress(`#${here()}`) })
+      photoQuestion = paid.value
       return
     }
+    if (discardedFor === hash && was) chat.discardUnsentPhotos?.()  // left without them: never carried into the next thread
     discardedFor = null
+    shownAt = position
     if (doc.value && !id) await fresh()
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     if ((creator || next === 'styles') && !creatorReady) await loadShop()
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     chatting.value = creator && (chatOn.value && !!message || hash === 'creer' && preferChat.value)
+    // The destination takes the focus, its title first, unless a dialog in front owns it.
+    const arrive = () => nextTick(() => { if (!modalOpen.value) (document.querySelector<HTMLElement>('main:not([hidden]) h1[tabindex]') ?? document.querySelector<HTMLElement>('main:not([hidden])'))?.focus() })
     if (id) {
-      if (creation.value?.id !== id) await openCreation(id, hash)
+      if (creation.value?.id !== id) { await openCreation(id, hash); if (creation.value?.id === id && window.location.hash.slice(1) === here()) arrive() }
       else if (message && !chatting.value) replaceAddress(`#${id}`)
       return
     }
@@ -734,7 +776,7 @@ async function route() {
     if (next === 'compte') accountPosition = position
     const address = here()
     if (address !== hash) replaceAddress(`#${address}`)
-    nextTick(() => { if (!modalOpen.value) (document.querySelector<HTMLElement>('main:not([hidden]) h1[tabindex]') ?? document.querySelector<HTMLElement>('main:not([hidden])'))?.focus() })
+    arrive()
   } catch (reason) {
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     chatting.value = was
@@ -761,6 +803,10 @@ async function openFromList(id: string) {
 // No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
 function onHash() {
   trackAddress()
+  drawer.value = false  // before the route focuses anything: the destination is inert while the drawer is open
+  // The question was about the entry left: the page may now be back on its own (Forward), or asks again for the new one.
+  if (photoQuestion && paid.value === photoQuestion) paid.value = null
+  photoQuestion = null
   if (!loaded.value) return
   const hash = location.hash.slice(1)
   if (account.value && (account.value.dirty || account.value.pending)) {
@@ -776,11 +822,12 @@ function onHash() {
     creditsPanel.value = false
     if (hash === beforeCredits || hash === here()) {
       if (hash !== here()) replaceAddress(`#${here()}`)
-      nextTick(() => { if (front.value) focusFront(front.value); else creditButton.value?.focus() })
+      nextTick(creditsClosed)
       return
     }
   }
   if (hash !== here()) { if (busy.value) routeDue = true; else perform(route) }
+  else shownAt = position
 }
 function leave(hash: string) { window.location.hash = hash }
 // A panel in front of the page takes the focus and gives it back; the page behind is inert meanwhile.
@@ -792,7 +839,9 @@ const vModal = {
 // its credit, read again as the dialog opens, and what stops it, with « Fermer » alone (D-BALANCE-006). `again`: a
 // request to its route lost its answer and keeps its key (api.ts retained): sent again, the server answers what it
 // stored, whatever the balance says now; a request it never took is refused there with its own sentence.
-const paid = ref<{ title: string; text: string; warning?: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void> } | null>(null)
+const paid = ref<{ title: string; text: string; warning?: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void>; cancel?: () => void } | null>(null)
+// « Annuler » or Escape: the dialog closes and what asked it may put things back (a departure returns to its page).
+function dismissPaid() { const cancel = paid.value?.cancel; paid.value = null; cancel?.() }
 const paidCost = computed<ReturnType<typeof credit>>(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
   : paid.value.again ? { stop: false, text: ONCE } : credit(balance.value, paid.value.charged))
 const unanswered = (route: string) => retained(`/api/creations/${creation.value?.id}/${route}`)
@@ -880,8 +929,9 @@ function readConditions() { paid.value = null; void readTerms() }
 // again, and the dialog opens unless it is already open.
 watch(termsAsked, () => { void readBalance(); if (!termsOpen.value) void readTerms() })
 // Tab and Shift+Tab go round inside the conditions: the page behind is inert, but the skip link and the messages are not.
+// The drawer too, whose theme switch is shown on a phone only.
 function keepTab(event: KeyboardEvent) {
-  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled)')]
+  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled)')].filter(control => control.checkVisibility())
   const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
@@ -1136,6 +1186,7 @@ async function createPoster() {
   if (pendingInput?.signature !== signature) pendingInput = { signature, id: (await mutation<{ id: string }>('/api/product-inputs', inputBody)).id }
   const input = pendingInput
   const result = await mutation<Creation>('/api/creations', { input_id: input.id, offer: { title: intake.name, price_ar: price }, brand_selection: include, primary_format: 'feed' })
+  madePoster()  // before adopt, whose later failure must not skip it
   await adopt(result)
   if (doc.value?.include.logo) edit(document => placeLogo(document, 'right'))
   pendingInput = null  // kept only for a retry of this creation: the same product typed again gets its own input
@@ -1194,6 +1245,9 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
   // A creator can finish its first poster while Credits is open. Back must return to its newly assigned address.
   const address = chatting.value ? `message-${result.id}` : result.id
   if (creditsPanel.value && origin === undefined) replaceAddress('#credits', { creditsFrom: address })
+  // The same poster under its other address (a recent row's message address on a shop without the chat): the address
+  // is corrected in place, so that one Back returns to where the row was opened (review r2, C).
+  else if (origin === `message-${result.id}` || origin === result.id) replaceAddress(`#${address}`)
   else window.location.hash = address
   if (!opening) await refreshVisuals()
   styleReference.value = currentVisual.value?.style_reference_asset ?? null
@@ -1266,6 +1320,7 @@ async function onRow(action: () => Promise<unknown>) {
     if (reason instanceof ApiError && reason.code === 'image_job_running') throw new Error('Une génération est en cours pour cette affiche : attendez sa fin.')
     throw reason
   }
+  madePoster()  // the list's count is old from here, even if its reading fails (review r2, D)
   await loadLibrary()
 }
 const duplicate = (item: LibraryItem) => perform(async () => {
@@ -1336,6 +1391,7 @@ function undo() { if (doc.value) { const previous = history.undo(doc.value); if 
 function redo() { if (doc.value) { const next = history.redo(doc.value); if (next) { doc.value = next; priceText.value = shownPrice(next.offer.price_ar); priceError.value = ''; saver!.queue(next) } } }
 async function conflictCopy() {
   const result = await mutation<Creation>(`/api/creations/${creation.value!.id}/copies`, { source_revision: saver!.revision, reason: 'save_conflict', unsaved_document: doc.value })
+  madePoster()
   await adopt(result); notice.value = 'Vos modifications ont été conservées dans une copie.'
 }
 async function prepareScene(owned?: () => void) {
@@ -1793,6 +1849,7 @@ async function confirmFinal() {
     checks: Object.fromEntries(Object.keys(finalPoints).map(key => [key, true])),
     acknowledged_warning_ids: shown.warnings.map((issue: LayoutIssue) => issue.id),
   }, saver!.revision)
+  void recent.read()
   // Its file, on its own preview only: another one opened meanwhile (a render job ending) is not confirmed by this answer.
   if (creation.value?.id === poster && finalPreview.value === shown) { shown.download_url = result.download_url; void prepare() }
 }
@@ -1977,6 +2034,47 @@ function resized() {
     nextTick(measureSticky)
   })
 }
+// The shell (D-REDESIGN-002): over 1180 px a sidebar, reduced to a rail by the owner's choice and always in the step
+// editor; at 1180 px and under a drawer. The choice is the device's, applied before the first paint by index.html.
+const RAIL_KEY = 'affiche.rail', wideScreen = matchMedia('(width > 1180px)')
+const railKept = ref(document.documentElement.hasAttribute('data-rail')), wide = ref(wideScreen.matches), drawer = ref(false)
+const menuButton = ref<HTMLElement>(), railToggle = ref<HTMLElement>(), sideClose = ref<HTMLElement>(), pill = ref<HTMLElement>()
+watch([shown, railKept, editing], ([on, kept, edit]) => {
+  document.documentElement.toggleAttribute('data-shell', on)
+  document.documentElement.toggleAttribute('data-rail', kept || edit)
+  document.documentElement.toggleAttribute('data-editing', edit)  // the step editor is a work surface: no frame's gap
+}, { immediate: true })
+function toggleRail() {
+  railKept.value = !railKept.value
+  try { if (railKept.value) localStorage.setItem(RAIL_KEY, '1'); else localStorage.removeItem(RAIL_KEY) } catch { /* the choice lasts the page */ }
+}
+// The address a poster's row opens: the one openFromList ends on for it, or the open poster's own.
+// Before the capabilities are read (Accueil does not read them) the chat is assumed available: a message address of a
+// shop without the chat opens the editor (route).
+const posterAddress = (id: string) => '#' + (creation.value?.id === id ? here() : (caps.value ? preferChat.value : !!navigator.locks && startView.value !== 'steps') ? `message-${id}` : id)
+const posterCount = computed(() => listKnown.value ? activeTotal.value : recent.error.value ? undefined : recent.data.value?.total)
+// A poster made or copied without reading the list again: the list's count is old, the recent read has the new one.
+function madePoster() { listKnown.value = false; void recent.read() }
+function openDrawer() { drawer.value = true; nextTick(() => sideClose.value?.focus()) }
+function closeDrawer() { drawer.value = false; nextTick(() => menuButton.value?.focus()) }
+// A destination: accountLink first, then the drawer closes and the route owns the focus. Without a route (the address
+// shown already), the focus goes back to the menu button.
+function sideClick(event: MouseEvent) {
+  accountLink(event)
+  const link = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]')
+  if (!link || !drawer.value) return
+  drawer.value = false
+  if (!event.defaultPrevented && link.hash === location.hash) nextTick(() => menuButton.value?.focus())
+}
+watch([shown, modalOpen, creditsPanel], ([on, modal, panel]) => { if (!on || modal || panel) drawer.value = false })
+function widened() {
+  wide.value = wideScreen.matches
+  if (!wide.value || !drawer.value) return
+  // The close button is hidden over 1180 px: the browser may already have dropped its focus to the body.
+  const closing = [sideClose.value, document.body, null].includes(document.activeElement as HTMLElement | null)
+  drawer.value = false
+  if (closing) nextTick(() => (railToggle.value ?? document.querySelector<HTMLElement>('.side .brand'))?.focus())
+}
 // The theme follows the device until the owner picks one with the theme button; that choice is kept on the device and
 // wins afterwards (R-POSTER-EDITOR-006 amendment). index.html applies it before the first paint.
 type Theme = 'clair' | 'sombre'
@@ -2010,7 +2108,7 @@ watch(state, now => {
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
     // Its conditions too (signed out, session ended, another shop): no late answer opens them again (readTerms).
-    creditsPanel.value = false; funds.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
+    creditsPanel.value = false; funds.clear(); recent.clear(); voidReads(); terms.value = null; termsOpen.value = false; termsLine.value = ''
     if (typeof bound.value === 'number' && location.hash) replaceAddress(location.pathname + location.search)
   }
   if (now === 'shown' && !loaded.value) void openShop()
@@ -2028,6 +2126,11 @@ async function openShop() {
   void readTerms(true)  // apart, as the balance: after a sign-in or on a session that lasts (D-TERMS-004)
   loaded.value = true
   await perform(route)
+  if (!shown.value) return
+  // The shell's two reads, once the first screen is known, each only when that screen does not make it: Accueil reads
+  // both; the creator, Styles and Mes crédits read the balance (D-REDESIGN-002). No watcher: it would fire before Accueil.
+  if (doc.value || view.value !== 'accueil') void recent.read()
+  if (!doc.value && (view.value === 'posters' || view.value === 'compte')) void readBalance()
 }
 function reload() { leaving = true; location.reload() }
 // An explicit sign-in on this page binds it to that shop and loads it fresh (rule 4). The same shop again: its unsaved
@@ -2117,46 +2220,66 @@ onMounted(() => {
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(type, press, true)
   for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, starter, true)
   lightDevice.addEventListener?.('change', followDevice)  // absent before Safari 14: the theme then stays as loaded
+  wideScreen.addEventListener('change', widened)
   document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('pagehide', close); window.addEventListener('pageshow', onPageShow); window.addEventListener('storage', onStorage); window.addEventListener('error', onImageError, true)
   return ask()
 })
-onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', close); window.removeEventListener('error', onImageError, true); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('storage', onStorage); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash); window.removeEventListener('popstate', onPopState) })
+onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice); wideScreen.removeEventListener('change', widened); for (const type of ['pointerdown', 'keydown'] as const) window.removeEventListener(type, starter, true); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', close); window.removeEventListener('error', onImageError, true); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('storage', onStorage); saver?.dispose(); clearTimeout(pollTimer); clearInterval(ticker); observer?.disconnect(); stickyObserver?.disconnect(); cancelAnimationFrame(resizeFrame); clearTimeout(restoring); released?.abort(); for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(type, press, true); window.removeEventListener('beforeunload', warnUnload); window.removeEventListener('resize', resized); window.visualViewport?.removeEventListener('resize', resized); window.removeEventListener('hashchange', onHash); window.removeEventListener('popstate', onPopState) })
 </script>
 
 <template>
   <div v-if="progress" class="load-line" role="progressbar" aria-label="Chargement"><span /></div>
-  <button class="skip" type="button" @click="skip">Aller au contenu</button>
-  <header @click="accountLink" ref="appHeader" class="app-header" :class="{ editing }" :inert="shown && (modalOpen || peeking)"><a href="#accueil" aria-label="Doka Studio — Accueil" class="wordmark" translate="no">
-      <img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="32" height="32" alt=""><span>Doka Studio</span>
-      <img class="signal-horizontal" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt="">
-    </a><template v-if="loaded">
-    <!-- The shop's part of the header: hidden whenever the gate is not open on this page's shop (D-MULTI-SHOP-007). -->
-    <span class="shop-label" :hidden="!shown">{{ profile.name || 'Votre boutique' }}</span><button class="ghost sign-out" type="button" :hidden="!shown" @click="perform(askSignOut)"><Icon n="out" /><span>Se déconnecter</span></button>
-    <nav class="nav" aria-label="Navigation" :hidden="!shown"><a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a><a href="#creer" :aria-current="doc || view === 'create' ? 'page' : undefined"><Icon n="plus" /><span>Créer</span></a><a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="long">Mes affiches <span v-if="listKnown" class="count">{{ activeTotal }}</span></span><span class="short" aria-hidden="true">Affiches</span></a><a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a><a v-if="view === 'create' && !editing" ref="creditButton" class="creator-credits" href="#credits" aria-haspopup="dialog" @click.exact.prevent="openCredits"><Icon n="credits" /><span class="long">{{ balanceLabel }}</span><span class="short" aria-hidden="true">{{ balance ? balance.available : 'Crédits' }}</span></a></nav>
-    <div v-if="chatOn && (doc || view === 'create')" class="seg" role="group" aria-label="Façon de créer" :hidden="!shown"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div></template>
+  <button class="skip" type="button" :inert="drawer" @click="skip">Aller au contenu</button>
+  <!-- The shell (D-REDESIGN-002): everything of a shop in it is rendered only while the gate is open on this page's shop. -->
+  <aside v-if="shown" id="menu" class="side" :class="{ open: drawer }" :inert="modalOpen || peeking || (!wide && !drawer)" @click="sideClick" @keydown.esc="drawer && closeDrawer()" @keydown.tab="event => drawer && keepTab(event)">
+    <button ref="sideClose" class="ghost icon side-close" type="button" aria-label="Fermer le menu" @click="closeDrawer"><Icon n="close" /></button>
+    <a href="#accueil" class="brand" aria-label="Doka Studio — Accueil" title="Accueil" translate="no"><img class="lockup" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt=""><img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="40" height="40" alt=""></a>
+    <a href="#creer" class="primary new" title="Nouvelle affiche"><Icon n="plus" /><span class="label">Nouvelle affiche</span></a>
+    <nav class="nav" aria-label="Navigation"><a href="#accueil" title="Accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span class="label">Accueil</span></a><a href="#affiches" title="Mes affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="label">Mes affiches</span> <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></a><a href="#styles" title="Styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span class="label">Styles</span> <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
+    <div v-if="recentItems.length" class="recent"><h2>Affiches récentes</h2><ul>
+      <li v-for="item in recentItems" :key="item.id"><a :href="posterAddress(item.id)" :title="item.title" :aria-current="creation?.id === item.id ? 'page' : undefined"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="32" height="40" alt="" loading="lazy" /><span v-else class="blank-poster" /><span><b translate="no">{{ item.title }}</b><span>{{ stateNames[item.state] }}</span></span></a></li>
+    </ul></div>
+    <div class="side-foot">
+      <a href="#credits" class="credit-card" :title="balanceLabel" :aria-haspopup="view === 'create' ? 'dialog' : undefined" @click="toCredits"><Icon n="credits" /><span class="label">{{ balanceLabel }}</span><b v-if="balance" class="number" aria-hidden="true">{{ balance.available }}</b></a>
+      <a href="#compte" class="account" :title="profile.name || 'Votre boutique'" :aria-current="!doc && view === 'compte' ? 'page' : undefined"><span class="avatar"><Icon n="user" /></span><span class="label" translate="no">{{ profile.name || 'Votre boutique' }}</span></a>
+      <button class="ghost sign-out" type="button" title="Se déconnecter" @click="perform(askSignOut)"><Icon n="out" /><span class="label">Se déconnecter</span></button>
+      <button class="ghost theme-toggle" type="button" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /><span>{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</span></button>
+    </div>
+  </aside>
+  <div v-if="shown" class="scrim" :class="{ open: drawer }" @click="closeDrawer" />
+  <header @click="accountLink" ref="appHeader" class="app-header" :class="{ editing: shown && editing, chatting: shown && chatting }" :inert="shown && (modalOpen || peeking || drawer)"><template v-if="shown">
+    <button ref="menuButton" class="ghost icon menu" type="button" aria-label="Ouvrir le menu" :aria-expanded="drawer" aria-controls="menu" @click="openDrawer"><Icon n="menu" /></button>
+    <button v-if="!editing" ref="railToggle" class="ghost icon rail-toggle" type="button" :aria-label="railKept ? 'Agrandir le menu' : 'Réduire le menu'" :aria-expanded="!railKept" aria-controls="menu" @click="toggleRail"><Icon n="panel" /></button>
+    <a href="#accueil" class="mark" aria-label="Doka Studio — Accueil" translate="no"><img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="32" height="32" alt=""></a>
+    <p v-if="chatting" class="top-title" aria-hidden="true" translate="no">{{ doc?.offer.title.trim() || 'Nouvelle affiche' }}</p><span class="grow" />
+    <div v-if="chatOn && (doc || view === 'create')" class="seg" role="group" aria-label="Façon de créer"><button v-for="[id, name] in ([['chat', 'Message'], ['steps', 'Pas à pas']] as const)" :key="id" type="button" :aria-pressed="shownStart === id" @click="switchTo(id)">{{ name }}</button></div>
+    <a v-if="chatting" href="#creer" class="ghost new-poster" aria-label="Nouvelle affiche" title="Nouvelle affiche"><Icon n="plus" /></a>
+    <a ref="pill" href="#credits" class="credits-pill" :aria-label="balanceLabel" :aria-haspopup="view === 'create' ? 'dialog' : undefined" @click="toCredits"><Icon n="credits" />{{ balance ? balance.available : 'Crédits' }}</a></template>
     <button class="ghost icon theme-toggle" type="button" :aria-label="theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair'" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /></button></header>
   <!-- Everything but the shop: the session awaited or failed, and the signed-out screen. -->
   <main v-if="!shown" class="gate" tabindex="-1">
+    <img class="gate-logo" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt="">
     <div v-if="gateError" class="message error" role="alert">{{ gateError }}<button class="text-button" type="button" @click="gateError = ''">Fermer</button></div>
     <section v-if="state === 'hidden' && failed === 'down'" class="sign-in" role="alert"><h1>Service indisponible</h1><p>Le service est momentanément indisponible. Réessayez dans quelques minutes.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
     <section v-else-if="state === 'hidden' && failed" class="sign-in" role="alert"><p>Connexion au serveur impossible.</p><button type="button" class="primary" @click="ask()">Réessayer</button></section>
     <p v-else-if="state !== 'out'" role="status">Ouverture de l’atelier…</p>
     <form v-else class="sign-in" @submit.prevent="signIn"><h1>Votre atelier d’affiches</h1><template v-if="leftover !== null"><p class="why" role="alert">Vous êtes déconnecté, mais ce navigateur a gardé des données de la boutique : elles n’ont pas pu être effacées.</p><button type="button" class="secondary" @click="forgetAgain()">Réessayer l’effacement</button></template><p v-if="elsewhere" class="why" role="alert">Une autre boutique est connectée dans ce navigateur. Connectez-vous pour continuer.</p><p>Connectez-vous avec l’identifiant et le mot de passe de la boutique.</p><label>Identifiant de la boutique<input v-model="identifier" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label>Mot de passe<input v-model="password" name="password" type="password" autocomplete="current-password" required /></label><button class="primary" :disabled="signing">Ouvrir l’atelier</button><button v-if="keepEdits" type="button" class="secondary" @click="reload">Recharger sans ces modifications</button><p v-if="support" class="help">Mot de passe oublié ? Contactez {{ support }}.</p><p class="help"><a href="/donnees.html" class="data-link">Vos données</a></p></form>
   </main>
-  <main v-if="loaded" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }">
+  <!-- Hidden during a verification (its unsaved work comes back); gone once the session is (review r1, 2). -->
+  <main v-if="loaded && state !== 'out'" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }" :inert="drawer">
     <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button v-else-if="retry && retry.text === error" class="text-button" type="button" @click="retry.run()">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
-    <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="state !== 'out' && !doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
+    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
+    <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="!doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
       :support="support" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
     <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
       <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
     </component>
     <template v-if="chatting">
       <!-- Only once the chat is the page: while a poster opens from a list, the list keeps its own title. -->
-      <h1 v-if="doc || view === 'create'" class="visually-hidden" :inert="modalOpen" :translate="doc?.offer.title.trim() ? 'no' : undefined">{{ chatTitle }}</h1>
+      <h1 v-if="doc || view === 'create'" class="visually-hidden" tabindex="-1" :inert="modalOpen" :translate="doc?.offer.title.trim() ? 'no' : undefined">{{ chatTitle }}</h1>
       <p v-if="chatRetry" class="empty" role="alert" :inert="modalOpen">La création par message n’a pas pu se charger. <button type="button" @click="chatRetry(); chatRetry = null">Réessayer</button></p>
       <ChatView v-else :adapter="chat" :inert="modalOpen" @steps="switchTo('steps')" />
     </template>
@@ -2175,12 +2298,12 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </form>
     </div>
     <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label></div>
       <p v-if="listFailed"><button class="secondary" @click="perform(loadLibrary)">Réessayer la liste</button></p>
       <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
       <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
       <div v-if="hasLibrary" class="rows"><div v-for="item in library" :key="item.id" class="library-row">
-        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span>{{ [showRemoved ? 'Retirée' : stateNames[item.state], `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
+        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="64" height="80" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span v-if="!showRemoved" :class="stateBadges[item.state]">{{ stateNames[item.state] }}</span><span class="details">{{ [showRemoved && 'Retirée', `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
         <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
       </div></div>
       <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
@@ -2193,7 +2316,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="editing && doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
-        <div class="what"><h1 translate="no">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
+        <div class="what"><h1 class="poster-title" translate="no" tabindex="-1">{{ doc.offer.title || 'Affiche sans titre' }}</h1><p class="meta"><span class="format">{{ FORMAT_NAMES[format][0] }} · {{ FORMATS[format][0] }} × {{ FORMATS[format][1] }} · </span><span role="status" aria-live="polite">{{ saveLabel }}</span></p></div>
         <button v-if="chatOn && (doc || view === 'create')" type="button" class="ghost icon to-chat" aria-label="Continuer par message" title="Continuer par message" @click="switchTo('chat')"><Icon n="chat" /></button>
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
@@ -2203,7 +2326,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
-          <button ref="creditButton" type="button" class="text-button creator-credits" aria-haspopup="dialog" @click="openCredits">{{ balanceLabel }}</button>
+          <button type="button" class="text-button creator-credits" aria-haspopup="dialog" @click="toCredits">{{ balanceLabel }}</button>
           <div ref="toolsRow" class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
           <div class="tabs"><span v-if="stepping" class="tab done"><Icon n="check" />Produit</span>
             <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name, icon], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span><Icon v-else :n="icon" class="tool" />{{ name }}</button></div></div></div>
@@ -2342,10 +2465,10 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <h2 id="titre-quitter-profil">Quitter la modification de la boutique ?</h2><p>Vos modifications ne sont pas enregistrées.</p>
       <div class="row"><button class="primary" data-focus @click="keepProfile">Continuer la modification</button><button class="secondary" :disabled="busy" @click="discardProfile">Abandonner</button></div>
     </div></div>
-    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" @keydown.esc="paid = null" @keydown.tab="keepTab"><div class="confirm">
+    <div v-if="paid" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-confirmation" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" @keydown.esc="dismissPaid" @keydown.tab="keepTab"><div class="confirm">
       <h2 id="titre-confirmation">{{ paid.title }}</h2><p>{{ paid.text }}</p><p v-if="paid.warning" id="avertissement-ajustement" class="why">{{ paid.warning }}</p><p v-if="paidCost.text" class="cost" aria-live="polite">{{ paidCost.text }}</p>
       <label v-if="smallPhoto && paid.run === createScene && !paidCost.stop" class="check"><input v-model="lowResAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-      <div class="row"><button v-if="!paidCost.stop" class="primary" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="paid = null">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
+      <div class="row"><button v-if="!paidCost.stop" class="primary" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="dismissPaid">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
     </div></div>
     <!-- The conditions of use (D-TERMS-004): under the confirmation above, which keeps the front; server text as text only. -->
     <div v-if="termsOpen" v-modal class="confirm-sheet terms-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-conditions" :inert="!!paid" @keydown.esc="later" @keydown.tab="keepTab"><div class="confirm">
@@ -2398,4 +2521,12 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-else>{{ review.status === 'approved' ? 'La fidélité de cette version a été approuvée.' : 'Cette version a été refusée.' }}</p>
     </section>
   </main>
+  <!-- The phone's bottom bar, outside the chat and the editor, where the composer or the tools take its place. -->
+  <nav v-if="shown && !chatting && !editing" class="phone-bar" aria-label="Navigation" :inert="modalOpen || peeking || drawer" @click="accountLink">
+    <a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a>
+    <a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="long">Mes affiches <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></span><span aria-hidden="true">Affiches</span></a>
+    <a href="#creer" class="make" aria-label="Nouvelle affiche"><Icon n="plus" /></a>
+    <a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a>
+    <a href="#compte" :aria-current="!doc && view === 'compte' ? 'page' : undefined"><Icon n="user" /><span class="long">Mon compte</span><span aria-hidden="true">Compte</span></a>
+  </nav>
 </template>

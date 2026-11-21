@@ -6,15 +6,8 @@
 import { onMounted, ref } from 'vue'
 import type { Question } from './Confirm.vue'
 import { AdminError, call } from './adminApi'
-import { CAP_WARNING, dollars, headroom, uncertain, when, type Headroom } from './admin'
+import { CAP_WARNING, dollars, headroom, uncertain, when, type ServiceView as View } from './admin'
 
-interface OperatorSession { actor: string; created_at: string; expires_at: string; address: string; agent: string | null; current: boolean }
-interface View {
-  commit: string; migration: string; started_at: string; backup: { finished_at: string; age_hours: number; late: boolean } | null
-  spend: { recorded_micros: number; cap_micros: number; since: string }; failed_jobs_24h: number; paused_since: string | null
-  purchase_text: { stored: string | null; shown: string }; headroom: Headroom
-  limits: { shop_daily_spend_micros: number; reads_per_day: number }; operator_sessions: OperatorSession[]
-}
 type Where = 'pause' | 'text' | 'sessions'
 
 // `reload` reads the Service screen that is on the page now: this one, or the one opened after the operator left and
@@ -79,10 +72,10 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
 </script>
 
 <template>
+  <button class="title-action" @click="read">Refresh</button>
   <p class="refusal" role="alert">{{ message }}</p>
-  <button @click="read">Refresh</button>
   <template v-if="shown">
-    <section aria-labelledby="health-title">
+    <section class="card" aria-labelledby="health-title">
       <h2 id="health-title">Health</h2>
       <p>Version <code>{{ shown.commit }}</code> · schema <code>{{ shown.migration }}</code> · started {{ when(shown.started_at) }}</p>
       <p v-if="shown.backup">Last backup: {{ shown.backup.age_hours }} hours ago ({{ when(shown.backup.finished_at) }})<strong v-if="shown.backup.late"> · late</strong></p>
@@ -90,13 +83,13 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
       <p>Jobs failed or interrupted in the last 24 hours: {{ shown.failed_jobs_24h }}</p>
     </section>
 
-    <section aria-labelledby="spend-title">
+    <section class="card" aria-labelledby="spend-title">
       <h2 id="spend-title">Spend</h2>
       <p>{{ headroom(shown.headroom) }} Counted from {{ shown.spend.since }}.</p>
       <p v-if="shown.headroom.warning"><strong>{{ CAP_WARNING }}</strong></p>
     </section>
 
-    <section aria-labelledby="pause-title">
+    <section class="card" aria-labelledby="pause-title">
       <h2 id="pause-title">New requests to the AI</h2>
       <p v-if="shown.paused_since"><strong>Paused</strong> since {{ when(shown.paused_since) }}: no new request reaches the AI for any shop.</p>
       <p v-else>Running: new requests reach the AI.</p>
@@ -106,7 +99,7 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
       <p class="refusal" role="alert">{{ at('pause', true) }}</p>
     </section>
 
-    <section aria-labelledby="text-title">
+    <section class="card" aria-labelledby="text-title">
       <h2 id="text-title">Purchase text</h2>
       <p>What a shop reads to get credits<template v-if="shown.purchase_text.stored === null"> (none set: every shop reads this fallback)</template>:</p>
       <p class="purchase" lang="fr">{{ shown.purchase_text.shown }}</p>
@@ -119,13 +112,13 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
       <p class="refusal" role="alert">{{ at('text', true) }}</p>
     </section>
 
-    <section aria-labelledby="limits-title">
+    <section class="card" aria-labelledby="limits-title">
       <h2 id="limits-title">Daily limits (UTC day)</h2>
       <p>Provider spend per shop: {{ dollars(shown.limits.shop_daily_spend_micros) }} · messages read per shop: {{ shown.limits.reads_per_day }}</p>
       <small>The same for every shop. They change in the box’s secrets file (SHOP_DAILY_SPEND_USD) or in the code.</small>
     </section>
 
-    <section aria-labelledby="sessions-title">
+    <section class="card" aria-labelledby="sessions-title">
       <h2 id="sessions-title">Operator sessions</h2>
       <ul class="lines">
         <li v-for="item in shown.operator_sessions" :key="item.actor + item.created_at">

@@ -72,7 +72,7 @@ def walk(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
 
     def home():
-        page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
 
     def opened(way):
@@ -714,7 +714,7 @@ def captions(browser, errors, data, product):
     page.route(f"{smoke.ORIGIN}/api/jobs/{later_job}", as_running)
     def opened_from_home(hash):
         """A new opening of the poster: from the chat straight to its editor is only a change of view, which opens nothing."""
-        page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
         page.evaluate("hash => { location.hash = hash }", hash)
     panel.get_by_role("button", name="Fermer").click()
@@ -806,7 +806,7 @@ def captions(browser, errors, data, product):
     def sign_out(at):
         parts(at)[0].get_by_role("button", name="Fermer").click()
         with smoke.replaced(at):
-            at.get_by_role("button", name="Se déconnecter").first.click()
+            smoke.go(at, "Se déconnecter")
         expect(at.get_by_label("Mot de passe", exact=True)).to_be_visible()
     keys = lambda prefix: other_shop.evaluate("prefix => Object.keys(localStorage).filter(key => key.startsWith(prefix))", prefix)
     sign_out(other_shop)
@@ -920,7 +920,7 @@ def sharing(browser, errors, data, product):
     tap = lambda: page.evaluate(TAP)
 
     def home():
-        page.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
 
     def open_poster(poster, ready=True, loaded=True, address=None):
@@ -1226,6 +1226,8 @@ def sharing(browser, errors, data, product):
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
         assert panel.evaluate("e => e.scrollWidth <= e.clientWidth"), "the panel scrolls sideways"
         page.screenshot(path=str(OUT / f"share-360-{scheme}.png"))
+    # « Partager » is the main action, charcoal on yellow; the file beside it is the second one, outlined (D-REDESIGN-001).
+    smoke.check_primary(page, "share, 360 px", share, panel.get_by_role("link", name="Télécharger le PNG confirmé"))
     page.emulate_media(color_scheme="light")
     expect(field).to_have_value(caption)
     field.focus()
@@ -1252,6 +1254,7 @@ def sharing(browser, errors, data, product):
     expect(other_panel.get_by_role("link", name="Télécharger le PNG confirmé")).not_to_have_class(re.compile(r"\bsecondary\b"))
     assert other.evaluate("() => window.toBlobs") == 0
     smoke.check_contrast(other, "cannot share")
+    smoke.check_primary(other, "cannot share", other_panel.get_by_role("link", name="Télécharger le PNG confirmé"))  # the main action there
     other.screenshot(path=str(OUT / "share-cannot-1366.png"))
     other.close()
 
@@ -1317,7 +1320,7 @@ def sharing(browser, errors, data, product):
     # the shop's part leaves the page, and the late encoding prepares nothing.
     theirs.evaluate("window.blobMode = 'hold'")
     their_panel.get_by_role("button", name="Fermer").click()
-    theirs.get_by_role("navigation", name="Navigation").get_by_role("link", name="Accueil").click()
+    smoke.go(theirs, "Accueil")
     expect(theirs.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
     theirs.evaluate("hash => { location.hash = hash }", their_poster)
     expect(their_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)

@@ -8,7 +8,13 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 import browser_smoke as smoke
+import share_browser as sb
 from terms_browser import open_atelier, set_terms
+
+
+def home_account(page):
+    """Accueil's own « Mon compte » link, the entry these walks were written for (the shell's is checked apart)."""
+    page.get_by_role("region", name="Accueil", exact=True).get_by_role("link", name="Mon compte").click()
 
 
 def set_theme(page, scheme):
@@ -16,74 +22,152 @@ def set_theme(page, scheme):
     page.wait_for_function("theme => document.documentElement.dataset.theme === theme", arg="clair" if scheme == "light" else "sombre")
 
 
+# The top bar's controls as drawn: each one's box, and whether its text is cut (D-REDESIGN-002, R-REDESIGN-003).
+TOP_BAR_JS = r"""header => [...header.querySelectorAll(':scope > *')].filter(e => e.checkVisibility() && e.getBoundingClientRect().width)
+  .filter(e => !e.matches('.grow')).map(e => { const box = e.getBoundingClientRect()
+    return { name: e.getAttribute('aria-label') || e.textContent.trim(), text: e.matches('.top-title'), left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+             width: box.width, height: box.height, cut: [e, ...e.querySelectorAll('*')].some(x => x.scrollWidth > x.clientWidth + 1 && !x.matches('.top-title')) } })"""
+
+
+def logo_of(locator, scheme):
+    """The kit's horizontal logo of the theme, whole, at its minimum width (R-SHOP-DASH-008 amended by ADR-123)."""
+    image = locator.locator("img:visible")
+    expect(image).to_have_count(1)
+    expect(image).to_have_js_property("complete", True)
+    assert image.evaluate("e => e.naturalWidth > 0")
+    assert image.bounding_box()["width"] >= 220
+    assert ("reverse" in image.get_attribute("src")) == (scheme == "dark"), image.get_attribute("src")
+
+
 def walk_header(browser):
-    context = browser.new_context()
+    """The shell's logo, top bar and shop name (D-REDESIGN-002): signed out, the theme switch alone and the logo above the
+    sign-in; over 1180 px the sidebar's logo and no name typed beside it, in Figtree; the top bar in one row at 360 px with
+    a five-digit balance, on Accueil and in the chat, and at 800 px with the poster's name; a long shop name cut in the
+    account row and kept whole in its title."""
+    context = browser.new_context(viewport={"width": 1440, "height": 740})
     try:
         page = context.new_page()
         open_atelier(page, "#accueil")
         header = page.locator(".app-header")
-        brand = header.get_by_role("link", name="Doka Studio — Accueil", exact=True)
-        def check():
-            for width in (360, 1440):
-                page.set_viewport_size({"width": width, "height": 740})
-                for scheme in ("light", "dark"):
-                    set_theme(page, scheme)
-                    expect(brand).to_be_visible()
-                    expect(brand).to_have_attribute("href", "#accueil")
-                    expect(brand.get_by_role("img")).to_have_count(0)
-                    image = brand.locator("img:visible")
-                    expect(image).to_have_count(1)
-                    expect(image).to_have_js_property("complete", True)
-                    assert image.evaluate("e => e.naturalWidth > 0")
-                    box = image.bounding_box()
-                    if width == 360:
-                        expect(brand.get_by_text("Doka Studio", exact=True)).to_be_visible()
-                        assert box["width"] == 32 and image.evaluate("e => getComputedStyle(e).paddingLeft") == "6px"
-                    else:
-                        assert box["width"] >= 220 and box["height"] > 0
-                        assert ("reverse" in image.get_attribute("src")) == (scheme == "dark")
-                    page.wait_for_function(smoke.NO_SIDEWAYS)
-                    brand.focus()
-                    expect(brand).to_be_focused()
-                    page.keyboard.press("Tab")
-                    assert header.evaluate("e => e.contains(document.activeElement)") and not brand.evaluate("e => e === document.activeElement")
-                    last_mode = header.locator(".seg button").last
-                    if width == 360 and last_mode.is_visible():
-                        assert header.bounding_box()["height"] <= 64
-                        controls = [brand, header.locator(".sign-out"), *header.locator(".seg button").all(), header.locator(".theme-toggle")]
-                        boxes = [control.bounding_box() for control in controls]
-                        assert all(box["height"] >= 44 and box["width"] >= 44 for box in boxes)
-                        assert all(left["x"] + left["width"] <= right["x"] + 1 for left, right in zip(boxes, boxes[1:]))
-                        theme_button = header.locator(".theme-toggle")
-                        last_mode.focus()
-                        page.keyboard.press("Tab")
-                        expect(theme_button).to_be_focused()
-                        mode_box, theme_box = last_mode.bounding_box(), theme_button.bounding_box()
-                        assert mode_box["x"] + mode_box["width"] <= theme_box["x"]
-                        assert abs(mode_box["y"] + mode_box["height"]/2 - theme_box["y"] - theme_box["height"]/2) < 2
-        expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
-        check()
-        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
-        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
-        page.get_by_role("button", name="Ouvrir l’atelier").click()
-        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
-        check()
-        for route, heading in (("credits", "Mes crédits"), ("compte", "Mon compte")):
-            page.goto(smoke.ORIGIN + "/#" + route)
-            expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
-            check()
+        for width in (360, 1440):
+            page.set_viewport_size({"width": width, "height": 740})
+            for scheme in ("light", "dark"):
+                set_theme(page, scheme)
+                expect(page.get_by_label("Identifiant de la boutique")).to_be_visible()
+                assert [item["name"] for item in header.evaluate(TOP_BAR_JS)] == ["Passer au thème sombre" if scheme == "light" else "Passer au thème clair"]
+                expect(page.locator("aside.side, nav.phone-bar")).to_have_count(0)
+                logo_of(page.locator("main.gate"), scheme)
+                page.wait_for_function(smoke.NO_SIDEWAYS)
         def long_name(route):
             response = route.fetch()
             profile = response.json()
             profile["name"] = "Boutique " * 17
             route.fulfill(json=profile)
         page.route("**/api/shop-profile", long_name)
+        page.route("**/api/balance", lambda route: route.fulfill(json={**route.fetch().json(), "available": 12345}))
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        side = page.locator("aside.side")
+        brand = side.get_by_role("link", name="Doka Studio — Accueil", exact=True)
+        for width in (1181, 1440):
+            page.set_viewport_size({"width": width, "height": 740})
+            for scheme in ("light", "dark"):
+                set_theme(page, scheme)
+                expect(brand).to_have_attribute("href", "#accueil")
+                expect(brand.get_by_role("img")).to_have_count(0)
+                logo_of(brand, scheme)
+                assert "Doka Studio" not in side.inner_text()
+                expect(header.get_by_role("link", name="Doka Studio — Accueil")).to_be_hidden()
+                page.wait_for_function(smoke.NO_SIDEWAYS)
+        assert page.evaluate("[...document.fonts].some(face => face.family.replace(/\"/g, '') === 'Figtree' && face.status === 'loaded')")
+        assert side.get_by_role("link", name="Accueil", exact=True).evaluate("e => getComputedStyle(e).fontFamily").startswith("Figtree")
+        # The phone's top bar: one row, nothing cut; menu, D, credits on Accueil; in the chat menu, switch, plus, credits.
+        page.set_viewport_size({"width": 360, "height": 740})
+        pill = header.get_by_role("link", name="12345 crédits")
+        expect(pill).to_have_text("12345")
+        def one_row(where, names, height=64):
+            controls = header.evaluate(TOP_BAR_JS)
+            assert [item["name"] for item in controls] == names, (where, controls)
+            assert header.bounding_box()["height"] <= height, (where, header.bounding_box())
+            assert all(not item["cut"] and (item["text"] or item["height"] >= 44 and item["width"] >= 44) for item in controls), (where, controls)
+            assert all(left["right"] <= right["left"] + 1 for left, right in zip(controls, controls[1:])), (where, controls)
+            assert len({round(item["top"] + item["height"] / 2) for item in controls}) == 1, (where, controls)
+            assert controls[-1]["right"] <= page.viewport_size["width"], (where, controls)
+            # Each button of the mode switch is a target of its own; the keyboard meets the controls in their visible order.
+            for button in header.locator(".seg button").all() if page.viewport_size["width"] <= 420 else []:  # a phone's 44 px
+                box = button.bounding_box()
+                assert box["width"] >= 44 and box["height"] >= 44, (where, button.inner_text(), box)
+            focusables = header.locator("a:visible, button:visible")
+            named = "e => e.getAttribute('aria-label') || e.textContent.trim()"
+            order = [control.evaluate(named) for control in focusables.all()]
+            focusables.first.focus()
+            met = [page.evaluate(f"({named})(document.activeElement)")]
+            for _ in order[1:]:
+                page.keyboard.press("Tab")
+                met.append(page.evaluate(f"({named})(document.activeElement)"))
+            assert met == order, (where, met, order)
+            page.wait_for_function(smoke.NO_SIDEWAYS)
+        one_row("Accueil, 360 px", ["Ouvrir le menu", "Doka Studio — Accueil", "12345 crédits"])
+        page.goto(smoke.ORIGIN + "/#message")
+        expect(page.get_by_label("Votre message")).to_be_visible()
+        one_row("the chat, 360 px", ["Ouvrir le menu", "Façon de créer", "Nouvelle affiche", "12345 crédits"])
+        # A poster's name in the creator from 721 px, cut by an ellipsis when long: aria-hidden, the page has its title.
+        title = ("Casque " + "Sony WH-CH720N " * 8).strip()
         page.goto(smoke.ORIGIN + "/#etapes")
-        expect(page.get_by_label("Photos du produit")).to_be_enabled()
-        check()
-        assert header.locator(".shop-label").evaluate("e => e.scrollWidth > e.clientWidth")
+        page.get_by_label("Photos du produit").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
+        expect(page.locator(".photo-strip img")).to_have_count(1)
+        page.get_by_label("Nom du produit", exact=True).fill(title)
+        page.get_by_label("Prix en ariary", exact=True).fill("90 000")
+        page.get_by_label("Les photos correspondent").check()
+        page.get_by_role("button", name="Préparer mon affiche").click()
+        expect(page.get_by_label("Titre", exact=True)).to_have_value(title)
+        page.goto(smoke.ORIGIN + "/#message-" + page.url.split("#")[1])
+        expect(page.get_by_label("Votre message")).to_be_visible()
+        one_row("the chat with a long poster name, 360 px", ["Ouvrir le menu", "Façon de créer", "Nouvelle affiche", "12345 crédits"])
+        page.set_viewport_size({"width": 800, "height": 740})
+        one_row("the chat with a long poster name, 800 px", ["Ouvrir le menu", "Doka Studio — Accueil", title, "Façon de créer", "12345 crédits", "Passer au thème clair"])
+        top = header.locator(".top-title")
+        expect(top).to_have_attribute("aria-hidden", "true")
+        assert top.evaluate("e => e.scrollWidth > e.clientWidth && getComputedStyle(e).textOverflow === 'ellipsis'")
+        # The shop's name in the account row: cut, and whole in its title.
+        page.set_viewport_size({"width": 1440, "height": 740})
+        account = side.locator("a.account")
+        expect(account).to_have_attribute("title", "Boutique " * 17)
+        assert account.locator(".label").evaluate("e => e.scrollWidth > e.clientWidth")
+        # The next walks start from a shop with no poster: this one leaves the list.
+        poster = page.request.get(smoke.ORIGIN + "/api/creations/" + page.url.split("#message-")[1]).json()
+        removed = page.request.post(f"{smoke.ORIGIN}/api/creations/{poster['id']}/abandon", data={}, headers={
+            "Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE), "If-Match": f'"{poster["revision"]}"', "Idempotency-Key": str(uuid4())})
+        assert removed.ok, removed.text()
     finally:
         context.close()
+
+
+# A poster's state in a list (D-REDESIGN-004): the four states on the first four rows, each row's word and tone.
+STATES = (("draft", "Brouillon", "badge"), ("to_review", "À vérifier", "badge warn"), ("approved", "Approuvée", "badge ok"), ("confirmed", "Confirmée", "badge ok"))
+# A row's title, badge and details in the document's order, with where each is drawn.
+ROW_JS = """row => [...row.querySelectorAll('strong, .badge, .details')].map(e => { const box = e.getBoundingClientRect()
+  return { kind: e.matches('strong') ? 'title' : e.matches('.badge') ? 'badge' : 'details', text: e.textContent.trim(), tone: e.className, top: box.top, bottom: box.bottom } })"""
+
+
+def four_states(route):
+    listing = route.fetch().json()
+    for item, (state, _, _) in zip(listing["items"], STATES):
+        item["state"] = state
+    route.fulfill(json=listing)
+
+
+def check_states(rows, details):
+    """Each row reads its title, then its state's badge, then its details (none on Accueil), one under the other."""
+    for index, (_, word, tone) in enumerate(STATES):
+        parts = rows.nth(index).evaluate(ROW_JS)
+        assert [part["kind"] for part in parts] == ["title", "badge", "details"][:3 if details else 2], parts
+        assert (parts[1]["text"], parts[1]["tone"]) == (word, tone), parts
+        assert all(after["top"] >= before["bottom"] - 1 for before, after in zip(parts, parts[1:])), parts
+        if details:
+            assert " Ar · " in parts[2]["text"] and word not in parts[2]["text"], parts
 
 
 # The frame of the shop's five screens (D-POLISH-003). A title: its type, and what shows its focus.
@@ -140,17 +224,24 @@ def level_one(page):
 
 
 def check_bar(nav, items, where):
-    """The bottom bar on a phone (D-POLISH-003): its items in order, each showing its short text on one line inside its link
-    at 11 px or more, a 44 × 44 px target, named by its full French name, which contains what is shown."""
+    """The bottom bar on a phone (D-POLISH-003, D-REDESIGN-002): five items in order by their full French names. The four
+    labelled ones each show their short text on one line inside their link at 11 px or more, a 44 × 44 px target, the name
+    containing what is shown; the centre « Nouvelle affiche » is a painted plus on a target of 44 × 44 px or more."""
     links = nav.get_by_role("link")
-    expect(links).to_have_count(len(items))
-    for link, (shown, name) in zip(links.all(), items):
+    names = [name for _, name in items[:2]] + ["Nouvelle affiche"] + [name for _, name in items[2:]]
+    expect(links).to_have_count(5)
+    for link, name in zip(links.all(), names):
         expect(link).to_have_accessible_name(name)
+    for shown, name in items:
         assert shown.casefold() in name.casefold(), (shown, name)
     measured = nav.evaluate(BAR_JS)
-    assert [item["text"] for item in measured] == [shown for shown, _ in items], (where, measured)
-    for item in measured:
+    labelled = measured[:2] + measured[3:]
+    assert [item["text"] for item in labelled] == [shown for shown, _ in items], (where, measured)
+    for item in labelled:
         assert item["size"] >= 11 and item["lines"] == 1 and item["inside"] and item["width"] >= 44 and item["height"] >= 44, (where, item)
+    centre = links.nth(2)
+    assert measured[2]["text"] == "" and measured[2]["width"] >= 44 and measured[2]["height"] >= 44, (where, measured[2])
+    assert centre.evaluate("e => { const plus = e.querySelector('svg path'); const box = plus.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(plus).stroke !== 'none' }"), where
 
 
 def walk_frame(browser):
@@ -174,7 +265,7 @@ def walk_frame(browser):
         title = page.get_by_role("heading", level=1)
         edges = []
         for name, link, first in (
-                ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.get_by_label("Afficher les affiches retirées")),
+                ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.locator(".gallery").get_by_role("button", name="Nouvelle affiche")),  # the page's action, then its filter
                 ("Styles", nav.get_by_role("link", name=re.compile("^Styles")), page.locator(".look-card").first),
                 ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("button", name="Actualiser")),
                 ("Mes crédits", home.get_by_role("link", name="Voir mes crédits"), page.locator(".shop-credits").get_by_role("link", name="Retour à l’accueil")),
@@ -221,7 +312,8 @@ def walk_frame(browser):
             near = page.get_by_role("region", name=name, exact=True).evaluate(NEAR_EDGE_JS)
             assert not near, f"{name} at 360 px, text closer than 16 px to an edge: {near}"
 
-        # The bar: four items on the dashboard's screens, five in the creator; the balance and the list as the server says.
+        # The bar: the same five items on the dashboard's screens and on the creator's form; the list as the server says.
+        # The balance is the top bar's pill (D-REDESIGN-002): its number, or « Crédits » unread, named in full.
         balance = page.request.get(smoke.ORIGIN + "/api/balance").json()
         answers = {"available": 0, "posters": 0}
         def read_balance(route):
@@ -231,7 +323,9 @@ def walk_frame(browser):
                 route.fulfill(json={**balance, "available": answers["available"]})
         page.route("**/api/balance", read_balance)
         page.route("**/api/creations?limit=50&status=active", lambda route: route.fulfill(json={"items": [], "total": answers["posters"], "next_cursor": None}))
-        nav.get_by_role("link", name="Créer", exact=True).click()  # the creator reads the styles: their count is known from here on
+        pill = page.locator(".app-header .credits-pill")
+        nav = page.get_by_role("navigation", name="Navigation", exact=True).and_(page.locator("nav.phone-bar"))
+        nav.get_by_role("link", name="Nouvelle affiche", exact=True).click()  # the creator reads the styles: their count is known from here on
         expect(page.get_by_label("Photos du produit")).to_be_enabled()
         for posters in (0, 3, 120):
             answers["posters"] = posters
@@ -241,14 +335,17 @@ def walk_frame(browser):
                 answers["available"] = available
                 with page.expect_request("**/api/balance"):
                     nav.get_by_role("link", name="Accueil", exact=True).click()
-                items = [("Accueil", "Accueil"), ("Créer", "Créer"), ("Affiches", f"Mes affiches {posters}"), ("Styles", "Styles 3")]
+                items = [("Accueil", "Accueil"), ("Affiches", f"Mes affiches {posters}"), ("Styles", "Styles 3"), ("Compte", "Mon compte")]
                 credits = ("Crédits", "Mes crédits") if available is None else (str(available), f"{available} crédit" + ("" if abs(available) == 1 else "s"))
                 where = f"{posters} affiches, solde {available}"
                 expect(home.get_by_role("button", name="Réessayer le solde")).to_have_count(int(available is None))
                 check_bar(nav, items, "Accueil, " + where)
-                nav.get_by_role("link", name="Créer", exact=True).click()
+                expect(pill).to_have_text(credits[0])
+                expect(pill).to_have_accessible_name(credits[1])
+                nav.get_by_role("link", name="Nouvelle affiche", exact=True).click()
                 expect(page.get_by_label("Photos du produit")).to_be_enabled()
-                check_bar(nav, items + [credits], "creator, " + where)
+                check_bar(nav, items, "creator, " + where)
+                expect(pill).to_have_text(credits[0])
         assert not errors, errors
     finally:
         context.close()
@@ -272,6 +369,11 @@ def walk(browser, out):
         expect(home.get_by_text("Lecture des affiches…")).to_be_visible()
         all_clear = home.get_by_text("Aucune affiche à vérifier.", exact=True)
         expect(all_clear).to_be_visible()
+        # A cold Accueil makes the requests it made before the shell, each once: the sidebar shares Accueil's reads
+        # (D-REDESIGN-002), and nothing of the creator is read.
+        cold = list(reads)
+        assert [cold.count(path) for path in ("shop-dashboard", "creations?limit=5", "balance")] == [1, 1, 1], cold
+        assert not any(path.startswith(("looks", "capabilities", "shop-profile", "creations?limit=50")) for path in cold), cold
         pending_summary = []
         page.route("**/api/shop-dashboard", lambda route: pending_summary.append(route))
         with page.expect_request("**/api/shop-dashboard"):
@@ -332,7 +434,7 @@ def walk(browser, out):
         expect(page.get_by_role("heading", name="Mon compte")).to_be_visible()
         page.wait_for_url("**/#compte")
         page.unroute("**/api/capabilities")
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         home.get_by_role("link", name="Créer une affiche").click()
         expect(page.get_by_label("Votre message")).to_be_visible()
         page.locator(".chat input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
@@ -356,7 +458,7 @@ def walk(browser, out):
         page.get_by_role("button", name="Pas à pas", exact=True).click()
         dialog.get_by_role("button", name="Quitter sans les envoyer").click()
         page.wait_for_url("**/#etapes")
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         home.get_by_role("link", name="Créer une affiche").click()
         page.wait_for_url("**/#etapes")
         expect(page.get_by_label("Photos du produit")).to_be_enabled()
@@ -381,7 +483,7 @@ def walk(browser, out):
         summary["review"] = {"total": 3, "first_creation_id": made["id"], "first_creation_title": made["document"]["offer"]["title"]}
         summary["failed"] = {"total": 1, "first_creation_id": recent_id}  # dashboard response from an older build
         page.route("**/api/shop-dashboard", lambda route: route.fulfill(json=summary))
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         review_action = home.get_by_role("button", name="Vérifier Casque de la boutique")
         expect(review_action).to_be_visible()
         expect(all_clear).to_have_count(0)
@@ -391,6 +493,13 @@ def walk(browser, out):
         expect(poster).to_be_visible()
         expect(home.locator(".home-recent button")).to_have_count(5)
         expect(home.locator(".home-recent")).not_to_contain_text("Casque de la boutique")
+        page.route("**/api/creations?limit=5", four_states)
+        home.get_by_role("button", name="Actualiser").click()
+        expect(home.locator(".home-recent .badge.ok")).to_have_count(2)
+        check_states(home.locator(".home-recent button"), details=False)
+        page.unroute("**/api/creations?limit=5")
+        home.get_by_role("button", name="Actualiser").click()
+        expect(home.locator(".home-recent .badge.ok")).to_have_count(0)
         for button, target, title in ((review_action, made["id"], "Casque de la boutique"),
                                       (home.get_by_role("button", name="Génération échouée"), recent_id, "Affiche 5"),
                                       (poster, recent_id, "Affiche 5")):
@@ -438,7 +547,7 @@ def walk(browser, out):
         expect(page.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
         after_contact = page.request.get(poster_url).json()
         assert after_contact["document"] == before_contact["document"] and after_contact["revision"] == before_contact["revision"]
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         # A stalled or failed first gallery read must never present zeros or a fictitious empty library.
         gallery_url = "**/api/creations?limit=50&status=active"
         page.route(gallery_url, lambda route: delayed.append(route))
@@ -450,26 +559,33 @@ def walk(browser, out):
         expect(gallery.get_by_role("button", name="Réessayer la liste")).to_be_visible()
         expect(gallery.locator(".empty, .meta")).to_have_count(0)
         page.unroute(gallery_url)
+        page.route(gallery_url, four_states)
         gallery.get_by_role("button", name="Réessayer la liste").click()
         expect(gallery.locator(".library-item")).to_have_count(6)
+        check_states(gallery.locator(".library-item"), details=True)
         # From an open poster, a successful creator reload must yield to the later choice of the gallery.
         page.set_viewport_size({"width": 1366, "height": 768})
+        check_states(gallery.locator(".library-item"), details=True)
         # In the 860 px frame a row's state, price and date are whole, under its title: beside it they were cut (D-POLISH-003).
-        cut = page.eval_on_selector_all(".library-item span", "spans => spans.filter(span => span.scrollWidth > span.clientWidth || !span.textContent.includes(' Ar · ')).map(span => span.textContent)")
+        cut = page.eval_on_selector_all(".library-item :is(.badge, .details)", "parts => parts.filter(part => part.scrollWidth > part.clientWidth || !part.matches('.badge') && !part.textContent.includes(' Ar · ')).map(part => part.textContent)")
         assert not cut, cut
+        for scheme in ("light", "dark"):
+            set_theme(page, scheme)
+            expect(gallery.locator(".library-item .badge").first).to_be_visible()
+            smoke.check_contrast(page, f"Mes affiches 1366 with the four states, {scheme}")
+        page.unroute(gallery_url)
         gallery.get_by_role("button", name="Affiche 5 Brouillon", exact=False).click()
         expect(page.get_by_label("Titre", exact=True)).to_have_value("Affiche 5")
         page.route("**/api/capabilities", lambda route: pending_caps.append(route))
-        nav = page.get_by_role("navigation", name="Navigation", exact=True)
         with page.expect_request("**/api/capabilities"):
-            nav.get_by_role("link", name="Créer", exact=True).click()
-        nav.get_by_role("link", name="Mes affiches", exact=False).click()
+            smoke.go(page, "Nouvelle affiche")
+        smoke.go(page, "Mes affiches")
         pending_caps.pop().continue_()
         expect(gallery).to_be_visible()
         page.wait_for_url("**/#affiches")
         page.unroute("**/api/capabilities")
         page.set_viewport_size({"width": 360, "height": 640})
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         balance = page.request.get(smoke.ORIGIN + "/api/balance").json()
         balance["available"] = 0
         balance["blocked"]["scene"] = {"reason": "terms", "message_fr": "Acceptez les conditions."}
@@ -502,7 +618,7 @@ def walk(browser, out):
         # A late list response cannot restore the dashboard after the identity has changed.
         page.route("**/api/creations?limit=5", lambda route: held.append(route))
         page.route("**/api/shop-dashboard", lambda route: route.fulfill(status=409, json={"error": {"code": "shop_changed"}}))
-        page.locator("nav").get_by_role("link", name="Accueil").click()
+        smoke.go(page, "Accueil")
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
         assert held
         held.pop().fulfill(json={"items": [{"title": "Ancienne boutique"}], "total": 1, "next_cursor": None})
@@ -513,6 +629,11 @@ def walk(browser, out):
         current_credit_poster(browser, poster_session, made["id"])
     finally:
         context.close()
+
+
+# The creator's way to the credits on a phone (D-REDESIGN-002): the top bar's pill, or in the step editor, whose phone
+# layout has no top bar, the rail's button.
+CREDITS_OPENER = ".app-header .credits-pill:visible, .rail .creator-credits:visible"
 
 
 def credit_poster_paths(browser, session, first, second):
@@ -528,7 +649,7 @@ def credit_poster_paths(browser, session, first, second):
         page.goto(f"{smoke.ORIGIN}/#message-{first}")
         with page.expect_request("**/api/assets"):
             page.locator(".chat input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
-        opener = page.locator(".creator-credits")
+        opener = page.locator(CREDITS_OPENER)
         opener.click()
         panel = page.get_by_role("dialog", name="Mes crédits")
         target = panel.get_by_role("button", name="Affiche 5")
@@ -627,7 +748,7 @@ def current_credit_poster(browser, session, poster_id):
         row = {"type": "job", "id": str(uuid4()), "kind": "scene", "credit": "spent", "at": "2026-11-01T10:00:00Z",
                "creation_id": poster_id, "title": "Affiche en cours", "removed": False}
         page.route("**/api/shop-credit-history?*", lambda r: r.fulfill(json={"items": [row], "next_cursor": None}))
-        opener = page.locator(".creator-credits")
+        opener = page.locator(CREDITS_OPENER)
         panel = page.get_by_role("dialog", name="Mes crédits")
         def select_current(address):
             reads = []
@@ -673,7 +794,7 @@ def check_balance_explanation(page, view, balance):
         balance["blocked"]["scene"] = {"reason": reason, "message_fr": restriction} if reason else None
         with page.expect_response("**/api/balance"):
             view.get_by_role("button", name="Actualiser").click()
-        expect(view.locator("dd")).to_have_text([str(available), str(pending)])
+        expect(view.locator("dd")).to_have_text([f"{available} crédit{'' if abs(available) == 1 else 's'}", f"{pending} crédit{'' if abs(pending) == 1 else 's'}"])
         expect(reserved).to_have_count(int(pending > 0))
         expect(empty).to_have_count(int(available <= 0))
         expect(view.get_by_text(restriction, exact=True)).to_have_count(int(bool(reason)))
@@ -683,7 +804,7 @@ def check_balance_explanation(page, view, balance):
     view.get_by_role("button", name="Actualiser").click()
     expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
     expect(view.get_by_text("Dernier solde connu à " + checked)).to_be_visible()
-    expect(view.locator("dd")).to_have_text(["-2", "1"])
+    expect(view.locator("dd")).to_have_text(["-2 crédits", "1 crédit"])  # the unit follows the count, as in the shell
     expect(empty).to_have_count(0)
     expect(view.get_by_text(restriction, exact=True)).to_have_count(0)
     view.get_by_role("button", name="Réessayer le solde").click()
@@ -707,7 +828,7 @@ def walk_credits(browser, out):
         page.route("**/api/assets", lambda route: uploads.append(route))
         with page.expect_request("**/api/assets"):
             page.locator(".chat input[type=file]").set_input_files(smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg")
-        opener = page.locator(".creator-credits")
+        opener = page.locator(CREDITS_OPENER)
         opener.click()
         panel = page.get_by_role("dialog", name="Mes crédits")
         expect(panel).to_be_visible()
@@ -752,7 +873,7 @@ def walk_credits(browser, out):
         expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
         expect(view.locator("dd")).to_have_count(0)
         check_balance_explanation(page, view, balance)
-        expect(view.get_by_text("-2", exact=True)).to_be_visible()
+        expect(view.locator("dd").first).to_have_text("-2 crédits")  # the figure with its unit
         expect(view.get_by_text(balance["purchase_fr"])).to_be_visible()
         expect(view.get_by_text("Achat de crédits")).to_be_visible()
         with page.expect_request("**/*before=cursor"):
@@ -785,6 +906,650 @@ def walk_credits(browser, out):
         context.close()
 
 
+PHOTO = smoke.ROOT / "backend/fixtures/examples/phone-noir.jpg"
+INSIDE = "selector => document.querySelector(selector)?.contains(document.activeElement) ?? false"
+# The frame (body::before) as drawn: its edges' distance to the window's, or null when there is none.
+FRAME_JS = """() => { const frame = getComputedStyle(document.body, '::before'), body = document.body.getBoundingClientRect()
+  if (frame.content === 'none' || frame.position !== 'absolute') return null
+  return { left: body.left + parseFloat(frame.left), right: document.documentElement.clientWidth - body.right + parseFloat(frame.right) } }"""
+
+
+def landmarks(page, role="navigation"):
+    """The landmarks of Chromium's own accessibility tree, which leaves out what is inert or hidden, as a screen reader does."""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        nodes = cdp.send("Accessibility.getFullAXTree")["nodes"]
+    finally:
+        cdp.detach()
+    return [node.get("name", {}).get("value") for node in nodes if not node.get("ignored") and node.get("role", {}).get("value") == role]
+
+
+def to_review(page, message):
+    """A poster made in the chat, its first version in the review panel."""
+    page.goto(smoke.ORIGIN + "/#message")
+    page.locator(".composer input[type=file]").set_input_files([PHOTO])
+    expect(page.locator(".tray .pic")).to_have_count(1)
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    page.get_by_label("Votre message").fill(message)
+    page.get_by_role("button", name="Envoyer").click()
+    page.get_by_role("log").get_by_role("button", name="Créer l’affiche").click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    page.get_by_role("button", name="Vérifier", exact=True).click(timeout=30000)
+    expect(page.get_by_role("heading", name=sb.REVIEW)).to_be_visible()
+    return page.url.split("#message-")[1]
+
+
+def never_reached(page, where, presses=40):
+    """Tab and Shift+Tab never put the focus in the sidebar, nor give « Se déconnecter » to a key."""
+    for key in ("Tab", "Shift+Tab"):
+        for _ in range(presses):
+            page.keyboard.press(key)
+            assert not page.evaluate(INSIDE, "aside.side"), (where, key)
+    expect(page.locator("aside.side")).to_have_attribute("inert", "")
+
+
+def walk_shell(browser, out):
+    """The shell over 1180 px, at its edges and around it (D-REDESIGN-002): the panels in front keep the sidebar out of reach;
+    the top bar sticks after a document scroll and the frame scrolls away, a notice stays under the bar and a toast is
+    centred on the content; the widths 1181/1180 and 721/720; the rail; the recent posters through the page's own
+    departure questions; the credits from the pill and the rail's button; a cold « Mes affiches » reads the shell's two
+    sections once."""
+    context = browser.new_context(viewport={"width": 1440, "height": 900}, color_scheme="light")
+    try:
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.set_default_timeout(10000)
+        open_atelier(page)
+        sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+        side, header = page.locator("aside.side"), page.locator(".app-header")
+        # Under a panel in front (1440 px): the final panel, then the review panel.
+        approved = sb.made_in_chat(page, PHOTO, "Casque Sony WH-CH720N noir, 289 000 Ar")
+        expect(page.get_by_role("heading", name=sb.FINAL)).to_be_visible()
+        never_reached(page, "the final panel")
+        page.get_by_role("button", name="Fermer", exact=True).click()
+        reviewed = to_review(page, "Écouteurs JBL Tune Flex blancs, 199 000 Ar")
+        never_reached(page, "the review panel")
+        page.locator(".review-panel").get_by_role("button", name="Fermer").click()
+        expect(side).not_to_have_attribute("inert", "")
+
+        # Sticky after a document scroll, on « Mes affiches » long enough to scroll: eight more drafts, made by the API.
+        headers = {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)}
+        source = page.request.get(f"{smoke.ORIGIN}/api/creations/{approved}").json()["document"]["input_id"]
+        for number in range(8):
+            made = page.request.post(smoke.ORIGIN + "/api/creations", headers={**headers, "Idempotency-Key": str(uuid4())}, data={
+                "input_id": source, "offer": {"title": f"Défilement {number}", "price_ar": 1000}, "brand_selection": {"logo": False, "shop_name": False, "contact": False}})
+            assert made.ok, made.text()
+        page.set_viewport_size({"width": 1440, "height": 600})
+        page.goto(smoke.ORIGIN + "/#affiches")
+        expect(page.locator(".library-item").first).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollHeight - innerHeight") >= 600, "not enough posters to scroll"
+        assert header.bounding_box()["height"] == 64 and header.bounding_box()["y"] == 12, header.bounding_box()
+        assert page.evaluate(FRAME_JS) == {"left": 12, "right": 12}, page.evaluate(FRAME_JS)
+        sidebar = side.bounding_box()
+        page.evaluate("window.scrollTo({ top: 600, behavior: 'instant' })")
+        assert header.bounding_box()["y"] == 0 and header.bounding_box()["height"] == 64, header.bounding_box()
+        assert side.bounding_box() == sidebar, (side.bounding_box(), sidebar)
+        assert page.evaluate(FRAME_JS) == {"left": 12, "right": 12}, page.evaluate(FRAME_JS)
+        # A notice under the bar at rest and after the scroll; a toast centred on the content, with the sidebar and the rail.
+        main = page.locator("main:not(.gate)")
+        def centred(where):
+            toast, content = page.locator(".message.notice").bounding_box(), main.bounding_box()
+            assert abs(toast["x"] + toast["width"] / 2 - content["x"] - content["width"] / 2) <= 1, (where, toast, content)
+        # A removed poster opened by its address says so in a notice (App.vue openCreation); the list of removed posters
+        # is short, so a spacer, added by the test, lets the page scroll.
+        abandoned = page.request.get(f"{smoke.ORIGIN}/api/creations/{reviewed}").json()
+        removed = page.request.post(f"{smoke.ORIGIN}/api/creations/{reviewed}/abandon", data={}, headers={
+            "Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE), "If-Match": f'"{abandoned["revision"]}"', "Idempotency-Key": str(uuid4())})
+        assert removed.ok, removed.text()
+        page.goto(f"{smoke.ORIGIN}/#{reviewed}")
+        notice = page.locator(".message.notice")
+        expect(notice).to_contain_text("Cette affiche a été retirée de la liste.")
+        page.evaluate("document.querySelector('main:not(.gate)').insertAdjacentHTML('beforeend', '<div class=\"test-spacer\" style=\"height: 2000px\"></div>')")
+        for top in (0, 600):
+            page.evaluate("top => window.scrollTo({ top, behavior: 'instant' })", top)
+            assert page.evaluate("scrollY") == top
+            bar = header.bounding_box()
+            assert notice.bounding_box()["y"] >= bar["y"] + bar["height"], (top, notice.bounding_box(), bar)
+            centred(f"sidebar, scroll {top}")
+        page.get_by_role("button", name="Réduire le menu").click()
+        expect(side).to_have_js_property("offsetWidth", 76)
+        centred("rail")
+        page.get_by_role("button", name="Agrandir le menu").click()
+        expect(side).to_have_js_property("offsetWidth", 288)
+        # 1024 px: no frame, the bar still sticks.
+        page.set_viewport_size({"width": 1024, "height": 600})
+        page.evaluate("window.scrollTo({ top: 600, behavior: 'instant' })")
+        assert page.evaluate(FRAME_JS) is None and header.bounding_box()["y"] == 0, (page.evaluate(FRAME_JS), header.bounding_box())
+        # The editor at 1440 px: the rail, and the sticky offset equal to the bar once stuck.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(f"{smoke.ORIGIN}/#{approved}")
+        expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+        if page.get_by_role("heading", name=sb.FINAL).count():
+            page.get_by_role("button", name="Fermer", exact=True).click()
+        # A work surface: no frame's gap (the 12 px go to the poster); the sidebar column from the window's left edge, and
+        # the poster's name only in the editor's own title row.
+        assert header.bounding_box()["y"] == 0 and side.bounding_box()["x"] == 0, (header.bounding_box(), side.bounding_box())
+        assert page.evaluate(FRAME_JS) == {"left": 0, "right": 0}, page.evaluate(FRAME_JS)
+        expect(header.locator(".top-title")).to_have_count(0)
+        page.evaluate("document.querySelector('main:not(.gate)').insertAdjacentHTML('beforeend', '<div class=\"test-spacer\" style=\"height: 2000px\"></div>')")
+        page.evaluate("window.scrollTo({ top: 400, behavior: 'instant' })")
+        page.wait_for_function("() => document.querySelector('.app-header').getBoundingClientRect().top === 0")
+        assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--sticky-top')") == f"{header.evaluate('e => e.offsetHeight')}px"
+
+        # The widths. 1181: the sidebar; the editor before and after a version with the rail and its three columns; the chat
+        # with its poster beside a thread of 460 px or more. 1180: the menu button, and no sidebar for a screen reader.
+        draft = page.request.get(smoke.ORIGIN + "/api/creations?limit=50&status=active").json()["items"]
+        draft = next(item["id"] for item in draft if item["state"] == "draft")
+        page.set_viewport_size({"width": 1181, "height": 800})
+        for poster in (draft, approved):
+            page.goto(f"{smoke.ORIGIN}/#{poster}")
+            expect(page.get_by_label("Titre", exact=True)).to_be_visible()
+            expect(side).to_have_js_property("offsetWidth", 76)
+            expect(page.get_by_role("button", name=re.compile("(Réduire|Agrandir) le menu"))).to_have_count(0)
+            columns = page.locator(".work").evaluate("e => getComputedStyle(e).gridTemplateColumns").split()
+            assert len(columns) == 3 and columns[0] == "360px" and columns[2] == "156px", columns
+            page.wait_for_function(smoke.NO_SIDEWAYS)
+        page.goto(f"{smoke.ORIGIN}/#message-{approved}")
+        expect(page.locator(".chat-side")).to_be_visible()
+        if page.get_by_role("heading", name=sb.FINAL).count():
+            page.get_by_role("button", name="Fermer", exact=True).click()
+        assert page.get_by_role("log").bounding_box()["width"] >= 460, page.get_by_role("log").bounding_box()
+        page.wait_for_function(smoke.NO_SIDEWAYS)
+        expect(side).to_have_js_property("offsetWidth", 288)
+        expect(header.locator(".menu")).to_be_hidden()
+        page.set_viewport_size({"width": 1180, "height": 800})
+        expect(header.get_by_role("button", name="Ouvrir le menu")).to_be_visible()
+        page.wait_for_timeout(400)  # the sidebar becomes the closed drawer: its slide out
+        assert landmarks(page) == [], landmarks(page)
+        assert page.evaluate("getComputedStyle(document.querySelector('aside.side')).visibility") == "hidden"
+        page.goto(smoke.ORIGIN + "/#accueil")
+        for width, bar in ((721, False), (720, True)):
+            page.set_viewport_size({"width": width, "height": 800})
+            expect(page.locator("nav.phone-bar")).to_be_visible() if bar else expect(page.locator("nav.phone-bar")).to_be_hidden()
+
+        # The rail: one button, every name kept, kept after a reload, forced in the editor, and for the page alone when
+        # the storage refuses.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(smoke.ORIGIN + "/#accueil")
+        expect(side.locator(".recent")).to_be_visible()
+        page.get_by_role("button", name="Réduire le menu").click()
+        expect(side).to_have_js_property("offsetWidth", 76)
+        expect(side.locator(".recent")).to_be_hidden()
+        # Every control left on the rail, in order, by its full accessible name; each link keeps a title as its tooltip.
+        rail = side.locator("a:visible, button:visible")
+        expected = [("link", re.compile("^Doka Studio — Accueil$")), ("link", re.compile("^Nouvelle affiche$")), ("link", re.compile("^Accueil$")),
+                    ("link", re.compile("^Mes affiches \\d+$")), ("link", re.compile("^Styles( \\d+)?$")), ("link", re.compile("^(-?\\d+ crédits?|Mes crédits)$")),
+                    ("link", re.compile("^" + re.escape(side.locator("a.account").get_attribute("title").strip()) + "$")), ("button", re.compile("^Se déconnecter$"))]
+        expect(rail).to_have_count(len(expected))
+        for control, (role, name) in zip(rail.all(), expected):
+            assert control.evaluate("e => e.tagName") == ("A" if role == "link" else "BUTTON")
+            expect(control).to_have_accessible_name(name)
+            assert control.get_attribute("title"), control.evaluate("e => e.outerHTML.slice(0, 120)")
+            expect(side.get_by_role(role, name=name)).to_have_count(1)
+        page.reload()
+        expect(side).to_have_js_property("offsetWidth", 76)
+        assert page.evaluate("localStorage.getItem('affiche.rail')") == "1"
+        page.get_by_role("button", name="Agrandir le menu").click()
+        expect(side).to_have_js_property("offsetWidth", 288)
+        assert page.evaluate("localStorage.getItem('affiche.rail')") is None
+        page.goto(f"{smoke.ORIGIN}/#{draft}")
+        expect(side).to_have_js_property("offsetWidth", 76)
+        expect(page.get_by_role("button", name=re.compile("(Réduire|Agrandir) le menu"))).to_have_count(0)
+        refusing = context.new_page()
+        refusing.add_init_script("for (const name of ['getItem', 'setItem', 'removeItem']) Storage.prototype[name] = () => { throw new DOMException('denied', 'SecurityError') }")
+        refusing.goto(smoke.ORIGIN + "/#accueil")
+        expect(refusing.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        refusing.get_by_role("button", name="Réduire le menu").click()
+        expect(refusing.locator("aside.side")).to_have_js_property("offsetWidth", 76)
+        refusing.get_by_role("button", name="Agrandir le menu").click()
+        expect(refusing.locator("aside.side")).to_have_js_property("offsetWidth", 288)
+        refusing.close()
+
+        # Recent posters go through the page's own questions: photos not sent in the chat, unsaved edits of the account.
+        # Both start views: a row is #message-<id> with the chat preferred, #<id> with « Pas à pas »; either way another
+        # poster is a departure. « Annuler » keeps the address and the photos; leaving discards them before the other opens.
+        other = side.locator(".recent a:not([aria-current])").first
+        leave = page.get_by_role("dialog", name="Quitter le message ?")
+        for start, form in (("chat", r"#message-[0-9a-f-]{36}"), ("steps", r"#[0-9a-f-]{36}")):
+            page.goto(smoke.ORIGIN + "/#accueil")
+            page.evaluate("start => localStorage.setItem('affiche.start', start)", start)
+            page.reload()
+            expect(other).to_be_visible()
+            target = other.get_attribute("href")
+            assert re.fullmatch(form, target), (start, target)
+            page.goto(smoke.ORIGIN + "/#message")
+            page.locator(".composer input[type=file]").set_input_files([PHOTO])
+            expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+            other.click()
+            expect(leave).to_be_visible()
+            leave.get_by_role("button", name="Annuler").click()
+            expect(leave).to_have_count(0)
+            assert page.url.endswith("#message"), (start, page.url)
+            expect(page.locator(".tray .pic")).to_have_count(1)
+            other.click()
+            leave.get_by_role("button", name="Quitter sans les envoyer").click()
+            page.wait_for_url("**/" + target)
+            expect(page.get_by_label("Votre message") if start == "chat" else page.get_by_label("Titre", exact=True)).to_be_visible()
+            expect(page.locator(".tray .pic")).to_have_count(0)
+        page.goto(smoke.ORIGIN + "/#compte")
+        name = page.get_by_role("region", name="Mon compte", exact=True).get_by_label("Nom de la boutique")
+        expect(name).to_be_visible()
+        kept = name.input_value()
+        name.fill("Saisie non enregistrée")
+        other.click()
+        expect(page.locator("[aria-labelledby=titre-quitter-profil]")).to_be_visible()
+        expect(page.get_by_role("button", name="Continuer la modification")).to_be_focused()
+        page.get_by_role("button", name="Continuer la modification").click()
+        assert page.url.endswith("#compte"), page.url
+        expect(name).to_have_value("Saisie non enregistrée")
+        name.fill(kept)
+
+        # The credits from the creator: the pill (the chat with a draft kept), the editor rail's button; the panel over
+        # the work, and closing gives the focus back to the opener.
+        panel = page.get_by_role("dialog", name="Mes crédits")
+        for opener, address in ((header.locator(".credits-pill"), "#message"), (page.locator(".rail .creator-credits"), f"#{draft}")):
+            page.goto(smoke.ORIGIN + "/" + address)
+            work = page.get_by_label("Votre message") if address == "#message" else page.get_by_label("Titre", exact=True)
+            expect(work).to_be_visible()
+            if address == "#message":
+                work.fill("Brouillon à garder")
+            before = work.input_value()
+            opener.click()
+            expect(panel).to_be_visible()
+            panel.get_by_role("button", name="Fermer").click()
+            expect(panel).to_have_count(0)
+            expect(opener).to_be_focused()
+            assert page.url.endswith(address), page.url
+            expect(work).to_have_value(before)
+
+        # The sidebar after a poster is made: the count and the rows of the server, not of « Mes affiches » read before; a
+        # failed recent read after a success leaves the section and its count out.
+        page.goto(smoke.ORIGIN + "/#affiches")
+        expect(page.locator(".library-item").first).to_be_visible()
+        listed = page.request.get(smoke.ORIGIN + "/api/creations?limit=1").json()["total"]
+        mine = side.get_by_role("link", name=re.compile("^Mes affiches"))
+        expect(mine).to_have_accessible_name(f"Mes affiches {listed}")
+        page.goto(smoke.ORIGIN + "/#etapes")
+        page.get_by_label("Photos du produit").set_input_files(PHOTO)
+        expect(page.locator(".photo-strip img")).to_have_count(1)
+        page.get_by_label("Nom du produit", exact=True).fill("Compte à jour")
+        page.get_by_label("Prix en ariary", exact=True).fill("90 000")
+        page.get_by_label("Les photos correspondent").check()
+        page.get_by_role("button", name="Préparer mon affiche").click()
+        expect(page.get_by_label("Titre", exact=True)).to_have_value("Compte à jour")
+        expect(mine).to_have_accessible_name(f"Mes affiches {listed + 1}")
+        expect(side.locator(".recent a").first).to_contain_text("Compte à jour")
+        smoke.go(page, "Accueil")
+        page.route("**/api/creations?limit=5", lambda route: route.abort())
+        page.get_by_role("region", name="Accueil", exact=True).get_by_role("button", name="Actualiser").click()
+        expect(page.get_by_role("region", name="Accueil", exact=True).get_by_role("button", name="Réessayer les affiches")).to_be_visible()
+        expect(side.locator(".recent")).to_have_count(0)
+        expect(mine).to_have_accessible_name("Mes affiches")
+        page.unroute("**/api/creations?limit=5")
+        page.get_by_role("region", name="Accueil", exact=True).get_by_role("button", name="Réessayer les affiches").click()
+        expect(side.locator(".recent a").first).to_contain_text("Compte à jour")
+        # A removal whose list read then fails: the count is the recent read's, never the list's old one (review r2, D).
+        page.goto(smoke.ORIGIN + "/#affiches")
+        expect(page.locator(".library-item").first).to_be_visible()
+        listed = page.request.get(smoke.ORIGIN + "/api/creations?limit=1").json()["total"]
+        expect(mine).to_have_accessible_name(f"Mes affiches {listed}")
+        page.route("**/api/creations?limit=50&status=active", lambda route: route.abort())
+        page.locator(".library-row", has_text="Défilement 0").get_by_role("button", name=re.compile("^Retirer")).click()
+        page.get_by_role("dialog").get_by_role("button", name="Retirer de la liste").click()
+        expect(page.locator(".message.error")).to_be_visible()
+        expect(mine).to_have_accessible_name(f"Mes affiches {listed - 1}")
+        page.unroute("**/api/creations?limit=50&status=active")
+
+        # Back and Forward with photos not sent (review r2, B), the chat preferred: A (Accueil) → B → C, two posters'
+        # conversations. Back from C asks; « Annuler » returns to C with the history as it was; « Quitter sans les
+        # envoyer » lands on B without the photos, and Forward still reaches C. From C a new conversation asks too.
+        page.evaluate("localStorage.setItem('affiche.start', 'chat')")
+        page.goto(smoke.ORIGIN + "/#accueil")
+        page.reload()
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        ids = {item["title"]: item["id"] for item in page.request.get(smoke.ORIGIN + "/api/creations?limit=50&status=active").json()["items"]}
+        b, c = f"#message-{ids['Défilement 5']}", f"#message-{ids['Défilement 6']}"
+        page.goto(smoke.ORIGIN + "/" + b)
+        expect(page.get_by_label("Votre message")).to_be_visible()
+        page.goto(smoke.ORIGIN + "/" + c)
+        expect(page.get_by_role("heading", name="Défilement 6", level=1)).to_be_attached()
+        tray = page.locator(".tray .pic")
+        page.locator(".composer input[type=file]").set_input_files([PHOTO])
+        expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+        length = page.evaluate("history.length")
+        page.go_back()
+        expect(leave).to_be_visible()
+        leave.get_by_role("button", name="Annuler").click()
+        page.wait_for_url("**/" + c)
+        expect(tray).to_have_count(1)
+        assert page.evaluate("history.length") == length
+        page.go_back()
+        expect(leave).to_be_visible()
+        leave.get_by_role("button", name="Quitter sans les envoyer").click()
+        page.wait_for_url("**/" + b)
+        expect(page.get_by_role("heading", name="Défilement 5", level=1)).to_be_attached()
+        expect(tray).to_have_count(0)
+        page.go_forward()
+        page.wait_for_url("**/" + c)
+        expect(page.get_by_role("heading", name="Défilement 6", level=1)).to_be_attached()
+        page.locator(".composer input[type=file]").set_input_files([PHOTO])
+        expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+        # Back, then Forward while the question is open: it closes with the entry it was about; the next Back asks again
+        # and nothing was discarded meanwhile (review r3, 1).
+        page.go_back()
+        expect(leave).to_be_visible()
+        page.go_forward()
+        page.wait_for_url("**/" + c)
+        expect(leave).to_have_count(0)
+        expect(tray).to_have_count(1)
+        page.go_back()
+        expect(leave).to_be_visible()
+        leave.get_by_role("button", name="Annuler").click()
+        page.wait_for_url("**/" + c)
+        expect(tray).to_have_count(1)
+        side.get_by_role("link", name="Nouvelle affiche").click()
+        expect(leave).to_be_visible()
+        leave.get_by_role("button", name="Annuler").click()
+        page.wait_for_url("**/" + c)
+        expect(tray).to_have_count(1)
+        side.get_by_role("link", name="Nouvelle affiche").click()
+        leave.get_by_role("button", name="Quitter sans les envoyer").click()
+        page.wait_for_url("**/#message")
+        expect(tray).to_have_count(0)
+        # A recent row's message address on a shop without the chat: the editor opens under the poster's own address,
+        # replaced, and one Back returns to Accueil (review r2, C).
+        plain = context.new_page()
+        plain.route("**/api/capabilities", lambda route: route.fulfill(json={**route.fetch().json(), "chat_available": False}))
+        plain.goto(smoke.ORIGIN + "/#accueil")
+        row = plain.locator("aside.side .recent a").first
+        expect(row).to_be_visible()
+        target = row.get_attribute("href")
+        assert target.startswith("#message-"), target
+        length = plain.evaluate("history.length")
+        row.click()
+        plain.wait_for_url("**/#" + target.removeprefix("#message-"))
+        expect(plain.get_by_label("Titre", exact=True)).to_be_visible()
+        assert plain.evaluate("history.length") == length + 1, (plain.evaluate("history.length"), length)
+        plain.go_back()
+        plain.wait_for_url("**/#accueil")
+        expect(plain.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        plain.close()
+
+        # A cold « Mes affiches »: one read of the five recent posters and one of the balance.
+        cold = context.new_page()
+        reads = []
+        cold.on("request", lambda request: reads.append(request.url.partition("/api/")[2]) if "/api/" in request.url else None)
+        cold.goto(smoke.ORIGIN + "/#affiches")
+        expect(cold.locator(".library-item").first).to_be_visible()
+        expect(cold.locator("aside.side .recent a").first).to_be_visible()
+        expect(cold.locator(".app-header .credits-pill")).not_to_have_text("Crédits")
+        cold.wait_for_timeout(500)
+        assert [reads.count(path) for path in ("creations?limit=5", "balance")] == [1, 1], reads
+        cold.close()
+        page.screenshot(path=str(out / "shell-1440.png"))
+        assert not errors, errors
+        return approved, draft, reviewed
+    finally:
+        context.close()
+
+
+def walk_drawer(browser, approved, draft, removed):
+    """The drawer at 1024 and 360 px (D-REDESIGN-002): Tab stays inside, Escape, the scrim and its close button give the
+    focus back to the menu button, a destination gives it to its title, Back closes it first, closed it is inert at once,
+    a destination with unsaved account edits raises the account's question with the drawer closed, a wider window
+    closes it and the focus goes to the rail's button; one navigation landmark when open, none when closed at 1024 px.
+    The phone bar is inert under the drawer and under a dialog, absent in the chat and the editor; the credit card in the
+    drawer opens the panel over the chat and gives the focus back to the menu button; the poster already open closes the
+    drawer and changes nothing; the editor's full-screen look keeps the sidebar out of reach."""
+    context = browser.new_context(viewport={"width": 1024, "height": 768}, color_scheme="dark")
+    try:
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.set_default_timeout(10000)
+        open_atelier(page)
+        sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+        side, menu = page.locator("aside.side"), page.get_by_role("button", name="Ouvrir le menu")
+        bar = page.locator("nav.phone-bar")
+        for width in (1024, 360):
+            page.set_viewport_size({"width": width, "height": 768})
+            page.goto(smoke.ORIGIN + "/#accueil")
+            expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+            page.wait_for_timeout(400)
+            assert landmarks(page) == ([] if width == 1024 else ["Navigation"]), (width, landmarks(page))
+            smoke.open_drawer(page)
+            expect(menu).to_have_attribute("aria-expanded", "true")
+            assert landmarks(page) == ["Navigation"], (width, landmarks(page))
+            if width == 360:
+                expect(bar).to_have_attribute("inert", "")
+            controls = side.locator("a:visible, button:visible").count()
+            for key in ("Tab", "Shift+Tab"):
+                for _ in range(controls + 2):
+                    page.keyboard.press(key)
+                    assert page.evaluate(INSIDE, "aside.side"), (width, key)
+            for way in ("Escape", "scrim", "close"):
+                if way != "Escape":
+                    smoke.open_drawer(page)
+                if way == "Escape":
+                    page.keyboard.press("Escape")
+                elif way == "scrim":
+                    page.mouse.click(page.viewport_size["width"] - 10, 400)
+                else:
+                    page.get_by_role("button", name="Fermer le menu").click()
+                expect(side).to_have_attribute("inert", "")  # at once, before its slide ends
+                expect(menu).to_be_focused()
+                expect(menu).to_have_attribute("aria-expanded", "false")
+            # Closed, it is out of the keyboard's way at once.
+            smoke.open_drawer(page)
+            page.keyboard.press("Escape")
+            page.keyboard.press("Shift+Tab")
+            assert not page.evaluate(INSIDE, "aside.side"), width
+            expect(page.get_by_role("button", name="Aller au contenu")).to_be_focused()  # the one control before the menu
+            page.keyboard.press("Tab")  # back on the menu button: the skip link, shown, covered it
+            expect(menu).to_be_focused()
+            # A destination: its title has the focus; Back with the drawer open closes it first.
+            smoke.open_drawer(page)
+            side.get_by_role("link", name=re.compile("^Styles")).click()
+            expect(page.get_by_role("heading", name="Styles", level=1)).to_be_focused()
+            expect(side).to_have_attribute("inert", "")
+            smoke.open_drawer(page)
+            page.go_back()
+            expect(page.get_by_role("heading", name="Accueil", level=1)).to_be_focused()
+            expect(side).to_have_attribute("inert", "")
+            # Another recent poster, a draft with no dialog of its own: its title has the focus (the chat's, then the
+            # editor's for a device that starts « Pas à pas »).
+            for start, title in (("chat", page.locator("main:not([hidden]) h1.visually-hidden")), ("steps", page.locator("main:not([hidden]) h1.poster-title"))):
+                page.evaluate("start => localStorage.setItem('affiche.start', start)", start)
+                page.goto(smoke.ORIGIN + "/#accueil")
+                page.reload()
+                expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+                smoke.open_drawer(page)
+                side.locator(".recent a", has_text="Défilement 6").click()
+                expect(title).to_have_text("Défilement 6")
+                expect(title).to_be_focused()
+                expect(side).to_have_attribute("inert", "")
+            page.evaluate("localStorage.removeItem('affiche.start')")
+            page.goto(smoke.ORIGIN + "/#accueil")
+            page.reload()
+            # The account's question, the drawer closed.
+            page.goto(smoke.ORIGIN + "/#compte")
+            name = page.get_by_role("region", name="Mon compte", exact=True).get_by_label("Nom de la boutique")
+            kept = name.input_value()
+            name.fill("Saisie non enregistrée")
+            smoke.open_drawer(page)
+            side.get_by_role("link", name="Accueil", exact=True).click()
+            expect(page.get_by_role("button", name="Continuer la modification")).to_be_focused()
+            expect(side).to_have_attribute("inert", "")
+            page.get_by_role("button", name="Continuer la modification").click()
+            name.fill(kept)
+            # The poster already open: the drawer closes, the address stays, the menu button has the focus.
+            page.goto(f"{smoke.ORIGIN}/#{draft}")
+            expect(page.get_by_label("Titre", exact=True)).to_be_visible()
+            if width == 360:
+                expect(bar).to_have_count(0)
+                page.goto(f"{smoke.ORIGIN}/#message-{draft}")
+                expect(page.get_by_label("Votre message")).to_be_visible()
+                expect(bar).to_have_count(0)
+            address = page.url
+            smoke.open_drawer(page)
+            side.locator(".recent a[aria-current=page]").click()
+            expect(menu).to_be_focused()
+            assert page.url == address, (page.url, address)
+            # The credit card in the drawer, in the creator: the panel over the work; closed, the focus to the menu button.
+            if not address.split("#")[1].startswith("message-"):
+                page.goto(f"{smoke.ORIGIN}/#message-{draft}")
+            page.get_by_label("Votre message").fill("Brouillon du tiroir")
+            smoke.open_drawer(page)
+            side.locator(".credit-card").click()
+            panel = page.get_by_role("dialog", name="Mes crédits")
+            expect(panel).to_be_visible()
+            expect(side).to_have_attribute("inert", "")
+            panel.get_by_role("button", name="Fermer").click()
+            expect(menu).to_be_focused()
+            expect(page.get_by_label("Votre message")).to_have_value("Brouillon du tiroir")
+        # A dialog on a phone: the bar is inert under it.
+        page.goto(smoke.ORIGIN + "/#styles")
+        page.locator(".look-card").first.click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        expect(bar).to_have_attribute("inert", "")
+        page.keyboard.press("Escape")
+        expect(bar).not_to_have_attribute("inert", "")
+        # The editor's full-screen look (1024 px): the top bar and the sidebar are out of reach under it.
+        page.set_viewport_size({"width": 1024, "height": 768})
+        page.goto(f"{smoke.ORIGIN}/#{approved}")
+        expect(page.get_by_role("heading", name=sb.FINAL)).to_be_visible()  # its file to check opens with it
+        page.get_by_role("button", name="Fermer", exact=True).click()
+        page.get_by_role("button", name="Voir l’affiche").first.click()
+        expect(page.get_by_role("button", name="Revenir aux réglages")).to_be_visible()
+        expect(page.locator(".app-header")).to_have_attribute("inert", "")
+        never_reached(page, "the full-screen look", presses=12)
+        page.get_by_role("button", name="Revenir aux réglages").click()
+        # A notice showing, then the drawer opened: the drawer and its scrim are painted over the notice (review r1, 6).
+        page.goto(f"{smoke.ORIGIN}/#{removed}")
+        notice = page.locator(".message.notice")
+        expect(notice).to_contain_text("Cette affiche a été retirée de la liste.")
+        smoke.open_drawer(page)
+        box = notice.bounding_box()
+        for x in (box["x"] + 4, box["x"] + box["width"] / 2):
+            assert page.evaluate("([x, y]) => !!document.elementFromPoint(x, y)?.closest('.side, .scrim')", [x, box["y"] + box["height"] / 2]), (x, box)
+        page.keyboard.press("Escape")
+        # Wider than 1180 px with the focus on « Fermer le menu »: the drawer closes, the focus goes to the rail's button.
+        page.goto(smoke.ORIGIN + "/#accueil")
+        smoke.open_drawer(page)
+        page.set_viewport_size({"width": 1300, "height": 768})
+        expect(page.get_by_role("button", name="Réduire le menu")).to_be_focused()
+        expect(side).not_to_have_class(re.compile(r"\bopen\b"))
+        assert not errors, errors
+    finally:
+        context.close()
+
+
+def walk_gate(browser, data):
+    """The shell and the identity gate (D-REDESIGN-002), each case apart, with markers of each shop: (a) signed out, and a
+    late answer after the sign-out: no sidebar, no bottom bar, nothing of the shop in the page's markup; (b) a verification
+    in progress with an unsaved account edit: the shell absent, the gate closed, the edit back once the shop is confirmed;
+    (c) shop A signs out and shop B signs in: nothing of A anywhere."""
+    engine = smoke.make_engine(Path(data))
+    password = uuid4().hex
+    with smoke.write_tx(engine) as conn:
+        smoke.accepted(conn, smoke.shops.create_shop(conn, "troisieme", "Boutique Beta Marqueur", smoke.PASSWORDS.hash(password)))
+    context = browser.new_context(viewport={"width": 360, "height": 740}, color_scheme="light")
+    try:
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        # Shop A's markers: its name and its balance as answered here, a poster title of its own.
+        shop = {"current": "A"}
+        def named(route):
+            profile = route.fetch().json()
+            if shop["current"] == "A":
+                profile["name"] = "Boutique Alpha Marqueur"
+            route.fulfill(json=profile)
+        def funded(route):
+            answer = route.fetch().json()
+            route.fulfill(json={**answer, "available": 4321} if shop["current"] == "A" else answer)
+        page.route("**/api/shop-profile", named)
+        page.route("**/api/balance", funded)
+        a_markers = ["Boutique Alpha Marqueur", "Défilement 7", "4321"]  # the latest poster (walk_shell)
+        open_atelier(page)
+        sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+        page.goto(smoke.ORIGIN + "/#etapes")  # the creator reads the profile: the account row has the shop's name
+        expect(page.locator("aside.side a.account")).to_have_attribute("title", "Boutique Alpha Marqueur")
+        page.goto(smoke.ORIGIN + "/#accueil")
+        expect(page.locator("aside.side .recent").get_by_text("Défilement 7")).to_have_count(1)
+        expect(page.locator(".app-header .credits-pill")).to_have_text("4321")
+        latest = next(item["id"] for item in page.request.get(smoke.ORIGIN + "/api/creations?limit=50&status=active").json()["items"] if item["title"] == "Défilement 7")
+        # (b) A verification in progress, an account edit unsaved.
+        page.goto(smoke.ORIGIN + "/#compte")
+        name = page.get_by_role("region", name="Mon compte", exact=True).get_by_label("Nom de la boutique")
+        expect(name).to_have_value("Boutique Alpha Marqueur")
+        name.fill("Saisie gardée pendant la vérification")
+        held = []
+        page.route("**/api/session", lambda route: held.append(route) if route.request.method == "GET" else route.continue_())
+        page.evaluate("dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))")
+        page.evaluate(smoke.VISIBILITY, True)
+        page.evaluate(smoke.VISIBILITY, False)
+        page.wait_for_function("() => !document.querySelector('aside.side')")
+        expect(page.locator("nav.phone-bar")).to_have_count(0)
+        assert page.evaluate(smoke.GATE_CLOSED, a_markers), "the shell or the shop shown while the shop is verified"
+        while not held:
+            page.wait_for_timeout(50)
+        page.unroute("**/api/session")
+        for route in held:
+            route.continue_()
+        expect(page.locator("aside.side")).to_have_count(1)
+        expect(name).to_have_value("Saisie gardée pendant la vérification")
+        name.fill("Boutique Alpha Marqueur")  # back as loaded: nothing left to save
+        smoke.go(page, "Accueil")
+        # (a) Signed out on this page (the session ended from another tab of the device), the shop's recent read answering
+        # after it: its turn is over, nothing of the shop is in the page.
+        expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+        late = []
+        page.route("**/api/creations?limit=5", lambda route: late.append((route, route.fetch())))
+        with page.expect_request("**/api/creations?limit=5"):
+            page.get_by_role("region", name="Accueil", exact=True).get_by_role("button", name="Actualiser").click()
+        while not late:
+            page.wait_for_timeout(50)
+        ended = context.request.delete(smoke.ORIGIN + "/api/session", headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)})
+        assert ended.ok, ended.text()
+        page.evaluate(smoke.VISIBILITY, True)
+        page.evaluate(smoke.VISIBILITY, False)
+        expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+        for route, answer in late:
+            route.fulfill(response=answer)
+        page.wait_for_timeout(300)
+        expect(page.locator("aside.side, nav.phone-bar")).to_have_count(0)
+        assert not page.evaluate(smoke.HOLDS, a_markers), page.evaluate(smoke.HOLDS, a_markers)
+        assert page.evaluate(smoke.GATE_CLOSED, a_markers)
+        # (a) again, from a populated phone editor and from « Mes affiches »: the shop's screen leaves the page with the
+        # session (review r1, 2), and the theme switch stays reachable in the top bar (review r1, 5).
+        for address in (f"#{latest}", "#affiches"):
+            sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+            page.goto(smoke.ORIGIN + "/" + address)
+            expect(page.get_by_label("Titre", exact=True) if address != "#affiches" else page.locator(".library-item").first).to_be_visible()
+            assert page.evaluate(smoke.HOLDS, a_markers), "the markers are on the screen before the sign-out"
+            ended = context.request.delete(smoke.ORIGIN + "/api/session", headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)})
+            assert ended.ok, ended.text()
+            page.evaluate(smoke.VISIBILITY, True)
+            page.evaluate(smoke.VISIBILITY, False)
+            expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
+            assert not page.evaluate(smoke.HOLDS, a_markers), (address, page.evaluate(smoke.HOLDS, a_markers))
+            switch = page.locator(".app-header .theme-toggle")
+            expect(switch).to_be_visible()
+            before = page.evaluate("document.documentElement.dataset.theme")
+            switch.click()
+            assert page.evaluate("document.documentElement.dataset.theme") != before, address
+        # (c) Shop B signs in on the same page: nothing of A anywhere.
+        shop["current"] = "B"
+        sb.sign_in(page, "troisieme", password)
+        page.goto(smoke.ORIGIN + "/#etapes")
+        expect(page.locator("aside.side a.account")).to_have_attribute("title", "Boutique Beta Marqueur")
+        assert not page.evaluate(smoke.HOLDS, a_markers), page.evaluate(smoke.HOLDS, a_markers)
+    finally:
+        context.close()
+        engine.dispose()
+
+
 def walk_account(browser, out, data):
     context = browser.new_context(viewport={"width": 360, "height": 640}, color_scheme="light")
     other = browser.new_context()
@@ -808,8 +1573,8 @@ def walk_account(browser, out, data):
         # Postponing is respected on Account entry. Another device accepts while this tab is away.
         page.get_by_role("button", name="Plus tard").click()
         expect(account.get_by_text("Conditions à accepter.")).to_be_visible()
-        page.locator("nav").get_by_role("link", name="Accueil").click()
-        page.get_by_role("link", name="Mon compte").click()
+        smoke.go(page, "Accueil")
+        home_account(page)
         expect(account.get_by_text("Conditions à accepter.")).to_be_visible()
         expect(page.get_by_role("dialog")).to_have_count(0)
         # Back during the conditions keeps that dialog in charge of a dirty Account.
@@ -962,7 +1727,7 @@ def walk_account(browser, out, data):
         page.evaluate("history.forward()")
         discard.click()
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
-        page.get_by_role("link", name="Mon compte").click()
+        home_account(page)
         expect(name).to_have_value(original_name)
         assert not profile_writes
 
@@ -979,7 +1744,7 @@ def walk_account(browser, out, data):
         name.fill("Nom déjà enregistré")
         with page.expect_request("**/api/shop-profile"):
             save.click()
-        page.locator("nav").get_by_role("link", name="Styles").click()
+        smoke.go(page, "Styles")
         expect(keep).to_have_count(0)
         lost.pop().abort()
         expect(discard).to_be_visible()
@@ -1008,7 +1773,7 @@ def walk_account(browser, out, data):
         clean_position = page.evaluate("history.state.position")
         page.route("**/api/capabilities", lambda route: route.abort())
         with page.expect_request("**/api/capabilities"):
-            page.locator("nav").get_by_role("link", name="Styles").click()
+            smoke.go(page, "Styles")
         page.wait_for_function("p => location.hash === '#compte' && history.state.position === p + 1", arg=clean_position)
         contact.fill("Saisie après retour sur erreur")
         page.evaluate("history.back()")
@@ -1130,7 +1895,7 @@ def walk_account(browser, out, data):
         home_link.click()
         discard.click()
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
-        page.get_by_role("link", name="Mon compte").click()
+        home_account(page)
         expect(account.get_by_alt_text("Logo de la boutique")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
         # The transparent file input on the French picker remains keyboard accessible.
         contact.focus()
@@ -1185,7 +1950,7 @@ def walk_account(browser, out, data):
         pending_saves.pop().continue_()
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
         page.unroute("**/api/shop-profile")
-        page.get_by_role("link", name="Mon compte").click()
+        home_account(page)
         expect(contact).to_have_value("Contact de départ")
         name.fill("Nom avant déconnexion")
         account.get_by_role("button", name="Se déconnecter").click()
@@ -1200,7 +1965,7 @@ def walk_account(browser, out, data):
         held = []
         page.route("**/api/shop-profile", lambda route: held.append((route, route.fetch())))
         with page.expect_request("**/api/shop-profile"):
-            page.get_by_role("link", name="Mon compte").click()
+            home_account(page)
         page.wait_for_function("location.hash === '#compte'")
         dirty_tab = context.new_page()
         open_atelier(dirty_tab, "#compte")
@@ -1250,6 +2015,9 @@ def run():
                         walk_frame(browser)
                         walk_credits(browser, out)
                         walk(browser, out)
+                        approved, draft, removed = walk_shell(browser, out)
+                        walk_drawer(browser, approved, draft, removed)
+                        walk_gate(browser, data)
                         walk_account(browser, out, data)
                     finally:
                         browser.close()
