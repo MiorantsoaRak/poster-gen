@@ -298,7 +298,8 @@ class KeysStayOff(sqlite3.Connection):
 
 
 def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "create_engine", lambda url: create_engine(url, connect_args={"factory": KeysStayOff}))
+    monkeypatch.setattr(db, "create_engine", lambda url, **options: create_engine(url, connect_args={"factory": KeysStayOff},
+                                                                                   **options))
     engine = make_engine(tmp_path)
     opened = []
     event.listen(engine, "connect", lambda *_: opened.append(1))
@@ -776,3 +777,17 @@ def test_0019_on_a_populated_0018_database_keeps_the_publications_and_adds_the_l
                 conn.exec_driver_sql(refused)
     finally:
         engine.dispose()
+
+
+def test_a_failed_statement_never_says_its_values(engine):
+    """hide_parameters: the text of a write that fails (a task logs its type, a traceback its text) holds no value bound
+    to it, so neither a photo's id nor a Page's token."""
+    photo, token = "77700012345", "page-token-never-in-an-error"
+    for statement, values in (
+            ("INSERT INTO facebook_post_items (post_id,position,creation_id,confirmation_id,photo_id)"
+             " VALUES ('no-post',0,'c','k',:value)", {"value": photo}),
+            ("INSERT INTO facebook_pages VALUES (99,'111','Page',:value,'connected','2026-11-21')", {"value": token})):
+        with pytest.raises(exc.IntegrityError) as failure, write_tx(engine) as conn:
+            conn.execute(text(statement), values)
+        assert "FOREIGN KEY" in str(failure.value) and values["value"] not in str(failure.value)
+        assert "hidden" in str(failure.value)

@@ -39,7 +39,9 @@ OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-prof
        ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms"), ("GET", "/api/shop-dashboard"),
        ("GET", "/api/shop-credit-history"),
        # The shop's Facebook Page and its one attempt, always the session's shop (D-FB-PUBLISH-002).
-       ("GET", "/api/facebook"), ("POST", "/api/facebook/connect"), ("DELETE", "/api/facebook/page")}
+       ("GET", "/api/facebook"), ("POST", "/api/facebook/connect"), ("DELETE", "/api/facebook/page"),
+       # A post's candidates and the shop's posts (D-FB-POST-003); with an id of A's, attempted or checked below.
+       ("GET", "/api/facebook/posts/candidates"), ("GET", "/api/facebook/posts")}
 # The stand-in's first Page, as a connection leaves it, written straight into the database (D-FB-PUBLISH-001).
 PAGE_ROW = "INSERT INTO facebook_pages VALUES (:shop,:id,:name,:token,'connected',:now)"
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
@@ -115,6 +117,8 @@ def route_of(schema, request):
     """The (method, path template) of the schema that a request was answered by."""
     found = [(method, template) for method, template in schema
              if method == request.method and re.fullmatch(re.sub(r"\{\w+\}", "[^/]+", template), request.url.path)]
+    if len(found) > 1:  # a fixed path beside a template that would take it: /api/facebook/posts/candidates and /{id}
+        found = [(method, template) for method, template in found if template == request.url.path]
     assert len(found) == 1, (request.method, request.url.path, found)
     return found[0]
 
@@ -185,6 +189,14 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         "confirmation_id": confirmed.json()["confirmation_id"], "page_id": StubGraph.PAGES[0].id, "caption": "[stub:unknown]",
         "seen": None})
     assert publication.status_code == 201 and publication.json()["status"] == "unknown", publication.text
+    # And a post of it whose outcome is unknown (D-FB-POST-003): its task runs on, the stand-in answers at once.
+    post_a = send(a, "POST", "/api/facebook/posts", {"page_id": StubGraph.PAGES[0].id, "description": "[stub:unknown]", "items": [
+        {"creation_id": cid, "confirmation_id": confirmed.json()["confirmation_id"], "seen": None}]})
+    assert post_a.status_code == 202, post_a.text
+    deadline = time.monotonic() + 10
+    while a.get(f"/api/facebook/posts/{post_a.json()['id']}").json()["status"] != "unknown":
+        assert time.monotonic() < deadline, "the post did not settle"
+        time.sleep(.05)
     read_key, read_body = key(), {"text": "JBL Flip 7, 700 000 Ar", "draft": {"product_photos": 1, "inspiration": False}, "history": []}
     assert a.post("/api/reads", json=read_body, headers={"Idempotency-Key": read_key}).status_code == 201
     rev, doc_a = 3, a.get(f"/api/creations/{cid}").json()["document"]
@@ -195,7 +207,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
               "look": look_a, "proposal": proposal_a, "effect": effect_a, "render": render_a,
               "confirmation": confirmed.json()["confirmation_id"], "original": original_a, "scene": scene_sha_a,
               "style": style_a, "logo": logo_a, "texture": texture_a, "png": render_row["png_sha256"],
-              "state": state_a, "page": StubGraph.PAGES[0].id, "publication": publication.json()["id"]}
+              "state": state_a, "page": StubGraph.PAGES[0].id, "publication": publication.json()["id"],
+              "post": post_a.json()["id"]}
     # The same places, filled with ids of the same kinds that exist nowhere.
     nowhere = {name: secrets.token_hex(32) if len(value) == 64 else str(uuid4()) for name, value in theirs.items()}
     nowhere["page"] = "9" * len(theirs["page"])  # a Page's id is digits
@@ -228,7 +241,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             ("/api/visuals/{id}", "visual"), ("/api/looks/{id}", "look"), ("/api/text-proposals/{id}", "proposal"),
             ("/api/text-effects/{id}", "effect"), ("/api/product-inputs/{id}", "input"), ("/api/renders/{id}", "render"),
             ("/api/renders/{id}/preview", "render"), ("/api/confirmations/{id}/download", "confirmation"),
-            ("/api/creations/{id}/publications", "creation"))),
+            ("/api/creations/{id}/publications", "creation"), ("/api/facebook/posts/{id}", "post"))),
+        ("GET", "/api/facebook/posts", lambda x: (f"/api/facebook/posts?creation={x['creation']}", None, None)),
         *(reading("/api/assets/{sha}", name, query) for name in ("original", "scene", "style", "logo", "texture", "png")
           for query in ("", "?prepared=true", "?prepared=true&display=true&v=1")),
         *(reading("/api/thumbnails/{sha}", name, "?v=1") for name in ("scene", "png", "original")),
@@ -266,6 +280,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
         ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
             f"/api/creations/{x['creation']}/publications/{x['publication']}/outcome", {"present": True}, None)),
+        ("POST", "/api/facebook/posts/{id}/stop", lambda x: (f"/api/facebook/posts/{x['post']}/stop", None, None)),
+        ("POST", "/api/facebook/posts/{id}/outcome", lambda x: (f"/api/facebook/posts/{x['post']}/outcome", {"present": True}, None)),
         # A's objects named in the body of B's own requests.
         ("POST", "/api/creations", lambda x: ("/api/creations", {"input_id": x["input"], "offer": {"title": "X", "price_ar": 1},
                                                                  "brand_selection": NO_BRAND}, None)),
@@ -303,6 +319,10 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
         ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
             f"/api/creations/{bid}/publications/{x['publication']}/outcome", {"present": False}, None)),
+        # A's poster, confirmation and post in a post of B's.
+        ("POST", "/api/facebook/posts", lambda x: ("/api/facebook/posts", {"page_id": x["page"], "description": "", "items": [
+            {"creation_id": x["creation"], "confirmation_id": x["confirmation"], "seen": {"id": x["post"], "status": "unknown"}}]},
+            None)),
         # A's dialog `state` sent with B's session, and a Page B was never offered.
         ("POST", "/api/facebook/code", lambda x: ("/api/facebook/code", {"state": x["state"], "code": STUB_CODE}, None)),
         ("POST", "/api/facebook/page", lambda x: ("/api/facebook/page", {"page_id": x["page"]}, None)),
@@ -361,9 +381,13 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     leaked = lambda answer: [name for name, value in theirs.items() if value in answer.text]  # noqa: E731
     for path in ("/api/creations", "/api/creations?status=abandoned", "/api/looks", "/api/shop-profile",
                  f"/api/creations/{bid}/jobs", f"/api/creations/{bid}/visuals", f"/api/creations/{bid}/versions",
-                 "/api/shop-dashboard", "/api/shop-credit-history"):
+                 "/api/shop-dashboard", "/api/shop-credit-history", "/api/facebook/posts/candidates", "/api/facebook/posts"):
         answer = b.get(path)
         assert answer.status_code == 200 and leaked(answer) == [], (path, leaked(answer))
+    # A's poster asked by its id among a post's candidates: gone, as a poster that exists nowhere.
+    for ids in (theirs, nowhere):
+        assert b.get(f"/api/facebook/posts/candidates?ids={ids['creation']}").json()["items"] == [
+            {"id": ids["creation"], "reason": "gone"}]
     assert [item["id"] for item in b.get("/api/creations").json()["items"]] == [bid]
     assert [item["id"] for item in b.get(f"/api/creations/{bid}/visuals").json()["items"]] == [visual_b]
     assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None}
@@ -473,6 +497,12 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     done += [a.get(f"/api/creations/{cid}/publications"),
              send(a, "POST", f"/api/creations/{cid}/publications/{theirs['publication']}/outcome", {"present": True})]
     assert b.get(f"/api/creations/{bid}/publications").json() == {"page": None, "items": []}
+    # A's post too: still unknown after B's tries; read, stopped (it is settled: answered as it is), then answered.
+    done += [a.get("/api/facebook/posts/candidates"), a.get(f"/api/facebook/posts?creation={cid}"),
+             a.get(f"/api/facebook/posts/{theirs['post']}"), send(a, "POST", f"/api/facebook/posts/{theirs['post']}/stop")]
+    assert done[-1].json()["status"] == "unknown"
+    done.append(send(a, "POST", f"/api/facebook/posts/{theirs['post']}/outcome", {"present": True}))
+    assert b.get(f"/api/facebook/posts?creation={bid}").json() == {"items": [], "next_cursor": None}
     done += [copied, abandoned, send(a, "POST", f"/api/creations/{copied.json()['id']}/restore", None, abandoned.json()["revision"]),
              send(a, "PUT", f"/api/looks/{look_a}", {"name": "Style A bis"}), send(a, "DELETE", f"/api/looks/{look_a}"),
              a.post("/api/session/password", json={"current_password": PASSWORD, "new_password": secrets.token_hex(8)})]

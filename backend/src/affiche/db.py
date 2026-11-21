@@ -15,7 +15,8 @@ _WRITE_OPTION = "affiche_write_tx"
 
 def make_engine(data_dir: Path) -> Engine:
     data_dir.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{data_dir / 'affiche.db'}")
+    # hide_parameters: a failed statement's text never carries its values (a Page's token, a photo's id, a password hash).
+    engine = create_engine(f"sqlite:///{data_dir / 'affiche.db'}", hide_parameters=True)
     event.listen(engine, "connect", _on_connect)
     event.listen(engine, "begin", _on_begin)
     return engine

@@ -1,4 +1,5 @@
 """Authenticated HTTP boundary for the pilot. Run with python -m affiche.api."""
+import asyncio
 import hashlib
 import io
 import ipaddress
@@ -31,8 +32,8 @@ from starlette.staticfiles import StaticFiles
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.db import utc_now
-from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_publish, jobs, looks, reads,
-                             rendering, store, terms, typography, visuals)
+from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_posts, facebook_publish, jobs,
+                             looks, reads, rendering, store, terms, typography, visuals)
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -186,6 +187,34 @@ MESSAGES = {
         "publication_refused": "Facebook a refusé la publication (code {}).",
         "publication_not_sent": "La publication n’est pas partie. Réessayez.",
         "publication_not_published": "Vous avez dit qu’elle n’est pas sur votre Page.",
+        # A post of one or several posters (D-FB-POST-003): the admission's own refusal ({} is the shop's limit), then a
+        # post's line (facebook_posts.said), the design's table of sentences; {n}, {count}, {code}, {said} are filled there.
+        "facebook_too_many": "Votre boutique peut mettre {} images au plus dans une publication.",
+        "facebook_items": "Choisissez au moins une affiche, et chacune une seule fois.",
+        "post_uploading": "Envoi de l’image {n} sur {count}…",
+        "post_uploaded": "Images envoyées. Publication…",
+        "post_posting": "Publication en cours…",
+        "post_published": "Publié sur {}.",
+        "post_confirmed": "Présence confirmée par vous",
+        "post_unknown": "Je ne sais pas si la publication est sur votre Page. Ouvrez votre Page et dites-le-moi.",
+        "post_image_refused": "L’image {n} n’a pas pu être envoyée (code {code}). Rien n’a été publié. Retirez l’image {n} ou remplacez-la, puis réessayez.",
+        "post_poster_changed": "L’affiche {n} a changé avant l’envoi. Rien n’a été publié. Vérifiez-la à nouveau.",
+        "post_export_missing": "Le fichier de l’image {n} est introuvable ou abîmé. Rien n’a été publié. Vérifiez cette affiche à nouveau.",
+        "post_not_sent": "La publication n’est pas partie. Rien n’a été publié. Réessayez.",
+        "post_stopped": "Envoi arrêté. Rien n’a été publié.",
+        "post_page_changed": "Votre Page a changé pendant l’envoi. Rien n’a été publié.",
+        "post_limit_lowered": "Le nombre d’images permis a changé pendant l’envoi. Rien n’a été publié.",
+        "post_refused": "Facebook a refusé la publication (code {code}). Rien n’a été publié.",
+        "post_reconnect": "Reconnectez votre Page. Rien n’a été publié.",
+        "post_permission": "Facebook a refusé la publication (code {code}) : l’autorisation manque. Rien n’a été publié. Reconnectez votre Page en l’autorisant ; si cela se répète, contactez l’opérateur.",
+        "post_limited": "Facebook limite les publications pour le moment. Rien n’a été publié. Réessayez plus tard.",
+        "post_at_image": "Image {n} : {said}",  # (r3) a failure at an upload names its image first
+        "post_not_published": "Vous avez dit qu’elle n’est pas sur votre Page.",
+        # Not in the design's table: an upload unanswered twice, and an upload whose answer names a post (the photo is
+        # public) or something else (facebook.Upload): the post stops there.
+        "post_no_answer": "Facebook n’a pas confirmé l’envoi de l’image {n}. La publication n’a pas été envoyée. Réessayez.",
+        "post_photo_public": "Facebook a publié l’image {n} seule sur votre Page au lieu de la garder pour la publication. L’envoi s’est arrêté. Vérifiez votre Page.",
+        "post_unexpected": "Facebook a répondu autrement que prévu à l’envoi de l’image {n}. L’envoi s’est arrêté. Vérifiez votre Page.",
 }
 
 
@@ -401,6 +430,19 @@ def result_response(result):
     return JSONResponse(body, status_code=status, headers={"ETag": f'"{body["revision"]}"'} if "revision" in body else {})
 
 
+def creation_cursor(before: str | None) -> tuple[str, str]:
+    """A cursor of the posters' pages, `created_at|id` (GET /api/creations, GET /api/facebook/posts/candidates)."""
+    if not before:
+        return "9999", ""
+    try:
+        stamp, id = before.split("|", 1)
+        if not re.fullmatch(r"[0-9T:+.\-]{20,40}", stamp) or not re.fullmatch(r"[0-9a-f-]{36}", id):
+            raise ValueError()
+        return stamp, id
+    except ValueError:
+        raise store.Refused("invalid_cursor") from None
+
+
 # Images made by code are kept by the browser for a year (ADR-087): their address carries the encoder's version
 # (`v`), so bump the constant whenever its output changes. A request with another version gets the current encoding,
 # never cached. The frontend builds the same addresses (frontend/src/api.ts, IMAGE_VERSIONS).
@@ -577,13 +619,16 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             reads.recover(runtime.engine)
             facebook_connect.recover(runtime.engine)
             facebook_publish.recover(runtime.engine)  # whatever the provider now: a `sending` row's handler is gone
+            facebook_posts.recover(runtime.engine)  # and a post in flight's task
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
             service.start()
             yield
         finally:
             try:
-                await facebook_publish.drain()  # before the lock goes: no send outlives its process's hold on the data
+                # Before the lock goes: no send outlives its process's hold on the data. Together, so that a post still
+                # uploading stops at its next check while a publication's send finishes.
+                await asyncio.gather(facebook_publish.drain(), facebook_posts.drain())
                 if service is not None:
                     await service.close()
             finally:
@@ -715,6 +760,37 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         def publication_outcome(id: Id, pid: Id, body: facebook_publish.OutcomeRequest, request: Request, key: Key):
             return result_response(facebook_publish.outcome(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
                                                             key, id, pid, body, MESSAGES))
+
+        # A post of one or several posters (D-FB-POST-003), beside the single poster's publication above until it goes:
+        # the key in the post's own column, as above; the owner's word through store.mutate. Candidates before {id}.
+        @protected.get("/api/facebook/posts/candidates")
+        def post_candidates(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
+                            before: Annotated[str | None, Query(max_length=100)] = None,
+                            ids: Annotated[str | None, Query(max_length=8000)] = None):
+            return facebook_posts.candidates(app.state.engine, request.state.shop, limit, creation_cursor(before), ids)
+
+        @protected.get("/api/facebook/posts")
+        def facebook_posts_list(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20, before: Id | None = None,
+                                creation: Id | None = None):
+            return facebook_posts.listed(app.state.engine, request.state.shop, limit, before, creation, MESSAGES)
+
+        @protected.post("/api/facebook/posts", status_code=202)
+        async def new_facebook_post(body: facebook_posts.PostRequest, request: Request, key: Key):
+            return await facebook_posts.publish(app.state.engine, settings, facebook.make_graph(settings), request.state.shop,
+                                                request.cookies.get(auth.COOKIE), key, body, MESSAGES)
+
+        @protected.get("/api/facebook/posts/{id}")
+        def facebook_post(id: Id, request: Request):
+            return facebook_posts.read(app.state.engine, request.state.shop, id, MESSAGES)
+
+        @protected.post("/api/facebook/posts/{id}/stop")
+        def stop_facebook_post(id: Id, request: Request):
+            return facebook_posts.stop(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE), id, MESSAGES)
+
+        @protected.post("/api/facebook/posts/{id}/outcome")
+        def facebook_post_outcome(id: Id, body: facebook_posts.OutcomeRequest, request: Request, key: Key):
+            return result_response(facebook_posts.outcome(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
+                                                          key, id, body, MESSAGES))
 
     @protected.post("/api/reads", status_code=201)
     async def new_read(body: reads.ReadRequest, request: Request, key: Key):
@@ -861,6 +937,8 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                 message = await run_in_threadpool(with_purchase_text)
             except (OSError, SQLAlchemyError) as failure:  # the refusal still goes out, with its sentence alone
                 log.warning("request=%s purchase text unreadable: %s", request.state.request_id, type(failure).__name__)
+        elif error.code == "facebook_too_many":  # the shop's limit, which the refusal carries (facebook_posts._admit)
+            message = MESSAGES["facebook_too_many"].format(error.limit)
         return error_response(request, error, message)
 
     @app.exception_handler(RequestValidationError)
@@ -999,15 +1077,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     def creations(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
                   before: Annotated[str | None, Query(max_length=100)] = None,
                   status: Literal["active", "abandoned"] = "active"):
-        cursor = ("9999", "")
-        if before:
-            try:
-                stamp, id = before.split("|", 1)
-                if not re.fullmatch(r"[0-9T:+.\-]{20,40}", stamp) or not re.fullmatch(r"[0-9a-f-]{36}", id):
-                    raise ValueError()
-                cursor = stamp, id
-            except ValueError:
-                raise store.Refused("invalid_cursor") from None
+        cursor = creation_cursor(before)
         with app.state.engine.connect() as conn:
             # Thumbnail: the last final preview of the poster, else the current scene of its format.
             rows = conn.execute(text("SELECT c.*,v.document_json,p.name,p.variant,"

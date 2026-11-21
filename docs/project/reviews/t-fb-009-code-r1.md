@@ -1,0 +1,25 @@
+# Code review r1 — T-FB-009: publishing a Facebook post of one or several posters (the server part)
+
+Reviewer: Codex, read-only, 2026-11-21. Verdict: REJECT (one P1, six P2, three tests asked; the other choices ruled sound). Answered in the code the same day; see r2.
+
+1. **P1 — A failed photo-ID write exposes the ID in exception text.** `_photo` binds the ID as `:photo`. If SQLite rejects that `UPDATE`, SQLAlchemy includes the bound parameters in the exception text because the engine uses its default settings. Logging only the exception class protects the log, but invariant 4 also covers the exception itself. Set `hide_parameters=True` on the engine and assert that `str(error)` excludes the photo ID on a failed update. [facebook_posts.py:409](backend/src/affiche/posters/facebook_posts.py#L409) · [db.py:18](backend/src/affiche/db.py#L18)
+
+2. **P2 — Shutdown can publish a post that was still uploading when shutdown began.** The lifespan awaits the single-poster drain before the new drain sets `CLOSING`. While an older send is outstanding, a multi-image post can finish uploading, pass its last check and call `create_post`. Start both drains together so the closing flag takes effect before either wait. [api.py:628](backend/src/affiche/api.py#L628)
+
+3. **P2 — An upload retry bypasses the owner’s stop.** If the owner taps stop while an upload is waiting and the call returns `unknown`, the retry checks only `CLOSING`. It sends the image again, potentially after a disconnect, suspension or limit change. If that retry fails, the owner also gets the upload failure instead of `stopped`. Run the existing pre-upload stop checks before the retry, using the current image position. [facebook_posts.py:481](backend/src/affiche/posters/facebook_posts.py#L481)
+
+4. **P2 — A concurrent replay can return a file refusal for an accepted key.** Two requests can both miss `_replayed`. If the first commits and its confirmed file then disappears, the second raises `export_missing` in `_prepared` before checking the key or its owner again. Recheck the key before returning a preparation refusal. Add a two-request test that holds the second request between its key lookup and its file check. [facebook_posts.py:540](backend/src/affiche/posters/facebook_posts.py#L540)
+
+5. **P2 — The 30-second window can start late.** `_posting` samples the clock after leaving the transaction context. If the worker is paused after commit but before that sample, it can resume more than 30 seconds later and still send. Capture the monotonic timestamp immediately before commit and return it only after commit succeeds. The current test subtracts 31 from the returned timestamp, so it misses this interval. [facebook_posts.py:425](backend/src/affiche/posters/facebook_posts.py#L425) · [test_facebook_posts.py:617](backend/tests/test_facebook_posts.py#L617)
+
+6. **P2 — Two inconclusive answers produce a false French sentence.** Two HTTP 503 responses reach `no_answer` even though Facebook answered both times. The server also cannot establish whether Facebook received the image. Keep the code and say « Facebook n’a pas confirmé l’envoi de l’image {n}. La publication n’a pas été envoyée. Réessayez. » The separate `published` and `unexpected` upload codes and their sentences are sound. [api.py:214](backend/src/affiche/api.py#L214)
+
+7. **P2 — Candidates expose Page history while reconnection is required.** `on` takes the Page ID whenever a row exists. A `reconnect` row therefore returns `last` and `published_at`, although the candidate contract defines both for the connected Page. Keep returning the Page and its state, and set `on` only when `state == "connected"`. [facebook_posts.py:224](backend/src/affiche/posters/facebook_posts.py#L224)
+
+**Test gaps.** The same-key test replays during upload, after admission. The disconnect test cancels before commit and separately proves that a read immediately after commit preserves ownership. Add a simultaneous pre-admission replay and a cancellation immediately after commit. Stale `seen` is tested after the owner answers `true` only. The elapsed-deadline test already exists at the Graph-client layer. [test_facebook_posts.py:362](backend/tests/test_facebook_posts.py#L362) · [test_facebook_posts.py:401](backend/tests/test_facebook_posts.py#L401) · [test_facebook.py:670](backend/tests/test_facebook.py#L670)
+
+**Other choices and simplification.** The zero-based positions and absent position at the cutoff or on task loss are sound. So are `facebook_items`, shop-wide orphan settlement, and reusing `caption_fault` and `MAX_BYTES` during this additive phase. The extracted creations cursor preserves the original parser and defaults. Fixed-path preference is sound for the current route order. The second `_owned` lookup in `stop` can be removed by returning the updated row from the guarded update and using the already-read row when the post was settled. [facebook_posts.py:572](backend/src/affiche/posters/facebook_posts.py#L572)
+
+Read-only review. I did not run tests or count the pending full-suite result.
+
+**REJECT**
