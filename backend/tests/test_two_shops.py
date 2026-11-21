@@ -40,6 +40,8 @@ OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-prof
        ("GET", "/api/shop-credit-history"),
        # The shop's Facebook Page and its one attempt, always the session's shop (D-FB-PUBLISH-002).
        ("GET", "/api/facebook"), ("POST", "/api/facebook/connect"), ("DELETE", "/api/facebook/page")}
+# The stand-in's first Page, as a connection leaves it, written straight into the database (D-FB-PUBLISH-001).
+PAGE_ROW = "INSERT INTO facebook_pages VALUES (:shop,:id,:name,:token,'connected',:now)"
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 
@@ -176,6 +178,13 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
                     "acknowledged_warning_ids": [w["id"] for w in render_row["warnings"]]}
     confirmed = send(a, "POST", f"/api/creations/{cid}/confirmations", confirm_body, 3)
     assert confirmed.status_code == 201, confirmed.text
+    # A's Page, and a publication of its confirmed poster whose outcome is unknown (the stand-in's marker).
+    with write_tx(engine) as conn:
+        conn.execute(text(PAGE_ROW), {"shop": 1, "now": "2026-11-21T08:00:00.000000+00:00", **vars(StubGraph.PAGES[0])})
+    publication = send(a, "POST", f"/api/creations/{cid}/publications", {
+        "confirmation_id": confirmed.json()["confirmation_id"], "page_id": StubGraph.PAGES[0].id, "caption": "[stub:unknown]",
+        "seen": None})
+    assert publication.status_code == 201 and publication.json()["status"] == "unknown", publication.text
     read_key, read_body = key(), {"text": "JBL Flip 7, 700 000 Ar", "draft": {"product_photos": 1, "inspiration": False}, "history": []}
     assert a.post("/api/reads", json=read_body, headers={"Idempotency-Key": read_key}).status_code == 201
     rev, doc_a = 3, a.get(f"/api/creations/{cid}").json()["document"]
@@ -186,7 +195,7 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
               "look": look_a, "proposal": proposal_a, "effect": effect_a, "render": render_a,
               "confirmation": confirmed.json()["confirmation_id"], "original": original_a, "scene": scene_sha_a,
               "style": style_a, "logo": logo_a, "texture": texture_a, "png": render_row["png_sha256"],
-              "state": state_a, "page": StubGraph.PAGES[0].id}
+              "state": state_a, "page": StubGraph.PAGES[0].id, "publication": publication.json()["id"]}
     # The same places, filled with ids of the same kinds that exist nowhere.
     nowhere = {name: secrets.token_hex(32) if len(value) == 64 else str(uuid4()) for name, value in theirs.items()}
     nowhere["page"] = "9" * len(theirs["page"])  # a Page's id is digits
@@ -218,7 +227,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             ("/api/creations/{id}/visuals", "creation"), ("/api/jobs/{id}", "job"), ("/api/plans/{id}", "plan"),
             ("/api/visuals/{id}", "visual"), ("/api/looks/{id}", "look"), ("/api/text-proposals/{id}", "proposal"),
             ("/api/text-effects/{id}", "effect"), ("/api/product-inputs/{id}", "input"), ("/api/renders/{id}", "render"),
-            ("/api/renders/{id}/preview", "render"), ("/api/confirmations/{id}/download", "confirmation"))),
+            ("/api/renders/{id}/preview", "render"), ("/api/confirmations/{id}/download", "confirmation"),
+            ("/api/creations/{id}/publications", "creation"))),
         *(reading("/api/assets/{sha}", name, query) for name in ("original", "scene", "style", "logo", "texture", "png")
           for query in ("", "?prepared=true", "?prepared=true&display=true&v=1")),
         *(reading("/api/thumbnails/{sha}", name, "?v=1") for name in ("scene", "png", "original")),
@@ -252,6 +262,10 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         ("POST", "/api/text-proposals/{id}/reject", lambda x: (f"/api/text-proposals/{x['proposal']}/reject", None, None)),
         ("POST", "/api/text-effects/{id}/apply", lambda x: (f"/api/text-effects/{x['effect']}/apply", None, rev)),
         ("POST", "/api/text-effects/{id}/reject", lambda x: (f"/api/text-effects/{x['effect']}/reject", None, None)),
+        ("POST", "/api/creations/{id}/publications", lambda x: (f"/api/creations/{x['creation']}/publications", {
+            "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
+        ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
+            f"/api/creations/{x['creation']}/publications/{x['publication']}/outcome", {"present": True}, None)),
         # A's objects named in the body of B's own requests.
         ("POST", "/api/creations", lambda x: ("/api/creations", {"input_id": x["input"], "offer": {"title": "X", "price_ar": 1},
                                                                  "brand_selection": NO_BRAND}, None)),
@@ -284,6 +298,11 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         ("POST", "/api/creations/{id}/scenes", lambda x: (f"/api/creations/{bid}/scenes", {
             "plan_id": plan_b, "acknowledged_warnings": ["low_resolution"], "keep_adjustments_of": x["visual"]}, 1)),
         ("POST", "/api/reads", lambda x: ("/api/reads", read_body | {"creation_id": bid, "visual_id": x["visual"]}, None)),
+        # A's confirmed file published on B's own poster, and A's publication answered from B's poster.
+        ("POST", "/api/creations/{id}/publications", lambda x: (f"/api/creations/{bid}/publications", {
+            "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
+        ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
+            f"/api/creations/{bid}/publications/{x['publication']}/outcome", {"present": False}, None)),
         # A's dialog `state` sent with B's session, and a Page B was never offered.
         ("POST", "/api/facebook/code", lambda x: ("/api/facebook/code", {"state": x["state"], "code": STUB_CODE}, None)),
         ("POST", "/api/facebook/page", lambda x: ("/api/facebook/page", {"page_id": x["page"]}, None)),
@@ -450,6 +469,10 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert b.get("/api/facebook").json()["page"] is None and b.delete("/api/facebook/page").is_success
     assert a.get("/api/facebook").json()["page"]["id"] == theirs["page"]
     done.append(a.delete("/api/facebook/page"))
+    # A's publication was not touched by B's tries: still unknown, its owner says it is on the Page.
+    done += [a.get(f"/api/creations/{cid}/publications"),
+             send(a, "POST", f"/api/creations/{cid}/publications/{theirs['publication']}/outcome", {"present": True})]
+    assert b.get(f"/api/creations/{bid}/publications").json() == {"page": None, "items": []}
     done += [copied, abandoned, send(a, "POST", f"/api/creations/{copied.json()['id']}/restore", None, abandoned.json()["revision"]),
              send(a, "PUT", f"/api/looks/{look_a}", {"name": "Style A bis"}), send(a, "DELETE", f"/api/looks/{look_a}"),
              a.post("/api/session/password", json={"current_password": PASSWORD, "new_password": secrets.token_hex(8)})]

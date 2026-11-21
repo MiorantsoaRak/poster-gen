@@ -273,10 +273,13 @@ class MetaGraph:
 
 class StubGraph:
     """FACEBOOK_PROVIDER=stub, for tests, smokes and the dev server: the same calls, no network. Two Pages, so that a
-    smoke chooses one; every photo is published, with a new post id of its Page's shape."""
+    smoke chooses one; every photo is published, with a new post id of its Page's shape, unless its caption holds one of
+    MARKERS: then the answer a smoke needs to see, unknown or refused."""
     mode = "stub"
     PAGES = (Page("100000000000001", "Page d’essai 1", "stub-page-token-000000001"),
              Page("100000000000002", "Page d’essai 2", "stub-page-token-000000002"))
+    MARKERS = {"[stub:unknown]": Outcome("unknown"), "[stub:refused]": Outcome("failed", error_code="506"),
+               "[stub:reconnect]": Outcome("failed", error_code=str(RECONNECT_CODE), reconnect=True)}
 
     async def exchange_code(self, code: str, redirect_uri: str) -> str | GraphFailure:
         return "stub-user-token-00000001"
@@ -290,6 +293,8 @@ class StubGraph:
     async def publish_photo(self, page_id: str, page_token: str, png: bytes, caption: str) -> Outcome:
         if not isinstance(page_id, str) or not DIGITS.fullmatch(page_id):
             return Outcome("failed", error_code="not_sent")
+        if marked := next((answer for marker, answer in self.MARKERS.items() if marker in caption), None):
+            return marked
         post_id = f"{page_id}_{uuid4().int % 10 ** 15}"
         return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
 

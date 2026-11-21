@@ -429,6 +429,21 @@ def test_the_stand_in_has_two_pages_and_publishes_with_its_pages_post_id():
     assert first == classify(httpx2.Response(200, json={"post_id": first.post_id}), pages[0].id)  # the real shape
 
 
+@pytest.mark.parametrize("caption, outcome", [
+    ("Promo [stub:unknown] du jour", Outcome("unknown")),
+    ("[stub:refused]", Outcome("failed", error_code="506")),
+    ("Avant\n[stub:reconnect]", Outcome("failed", error_code="190", reconnect=True)),
+])
+def test_the_stand_in_answers_unknown_or_refused_when_its_caption_holds_a_marker(caption, outcome):
+    """For the browser smoke, which cannot reach the real answers: the stand-in only, the real client is not changed."""
+    page = StubGraph.PAGES[0]
+    assert asyncio.run(StubGraph().publish_photo(page.id, page.token, PNG, caption)) == outcome
+    for near in ("[stub:Unknown]", "stub:unknown", "[stub: refused]"):  # only the exact marker
+        assert asyncio.run(StubGraph().publish_photo(page.id, page.token, PNG, near)).status == "published"
+    marked, requests = publish(httpx2.Response(200, json={"post_id": f"{PAGE}_1"}), caption)
+    assert marked.status == "published" and len(requests) == 1  # the real client sends it as any caption
+
+
 def test_the_client_follows_the_setting(env):
     with pytest.raises(Refused) as caught:
         make_graph(load_settings(env_file=None))  # off, the default

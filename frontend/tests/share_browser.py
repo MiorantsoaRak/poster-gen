@@ -31,6 +31,7 @@ DRAFT, DRAFT_LEDE = "Aperçu d’une version précédente", "Ce fichier a été 
 OPEN_FAILED = "L’affiche confirmée n’a pas pu être ouverte."
 CHANGED = "Cette affiche a été modifiée ailleurs : la version enregistrée a été rechargée. Réessayez."
 BUTTON = "Télécharger ou partager"
+PUBLISH = "Publier sur ma Page"
 
 
 def copy_row(store, table, source, **changes):
@@ -68,6 +69,9 @@ def walk(browser, errors, data, product):
     # Now current: the button opens that confirmation, with no render request.
     download.click()
     current(panel, first)
+    # FACEBOOK_PROVIDER=off (this server's): no « Publier sur ma Page », no publications (D-FB-PUBLISH-004).
+    expect(panel.get_by_role("button", name=PUBLISH)).to_have_count(0)
+    expect(panel.locator(".publications")).to_have_count(0)
     assert len(renders) == 1, renders
     panel.get_by_role("button", name="Fermer").click()
 
@@ -1336,6 +1340,169 @@ def sharing(browser, errors, data, product):
     context.close()
 
 
+def publishing(browser, errors, product):
+    """« Publier sur ma Page » (T-FB-003, D-FB-PUBLISH-003 and 004) on the stand-in, whose caption markers give the
+    answers a real Page cannot be asked for: published, published again knowingly, unknown and each of the owner's two
+    answers, the access cancelled. Nothing of the feature is kept in the browser; nothing is asked again by a timer."""
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    page = context.new_page()
+    page.set_default_timeout(15000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda r: print(f"HTTP {r.status} {r.request.method} {r.url}", flush=True) if r.status >= 400 and "/api/" in r.url else None)
+    sent = []  # every publication request that leaves the browser, with its body
+    page.on("request", lambda r: sent.append(r.post_data_json) if r.method == "POST" and r.url.endswith("/publications") else None)
+    panel, button = page.locator(".final-preview"), page.locator(".final-preview").get_by_role("button", name=PUBLISH)
+    sheet, lines = page.get_by_role("dialog", name=re.compile("^Publier sur ")), panel.locator(".publications li")
+    open_atelier(page)
+    sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+    poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
+    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(page.get_by_role("heading", name=READY)).to_be_visible()
+
+    # No Page connected: the button leads to « Mon compte », where the stand-in's dialog connects one.
+    expect(panel.get_by_text("Connectez d’abord votre Page Facebook dans « Mon compte ».")).to_be_visible()
+    button.click()
+    page.wait_for_url(re.compile(r"#compte$"))
+    card = page.get_by_role("region", name="Page Facebook", exact=True)
+    card.get_by_role("button", name="Connecter ma Page Facebook").click()
+    page.wait_for_url(smoke.ORIGIN + "/#compte")
+    card.get_by_role("radio", name="Page d’essai 1").check()
+    card.get_by_role("button", name="Connecter cette Page").click()
+    expect(card).to_contain_text("Page connectée : Page d’essai 1")
+
+    def reopen():
+        page.evaluate("hash => { location.hash = hash }", poster)
+        expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+
+    def publish(caption=None):
+        """Opens the sheet, sets its caption (the field of « Partager »), publishes; the line it adds is the newest."""
+        before = lines.count()
+        button.click()
+        expect(sheet).to_be_visible()
+        if caption is not None:
+            sheet.get_by_label("Légende de la publication").fill(caption)
+        sheet.get_by_role("button", name="Publier", exact=True).click()
+        expect(sheet).to_have_count(0)
+        expect(lines).to_have_count(before + 1)
+        return lines.first
+
+    reopen()
+    expect(lines).to_have_count(0)
+    panel.get_by_label("Légende de la publication").fill("Casque Bose QC, 450 000 Ar")
+    button.click()
+    expect(sheet.get_by_role("heading")).to_have_text("Publier sur Page d’essai 1 ?")
+    expect(sheet.get_by_role("img", name="L’affiche à publier")).to_be_visible()
+    expect(sheet.get_by_label("Légende de la publication")).to_have_value("Casque Bose QC, 450 000 Ar")
+    expect(sheet).not_to_contain_text("Déjà publiée")
+    expect(sheet.get_by_role("button", name="Annuler")).to_be_focused()
+    smoke.check_contrast(page, "publish sheet")
+    page.screenshot(path=str(OUT / "publish-sheet-1366.png"))
+    sheet.get_by_role("button", name="Annuler").click()
+    expect(sheet).to_have_count(0)
+    first = publish()
+    confirmation = page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}").json()["confirmation"]["id"]
+    assert sent[-1] == {"confirmation_id": confirmation, "page_id": "100000000000001", "caption": "Casque Bose QC, 450 000 Ar",
+                        "seen": None}, sent
+    expect(first).to_contain_text("Publié sur Page d’essai 1.")
+    expect(first).to_contain_text("Page d’essai 1")
+    expect(first.get_by_role("link", name="Voir la publication")).to_have_attribute("href", re.compile(r"^https://www\.facebook\.com/100000000000001_\d+$"))
+    # Again: the sheet says so with its date; published again knowingly, it sends the last publication it showed.
+    button.click()
+    expect(sheet).to_contain_text(re.compile(r"Déjà publiée sur Page d’essai 1 le .+\. Publier à nouveau \?"))
+    sheet.get_by_role("button", name="Publier", exact=True).click()
+    expect(lines).to_have_count(2)
+    published = page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/publications").json()["items"]
+    assert sent[-1]["seen"] == published[1]["id"] and all(item["status"] == "published" for item in published), (sent, published)
+    # Another tab publishes while the sheet is open: refused by `seen`, the sheet reads again and says so, then publishes.
+    button.click()
+    expect(sheet).to_be_visible()
+    elsewhere = page.request.post(f"{smoke.ORIGIN}/api/creations/{poster}/publications", data={
+        "confirmation_id": confirmation, "page_id": "100000000000001", "caption": "Autre onglet", "seen": published[0]["id"]},
+        headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "Idempotency-Key": str(uuid4())})
+    assert elsewhere.ok, elsewhere.text()
+    sheet.get_by_role("button", name="Publier", exact=True).click()
+    expect(sheet.get_by_role("alert")).to_have_text(MESSAGES["facebook_stale"])
+    expect(lines).to_have_count(3)
+    sheet.get_by_role("button", name="Publier", exact=True).click()
+    expect(sheet).to_have_count(0)
+    expect(lines).to_have_count(4)
+    assert sent[-1]["seen"] == elsewhere.json()["id"], sent
+
+    # Facebook's answer lost: the owner looks at his Page and says. No sheet is offered meanwhile.
+    unknown = publish("Casque Bose [stub:unknown]")
+    expect(unknown).to_contain_text("Je ne sais pas si l’affiche est publiée. Ouvrez votre Page et dites-le-moi.")
+    expect(unknown.get_by_role("link", name="Ouvrir ma Page")).to_have_attribute("href", "https://www.facebook.com/100000000000001")
+    expect(unknown.get_by_role("link", name="Ouvrir ma Page")).to_have_attribute("target", "_blank")
+    expect(button).to_have_count(0)
+    page.screenshot(path=str(OUT / "publish-unknown-1366.png"))
+    unknown.get_by_role("button", name="Elle n’y est pas").click()
+    absent = page.get_by_role("dialog", name="Elle n’est pas sur votre Page ?")
+    expect(absent).to_contain_text("Si elle apparaît plus tard, publier à nouveau créera un doublon.")
+    absent.get_by_role("button", name="Elle n’y est pas").click()
+    expect(lines.first).to_contain_text("Vous avez dit qu’elle n’est pas sur votre Page.")
+    expect(lines.first.get_by_role("button")).to_have_count(0)
+    # It may be published again; unknown again, then the owner sees it on his Page.
+    unknown = publish()
+    expect(unknown.get_by_role("button", name="Elle est sur ma Page")).to_be_visible()
+    unknown.get_by_role("button", name="Elle est sur ma Page").click()
+    expect(lines.first).to_contain_text("Présence confirmée par vous")
+    expect(lines.first.get_by_role("link", name="Ouvrir la Page")).to_have_attribute("href", "https://www.facebook.com/100000000000001")
+    expect(lines).to_have_count(6)
+    # The access cancelled (190): said on its line, and the button now leads to « Mon compte » to reconnect.
+    cancelled = publish("[stub:reconnect]")
+    expect(cancelled).to_contain_text("Reconnectez votre Page.")
+    expect(panel.get_by_text("Reconnectez votre Page dans « Mon compte ».")).to_be_visible()
+    # Kept on the device: the caption, « Partager »'s own key (the text sent is the field's), and nothing of this feature.
+    stored = page.evaluate("() => [{...localStorage}, {...sessionStorage}]")
+    assert stored[0][f"affiche.shop1.caption.{poster}"] == "[stub:reconnect]", stored
+    kept = json.dumps([{key: value for key, value in part.items() if ".caption." not in key} for part in stored])
+    assert not re.search(r"facebook|publication|stub:|post_id|100000000000001", kept, re.I), kept
+    lines.first.scroll_into_view_if_needed()
+    smoke.check_contrast(page, "publications")
+    page.screenshot(path=str(OUT / "publish-lines-1366.png"))
+    page.evaluate("() => { location.hash = 'accueil' }")
+    expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+    expect(panel).to_have_count(0)
+    page.set_viewport_size({"width": 360, "height": 640})
+    reopen()  # read again at each opening, never by a timer
+    expect(lines).to_have_count(7)
+    assert panel.evaluate("el => el.scrollWidth <= el.clientWidth"), "the panel scrolls sideways at 360 px"
+    lines.last.scroll_into_view_if_needed()
+    page.screenshot(path=str(OUT / "publish-lines-360.png"))
+    button.click()
+    page.wait_for_url(re.compile(r"#compte$"))
+    expect(card.get_by_role("button", name="Reconnecter ma Page")).to_be_visible()
+    # The Page reconnected. The sheet open, the poster is saved elsewhere: its file is no longer the confirmed one. The
+    # refusal closes the sheet (the same file would be refused again), says so, and the poster is read again.
+    card.get_by_role("button", name="Reconnecter ma Page").click()
+    page.wait_for_url(smoke.ORIGIN + "/#compte")
+    card.get_by_role("radio", name="Page d’essai 1").check()
+    card.get_by_role("button", name="Connecter cette Page").click()
+    expect(card).to_contain_text("Page connectée : Page d’essai 1")
+    page.set_viewport_size({"width": 1366, "height": 768})
+    reopen()
+    button.click()
+    expect(sheet).to_be_visible()
+    address = f"{smoke.ORIGIN}/api/creations/{poster}"
+    now = page.request.get(address).json()
+    saved = page.request.put(address, data=now["document"] | {"offer": now["document"]["offer"] | {"price_ar": 460000}},
+        headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "If-Match": f'"{now["revision"]}"', "Idempotency-Key": str(uuid4())})
+    assert saved.ok, saved.text()
+    sheet.get_by_role("button", name="Publier", exact=True).click()
+    expect(sheet).to_have_count(0)
+    expect(page.locator(".message.error")).to_contain_text(MESSAGES["facebook_stale"])
+    assert len(page.request.get(f"{address}/publications").json()["items"]) == 7
+    # An earlier version now: its publications stay with the poster (an unknown one could still be answered); publishing
+    # is offered for the current confirmed file only.
+    page.evaluate("() => { location.hash = 'accueil' }")
+    expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
+    page.evaluate("hash => { location.hash = hash }", poster)
+    expect(page.get_by_role("heading", name=EARLIER)).to_be_visible(timeout=20000)
+    expect(lines).to_have_count(7)
+    expect(button).to_have_count(0)
+    context.close()
+
+
 def current(panel, confirmation):
     """The panel holds that confirmation's own render, ready: the heading, its image, its download, no checklist."""
     expect(panel.get_by_role("heading", name=READY)).to_be_visible()
@@ -1367,7 +1534,8 @@ def run():
     ImageDraw.Draw(photo).rounded_rectangle((250, 160, 750, 840), 50, fill="#202020")
     photo.save(product)
     errors = []
-    with tempfile.TemporaryDirectory(prefix="affiche-share-") as data:
+    with (tempfile.TemporaryDirectory(prefix="affiche-share-") as data,
+          tempfile.TemporaryDirectory(prefix="affiche-publish-") as facebook_data):
         server = smoke.serve(data)
         with (OUT / "preview.log").open("w") as log:
             vite = subprocess.Popen(["node", str(smoke.ROOT / "frontend/node_modules/vite/bin/vite.js"), "preview", "--host", "127.0.0.1",
@@ -1379,6 +1547,10 @@ def run():
                         walk(browser, errors, data, product)
                         captions(browser, errors, data, product)
                         sharing(browser, errors, data, product)
+                        # « Publier sur ma Page » exists only with the feature on: a server of its own, on the stand-in.
+                        smoke.stop(*server)
+                        server = smoke.serve(Path(facebook_data), facebook_provider="stub")
+                        publishing(browser, errors, product)
                         assert not errors, errors
                     finally:
                         browser.close()
@@ -1407,7 +1579,10 @@ def run():
           "refused, a share never settling (nothing locked, then the line, withdrawn by a cancel); not ready, the encoder "
           "failing (deadline, PNG, null, size), cannot share; prepared on confirmation in place; a late encoding never "
           "another opening's; an earlier version never offers it; not gated; the app switch keeps the outcome for the same "
-          "shop and drops it for another; 360 px, both themes, keyboard.")
+          "shop and drops it for another; 360 px, both themes, keyboard. « Publier sur ma Page » (stand-in; none with the "
+          "feature off): to « Mon compte » without a Page; the sheet's Page, image and caption; published, then again "
+          "knowingly; another tab's publication refused by `seen` and read again; unknown, no sheet meanwhile, « Elle n’y "
+          "est pas » after its warning, « Elle est sur ma Page »; the access cancelled leads to « Mon compte »; nothing kept.")
 
 
 if __name__ == "__main__":

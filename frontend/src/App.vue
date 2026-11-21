@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted
 import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { canShareFiles, captionFault, jpegOf, linesOf, presentedAsCurrent, readCaption, shareFile, weight, type Attempt } from './share'
+import { lineOf, publishAction, publishedOn, seenOf, type FacebookAnswer, type Publication } from './facebook'
 import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
@@ -18,7 +19,7 @@ import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
 import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Words } from './chat'
 
-interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[] }
+interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[]; facebook?: boolean }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
 const roleNames: Record<string, string> = { title: 'Titre', price: 'Prix', shop_name: 'Nom de la boutique', contact: 'Contact', logo: 'Logo', product: 'Produit' }
 const checkNames: Record<string, string> = { colour: 'Couleurs fidèles', markings: 'Marque et inscriptions fidèles', hardware: 'Boutons et détails fidèles', shape: 'Forme et proportions fidèles', extras_text: 'Rien d’ajouté par l’IA sans votre demande, et ce qu’elle a ajouté est exact pour ce produit', integration: 'Intégration naturelle dans la scène' }
@@ -840,6 +841,9 @@ const vModal = {
 // request to its route lost its answer and keeps its key (api.ts retained): sent again, the server answers what it
 // stored, whatever the balance says now; a request it never took is refused there with its own sentence.
 const paid = ref<{ title: string; text: string; warning?: string; cost: string; charged?: Charged; again?: boolean; label: string; run: () => Promise<void>; cancel?: () => void } | null>(null)
+// « Publier sur ma Page »'s sheet (D-FB-PUBLISH-004), in front of the final panel: the Page, the publication it saw last
+// (`seen`), the last one on it (`already`), and a refusal's line. Its handling is beside « Partager » below.
+const publishSheet = ref<{ page: { id: string; name: string }; seen: string | null; already: Publication | null; line: string; shot: 'loading' | 'loaded' | 'failed'; tries: number } | null>(null)
 // « Annuler » or Escape: the dialog closes and what asked it may put things back (a departure returns to its page).
 function dismissPaid() { const cancel = paid.value?.cancel; paid.value = null; cancel?.() }
 const paidCost = computed<ReturnType<typeof credit>>(() => !paid.value?.charged ? { stop: false, text: paid.value?.cost ?? '' }
@@ -931,11 +935,11 @@ watch(termsAsked, () => { void readBalance(); if (!termsOpen.value) void readTer
 // Tab and Shift+Tab go round inside the conditions: the page behind is inert, but the skip link and the messages are not.
 // The drawer too, whose theme switch is shown on a phone only.
 function keepTab(event: KeyboardEvent) {
-  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled)')].filter(control => control.checkVisibility())
+  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled)')].filter(control => control.checkVisibility())
   const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
-const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || review.value || finalPreview.value || opened.value))
+const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || publishSheet.value || review.value || finalPreview.value || opened.value))
 // "Styles": a style opens in a panel; one made by the shop can be renamed or removed there.
 const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
 const opened = computed(() => {
@@ -948,7 +952,7 @@ const opened = computed(() => {
 // v-modal focuses a panel only as it mounts, which an inert panel ignores: the conditions behind the sign-out
 // confirmation are focused when it closes. After the render and v-modal's own focus, so that it has the last word.
 // Only while the shop is shown: back from another tab, the panel that was in front takes the focus again.
-const front = computed(() => !shown.value ? '' : profilePrompt.value ? 'titre-quitter-profil' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
+const front = computed(() => !shown.value ? '' : profilePrompt.value ? 'titre-quitter-profil' : paid.value ? 'titre-confirmation' : termsOpen.value ? 'titre-conditions' : publishSheet.value ? 'titre-publier' : review.value ? 'review-title' : opened.value ? 'titre-style-ouvert' : finalPreview.value ? 'final-title' : '')
 function focusFront(id: string) {
   const panel = id ? document.querySelector<HTMLElement>(`[aria-labelledby="${id}"]`) : null
   if (panel && !panel.contains(document.activeElement)) (panel.querySelector<HTMLElement>('[data-focus]') ?? panel).focus()
@@ -1803,6 +1807,104 @@ watch([attempt, slow], () => {
   const line = linesOf(attempt.value, slow.value).copy
   copyLine.value = line ? SHARE_LINES[line] : ''
 })
+// « Publier sur ma Page » (D-FB-PUBLISH-003, 004): beside « Partager », for the current confirmed file only, when the
+// service has the feature. The shop's Page and the poster's publications are read at each opening of that file and after
+// each answer, never by a timer; nothing of them is kept in the browser. What is sent is the caption field of « Partager »,
+// its text and storage unchanged.
+const PUBLISH_TIMEOUT_MS = 75_000  // the server's own call takes 60 s at most
+const PUBLISH_LOST = 'La réponse n’est pas arrivée. Vérifiez les publications de cette affiche avant de réessayer.'
+const PUBLISH_UNSENT = 'La réponse n’est pas arrivée. Réessayez.'
+// The poster's publications, and the owner's word on an unknown one, belong to the poster: they are read and shown with
+// any of its files, an earlier version included. Publishing is offered for the current confirmed file only.
+const facebookOn = computed(() => !!caps.value?.facebook && !!finalPreview.value)
+const facebookShown = computed(() => facebookOn.value && captionShown.value)
+const facebookPage = ref<FacebookAnswer['page']>(null), publications = ref<Publication[]>([])
+const facebookRead = ref<'reading' | 'read' | 'failed'>('reading'), publishing = ref(false)
+const facebookAction = computed(() => publishAction(facebookPage.value, publications.value))
+const publicationLines = computed(() => publications.value.map(item => ({ item, ...lineOf(item) })))
+const captionBlocked = computed(() => { const fault = captionFault(caption.value); return fault === 'too_long' || fault === 'bad_character' })
+const moment = (stamp: string) => { const date = new Date(stamp); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(date) }
+let facebookTurn = 0
+async function readPublications() {
+  const poster = creation.value?.id, turn = ++facebookTurn
+  if (!poster) return
+  facebookRead.value = 'reading'
+  try {
+    const listed = await api<{ page: FacebookAnswer['page']; items: Publication[] }>(`/api/creations/${poster}/publications`, { quiet: true, timeout: 20_000 })
+    if (turn !== facebookTurn || creation.value?.id !== poster) return
+    facebookPage.value = listed.page; publications.value = listed.items; facebookRead.value = 'read'
+  } catch { if (turn === facebookTurn) facebookRead.value = 'failed' }
+}
+// Each opening of the confirmed file reads them again; a sheet and the lines of another opening go.
+watch(captionShown, shown => { if (!shown) publishSheet.value = null })
+watch(() => [facebookOn.value, finalPreview.value] as const, ([on]) => {
+  facebookTurn++; publishSheet.value = null
+  if (!on) { publications.value = []; facebookPage.value = null; facebookRead.value = 'reading'; return }
+  void readPublications()
+})
+function askPublish() {
+  const page = facebookPage.value
+  if (facebookAction.value === 'account' || !page) { leave('compte'); return }
+  if (facebookAction.value === 'sheet')
+    publishSheet.value = { page: { id: page.id, name: page.name }, seen: seenOf(page, publications.value), already: publishedOn(page, publications.value), line: '', shot: 'loading', tries: 0 }
+}
+// One request at a time. A lost answer keeps its key (mutation): the same request sent again is answered from the server's
+// row. Whatever the answer, the Page and the publications are read again. A refusal keeps the sheet open with its sentence
+// while it is still offered; `facebook_stale` also shows what was read again. A lost answer closes it: the line says.
+async function publishNow() {
+  const sheet = publishSheet.value, preview = finalPreview.value, poster = creation.value?.id
+  if (!sheet || !preview?.download_url || !poster || publishing.value || captionBlocked.value || sheet.shot !== 'loaded') return
+  publishing.value = true; sheet.line = ''
+  let refused: ApiError | null = null, lost = false
+  try {
+    await mutation(`/api/creations/${poster}/publications`, { confirmation_id: String(preview.download_url).split('/')[3],
+      page_id: sheet.page.id, caption: caption.value, seen: sheet.seen }, undefined, undefined, 'POST', false, PUBLISH_TIMEOUT_MS)
+  } catch (reason) {
+    refused = reason instanceof ApiError && (reason.code === 'export_missing' || reason.status >= 400 && reason.status < 500 && reason.code !== 'invalid_response') ? reason : null
+    lost = !refused
+  } finally { publishing.value = false }
+  await readPublications()
+  if (publishSheet.value !== sheet) return
+  const page = facebookPage.value
+  // `facebook_stale` may be the poster's: saved or confirmed elsewhere since this tab read it. The sheet's file would be
+  // refused again, so the sheet goes and the poster is read again, as at its opening (openFinal).
+  if (refused?.code === 'facebook_stale') {
+    let found: Creation | null = null
+    try { found = await api<Creation>(`/api/creations/${poster}`, { quiet: true }) } catch { /* said below */ }
+    if (publishSheet.value !== sheet) return
+    if (!found || found.revision !== saver?.revision || found.confirmation?.render_id !== preview.id) {
+      publishSheet.value = null
+      if (found && creation.value?.id === poster) await openFinal(poster, saver!.revision, false)
+      error.value = refused.message
+      return
+    }
+  }
+  // No answer, and no line of this attempt after the read: nothing says it left. The same request may be sent again.
+  if (lost && page && facebookRead.value === 'read' && facebookAction.value === 'sheet' && seenOf(page, publications.value) === sheet.seen) {
+    sheet.line = PUBLISH_UNSENT
+    return
+  }
+  // terms_required: the conditions open in front (api.ts termsAsked), the sheet behind them would be out of reach.
+  if (refused && refused.code !== 'terms_required' && page && facebookAction.value === 'sheet' && facebookRead.value === 'read') {
+    if (refused.code === 'facebook_stale') Object.assign(sheet, { page: { id: page.id, name: page.name }, seen: seenOf(page, publications.value), already: publishedOn(page, publications.value) })
+    sheet.line = refused.message
+    return
+  }
+  publishSheet.value = null
+  if (lost) error.value = PUBLISH_LOST
+  else if (refused && refused.code !== 'terms_required') error.value = refused.message
+}
+// The owner's word on an unknown outcome (§5): « Elle n’y est pas » is asked once more, with what publishing again risks.
+async function sayOutcome(item: Publication, present: boolean) {
+  const poster = creation.value?.id
+  if (!poster) return
+  try { await mutation(`/api/creations/${poster}/publications/${item.id}/outcome`, { present }, undefined, undefined, 'POST', false, 20_000) }
+  finally { await readPublications() }
+}
+function askAbsent(item: Publication) {
+  paid.value = { title: 'Elle n’est pas sur votre Page ?', text: 'Si elle apparaît plus tard, publier à nouveau créera un doublon.',
+    cost: '', label: 'Elle n’y est pas', run: () => sayOutcome(item, false) }
+}
 // A poster opens on its current confirmation's own render (D-SHARE-001), read-only, never with a render request. Without
 // one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's button (`ask`) asks for a
 // render. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
@@ -2514,6 +2616,16 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="row"><button v-if="!paidCost.stop" class="primary" :aria-describedby="paid.warning ? 'avertissement-ajustement' : undefined" :disabled="busy || (smallPhoto && paid.run === createScene && !lowResAccepted)" @click="confirmPaid">{{ paid.label }}</button><button v-else-if="paidCost.terms" class="primary" @click="readConditions">Lire les conditions</button><button class="secondary" data-focus @click="dismissPaid">{{ paidCost.stop ? 'Fermer' : 'Annuler' }}</button></div>
     </div></div>
     <!-- The conditions of use (D-TERMS-004): under the confirmation above, which keeps the front; server text as text only. -->
+    <div v-if="publishSheet && finalPreview" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-publier" :inert="!!paid || termsOpen" @keydown.esc="publishing || (publishSheet = null)" @keydown.tab="keepTab"><div class="confirm">
+      <h2 id="titre-publier">Publier sur <span translate="no">{{ publishSheet.page.name }}</span> ?</h2>
+      <img :key="publishSheet.tries" class="publish-shot" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="L’affiche à publier" @load="publishSheet.shot = 'loaded'" @error="publishSheet.shot = 'failed'" />
+      <template v-if="publishSheet.shot === 'failed'"><p class="why" role="alert">L’image n’a pas pu être affichée : elle doit être vue avant d’être publiée.</p><button class="secondary" @click="publishSheet.shot = 'loading'; publishSheet.tries++">Réessayer</button></template>
+      <p v-if="publishSheet.already" class="why">Déjà publiée sur <span translate="no">{{ publishSheet.already.page_name }}</span> le {{ moment(publishSheet.already.sent_at) }}. Publier à nouveau ?</p>
+      <label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="etat-legende-publier" :aria-invalid="captionBlocked || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label>
+      <p id="etat-legende-publier" class="why" role="status">{{ captionLine }}</p>
+      <p v-if="publishSheet.line" class="why" role="alert">{{ publishSheet.line }}</p>
+      <div class="row"><button class="primary" :disabled="publishing || captionBlocked || publishSheet.shot !== 'loaded'" :aria-busy="publishing || undefined" @click="publishNow">{{ publishing ? 'Publication en cours…' : 'Publier' }}</button><button class="secondary" data-focus :disabled="publishing" @click="publishSheet = null">Annuler</button></div>
+    </div></div>
     <div v-if="termsOpen" v-modal class="confirm-sheet terms-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-conditions" :inert="!!paid" @keydown.esc="later" @keydown.tab="keepTab"><div class="confirm">
       <h2 id="titre-conditions">{{ terms?.changed ? 'Les conditions d’utilisation ont changé' : 'Conditions d’utilisation' }}</h2>
       <template v-if="terms"><p class="cost">Version du {{ termsDate(terms.version) }}</p><p v-for="(paragraph, index) in terms.paragraphs_fr" :key="index">{{ paragraph }}</p><p><a href="/donnees.html" class="data-link" target="_blank" rel="noopener">Vos données</a></p></template>
@@ -2521,7 +2633,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-if="termsLine" class="cost" role="alert">{{ termsLine }}</p>
       <div class="row"><button v-if="terms" class="primary" :disabled="accepting" @click="acceptTerms">J’accepte</button><button v-else class="primary" @click="retryTerms">Réessayer</button><button class="secondary" @click="later">Plus tard</button></div>
     </div></div>
-    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null">
+    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen || !!publishSheet" @keydown.esc="finalPreview = null">
       <div class="section-heading"><div><h2 id="final-title">{{ earlier ? finalPreview.download_url ? 'Version confirmée précédente' : 'Aperçu d’une version précédente' : finalPreview.download_url ? finalPreview.loaded ? 'Votre affiche est prête' : 'Ouverture du fichier confirmé…' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ earlier ? finalPreview.download_url ? 'Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager.' : 'Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle.' : finalPreview.download_url ?'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
       <div class="final-grid">
         <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id" ref="previewImage" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="previewError" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
@@ -2533,7 +2645,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !finalPreview.loaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!finalPreview.loaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
           </template>
           <div v-if="captionShown" class="group caption"><label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label><p id="etat-legende" class="why" role="status">{{ captionLine }}</p><p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p><button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button><p id="copie-legende" :class="copyLine === CAPTION_LINES.copied || !copyLine ? 'help' : 'why'" role="status">{{ copyLine }}</p></div>
-          <div v-if="finalPreview.download_url || earlier" class="after"><template v-if="shareView === 'ready' || shareView === 'preparing'"><button class="primary" :disabled="shareView !== 'ready'" :aria-busy="shareView === 'preparing' || undefined" aria-describedby="partage-etat" @click="share"><Icon n="share" />{{ shareView === 'ready' ? 'Partager' : 'Préparation de l’image…' }}</button><span v-if="prepared?.weight" class="count">{{ prepared.weight }}</span></template><a v-if="finalPreview.download_url" :href="finalPreview.download_url" :class="shareView === 'ready' || shareView === 'preparing' ? 'download-button secondary' : 'download-button'" download><Icon n="download" />Télécharger le PNG confirmé</a><p v-if="shareView" id="partage-etat" class="why" role="status">{{ shareView === 'cannot' || shareView === 'unprepared' ? SHARE_LINES[shareView] : shareLine }}</p><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+          <div v-if="finalPreview.download_url || earlier" class="after"><template v-if="shareView === 'ready' || shareView === 'preparing'"><button class="primary" :disabled="shareView !== 'ready'" :aria-busy="shareView === 'preparing' || undefined" aria-describedby="partage-etat" @click="share"><Icon n="share" />{{ shareView === 'ready' ? 'Partager' : 'Préparation de l’image…' }}</button><span v-if="prepared?.weight" class="count">{{ prepared.weight }}</span></template><template v-if="facebookShown && facebookRead === 'read' && facebookAction !== 'wait'"><button class="secondary" :aria-describedby="facebookAction === 'account' ? 'aide-publier' : undefined" @click="askPublish">Publier sur ma Page</button><p v-if="facebookAction === 'account'" id="aide-publier" class="help">{{ facebookPage ? 'Reconnectez votre Page dans « Mon compte ».' : 'Connectez d’abord votre Page Facebook dans « Mon compte ».' }}</p></template><a v-if="finalPreview.download_url" :href="finalPreview.download_url" :class="shareView === 'ready' || shareView === 'preparing' ? 'download-button secondary' : 'download-button'" download><Icon n="download" />Télécharger le PNG confirmé</a><p v-if="shareView" id="partage-etat" class="why" role="status">{{ shareView === 'cannot' || shareView === 'unprepared' ? SHARE_LINES[shareView] : shareLine }}</p><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
+          <section v-if="facebookOn && (publications.length || facebookRead === 'failed')" class="group publications" aria-labelledby="titre-publications"><h3 id="titre-publications">Publications sur Facebook</h3>
+            <template v-if="facebookRead === 'failed'"><p class="why" role="alert">La Page Facebook et les publications de cette affiche n’ont pas pu être lues.</p><button class="secondary" @click="readPublications">Réessayer</button></template>
+            <ul class="points"><li v-for="line in publicationLines" :key="line.item.id"><small><time :datetime="line.item.sent_at">{{ moment(line.item.sent_at) }}</time> · <span translate="no">{{ line.item.page_name }}</span></small><span>{{ line.state }}</span>
+              <div v-if="line.link || line.ask" class="row"><a v-if="line.link" :href="line.link.href" target="_blank" rel="noopener">{{ line.link.label }}</a><template v-if="line.ask"><button class="secondary" @click="perform(() => sayOutcome(line.item, true))">Elle est sur ma Page</button><button class="secondary" @click="askAbsent(line.item)">Elle n’y est pas</button></template></div></li></ul></section>
         </div>
       </div>
     </section>

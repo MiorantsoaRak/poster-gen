@@ -31,8 +31,8 @@ from starlette.staticfiles import StaticFiles
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.db import utc_now
-from affiche.posters import (auth, credits, exports, facebook, facebook_connect, jobs, looks, reads, rendering, store, terms,
-                             typography, visuals)
+from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_publish, jobs, looks, reads,
+                             rendering, store, terms, typography, visuals)
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -167,6 +167,25 @@ MESSAGES = {
         "facebook_failed": "La connexion à Facebook n’a pas abouti. Réessayez.",
         "facebook_cancelled": "Connexion annulée.",
         "facebook_dialog_failed": "La connexion n’a pas abouti.",
+        # Publishing on it (D-FB-PUBLISH-003): the refusals of the admission and of the owner's word, written nothing.
+        "facebook_too_large": "Ce fichier dépasse 10 Mo, la limite de Facebook. Téléchargez-le, puis publiez-le depuis Facebook.",
+        "facebook_not_connected": "Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».",
+        "facebook_reconnect": "Reconnectez votre Page dans « Mon compte ».",
+        "facebook_stale": "L’affiche, la Page connectée ou ses publications ont changé. Vérifiez, puis publiez.",
+        "facebook_pending": "Une publication de cette affiche sur cette Page attend encore son résultat.",
+        "facebook_running": "La publication est en cours. Patientez quelques secondes.",
+        "facebook_settled": "Cette publication a déjà son résultat. Rechargez la page.",
+        "caption_invalid": "La légende dépasse 2 000 caractères ou contient un caractère invisible non accepté. Corrigez-la, puis publiez.",
+        # A publication's line (facebook_publish.said): the answers' table of D-FB-PUBLISH-003 §4 and §5. {} is filled there.
+        "publication_sending": "Publication en cours…",
+        "publication_published": "Publié sur {}.",
+        "publication_confirmed": "Présence confirmée par vous",
+        "publication_unknown": "Je ne sais pas si l’affiche est publiée. Ouvrez votre Page et dites-le-moi.",
+        "publication_reconnect": "Reconnectez votre Page.",
+        "publication_limited": "Facebook limite les publications pour le moment. Réessayez plus tard.",
+        "publication_refused": "Facebook a refusé la publication (code {}).",
+        "publication_not_sent": "La publication n’est pas partie. Réessayez.",
+        "publication_not_published": "Vous avez dit qu’elle n’est pas sur votre Page.",
 }
 
 
@@ -557,12 +576,14 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             jobs.recover(runtime.engine, settings.data_dir)  # the service's sweep finalises the spooled jobs it leaves running
             reads.recover(runtime.engine)
             facebook_connect.recover(runtime.engine)
+            facebook_publish.recover(runtime.engine)  # whatever the provider now: a `sending` row's handler is gone
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
             service.start()
             yield
         finally:
             try:
+                await facebook_publish.drain()  # before the lock goes: no send outlives its process's hold on the data
                 if service is not None:
                     await service.close()
             finally:
@@ -677,6 +698,23 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         def disconnect_facebook(request: Request):
             facebook.make_graph(settings)
             return facebook_connect.disconnect(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE))
+
+        # Publishing a confirmed poster on it (D-FB-PUBLISH-003): the key in the table's own column, not store.mutate,
+        # so that no lock is held during the call. The owner's word on an unknown outcome makes no call: store.mutate.
+        @protected.get("/api/creations/{id}/publications")
+        def publications(id: Id, request: Request):
+            with app.state.engine.connect() as conn:
+                return facebook_publish.listed(conn, request.state.shop, id, MESSAGES)
+
+        @protected.post("/api/creations/{id}/publications", status_code=201)
+        async def publish(id: Id, body: facebook_publish.PublishRequest, request: Request, key: Key):
+            return await facebook_publish.publish(app.state.engine, settings, facebook.make_graph(settings), request.state.shop,
+                                                  request.cookies.get(auth.COOKIE), key, id, body, MESSAGES)
+
+        @protected.post("/api/creations/{id}/publications/{pid}/outcome")
+        def publication_outcome(id: Id, pid: Id, body: facebook_publish.OutcomeRequest, request: Request, key: Key):
+            return result_response(facebook_publish.outcome(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
+                                                            key, id, pid, body, MESSAGES))
 
     @protected.post("/api/reads", status_code=201)
     async def new_read(body: reads.ReadRequest, request: Request, key: Key):
