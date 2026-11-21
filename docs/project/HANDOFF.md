@@ -8,7 +8,7 @@ No work order: the owner's own project. Goal: both interfaces follow the mockup 
 ([mockups/doka-console/](mockups/doka-console/README.md)); ADR-123, [requirements](requirements/app-redesign.md),
 [design](designs/app-redesign.md) v2, tasks T-REDESIGN-001 … 007 in TODO.md.
 
-**State: all seven tasks are done and committed on the branch `redesign`, NOT on `main`, NOT pushed, NOT deployed.**
+**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and committed on the branch `redesign`, NOT on `main`, NOT deployed.** Pushed on the owner's word (2026-11-21: "commit and push"): `redesign` and `main` are on `origin`.
 The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `node_modules`, `.venv`; smoke ports
 5273/8100). `redesign-chat` (worktree `../affiche-ia-worktrees/chat`) and `redesign-console`
 (`../affiche-ia-worktrees/console`) are merged into it. `main` still holds the interface polish only
@@ -16,6 +16,23 @@ The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `nod
 
 **Proof, once on the merged branch:** Vitest 312; the build; all seven browser smokes; backend 1533 passed; 102
 captures in `../affiche-ia-worktrees/app/outputs/design-capture/redesign/`.
+
+**The element pass (T-REDESIGN-008, ADR-124), after the owner looked at the running branch.** Looks and positions only.
+The owner's rules from it, to keep: search the web for the current practice before designing an element; a card's
+content fills its card (narrow the card or the column, never cap the form inside it). What changed is listed in the
+TODO entry and in `DESIGN.md` on the branch; the decision and what he may overturn (the dark balance card in the
+light theme, « crédits » after the figures, the 64 px thumbnails, the 600 px column of one shop's page) are in ADR-124.
+Proof on the final code: Vitest 313, the build, the seven browser smokes; the backend is untouched (no run). No Codex
+review of this pass. Not done: the 108 captures were not taken again after the last console fixes; the report
+[reviews/app-redesign-after-2026-11-21.md](reviews/app-redesign-after-2026-11-21.md) describes the branch before this pass.
+
+**To look at it running** (stub, no spend, throwaway data; the script writes the sign-in details beside itself):
+```
+cd ../affiche-ia-worktrees/app/backend
+SMOKE_WEB_PORT=5273 SMOKE_API_PORT=8100 uv run python <scratchpad>/dev/dev_serve.py
+```
+The script lives in a session scratchpad and may be gone: it is `smoke.serve()` on a temporary folder, `vite` in dev
+mode on the web port, and `design_capture.seed()` for the data.
 
 **Exact next step: the owner's.**
 1. Look at it (from the worktree):
