@@ -4,7 +4,8 @@ import { creditWord, sectionRead, stateBadges, stateNames, type Listing, type Su
 import { credit, type Balance } from './generation'
 
 // The balance and the five latest posters are the application's, shared with its shell (D-REDESIGN-002).
-const props = defineProps<{ funds: ReturnType<typeof sectionRead<Balance>>; recent: ReturnType<typeof sectionRead<Listing>>; busy: boolean }>()
+// `publish`: the service publishes on Facebook (D-FB-POST-005): a line leads to « Publier sur Facebook ».
+const props = defineProps<{ funds: ReturnType<typeof sectionRead<Balance>>; recent: ReturnType<typeof sectionRead<Listing>>; busy: boolean; publish?: boolean }>()
 const emit = defineEmits<{ poster: [id: string]; terms: [] }>()
 const summary = proxyRefs(sectionRead<Summary>('/api/shop-dashboard'))
 const recent = proxyRefs(props.recent)
@@ -41,6 +42,7 @@ defineExpose({ refresh })
       </div>
       <a class="download-button" href="#creer">Créer une affiche</a>
     </div>
+    <a v-if="publish" class="account-link publish-link" href="#publier">Publier sur Facebook</a>
     <div class="home-section"><h2>Affiches récentes</h2><a href="#affiches">Tout voir</a></div>
     <p v-if="recent.error" role="status">Affiches indisponibles. {{ recent.error }} <button class="text-button" @click="recent.read">Réessayer les affiches</button></p>
     <p v-else-if="recent.loading && !recent.data" role="status">Lecture des affiches…</p>
@@ -79,4 +81,6 @@ a:not(.download-button) { display: inline-flex; min-height: 44px; align-items: c
 /* The account: a row of its own under the list, not a lone underlined word. */
 a.account-link { display: flex; justify-content: space-between; min-height: 56px; margin-top: 24px; padding: 0 2px; border-block: 1px solid var(--line); font-weight: 650; text-decoration: none }
 @media (hover: hover) { a.account-link:hover { background: var(--active) } }
+/* The way to « Publier sur Facebook », a row like « Mon compte », between the balance and the recent posters. */
+a.publish-link { margin: -8px 0 24px }
 </style>

@@ -1,0 +1,18 @@
+# Code review r3 — T-FB-010: the « Publier sur Facebook » page
+
+Reviewer: Codex, read-only, 2026-11-22. Verdict: APPROVE WITH FIXES (round 2's five findings closed; two new P2: a reload between two reads can leave « Publier… » off, and a draft that loses a poster at its opening keeps a used key). Both fixed afterwards, not reviewed again.
+
+1. **CLOSED — Late settlement erasing another tab’s draft.** A takeover invalidates the old tab’s answer handlers. Settlement also checks the live stamp before changing the draft. [ShopPublish.vue:282](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:282) · [publish.ts:103](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/publish.ts:103)
+2. **CLOSED — Failed save overwriting another tab’s edit.** Taking the lock back rereads the draft and closes the old sheet. A failed write or read-back blocks sending and displays recovery instructions. [ShopPublish.vue:371](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:371) · [publish.ts:91](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/publish.ts:91)
+3. **CLOSED — Duplicate after one-poster reload.** An in-flight candidate disables submission. After publication, the frozen sheet names the prior publication and requires « Publier à nouveau ». [publish.ts:129](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/publish.ts:129) · [ShopPublish.vue:262](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:262)
+4. **CLOSED — Failed candidate refresh enabling submission.** A refusal sets `stale`. Reading disables the button, and a failed read leaves `stale` set. [ShopPublish.vue:293](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:293) · [ShopPublish.vue:440](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:440)
+5. **CLOSED — Late list dropping the admitted post.** The list preserves rows updated after its request began, so the admitted row still drives polling. [ShopPublish.vue:185](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:185)
+
+**New findings**
+
+- **P2 — A reload can leave « Publier… » disabled indefinitely.** The candidate read sees `uploading`. The post settles before the parallel list read sees it, so the first list already says `published`. With no previous row, `observe()` detects no transition. Nothing is polled, and the candidate keeps telling the owner to wait. Re-read candidates when a selected poster’s in-flight mark disagrees with the listed status for that same post ID, whichever read finishes first. [ShopPublish.vue:196](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:196) · [ShopPublish.vue:379](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:379)
+- **P2 — Removing an ineligible poster can strand the draft on a used key.** Send A+B, lose the 202, then edit A in the editor and reopen the draft after publication. Resolution removes A but keeps the stamp used for A+B. Confirming B sends a different body under that stamp. The server returns `idempotency_reused`, and every refresh and retry repeats it. Give the remaining draft a fresh stamp and clear its post ID when resolution removes an item. [publish.ts:61](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/publish.ts:61) · [facebook_posts.py:295](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/posters/facebook_posts.py:295)
+
+Static review only. No tests run or counted.
+
+**APPROVE WITH FIXES**

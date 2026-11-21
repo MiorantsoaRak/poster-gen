@@ -53,6 +53,7 @@ Backend (`backend/`, Python 3.12 with uv; verified 2026-11-09 on Windows 10):
 | Operator: shops and credits (never migrates: start the API once first; `--help` for each; deploy/README.md "Shops", "Credits", "Operator dashboard") | `uv run python -m affiche.shops list\|create [--welcome N]\|set-password\|end-sessions [--all\|--operator]\|suspend --yes\|enable\|grant\|move-payment\|correct\|pause --yes\|resume\|purchase-text\|post-limit <identifier> [N\|none]\|after-restore <kept database> [--apply]\|operator-password` |
 | Operator page browser smoke (stub, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/admin_browser.py` |
 | Conditions of use browser smoke (stub, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/terms_browser.py` |
+| « Publier sur Facebook » page browser smoke (Facebook stand-in, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/publish_browser.py` |
 | Captures of every screen for a design review (stub, isolated data; build first; 102 PNG, contact sheets and static snapshots in `outputs/design-capture/<label>/`; never beside a smoke: same ports) | `uv run python ../frontend/tests/design_capture.py [label]` |
 | New migration file (hand-written SQL) | `uv run alembic revision -m "<message>"` |
 | One-time cutout model download (224 MB, to `%USERPROFILE%\.rembg\models\`) | `uv run python -c "from rembg import new_session; new_session('birefnet-general-lite')"` |

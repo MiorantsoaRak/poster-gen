@@ -21,7 +21,7 @@
 
 ```
 browser                          server                                    Facebook
-  keeps {key, body} on the device
+  the draft's stamp is the key
   POST /api/facebook/posts   ──► one task: admitted (one write) 'uploading'
   ◄── 202 {id}                   for each image, in order
   GET  …/posts/{id} (2 s)          read the confirmed PNG ────────────────► POST /{page}/photos published=false
@@ -29,7 +29,7 @@ browser                          server                                    Faceb
                                  last check + 'posting' (one write)
                                                            ───────────────► POST /{page}/feed attached_media[…]
   ◄── published + link           settled (one write)                      ◄── {id: page_post}
-  forgets {key, body}, the draft
+  clears the draft
 ```
 
 ## D-FB-POST-001 — What is stored (covers R-FB-POST-003, 005, 006)
@@ -114,7 +114,7 @@ New module `posters/facebook_posts.py`, in place of `facebook_publish.py`, whose
 
 **A candidate** is an active poster of the shop with a confirmation in the format `feed` whose `confirmed_revision` is the poster's current revision (the latest such). It carries: the poster's id, name, title and price as `/api/creations` gives them; `confirmation_id`; the thumbnail and the download address of the confirmed file; and for the connected Page `last`: the id **and the status** of the latest post that holds this poster there (null when none), and `published_at`: the date of the latest one that is `published` (null when none). With `ids`, a poster that is not a candidate comes back with its reason instead: `other_format`, `changed`, `unconfirmed`, `gone`. Paged as `/api/creations` (cursor, 20 a page); `ids` is not paged (200 at most).
 
-**The request:** `{ page_id, description, items: [{ creation_id, confirmation_id, seen: {id, status} | null }] }`, the items in the post's order.
+**The request:** `{ page_id, description, items: [{ creation_id, confirmation_id, seen: {id, status} | null }] }`, the items in the post's order. Its `payload_sha` is made of the Page, the description and each item's poster and confirmation in order, **without `seen`** *(T-FB-010's review)*: the same key with the same post is the same request whatever the page had read meanwhile.
 
 **One task owns the post.** The route makes one task and registers it **under `(shop, key)` before the admission**, in the module's table of tasks; it stays there until its post is settled. The route awaits only the admission, shielded: a client that goes after the commit cannot leave a row without a task, and *(r2)* a read that comes right after the commit finds the row's owner by the row's own `(shop_id, key)`.
 
@@ -193,10 +193,15 @@ A new view `publier` (`#publier`), its own component `ShopPublish.vue`. Shown on
 
 **The confirmation** (the editor's existing sheet): « Publier sur {Page} ? », the images in their order as a numbered strip that scrolls sideways inside the sheet, the description as it will be sent, « Publier », « Annuler ». The strip shows the confirmed files' thumbnails, each a link to its confirmed file: thirty full files would not load on a phone's connection, and the exact file is the server's to guarantee (its hash is checked before it leaves; a damaged one fails the post, names the image and publishes nothing). « Publier » is off until every thumbnail has loaded, and while a post is in flight (with the reason). What the sheet shows is frozen when it opens: the items, their `seen`, the description.
 
-**What is kept on the device** (the shop's storage, cleared at sign-out):
-- `post-draft`: the posters' ids in order, the description, and *(r2)* a stamp that changes at each edit. Written at each change; cleared by « Vider », and when the post made from it is `published` (by Facebook or by the owner's word) **and its stamp is still the one that was sent**: a draft edited since, in this tab or another, is kept. A failed or stopped post leaves it as it was: nothing is chosen or typed again. (The page for one poster keeps no draft: its description is the poster's caption.)
-- `post-sent`: the exact body, its key and the draft's stamp, **written before the request leaves**. *(r2)* Unlike a chat read, which goes on from memory when the write fails, **a write that fails stops the publication:** nothing is sent, and the page says « Cet appareil n’a pas pu garder la demande : rien n’a été envoyé. Libérez de la place ou quittez la navigation privée, puis réessayez. » It is cleared only by the answer to its own key. At every opening of the page and before any new « Publier », a `post-sent` is sent again first, with its key: the server answers the post as it is, and the page follows it. It is cleared when its post is settled, or when the server refuses it without a row. So a lost 202, a reload or a closed tab never makes a second post.
-At opening, the draft's posters are resolved with `candidates?ids=`, 200 ids a request: one that can no longer go is taken out and named with its reason.
+**What is kept on the device** (the shop's storage, cleared at sign-out): **one object, `post-draft`** *(changed on the first code review of T-FB-010, 2026-11-21: v3 kept a second object, `post-sent`, with the request and its key; its review found five ways two tabs, an unreadable record or a late answer could lose or overwrite that key. The slot is gone: the draft's own stamp is the request's key.)*
+- **One tab at a time holds the page** *(second code review of T-FB-010)*: the page takes a lock of its own (Web Locks, as « Par message » does), and another tab that opens it says « La page Publier est ouverte dans un autre onglet. » with « Continuer ici ». So one tab reads and writes the draft: no two tabs race on the device's storage, and the page needs no rule against each other's writes. A browser without Web Locks behaves as « Par message » does there.
+- `post-draft`: the posters' ids in order, the description, a **stamp** (a UUID, made anew at each edit), and `post`: the id of the post made from it, once its 202 has arrived. A draft that cannot be read (the storage refuses, or the record is damaged) is never taken for an empty one: nothing is removed or sent, and the page says so with « Réessayer ».
+- **The request's `Idempotency-Key` is the draft's stamp.** The same draft sent again (a second tap, a reload after a lost answer, another tab holding the same stored draft) is the same request: the server answers the post it already made. An edited draft has another stamp and is another request. The server's `payload_sha` leaves `seen` out (D-FB-POST-003), so a page that read the candidates again before sending the same draft again is still answered its post.
+- **Before a request leaves**, the page writes the draft and reads it back: when the write or the read failed, **nothing is sent**; the page says « Cet appareil n’a pas pu garder votre publication : rien n’a été envoyé. Libérez de la place ou quittez la navigation privée, puis réessayez. »
+- **Every answer about the draft's post goes through one handler**, whichever read brought it (the POST's answer, the polling, the list, the stop): `uploading` or `posting`: the page follows it; `published`: the draft is cleared, if its stamp is still the one sent (an edit made meanwhile is kept); `failed`: the draft is kept, `post` is forgotten and **the stamp is made anew**, so that « Publier » is a new try and not the answer of the failed one; `unknown`: the draft and its stamp are kept, « Publier… » is off, and the page sends the owner to the post's two buttons.
+- At opening: the draft's posters are resolved with `candidates?ids=`, 200 ids a request (one that can no longer go is taken out and named with its reason; **the draft then gets a new stamp and forgets its `post`**: it is no longer the request that stamp was sent with, and the server would refuse it as another body under a used key *(third code review of T-FB-010)*); a draft with a `post` reads that post and handles it as above. A chosen poster that the candidates say is in a post in flight, while the list says that post is settled or does not hold it, is read again until the two agree: a reload between the two reads never leaves « Publier… » off for good.
+- The page for one poster keeps no draft: its description is the poster's caption, and its stamp lives in the tab. A lost answer followed by a reload there is caught in two ways: while the post is in flight the server refuses another, and the page says so; once it is published the sheet says it (below) and asks to publish **again**.
+- **The sheet names what is already on the Page** *(second code review)*, on the page and on the one-poster page: when a chosen poster has a `published_at`, « {n} de ces affiches sont déjà sur votre Page (la dernière le {date}). Publier à nouveau ? » (one poster: « Cette affiche est déjà sur votre Page depuis le {date}. Publier à nouveau ? »), and its button reads « Publier à nouveau ». Publishing again is always the owner's stated choice.
 
 **The final panel** lists the posts that hold its poster (`GET /api/facebook/posts?creation=`): date, Page, « seule » or « dans une publication de {count} images », state, link; an `unknown` one sends to the page to answer.
 
@@ -216,7 +221,7 @@ At opening, the draft's posters are resolved with `candidates?ids=`, 200 ids a r
 | Facebook is slow or down during the uploads | each upload is tried twice at most; then `failed`, nothing published; the owner may stop it himself |
 | The answer to the last call is lost | `unknown`: the owner says; none of its posters can go in a post on that Page until he has |
 | Facebook refuses the post (too many photos, a limit, a permission) | `failed` with the code when it is a known one, `unknown` when it is not |
-| The answer to « Publier » is lost, the page reloaded or closed | `post-sent` is sent again with its key at the next opening: the same post, never a second |
+| The answer to « Publier » is lost, the page reloaded or closed | the draft is still there with its stamp: « Publier » sends the same key, and the server answers the post it made |
 | The owner closes the application during the uploads | the task goes on; the page shows the state at his return |
 | The server stops during the uploads | at start the post is `failed` (`not_sent`) |
 | The server stops during the last call | `unknown` at start |
@@ -238,13 +243,13 @@ At opening, the draft's posters are resolved with `candidates?ids=`, 200 ids a r
 ## Tests
 
 - **Backend (pytest, `httpx2.MockTransport`):** the client's two methods (the fields sent, `published=false`, the order of `attached_media`, `id` as the post's id, each classification, no credential in a return or a log); the migration's rehearsal, with a row of each status of 0018's table turned into a post, one of them naming a confirmation that is not there: as many posts and items as rows. Admission: the key answered before any file is looked at; each refusal writes nothing; the limit (none, at, over); a poster twice; a candidate in another format, changed, another shop's; in flight; `seen` with a wrong id and with the right id and a status that has changed. The task: a client that goes right after the commit leaves a task; a read right after the commit does not take the post for one that no task holds; a call whose answer trickles past its deadline; the order sent is the order chosen; `done` after each upload; an upload tried once more and only once; a refused upload names its position and publishes nothing; a stop asked; a Page changed, a shop suspended, a limit lowered, before the last call; the last call never sent twice; the 30 s rule; the lock not held during a call. A post that no task holds, read by a route. Restart and shutdown. The owner's two answers, and the stale `seen` after them. `off`: 404 on the six routes. `post-limit`. `after-restore`: a post copied whole with a poster missing; settled from the kept database; `uploading` here and `posting` there becomes `unknown`.
-- **Vitest:** the draft (add, remove, move, the limit, a poster resolved as no longer a candidate); `post-sent` written before the request and sent again at opening; a storage that refuses the write: nothing is sent; a draft edited after the request is kept when its post is published; the page for one poster uses the poster's caption and leaves the draft; what « Publier… » does in each state; a post's line.
+- **Vitest:** the draft (add, remove, move, the limit, a poster resolved as no longer a candidate); the stamp as the key (the same draft twice is one key; an edit is another); a storage that refuses the write, or a stamp changed in another tab: nothing is sent; the one handler for each status (a failed post makes the stamp anew, an unknown one keeps it); a draft edited after the request is kept when its post is published; the page for one poster uses the poster's caption and leaves the draft; what « Publier… » does in each state; a post's line.
 - **Browser smoke (stub):** reach the page on a desktop, on a phone and from a poster's final panel (that poster alone, its caption, the draft kept); an unknown post answered with no Page connected; choose three posters, reorder, take a caption as the description, publish, the progress then the link, the order sent; the draft kept after a refused image (`[stub:image:2]`) and cleared after a published post; a reload while the answer is held: one post; « Arrêter l’envoi » (`[stub:slow]`); the operator's limit; an unknown outcome and each answer; a poster in another format counted and not offered; `off`: no entry and no button.
 
 ## To prove (free; with the owner's token)
 
 Before task 2, unseen (scheduled, not published), on any Page of his:
-1. The largest number of images and the code of Facebook's refusal (40 is next). A fixed maximum goes on the page before the owner reaches it.
+1. ~~The largest number of images and the code of Facebook's refusal.~~ **Done 2026-11-21: 40 images accepted** (requirements, « What the proofs showed »); the largest number is not looked for further, and the refusal's code stays unknown, so no maximum is written on the page and a refusal claims no cause.
 2. A post of one photo made with `attached_media`: created, and read back as a photo.
 3. `temporary=true` on an upload that is never attached: whether Facebook removes it by itself. If so, uploads use it.
 At the first real post: the collage as a visitor sees it; that the link built from the post's id opens.
@@ -261,3 +266,5 @@ Drag to reorder; « Reprendre » a failed post on another device; the descriptio
 3. The page, its ways in, the draft and `post-sent`; the final panel's button and list in place of its sheet; Vitest; the browser smokes.
 4. « Vos données », the conditions, the runbook.
 5. With the owner: the first real post's proofs. (T-FB-005's gates of stage 1 are unchanged.)
+
+*(Re-cut in TODO.md on 2026-11-21, so that the application works between tasks: T-FB-009 and T-FB-010 build the module, its routes and the page beside the single poster's path; T-FB-013 then makes the switch: the final panel's button, the removal of `facebook_publish.py`, its routes and `publish_photo`, migration 0020, `after-restore` on posts.)*

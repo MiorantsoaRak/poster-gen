@@ -9,6 +9,7 @@ import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
 import ShopCredits from './ShopCredits.vue'
 import ShopAccount from './ShopAccount.vue'
+import ShopPublish from './ShopPublish.vue'
 import signalHorizontal from './assets/doka-horizontal.svg'
 import signalReverse from './assets/doka-horizontal-reverse.svg'
 import { sectionRead, stateBadges, stateNames, type LibraryItem, type Listing } from './dashboard'
@@ -47,6 +48,14 @@ const balanceLabel = computed(() => balance.value ? balance.value.available + ' 
 const accountVisit = ref(0)
 const account = ref<InstanceType<typeof ShopAccount> | null>(null)
 const home = ref<InstanceType<typeof ShopHome> | null>(null)
+const publisher = ref<InstanceType<typeof ShopPublish> | null>(null)
+// « Publier sur Facebook » (D-FB-POST-005) and its ways in exist only when the service publishes on Facebook. Accueil
+// makes no creator initialisation (loadShop, which sets caps): the capabilities are read once on their own, quietly, when
+// the shop opens. A failed read hides the ways in; the page's address then says why (route).
+const facebookCaps = sectionRead<Capabilities>('/api/capabilities')
+const publishOn = computed(() => !!(caps.value ?? facebookCaps.data.value)?.facebook)
+// `#publier-<id>`: the page for that poster alone; null for the draft of a post (`#publier`).
+const publishFor = ref<string | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -588,7 +597,7 @@ async function importMissingProfile() {
   await flush()
   notice.value = 'Informations ajoutées. Activez uniquement celles à afficher sur cette affiche.'
 }
-type View = 'opening' | 'accueil' | 'create' | 'posters' | 'styles' | 'credits' | 'compte'
+type View = 'opening' | 'accueil' | 'create' | 'posters' | 'styles' | 'credits' | 'compte' | 'publier'
 const view = ref<View>('opening')
 const routeRetry = ref<string | null>(null)
 // The error line's « Réessayer » for the error it was made for (`text`); any action clears it (perform).
@@ -627,7 +636,8 @@ function switchTo(to: Start, confirmed = false) {
   leave(target)
 }
 const here = () => creation.value?.id ? `${chatting.value ? 'message-' : ''}${creation.value.id}` : chatting.value ? 'message'
-  : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : view.value === 'create' ? 'etapes' : view.value === 'opening' ? 'accueil' : view.value
+  : view.value === 'posters' ? 'affiches' : view.value === 'styles' ? 'styles' : view.value === 'create' ? 'etapes' : view.value === 'opening' ? 'accueil'
+  : view.value === 'publier' && publishFor.value ? `publier-${publishFor.value}` : view.value
 let routeDue = false, discardedFor: string | null = null
 // A cancelled Back/Forward returns to the original entry without erasing either history branch.
 let position = Number(window.history.state?.position) || 0
@@ -743,7 +753,9 @@ async function route() {
     const message = /^message(?:-([a-f0-9-]{36}))?$/.exec(hash)
     const id = message ? message[1] : /^[a-f0-9-]{36}$/.test(hash) ? hash : undefined
     const creator = !!(id || message || hash === 'creer' || hash === 'etapes')
-    const next = creator ? 'create' : VIEWS[hash] ?? 'accueil'
+    // « #publier » and « #publier-<poster id> » (D-FB-POST-005), as « #message-<id> » is read.
+    const publish = /^publier(?:-([a-f0-9-]{36}))?$/.exec(hash)
+    const next = creator ? 'create' : publish ? 'publier' : VIEWS[hash] ?? 'accueil'
     // The conversation stays only when it is the same thread: another poster's, or a new one (« #message », « #creer »
     // with the chat preferred) from a poster's, is a departure; the photos chosen here are not that thread's (review r1, 1).
     const thread = message ? id ?? '' : hash === 'creer' && preferChat.value ? '' : null
@@ -764,6 +776,11 @@ async function route() {
     if (doc.value && !id) await fresh()
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     if ((creator || next === 'styles') && !creatorReady) await loadShop()
+    // Without the feature the address falls back as an unknown one does; unread, it is read first, and a failure says so.
+    if (publish && !caps.value && !facebookCaps.data.value) {
+      await facebookCaps.read()
+      if (facebookCaps.error.value && window.location.hash.slice(1) === hash) throw new Error(facebookCaps.error.value)
+    }
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     chatting.value = creator && (chatOn.value && !!message || hash === 'creer' && preferChat.value)
     // The destination takes the focus, its title first, unless a dialog in front owns it.
@@ -773,7 +790,8 @@ async function route() {
       else if (message && !chatting.value) replaceAddress(`#${id}`)
       return
     }
-    view.value = next
+    publishFor.value = publish?.[1] ?? null
+    view.value = next === 'publier' && !publishOn.value ? 'accueil' : next
     if (next === 'compte') accountPosition = position
     const address = here()
     if (address !== hash) replaceAddress(`#${address}`)
@@ -939,7 +957,7 @@ function keepTab(event: KeyboardEvent) {
   const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
-const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || publishSheet.value || review.value || finalPreview.value || opened.value))
+const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || publishSheet.value || review.value || finalPreview.value || opened.value || publisher.value?.modal))
 // "Styles": a style opens in a panel; one made by the shop can be renamed or removed there.
 const openedId = ref<string | null>(null), renameText = ref(''), renameError = ref('')
 const opened = computed(() => {
@@ -2276,6 +2294,7 @@ async function openShop() {
   // both; the creator, Styles and Mes crédits read the balance (D-REDESIGN-002). No watcher: it would fire before Accueil.
   if (doc.value || view.value !== 'accueil') void recent.read()
   if (!doc.value && (view.value === 'posters' || view.value === 'compte')) void readBalance()
+  if (!caps.value && !facebookCaps.data.value) void facebookCaps.read()  // the ways in to « Publier sur Facebook »
 }
 function reload() { leaving = true; location.reload() }
 // An explicit sign-in on this page binds it to that shop and loads it fresh (rule 4). The same shop again: its unsaved
@@ -2381,7 +2400,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <button ref="sideClose" class="ghost icon side-close" type="button" aria-label="Fermer le menu" @click="closeDrawer"><Icon n="close" /></button>
     <a href="#accueil" class="brand" aria-label="Doka Studio — Accueil" title="Accueil" translate="no"><img class="lockup" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt=""><img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="40" height="40" alt=""></a>
     <a href="#creer" class="primary new" title="Nouvelle affiche"><Icon n="plus" /><span class="label">Nouvelle affiche</span></a>
-    <nav class="nav" aria-label="Navigation"><a href="#accueil" title="Accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span class="label">Accueil</span></a><a href="#affiches" title="Mes affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="label">Mes affiches</span> <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></a><a href="#styles" title="Styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span class="label">Styles</span> <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
+    <nav class="nav" aria-label="Navigation"><a href="#accueil" title="Accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span class="label">Accueil</span></a><a href="#affiches" title="Mes affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="label">Mes affiches</span> <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></a><a v-if="publishOn" href="#publier" title="Publier" :aria-current="!doc && view === 'publier' ? 'page' : undefined"><Icon n="share" /><span class="label">Publier</span></a><a href="#styles" title="Styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span class="label">Styles</span> <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
     <div v-if="recentItems.length" class="recent"><h2>Affiches récentes</h2><ul>
       <li v-for="item in recentItems" :key="item.id"><a :href="posterAddress(item.id)" :title="item.title" :aria-current="creation?.id === item.id ? 'page' : undefined"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="32" height="40" alt="" loading="lazy" /><span v-else class="blank-poster" /><span><b translate="no">{{ item.title }}</b><span>{{ stateNames[item.state] }}</span></span></a></li>
     </ul></div>
@@ -2416,7 +2435,9 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button v-else-if="retry && retry.text === error" class="text-button" type="button" @click="retry.run()">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
+    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" :publish="publishOn" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
+    <ShopPublish v-if="shown && !doc && view === 'publier'" ref="publisher" :poster="publishFor" :terms="terms" :inert="modalOpen && !publisher?.modal"
+      @terms="readConditions" @poster="id => perform(() => openFromList(id))" />
     <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="!doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
       :support="support" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
     <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
@@ -2443,7 +2464,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </form>
     </div>
     <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label></div>
+      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><a v-if="publishOn" href="#publier" class="download-button secondary"><Icon n="share" />Publier sur Facebook</a><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label></div>
       <p v-if="listFailed"><button class="secondary" @click="perform(loadLibrary)">Réessayer la liste</button></p>
       <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
       <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>

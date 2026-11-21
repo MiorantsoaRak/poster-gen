@@ -373,10 +373,11 @@ def walk(browser, out):
         all_clear = home.get_by_text("Aucune affiche à vérifier.", exact=True)
         expect(all_clear).to_be_visible()
         # A cold Accueil makes the requests it made before the shell, each once: the sidebar shares Accueil's reads
-        # (D-REDESIGN-002), and nothing of the creator is read.
+        # (D-REDESIGN-002), and nothing of the creator is read: the capabilities at most once, for the ways in to
+        # « Publier sur Facebook » (D-FB-POST-005).
         cold = list(reads)
         assert [cold.count(path) for path in ("shop-dashboard", "creations?limit=5", "balance")] == [1, 1, 1], cold
-        assert not any(path.startswith(("looks", "capabilities", "shop-profile", "creations?limit=50")) for path in cold), cold
+        assert not any(path.startswith(("looks", "shop-profile", "creations?limit=50")) for path in cold) and cold.count("capabilities") <= 1, cold
         pending_summary = []
         page.route("**/api/shop-dashboard", lambda route: pending_summary.append(route))
         with page.expect_request("**/api/shop-dashboard"):
@@ -390,7 +391,7 @@ def walk(browser, out):
         home.get_by_role("button", name="Réessayer le suivi").click()
         expect(all_clear).to_be_visible()
         assert "shop-dashboard" in reads and "creations?limit=5" in reads
-        assert not any(path.startswith(("looks", "capabilities", "shop-profile", "creations?limit=50")) for path in reads), reads
+        assert not any(path.startswith(("looks", "shop-profile", "creations?limit=50")) for path in reads) and reads.count("capabilities") <= 1, reads
         while held:
             held.pop().abort()
         expect(home.get_by_text("Affiches indisponibles.", exact=False)).to_be_visible()
