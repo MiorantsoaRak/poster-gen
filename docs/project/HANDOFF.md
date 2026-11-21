@@ -8,11 +8,12 @@ No work order: the owner's own project. Goal: both interfaces follow the mockup 
 ([mockups/doka-console/](mockups/doka-console/README.md)); ADR-123, [requirements](requirements/app-redesign.md),
 [design](designs/app-redesign.md) v2, tasks T-REDESIGN-001 … 007 in TODO.md.
 
-**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and committed on the branch `redesign`, NOT on `main`, NOT deployed.** Pushed on the owner's word (2026-11-21: "commit and push"): `redesign` and `main` are on `origin`.
+**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and merged into `main` (2026-11-21, on the owner's word "merge redesign into main": a `--no-ff` merge, no conflict). NOT deployed, and the merge is NOT pushed.** `origin/main` is still the commit before the merge; `origin/redesign` holds the same code.
 The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `node_modules`, `.venv`; smoke ports
 5273/8100). `redesign-chat` (worktree `../affiche-ia-worktrees/chat`) and `redesign-console`
-(`../affiche-ia-worktrees/console`) are merged into it. `main` still holds the interface polish only
-(T-POLISH-001 … 005), also not pushed. The report: [reviews/app-redesign-after-2026-11-21.md](reviews/app-redesign-after-2026-11-21.md).
+(`../affiche-ia-worktrees/console`) are merged into it. After the merge the code of `main` equals the branch
+(`git diff redesign main -- frontend backend DESIGN.md` is empty); Vitest 313 and the build pass in the main checkout; the
+smokes were not run again there (the same tree as the run on the branch). The report: [reviews/app-redesign-after-2026-11-21.md](reviews/app-redesign-after-2026-11-21.md).
 
 **Proof, once on the merged branch:** Vitest 312; the build; all seven browser smokes; backend 1533 passed; 102
 captures in `../affiche-ia-worktrees/app/outputs/design-capture/redesign/`.
@@ -43,8 +44,7 @@ mode on the web port, and `design_capture.seed()` for the data.
    then open `outputs/design-capture/look/sheets/` there.
 2. Decide the five points of « For the owner » in the report (placement of « Needs you », the cost sentence, « Images »,
    « Payments », the theme switch in the phone drawer).
-3. On his word only: merge `redesign` into `main` (`git merge --no-ff redesign` from `main`; no conflict expected,
-   `main` has only docs since), push, deploy as an ordinary release (no migration).
+3. On his word only: push `main` (the merge is local), then deploy as an ordinary release (no migration).
 
 **Open, small (from the `DESIGN.md` rewrite, not yet tasks):** the console's yellow hover is a `color-mix()` (the
 shops' app uses `--signal-hover`); the two apps' blur values differ; the console's scrim is a literal; the console's
@@ -57,7 +57,7 @@ sidebar's « Affiches récentes » shows the state as grey text, not a badge.
   the full suite once at the end.
 - Rule 1 of the design: nothing with blur, filter, transform or containment between a fixed element and the window
   (the phone's review buttons are fixed from inside the review panel). The window is the page's scroller.
-- The worktrees are on disk next to the repo; delete them only after `redesign` is merged
+- The worktrees are on disk next to the repo; `redesign` is merged, so they can go on the owner's word
   (`git worktree remove ../affiche-ia-worktrees/<name>`).
 - The mockup's local server (port 8777) may still be running from 2026-11-20; it serves only the mockup folder.
 
