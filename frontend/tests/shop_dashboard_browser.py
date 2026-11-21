@@ -265,7 +265,7 @@ def walk_frame(browser):
         title = page.get_by_role("heading", level=1)
         edges = []
         for name, link, first in (
-                ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.get_by_label("Afficher les affiches retirées")),
+                ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.locator(".gallery").get_by_role("button", name="Nouvelle affiche")),  # the page's action, then its filter
                 ("Styles", nav.get_by_role("link", name=re.compile("^Styles")), page.locator(".look-card").first),
                 ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("button", name="Actualiser")),
                 ("Mes crédits", home.get_by_role("link", name="Voir mes crédits"), page.locator(".shop-credits").get_by_role("link", name="Retour à l’accueil")),
@@ -794,7 +794,7 @@ def check_balance_explanation(page, view, balance):
         balance["blocked"]["scene"] = {"reason": reason, "message_fr": restriction} if reason else None
         with page.expect_response("**/api/balance"):
             view.get_by_role("button", name="Actualiser").click()
-        expect(view.locator("dd")).to_have_text([str(available), str(pending)])
+        expect(view.locator("dd")).to_have_text([f"{available} crédit{'' if abs(available) == 1 else 's'}", f"{pending} crédit{'' if abs(pending) == 1 else 's'}"])
         expect(reserved).to_have_count(int(pending > 0))
         expect(empty).to_have_count(int(available <= 0))
         expect(view.get_by_text(restriction, exact=True)).to_have_count(int(bool(reason)))
@@ -804,7 +804,7 @@ def check_balance_explanation(page, view, balance):
     view.get_by_role("button", name="Actualiser").click()
     expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
     expect(view.get_by_text("Dernier solde connu à " + checked)).to_be_visible()
-    expect(view.locator("dd")).to_have_text(["-2", "1"])
+    expect(view.locator("dd")).to_have_text(["-2 crédits", "1 crédit"])  # the unit follows the count, as in the shell
     expect(empty).to_have_count(0)
     expect(view.get_by_text(restriction, exact=True)).to_have_count(0)
     view.get_by_role("button", name="Réessayer le solde").click()
@@ -873,7 +873,7 @@ def walk_credits(browser, out):
         expect(view.get_by_role("button", name="Réessayer le solde")).to_be_visible()
         expect(view.locator("dd")).to_have_count(0)
         check_balance_explanation(page, view, balance)
-        expect(view.get_by_text("-2", exact=True)).to_be_visible()
+        expect(view.locator("dd").first).to_have_text("-2 crédits")  # the figure with its unit
         expect(view.get_by_text(balance["purchase_fr"])).to_be_visible()
         expect(view.get_by_text("Achat de crédits")).to_be_visible()
         with page.expect_request("**/*before=cursor"):

@@ -63,11 +63,21 @@ it('keeps the role table in both themes', () => {
   expect(dark.ambient).toBe('radial-gradient(52rem 34rem at 8% -6%, var(--patch-1), transparent 62%), radial-gradient(46rem 38rem at 104% 104%, var(--patch-2), transparent 60%), radial-gradient(34rem 26rem at 62% 34%, var(--patch-3), transparent 70%)')
 })
 
-it('declares a token of the table only in the two themes and in the solid fallback', () => {
+// The balance card is the dark surface in the light theme too: there, and only there, a rule writes the table's tokens
+// again, each with the dark theme's value.
+const INVERSE = ':root[data-theme=clair] .balance-card'
+
+it('declares a token of the table only in the two themes, in the solid fallback and on the balance card', () => {
   const fallback = /^@(supports not|media \(prefers-reduced-transparency: reduce\))/
   const elsewhere = rules.filter(rule => declared(rule.body).some(([name]) => name in ROLES.dark || name === 'ambient'))
-    .filter(rule => !(rule.at === '' && [DARK, LIGHT].includes(rule.selector)) && !(fallback.test(rule.at) && rule.selector === ':root:root'))
+    .filter(rule => !(rule.at === '' && [DARK, LIGHT, INVERSE].includes(rule.selector)) && !(fallback.test(rule.at) && rule.selector === ':root:root'))
   expect(elsewhere.map(rule => `${rule.at} ${rule.selector}`)).toEqual([])
+})
+
+it('gives the balance card the dark theme\'s values in the light theme', () => {
+  const again = Object.entries(tokens(INVERSE)).filter(([name]) => name in ROLES.dark)
+  expect(again.map(([name]) => name)).toContain('text')
+  for (const [name, value] of again) expect(value, name).toBe(dark[name])
 })
 
 it('makes what floats opaque and still where the browser cannot blur or the person asked for less', () => {

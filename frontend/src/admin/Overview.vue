@@ -68,8 +68,8 @@ const checked = computed(() => !!shops.value.answer && !!service.value.answer &&
 </script>
 
 <template>
+  <button type="button" class="title-action" @click="read">Refresh</button>
   <div class="refusal" role="alert"><p v-for="line in failures" :key="line">{{ line }}</p></div>
-  <button type="button" @click="read">Refresh</button>
 
   <!-- The four figures: one card split by hairlines, a label over each value. -->
   <dl class="card kpis">

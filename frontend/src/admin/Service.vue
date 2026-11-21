@@ -72,8 +72,8 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
 </script>
 
 <template>
+  <button class="title-action" @click="read">Refresh</button>
   <p class="refusal" role="alert">{{ message }}</p>
-  <button @click="read">Refresh</button>
   <template v-if="shown">
     <section class="card" aria-labelledby="health-title">
       <h2 id="health-title">Health</h2>

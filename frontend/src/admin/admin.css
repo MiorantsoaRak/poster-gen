@@ -76,6 +76,8 @@ nav a, td a, p > a { display: inline-flex; align-items: center; min-width: 44px;
 main { --column: 860px; margin-inline: calc(var(--gap) + var(--side-w)) var(--gap);
   padding: 8px max(var(--gutter), (100% - var(--side-w) - 2 * var(--gap) - var(--column)) / 2) 48px }
 main.wide { --column: 1240px }
+/* One shop: a column of forms. Its cards are as wide as a form, not as a table's page. */
+main.single { --column: 600px }
 main > button { margin-bottom: 16px }
 main.out { --column: 420px; padding-top: 48px }
 .out .lockup { display: block; width: 220px; height: auto }
@@ -153,14 +155,37 @@ details.card { padding-block: 6px }
 details.card[open] { padding-bottom: 16px }
 .kept, .shown { border: 2px solid var(--hue) }
 .shown { padding: 16px 20px; border-radius: 20px; background: var(--surface) }
-.stack { display: grid; gap: 8px; max-width: 480px }
+/* A form fills its card: where its fields would be too wide, the card or the page's column is narrower, never the
+   form inside it (the owner's rule, 2026-11-21). */
+.stack { display: grid; gap: 8px }
 .stack button { justify-self: start }
+/* A period is one row that fills its card: its two days share the width, then the button that reads it, as tall as
+   they are (they stack when the row is too narrow). */
+.range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 16px }
+.range > div { display: grid; gap: 8px; flex: 1 1 180px }
+.range button { min-height: 48px }
+.range .refusal { flex-basis: 100%; margin: 0 }
+/* A page's action (« Refresh », the Shops page's « New shop ») sits on the title's line, at its right, not under it. It
+   comes right after the h1 (26/32 px, 16 px under it), so it is lifted by that line and centred on it. */
+.title-action { float: right; margin-top: -52px }
+.title-action + * { clear: both }  /* nothing under it is narrowed by it */
+@media (width < 600px) { .range > div { flex-basis: 100% } }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 }
 .refusal { color: var(--bad); font-weight: 700 }
 .refusal:empty, [role='status']:empty { margin: 0 }
 .note { border-left: 4px solid var(--signal-edge); padding-left: 12px }
 .secret { font-size: 20px; letter-spacing: .05em; user-select: all }
 .name { font-size: 18px; font-weight: 650 }
+/* One shop's head: who it is and its state on the left, its two figures on the right (under them when narrow), each
+   with its label above. */
+.shop-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 24px }
+.shop-head p { margin: 0 }
+.shop-head .state { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted) }
+.shop-head .figures { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 20px; margin: 0 }
+.shop-head .figures div + div { padding-left: 20px; border-left: 1px solid var(--line) }
+.shop-head dt { font-size: 13px; color: var(--muted) }
+.shop-head dd { margin: 0; font-size: 22px; line-height: 28px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right }
+@media (width < 600px) { .shop-head .figures { grid-column: 1; grid-row: auto; margin-top: 10px } .shop-head dd { text-align: left } }
 .lines { list-style: none; margin: 0 0 8px; padding: 0 }
 .lines li { padding: 12px 0; border-top: 1px solid var(--line) }
 .lines li:first-child { border-top: 0 }
@@ -199,7 +224,16 @@ details.card[open] { padding-bottom: 16px }
   .shops td.shop a { line-height: 44px }
   /* A date is not broken at its hyphens: in the overview's narrower column it would make a row taller than the others. */
   .shops td[data-label='Last poster'] { white-space: nowrap }
+  /* The payments table lies in a card with its own padding: its first and last cells keep the card's edges. */
+  .payments :is(th, td):first-child { padding-left: 0 }
+  .payments :is(th, td):last-child { padding-right: 0 }
+  .payments td[data-label='When'] { white-space: nowrap }
 }
+/* Payments: the shop and the amount are the row's ink; a note and who wrote the line are small, under their value; a
+   long reference or note breaks anywhere rather than widening the table. */
+.shops.payments td:not(.shop) { overflow-wrap: anywhere }
+.payments small { display: block; font-size: 13px; line-height: 18px }
+.payments :is(.who, .amount) { color: var(--text); font-weight: 650 }
 /* Below 600 px each shop is a card in one column: the shop first, then each value with its column's name; long values
    wrap there. */
 @media (width < 600px) {
@@ -208,8 +242,13 @@ details.card[open] { padding-bottom: 16px }
   .shops, .shops tbody, .shops tr, .shops td { display: block }
   .shops tr { margin-bottom: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface) }
   .shops td, .shops td.shop { width: auto; height: auto; padding: 0; border: 0 }
-  .shops td + td { margin-top: 4px }
-  .shops td[data-label]::before { content: attr(data-label) ': '; color: var(--faint) }
+  .shops td + td { margin-top: 6px }
+  /* Each value under the shop: its column's name on the left, the value on the right edge (one edge down the card). */
+  .shops td[data-label] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px }
+  .shops td[data-label]::before { content: attr(data-label); margin-right: auto; color: var(--faint) }
+  /* Payments are inside a card already: a row is a block between hairlines, not a card in a card. */
+  .payments tr, .payments tr:first-child { margin: 0; padding: 12px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none }
+  .payments small { flex-basis: 100% }
 }
 
 /* The overview (D-REDESIGN-006). The four figures: one card whose 1 px gaps, on --line over --surface, are the hairlines
@@ -226,7 +265,8 @@ details.card[open] { padding-bottom: 16px }
    columns as the width holds, each a 44 px link on a hairline. */
 .needs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px }
 .needs h2, .needs p { margin: 0 }
-.needs ul { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); column-gap: 24px; margin: 0 }
+/* auto-fit, not auto-fill: with fewer lines than columns the empty columns collapse and the lines share the card's width. */
+.needs ul { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); column-gap: 24px; margin: 0 }
 .needs li, .needs li:first-child { padding: 4px 0; border-top: 1px solid var(--line) }
 /* Below it: the shops and the service, then the payments; two columns over 1180 px. */
 .cols { display: grid; gap: 0 16px; align-items: start }
@@ -259,3 +299,4 @@ dialog { width: min(32rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: var(--lift); color: var(--text) }
 dialog::backdrop { background: rgb(21 19 15 / .55) }
 dialog h2 { margin-top: 0 }
+dialog .actions { justify-content: flex-end; margin-bottom: 0 }

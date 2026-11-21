@@ -91,9 +91,10 @@ def ask(page, opener, title, action):
 
 
 def new_shop_form(page):
-    """Opens « New shop » when it is folded (its fold keeps its state across views)."""
-    if not page.locator("details", has=page.locator("summary", has_text="New shop")).evaluate("e => e.open"):
-        page.locator("summary", has_text="New shop").click()  # not the sidebar's link of the same name
+    """Opens the « New shop » window when it is closed, by the Shops page's button (not the sidebar's link)."""
+    if not page.locator("dialog.new-shop").evaluate("e => e.open"):
+        page.locator("main").get_by_role("button", name="New shop", exact=True).click()
+    expect(page.get_by_role("dialog", name="New shop")).to_be_visible()
 
 
 def wait_until(page, ready):
@@ -218,8 +219,11 @@ def walk(browser, playwright, engine, errors):
         expect(page.get_by_role("heading", name="Shops", exact=True, level=1)).to_be_focused()
         expect(page.get_by_role("link", name=smoke.IDENTIFIER, exact=True)).to_be_visible()
 
-        # A shop with the widest values, its password shown once and copied.
-        page.locator("summary", has_text="New shop").click()
+        # A shop with the widest values, its password shown once and copied. « New shop » is a window: a modal dialog
+        # with its first field focused; created, it closes and the password takes the focus.
+        page.locator("main").get_by_role("button", name="New shop", exact=True).click()
+        expect(page.get_by_role("dialog", name="New shop")).to_be_visible()
+        expect(page.get_by_label("Identifier", exact=True)).to_be_focused()
         page.get_by_label("Identifier", exact=True).fill(WIDE_ID)
         page.get_by_label("Name (optional)", exact=True).fill(WIDE_NAME)
         expect(page.get_by_label("Welcome credits", exact=True)).to_have_value("5")
@@ -253,7 +257,8 @@ def walk(browser, playwright, engine, errors):
         expect(page.get_by_role("heading", name=WIDE_ID, level=1)).to_be_focused()
         expect(page.get_by_text(WIDE_NAME, exact=True)).to_be_visible()
         expect(page.get_by_text("active · 1 live session", exact=True)).to_be_visible()
-        expect(page.locator("main p").filter(has_text="available 5")).to_have_text("available 5 · en attente 0")
+        expect(page.locator(".shop-head dt")).to_have_text(["Available", "En attente"])
+        expect(page.locator(".shop-head dd")).to_have_text(["5", "0"])
         expect(page.get_by_text("Provider spend: $0.00 of $2.00", exact=True)).to_be_visible()
         expect(page.get_by_text("Messages read: 0 of 100", exact=True)).to_be_visible()
         page.get_by_text("Access", exact=True).click()
@@ -342,7 +347,7 @@ def walk(browser, playwright, engine, errors):
             route.fulfill(status=409, json={"error": {"code": "operator_refused", "message_fr": "Refusé : rien n’a été écrit.",
                                                       "retryable": False, "detail": WIDE_REFUSAL}, "request_id": "r"})
         page.route("**/api/admin/shops", refuse)
-        page.locator("summary", has_text="New shop").click()
+        page.locator("main").get_by_role("button", name="New shop", exact=True).click()
         page.get_by_label("Identifier", exact=True).fill("refused")
         page.get_by_role("button", name="Create the shop", exact=True).click()
         expect(page.get_by_role("alert").filter(has_text=WIDE_REFUSAL)).to_be_visible()
@@ -467,6 +472,8 @@ def walk(browser, playwright, engine, errors):
             page.get_by_label("Identifier", exact=True).fill(identifier)
             page.get_by_role("button", name="Create the shop", exact=True).click()
             wait_until(page, lambda: len(held) == 2)
+            page.keyboard.press("Escape")  # the window is modal: closed, the request still out, the page is usable again
+            expect(page.locator("dialog.new-shop")).to_be_hidden()
             page.get_by_role("button", name="Sign out", exact=True).click()
             expect(password_field(page)).to_be_focused()
             if again:
@@ -480,7 +487,9 @@ def walk(browser, playwright, engine, errors):
             expect(page.locator(".shown")).to_have_count(0)
             assert late not in page.content() and "STALE-LIST" not in page.content()
             if again:
+                new_shop_form(page)
                 expect(page.get_by_role("button", name="Create the shop", exact=True)).to_be_enabled()
+                page.keyboard.press("Escape")
             else:
                 left_nothing("after late answers")
         sign_in(page)
@@ -992,9 +1001,15 @@ def walk_money(browser, engine, errors):
         expect(page.get_by_label("First day (UTC)", exact=True)).to_have_value(first.isoformat())
         expect(page.get_by_label("Last day, included", exact=True)).to_have_value(last.isoformat())
         expect(page.get_by_text(re.compile(r"^Received: "))).to_have_text(f"Received: {received[0]:,} Ar".replace(",", " "))
-        expect(page.locator(".lines li")).to_have_count(received[1])
-        expect(page.locator(".lines li", has_text="MV-MOVE")).to_have_count(3)  # moved: +A, −A, +A, counted once
-        expect(page.locator(".lines li", has_text="MV-SPENT")).to_contain_text("+20 000 Ar · boutiquesix · grant bought · line ")
+        # A ledger: one payment a row, its values in their columns (When, Shop, Entry, Method, Reference, Credits, Amount).
+        rows = page.locator(".payments tbody tr")
+        expect(page.locator(".payments th")).to_have_text(["When", "Shop", "Entry", "Method", "Reference", "Credits", "Amount"])
+        expect(rows).to_have_count(received[1])
+        expect(rows.filter(has_text="MV-MOVE")).to_have_count(3)  # moved: +A, −A, +A, counted once
+        spent = rows.filter(has_text="MV-SPENT")
+        expect(spent.locator("td[data-label=Shop]")).to_have_text("boutiquesix")
+        expect(spent.locator("td[data-label=Entry]")).to_contain_text("grant bought · line ")
+        expect(spent.locator("td[data-label=Amount]")).to_have_text(re.compile(r"^\+20\s000\sAr$"))
         for scheme in ("light", "dark"):
             emulate(page, scheme)
             check_layout(page, f"the payments at 360 px, {scheme}")
@@ -1087,9 +1102,9 @@ def walk_keyboard(browser, errors):
         tab_to(page, page.locator("aside.side").get_by_role("link", name="Shops", exact=True), back=True)
         page.keyboard.press("Enter")
         expect(page.get_by_role("heading", name="Shops", exact=True, level=1)).to_be_focused()
-        tab_to(page, page.locator("summary", has_text="New shop"))
+        tab_to(page, page.locator("main").get_by_role("button", name="New shop", exact=True))
         page.keyboard.press("Enter")
-        tab_to(page, page.get_by_label("Identifier", exact=True))
+        expect(page.get_by_label("Identifier", exact=True)).to_be_focused()  # the window's first field
         page.keyboard.type("clavier")
         page.keyboard.press("Enter")  # the form's own submission
         panel = page.locator(".shown")
@@ -1495,19 +1510,22 @@ def walk_shell(browser, engine, errors):
         expect(rows).to_have_count(total)
         assert len(reads) == before, reads[before:]
 
-        # « New shop » in the sidebar: the list, its fold open, its first field focused; also when already on Shops.
+        # « New shop » in the sidebar: the list, its window open over it, its first field focused; also when already on
+        # Shops. Esc closes the window and the page behind it is usable again.
         new = side.get_by_role("link", name="New shop", exact=True)
-        fold = page.locator("details", has=page.locator("summary", has_text="New shop"))
+        window = page.locator("dialog.new-shop")
         page.evaluate("location.hash = '#/money'")
         expect(page.get_by_role("heading", name="Payments", level=1)).to_be_focused()
         new.click()
         expect(page.get_by_label("Identifier", exact=True)).to_be_focused()
-        assert page.evaluate("location.hash") == "#/shops" and fold.evaluate("e => e.open")
-        page.locator("summary", has_text="New shop").click()
-        assert not fold.evaluate("e => e.open")
+        assert page.evaluate("location.hash") == "#/shops" and window.evaluate("e => e.open && e.matches(':modal')")
+        page.keyboard.press("Escape")
+        expect(window).to_be_hidden()
         new.click()
         expect(page.get_by_label("Identifier", exact=True)).to_be_focused()
-        assert fold.evaluate("e => e.open")
+        assert window.evaluate("e => e.open")
+        window.get_by_role("button", name="Cancel", exact=True).click()
+        expect(window).to_be_hidden()
 
         # The rail, by one button: 76 px, every link keeps its name, the D alone; in memory only, so a reload undoes it.
         page.get_by_role("button", name="Collapse the menu", exact=True).click()

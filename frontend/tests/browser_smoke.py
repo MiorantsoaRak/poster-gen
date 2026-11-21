@@ -1487,7 +1487,7 @@ def walk_formats(browser, errors):
                     shot(screen, f"format-{value}-{width}-{theme}-grand.png", full_page=False)
                     press(sheet.get_by_role("button", name="Revenir aux réglages"))
                     expect(screen.get_by_role("dialog")).to_have_count(0)
-            # The library: each thumbnail whole, in its poster's shape, inside the same 48 × 60 place.
+            # The library: each thumbnail whole, in its poster's shape, inside the same 64 × 80 place.
             screen.goto(f"{ORIGIN}/#affiches")
             expect(screen.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
             for value, title in titles.items():
@@ -1495,7 +1495,7 @@ def walk_formats(browser, errors):
                 screen.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=picture.element_handle())
                 natural = picture.evaluate("e => e.naturalWidth / e.naturalHeight")
                 assert abs(natural - ratios[value]) / ratios[value] < .02 and picture.evaluate("e => getComputedStyle(e).objectFit") == "contain", (value, natural)
-                assert [round(side) for side in picture.evaluate(BOX_JS)] == [48, 60]
+                assert [round(side) for side in picture.evaluate(BOX_JS)] == [64, 80]
             check_contrast(screen, f"Mes affiches at {width} px, {theme}")
             shot(screen, f"format-mes-affiches-{width}-{theme}.png", full_page=False)
             # A Story poster in the steps: on one column its thumbnail is at most 130 px high and the first field stays high.

@@ -337,6 +337,25 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state { background: var(--surface); border: 1px solid var(--line) }
 .sign-in { max-width: 420px; padding: 28px; margin: 10vh auto; border-radius: var(--radius) }
 .sign-in h1, .intake h1 { font-size: 26px; line-height: 32px; margin-bottom: 8px }
+/* In the sign-in card each action takes the card's width (a thumb reaches it anywhere), and the help keeps its distance. */
+.sign-in > button { width: 100% }
+.sign-in > button + .help { margin-top: 14px }
+/* The balance card (Accueil and « Mes crédits »), as a finance app's: one dominant figure with its label above and its
+   unit after, the pending one clearly second. Always the dark card (charcoal in the light theme, the raised surface in
+   the dark one), so yellow sits on charcoal as in the kit: in the light theme everything inside reads the dark theme's
+   roles. Flat: no gradient, blur or shadow. The answer figure is 36 px, 1.8 times its sibling. */
+.balance-card { --bal: var(--surface); padding: clamp(20px, 3vw, 32px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--bal); color: var(--text) }
+:root[data-theme=clair] .balance-card { --bal: #20201d; --surface: #2b2b27; --raised: #36362f; --line: rgb(245 241 232 / .10); --control: #8f8b80;
+  --edge: rgb(245 241 232 / .22); --active: rgb(245 241 232 / .10); --text: #f5f1e8; --muted: #d6d0c3; --faint: #c2bcaf; --hue: #f2c744;
+  --ok: #8fddb0; --ok-bg: #1d3327; --warn: #f0c26a; --warn-bg: #3a2f14; --bad: #ff9a8f; --bad-bg: #3d2320; --signal-edge: #f2c744; color-scheme: dark }
+.balance-card h2 { font-size: 15px; line-height: 20px; font-weight: 650; color: var(--muted) }
+.balance-figures { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 24px; margin: 16px 0 12px }
+.balance-figures > div + div { padding-left: 24px; border-left: 1px solid var(--line) }
+.balance-figures .label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 13px; font-weight: 600 }
+.balance-figures .value { margin: 0; font-variant-numeric: tabular-nums; font-size: 20px; line-height: 28px; font-weight: 700 }
+.balance-figures .credit-unit { color: var(--muted); font-size: 14px; font-weight: 600; letter-spacing: 0 }
+.balance-figures > div:first-child .value { font-size: 36px; line-height: 40px; letter-spacing: -.02em }
+.balance-figures > div:first-child .credit-unit { font-size: 16px }
 .intake-layout { max-width: 640px; margin: 20px auto }
 .intake { border-radius: var(--radius); padding: 28px }
 .intro { color: var(--muted); margin-bottom: 22px; max-width: 52ch }
@@ -361,13 +380,14 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .rows { display: grid; border-radius: var(--radius); overflow: hidden }
 .library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center }
 .library-row + .library-row { border-top: 1px solid var(--line) }
-.row-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 8px 0 }
-.row-actions button { min-height: 36px; padding: 0 14px; font-weight: 600 }
+/* A row's second actions are words, not a stack of outlined buttons: the row itself (and its chevron) is the main one. */
+.row-actions { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 12px 8px 0 }
+.row-actions button { min-height: 36px; padding: 0 10px; border-color: transparent; color: var(--muted); font-weight: 600; text-decoration: underline; text-underline-offset: 2px }
 .more { margin: 14px 0 0; text-align: center }
 .gallery .titlerow label.check { padding: 0 }
-.library-item { display: grid; align-items: center; grid-template-columns: 48px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 76px; padding: 8px 20px; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; justify-content: stretch }
+.library-item { display: grid; align-items: center; grid-template-columns: 64px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 96px; padding: 8px 20px; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; justify-content: stretch }
 /* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
-.library-item { content-visibility: auto; contain-intrinsic-size: auto 76px }
+.library-item { content-visibility: auto; contain-intrinsic-size: auto 96px }
 @media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--active) } }
 .library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 /* The state, price and date go under the title at every width: beside it they were cut short in the 860 px frame (D-POLISH-003). */
@@ -381,9 +401,10 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .library-item:has(.badge) > :is(:first-child, :last-child) { grid-row: 1 / span 3 }
 .library-item svg { color: var(--faint); justify-self: center }
 /* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
-.library-item img { width: 48px; height: 60px; object-fit: contain; border-radius: 8px; display: block }
+/* 64 x 80: a poster is known by its look (a 48 px one is a colour); artwork keeps a small radius. */
+.library-item img { width: 64px; height: 80px; object-fit: contain; border-radius: 4px; display: block }
 .empty { color: var(--muted); border-radius: var(--radius); padding: 28px }
-.look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px }
+.look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, calc(50% - 7px)), 1fr)); gap: 14px; margin-bottom: 14px }
 .look-card { margin: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
 .look-card span { padding: 0 6px }
 .look-wall img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 18px; display: block }
@@ -398,6 +419,8 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 /* Editor: title row, then rail (one group of controls at a time) / stage (the poster and the one main action) / versions */
 .titlerow { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 10px 0 16px }
 .titlerow .what { margin-right: auto; min-width: 0 }
+.gallery .titlerow .what { flex: 1 1 0 }
+.gallery .titlerow label.check { flex-basis: 100%; min-height: 44px; align-items: center }
 .meta { color: var(--faint); font-size: 13px; font-weight: 500; margin: 0 }
 .progress { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; color: var(--faint); font-size: 13px }
 .progress li { display: flex; align-items: center; gap: 6px }
@@ -762,7 +785,9 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .facts { grid-template-columns: 1fr }
   .facts div + div { border-left: 0; border-top: 1px solid var(--line) }
   .library-row { grid-template-columns: 1fr }
-  .row-actions { padding: 0 12px 10px }
+  .row-actions { padding: 0 12px 6px 80px; margin-top: -6px }
+  /* Beside a 64 px thumbnail a name has about 190 px: it takes a second line rather than losing its end. */
+  .library-item strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2 }
   .library-item { padding: 8px 12px }
   .progress { display: none }
   /* iOS zooms the page on a field under 16px. */

@@ -620,6 +620,8 @@ Every `button` starts from one zero-specificity reset (`:where(button)`), so one
 - Label above, gap 6px, 13px/650 `--muted`. Placeholder `--muted` at 400.
 - `.upload-zone`: `--surface`, 2px dashed `--control`. `.file-pick` shows a French pill with an `--edge` border over a transparent native input.
 - **Switch** (`label.switch`): a 52 × 32 track. Off: `--raised` with a 2px `--muted` ring and knob. On: `--invert` with an `--invert-ink` knob. Grouped in a 20px `--surface` list with `--line` between rows.
+- A form fills its card (the owner's rule): where its fields would be too wide, the card or the page's column is made narrower, never the form inside it. « Se déconnecter » is the last thing on Mon compte, outside every card.
+- In the sign-in card each button takes the card's width, with 14px before the help line.
 - Fields carry no error colour. A reason goes in a `.why` line (`--warn`), a block of issues, or an error toast.
 - **Console:** 48px, padding 10px 14px, 1.5px `--control`, 16px corners, `--surface`; textarea 96px; the filter is a 44px pill at 16px with a search icon.
 
@@ -634,9 +636,13 @@ Every `button` starts from one zero-specificity reset (`:where(button)`), so one
 
 ### Cards and lists
 - **Cards** (`.card`, `.group`, `.sign-in`, `.intake`, `.empty`, `.rows`): `--surface`, 1px `--line`. Editor rail `.card` 24px, padding 20px 22px (18px 16px on a phone). `.group` 20px, padding 18px 20px.
-- **Dashboard cards** (`.home-bal`, `.credit-balance`, Mon compte's forms): `--surface`, `--line`, `--radius`.
-- **Poster list** (`.rows` > `.library-row` > `.library-item`): rows at least 76px, separated by `--line`. A 48 × 60 thumbnail, the title, the badge, the details in `--faint`, a chevron. Hover: `--active`. Press: `--raised`.
-- **Accueil's recent posters**: transparent rows on a bottom `--line`, a 44 × 55 thumbnail, the badge under the title.
+- **Dashboard cards** (Mon compte's forms and sections): `--surface`, `--line`, `--radius`, padding 20px.
+- **Balance card** (`.balance-card`: Accueil's « Mes crédits » and the « Solde » of Mes crédits, one form for one fact): always the dark card, charcoal `#20201d` in the light theme (where everything inside reads the dark theme's roles again: the one place besides the two themes that writes the table's tokens, pinned by `tokens.test.ts`) and `--surface` in the dark one. Flat: `--line`, `--radius`, padding `clamp(20px, 3vw, 32px)`, no gradient. Its title is a 15px/650 `--muted` label. `.balance-figures`: each figure has its label above (13px/600 `--muted`) and its unit after (« crédit » or « crédits », `--muted`); the available credits lead at 36px/40px 700, the pending ones are second at 20px behind a `--line` divider. On Accueil the check time and « Voir mes crédits » share one line and « Créer une affiche » is under them, full width at 720 px and under, at the right above. On Mes crédits « Obtenir des crédits » is the card's second part under a hairline.
+- **Poster list** (`.rows` > `.library-row` > `.library-item`): rows at least 96px, separated by `--line`. A 64 × 80 thumbnail with 4px corners (a poster is known by its look), the title (one line; two at 720 px and under), the badge, the details in `--faint`, a chevron. Hover: `--active`. Press: `--raised`. The row's second actions (`.row-actions`: « Dupliquer », « Retirer de la liste ») are underlined `--muted` words with no outline, at the right of the row, and under the text's edge at 720 px and under.
+- **A list's title row** (`.gallery .titlerow`): the title and its sentence on the left, the action on the right; the filter (« Afficher les affiches retirées ») has its own line, directly on the list it filters.
+- **Accueil's recent posters**: transparent rows on a bottom `--line`, a 48 × 60 thumbnail with 4px corners, the badge under the title, a drawn chevron at the end. « Mon compte » is a 56px row of its own under the list, between two hairlines, with the same chevron.
+- **The way back** (`a.back`, Mes crédits and Mon compte): « Retour à l’accueil » before the title, on its own line, `--muted`, with a drawn chevron.
+- **Styles** (`.look-wall`): square pictures at every width, two across on a phone.
 
 ### Navigation (shops)
 - **Sidebar rows** (`.nav a`, `.sign-out`, `.theme-toggle`): 40px (44px on touch), padding 0 12px, 12px corners, `--muted` 600. Hover: `--active` and `--text`. Current (`aria-current`): `--active`, `--text`, 700. Counts: `--faint` 13px at the row's end.
@@ -684,7 +690,11 @@ Every `button` starts from one zero-specificity reset (`:where(button)`), so one
 
 ### Console (Overview and Shops)
 - **Overview** (`Overview.vue`, the console's home): four figures in one card (Active shops, Credits outstanding, Received in the month, Provider spend with a 6px meter in `--text` on `--raised`). The 1px gaps over `--line` are the hairlines between them: one column, two by two from 600 px, four across over 1180 px. « Needs you » follows, the full width, its lines as 44px links on a hairline in as many columns as fit. Below: Shops (the first eight) and Service on the left, the month's payments in a 340px column on the right, over 1180 px.
-- **Shops table:** rows 60px on a `--line` hairline; the first cell the identifier (a 44px link) and the name under it; numbers right-aligned and tabular from 600 px; under 600 px one `--surface` card per shop, each value with its column's name.
+- **Shops table:** rows 60px on a `--line` hairline; the first cell the identifier (a 44px link) and the name under it; numbers right-aligned and tabular from 600 px; under 600 px one `--surface` card per shop, each value with its column's name on the left and the value on the right edge.
+- **Payments:** the period is one row that fills its card (two date fields sharing the width, then « Show » at their height; stacked under 600 px). The payments are a table with the shops table's styles (`.shops.payments`): When (and who wrote the line), Shop, Entry, Method, Reference (and the note), Credits, Amount; the shop and the amount in `--text` 650, the two numbers right-aligned. Under 600 px each payment is a block of labelled values between hairlines.
+- **A page's action** (`.title-action`: « Refresh » on Overview and Service, « New shop » on Shops) sits on the title's line, at its right.
+- **« New shop »** is a window: the native modal `dialog.new-shop` (the console's dialog surface, 32rem), opened by the sidebar's link (over the Shops list) and by the Shops page's button. Its first field is focused; « Cancel » and « Create the shop » are at its bottom right; Esc closes it and what was typed stays.
+- **Forms** (`.stack`) fill their card. **One shop** (`main.single`) is a 600px column. Its head (`.shop-head`): the name (18px/650), the state as a badge with the live sessions after it, and at the right the two balances as figures (22px/700, label above, a `--line` divider), under them below 600 px.
 - **Notices:** `.banner` a 16px-corner yellow band with charcoal 700. `.note` a 4px `--signal-edge` left border. `.kept` and `.shown` a 2px `--hue` border. `.refusal` `--bad` 700.
 
 ### Motion

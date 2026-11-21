@@ -87,7 +87,7 @@ onMounted(readProfile)
 
 <template>
   <section class="shop-account" aria-labelledby="titre-compte">
-    <header><h1 id="titre-compte" class="page-title" tabindex="-1">Mon compte</h1><a href="#accueil">Retour à l’accueil</a></header>
+    <header><h1 id="titre-compte" class="page-title" tabindex="-1">Mon compte</h1><a class="back" href="#accueil">Retour à l’accueil</a></header>
     <form aria-labelledby="titre-profil" @input="rememberEdit" @submit.prevent="save">
       <h2 id="titre-profil" ref="profileHeading" tabindex="-1">Ma boutique</h2>
       <fieldset v-if="draft" :disabled="working || conflict || uncertain || !!overlaps.length">
@@ -130,8 +130,8 @@ onMounted(readProfile)
       <button v-if="termsUnavailable || (terms && !terms.accepted_at)" class="secondary" @click="emit('terms')">{{ termsUnavailable ? 'Réessayer la lecture des conditions' : 'Lire les conditions' }}</button>
       <a href="/donnees.html">Vos données</a>
     </section>
-    <section aria-labelledby="titre-assistance"><h2 id="titre-assistance">Assistance Doka Studio</h2><p>Contactez {{ support || 'l’opérateur qui vous a remis votre identifiant' }}.</p>
-      <button class="secondary" @click="emit('signOut')">Se déconnecter</button></section>
+    <section aria-labelledby="titre-assistance"><h2 id="titre-assistance">Assistance Doka Studio</h2><p>Contactez {{ support || 'l’opérateur qui vous a remis votre identifiant' }}.</p></section>
+    <p class="leave"><button class="secondary" @click="emit('signOut')">Se déconnecter</button></p>
   </section>
 </template>
 
@@ -139,12 +139,18 @@ onMounted(readProfile)
 .shop-account { width: min(100%, var(--page)); margin: auto; padding: 18px 0 30px; overflow-wrap: anywhere }
 header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px }
 h1, h2, p { margin: 0 }
-form, section > section { display: grid; gap: 12px; margin-top: 20px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
+form, section > section { display: grid; gap: 12px; margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
 fieldset { display: grid; gap: 12px; border: 0; min-width: 0; margin: 0; padding: 0 }
 input[type=file] { max-width: 100% }
 .collision { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius) }
 .collision > div { display: grid; gap: 6px }
 button, a { justify-self: start }
+/* The way back is shown before the title, on its own line (GOV.UK's back link; the console's « ← Shops »). It stays
+   after the title for the keyboard: the title has the focus on arrival, and the first Tab is the way back. */
+a.back { order: -1; flex-basis: 100%; display: inline-flex; align-items: center; gap: 8px; margin-bottom: -8px; color: var(--muted) }
+a.back::before { content: ''; flex: none; width: 7px; height: 7px; border: solid currentColor; border-width: 0 0 1.6px 1.6px; rotate: 45deg }
+/* Leaving is the last thing on the page, on its own: it is not part of the assistance. */
+.leave { margin-top: 24px }
 a, summary { min-height: 44px; align-content: center; color: var(--text) }
 details p { margin: 8px 0 }
 </style>

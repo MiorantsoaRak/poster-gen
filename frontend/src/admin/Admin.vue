@@ -25,7 +25,7 @@ const session = ref<Session>(), starting = ref('')  // undefined until the serve
 const signedIn = computed(() => !!session.value?.authenticated)
 const outdated = ref('')  // bundle_outdated: the page must be reloaded
 const route = ref(read(location.hash))
-const heading = ref<HTMLElement>(), passwordField = ref<HTMLInputElement>(), panel = ref<HTMLElement>(), newShop = ref<HTMLDetailsElement>()
+const heading = ref<HTMLElement>(), passwordField = ref<HTMLInputElement>(), panel = ref<HTMLElement>(), newShop = ref<HTMLDialogElement>()
 const confirm = ref<InstanceType<typeof Confirm>>()
 
 const signing = ref(false), signingOut = ref(false), signInMessage = ref(''), headerMessage = ref('')
@@ -142,11 +142,12 @@ function keepTab(event: KeyboardEvent) {
   const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === side ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
-// « New shop » in the sidebar: the list, its fold open, its first field focused once the route and the fold have settled.
+// « New shop » is a window of its own (the native modal <dialog>: Esc, the inert page and the focus back on its opener
+// come from the browser). From the sidebar it opens over the list, once the route has settled; its first field is focused.
 let adding = false
 async function openNewShop() {
-  if (!newShop.value) return
-  newShop.value.open = true
+  if (!newShop.value || newShop.value.open) return
+  newShop.value.showModal()
   await nextTick(); identifierField.value?.focus()
 }
 /** A link of the sidebar closes the drawer, and its destination takes the focus (navigate): also when the address does
@@ -168,7 +169,7 @@ function destination(event: MouseEvent) {
  *  request stays: its answer, if it ever comes, is dropped, so it is unresolved and is sent again after the sign-in. */
 function leave(all: boolean) {
   newEpoch()
-  confirm.value?.dismiss()
+  confirm.value?.dismiss(); newShop.value?.close()
   session.value = { authenticated: false, configured: true }
   shown.value = undefined; shops.value = undefined; one.value = undefined; note.value = undefined
   history.value = undefined; historyMessage.value = undefined; result.value = undefined
@@ -347,14 +348,15 @@ async function create() {
   try {
     const made = await call<{ shop: Shop; password: string }>('/api/admin/shops', 'POST', { identifier, name: name.trim() || null, welcome: Number(welcome) })
     draft.value = blank()
-    if (newShop.value) newShop.value.open = false
+    newShop.value?.close()
     await show(made.shop.identifier, made.password)
   } catch (error) {
     const said = failure(error)
     if (!signedIn.value) return  // the session ended: the sign-in form says so, and what was typed stays
     createMessage.value = error instanceof AdminError && uncertain(error)
-      ? `${said} The shop may have been created: the list below was read again. If it is there, its password is lost: open it and set a new password.`
+      ? `${said} The shop may have been created: the list was read again. If it is there, its password is lost: open it and set a new password.`
       : said
+    if (outdated.value) newShop.value?.close()  // the reload banner is on the page, behind this window
   }
   creating.value = false
   await load()
@@ -594,6 +596,23 @@ async function repay(job: JobItem) {
     <p class="refusal" role="alert">{{ headerMessage }}</p>
   </header>
 
+  <!-- « New shop »: a window over the page (the owner's word, 2026-11-21), from the sidebar's link and from the
+       Shops page's button. What was typed stays when it is closed without creating. -->
+  <dialog ref="newShop" class="new-shop" aria-labelledby="new-shop-title">
+    <h2 id="new-shop-title">New shop</h2>
+    <form class="stack" @submit.prevent="create">
+      <label for="identifier">Identifier</label>
+      <input id="identifier" ref="identifierField" v-model="draft.identifier" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="identifier-help">
+      <small id="identifier-help">3 to 32 letters or digits; case, accents, spaces and punctuation do not count. The owner signs in with it.</small>
+      <label for="name">Name (optional)</label>
+      <input id="name" v-model="draft.name" maxlength="160" autocomplete="off">
+      <label for="welcome">Welcome credits</label>
+      <input id="welcome" v-model="draft.welcome" required inputmode="numeric" pattern="[0-9]{1,9}" autocomplete="off">
+      <p class="refusal" role="alert">{{ createMessage }}</p>
+      <div class="actions"><button type="button" @click="newShop?.close()">Cancel</button><button class="primary" :aria-disabled="creating">Create the shop</button></div>
+    </form>
+  </dialog>
+
   <section v-if="shown" v-show="signedIn" ref="panel" class="shown" tabindex="-1" aria-labelledby="shown-password" :inert="drawer">
     <p id="shown-password">Password for <strong>{{ shown.identifier }}</strong>, shown once: <code class="secret">{{ shown.password }}</code></p>
     <p>It will not be shown again. Give it to the owner in person.</p>
@@ -603,20 +622,7 @@ async function repay(job: JobItem) {
 
   <main v-if="route.view === 'shops'" v-show="signedIn" class="wide" :inert="drawer">
     <h1 ref="heading" tabindex="-1">Shops</h1>
-    <details ref="newShop" class="fold card">
-      <summary>New shop</summary>
-      <form class="stack" @submit.prevent="create">
-        <label for="identifier">Identifier</label>
-        <input id="identifier" ref="identifierField" v-model="draft.identifier" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="identifier-help">
-        <small id="identifier-help">3 to 32 letters or digits; case, accents, spaces and punctuation do not count. The owner signs in with it.</small>
-        <label for="name">Name (optional)</label>
-        <input id="name" v-model="draft.name" maxlength="160" autocomplete="off">
-        <label for="welcome">Welcome credits</label>
-        <input id="welcome" v-model="draft.welcome" required inputmode="numeric" pattern="[0-9]{1,9}" autocomplete="off">
-        <button class="primary" :aria-disabled="creating">Create the shop</button>
-        <p class="refusal" role="alert">{{ createMessage }}</p>
-      </form>
-    </details>
+    <button type="button" class="title-action" @click="openNewShop">New shop</button>
     <p class="refusal" role="alert">{{ listMessage }}</p>
     <div v-if="rows.length" class="card table-card">
       <table class="shops">
@@ -657,15 +663,15 @@ async function repay(job: JobItem) {
     <Overview v-if="signedIn" ref="overview" :failure="failure" :kept="kept" />
   </main>
 
-  <main v-else v-show="signedIn" :inert="drawer">
+  <main v-else v-show="signedIn" class="single" :inert="drawer">
     <p><a href="#/shops">← Shops</a></p>
     <h1 ref="heading" tabindex="-1">{{ current?.shop.identifier ?? 'Shop' }}</h1>
     <p class="refusal" role="alert">{{ shopMessage }}</p>
     <template v-if="current">
-      <div class="card">
+      <div class="card shop-head">
         <p class="name">{{ current.shop.name ?? 'No name' }}</p>
-        <p>{{ current.shop.state }}<template v-if="!current.shop.has_password"> · no password</template> · {{ count(current.shop.sessions, 'live session') }}</p>
-        <p>available {{ grouped(current.shop.available) }} · <span lang="fr">en attente</span> {{ grouped(current.shop.pending) }}</p>
+        <p class="state"><span class="badge" :class="current.shop.state === 'suspended' ? 'bad' : 'ok'">{{ current.shop.state }}</span><template v-if="!current.shop.has_password"> · no password</template> · {{ count(current.shop.sessions, 'live session') }}</p>
+        <dl class="figures"><div><dt>Available</dt><dd>{{ grouped(current.shop.available) }}</dd></div><div><dt lang="fr">En attente</dt><dd>{{ grouped(current.shop.pending) }}</dd></div></dl>
       </div>
 
       <section v-if="pendingHere" class="kept card" aria-labelledby="kept-title">
