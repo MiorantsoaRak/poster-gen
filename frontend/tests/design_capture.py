@@ -98,7 +98,14 @@ def shoot(browser, name, url, sign_in=None, after=None):
             if after:
                 after(page)
             time.sleep(.6)  # the last transition
+            # The ambient glow is fixed to the window: a full-page picture would cut it at one window's height, a line a
+            # scrolling reader never sees. For the picture only, it spans the page; removed before the snapshot.
+            glow = page.add_style_tag(content="html::before { position: absolute !important; bottom: auto !important;"
+                                              " height: max(100%, var(--page-h)) !important }")
+            page.evaluate("document.documentElement.style.setProperty('--page-h', document.documentElement.scrollHeight + 'px')")
             page.screenshot(path=OUT / f"{name}-{width}-{scheme}.png", full_page=True)
+            glow.evaluate("style => style.remove()")
+            page.evaluate("document.documentElement.style.removeProperty('--page-h')")
             if (width, scheme) in SNAPSHOTS:
                 relative = os.path.relpath(dist, OUT / "html") + "/"  # a file: address is not read by every checker
                 html = re.sub(r"<script\b.*?</script>", "", page.content(), flags=re.S)
@@ -163,7 +170,7 @@ def run():
                               after=lambda page: page.get_by_role("button", name="Fermer", exact=True).first.click())
                         shoot(browser, "client-conditions", origin + "/#accueil", sign_in=shop_in(SHOP2, SHOP2_PASSWORD))
                         shoot(browser, "admin-signin", origin + "/admin/")
-                        for name, path in [("admin-shops", "/admin/#/shops"), ("admin-shop", "/admin/#/shops/1"),
+                        for name, path in [("admin-overview", "/admin/#/overview"), ("admin-shops", "/admin/#/shops"), ("admin-shop", "/admin/#/shops/1"),
                                            ("admin-money", "/admin/#/money"), ("admin-service", "/admin/#/service")]:
                             shoot(browser, name, origin + path, sign_in=operator_in)
                     finally:
