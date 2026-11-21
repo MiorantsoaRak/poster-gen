@@ -26,3 +26,4 @@ Approved flow: photo/title/exact price → optional Claude planning → GPT Imag
 
 Next gate: review the [technical designs](../designs/_INDEX.md), then approve them before implementation tasks, as required by [AGENTS.md](../../../AGENTS.md). No new feature code or paid testing was performed during design.
 | [poster-format.md](poster-format.md) | R-POSTER-FORMAT-001 … 002 | Approved 2026-11-14 (ADR-080) | [poster-format](../designs/poster-format.md) |
+| [facebook-publishing.md](facebook-publishing.md) | R-FB-PUBLISH-001 … 004 | Approved by the owner 2026-11-21 (ADR-127): stage 1, shops with a role on the Meta app; free; the link to the post only; v2 amended by the proofs, amendments approved the same day | [facebook-publishing](../designs/facebook-publishing.md) v3, approved under the autonomy grant |
