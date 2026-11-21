@@ -9,7 +9,7 @@ from affiche.db import utc_now, write_tx
 from . import auth
 from .store import Refused
 
-VERSION = "2026-11-17"  # the text's date, ISO, at most one a day; a new one asks every shop again
+VERSION = "2026-11-21"  # the text's date, ISO, at most one a day; a new one asks every shop again
 # Drafts waiting for the owner's reading (designs/service-terms.md, "French texts"); a jurist has read none of this.
 PARAGRAPHS_FR = (
     "Ce service fabrique vos affiches avec une intelligence artificielle (IA). L'IA peut se tromper : un mot mal écrit, "
@@ -25,6 +25,18 @@ PARAGRAPHS_FR = (
     "boutique agit en son nom : ne les confiez qu'à des personnes de confiance.",
     "Ce que le service garde de vos photos et de vos messages, et ce qu'il envoie à d'autres services, est expliqué sur "
     "la page « Vos données ».",
+    # 2026-11-21: publishing on a Facebook Page (designs/facebook-publishing.md, answer 1 of the owner).
+    "Si vous connectez une Page Facebook, le service garde son nom, son identifiant et l'accès que Facebook a donné "
+    "pour cette Page. Cet accès reste sur le serveur : il n'est jamais affiché ni envoyé au navigateur. Pour chaque "
+    "publication demandée, une fois la demande prise en compte et même si elle n'aboutit pas, le service garde sa "
+    "date, la Page, la légende de la demande, son résultat et ce qu'il a retenu de la réponse de Facebook (le lien de "
+    "la publication, ou un code d'erreur). L'image envoyée est l'affiche confirmée. Le service "
+    "ne lit pas le contenu de votre Page ; à la connexion, il reçoit le nom et l'identifiant des Pages que vous "
+    "autorisez. « Déconnecter », dans « Mon compte », efface aussitôt cet accès ici ; les copies de secours peuvent "
+    "encore le contenir, et l'autorisation donnée sur Facebook se retire sur Facebook. La page « Vos données » donne "
+    "le détail. Les publications faites restent sur votre Page jusqu'à ce que vous les supprimiez sur "
+    "Facebook ; leur liste reste avec l'affiche. C'est vous qui publiez : avant « Publier », vous vérifiez l'image et la "
+    "légende. Une publication faite est sur votre Page, sous votre responsabilité.",
     "Si ces conditions changent, la nouvelle version vous sera montrée ; il faudra l'accepter avant de demander quoi "
     "que ce soit de nouveau à l'IA.",
     "Une question, un problème, une demande sur vos données : contactez {contact}.",

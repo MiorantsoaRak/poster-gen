@@ -1,0 +1,16 @@
+# Code review r3 — T-FB-004: the restore's Facebook steps, « Vos données », the conditions' new version, the runbook
+
+Reviewer: Codex, read-only, 2026-11-21. Verdict: REJECT, third and last round (the two restore findings and the fingerprints closed; the publication record's wording partial for the third time; new: a WAL left behind by a run stopped between its two moves, which is `restore.sh` as it was before this task; « la légende envoyée »). Answered by a change of approach, NOT reviewed again: both texts now describe the record one level up (« ce que le service a retenu de la réponse de Facebook »), in place of a field-by-field list; « la légende de la demande »; the runbook gains the step that puts a left-behind `-wal` back with the first kept database.
+
+- **1 — CLOSED.** Both late failures print `$BEFORE`, and the retry instructions identify the first run that actually moved the live database. [restore.sh:61](deploy/restore.sh#L61) · [restore.sh:81](deploy/restore.sh#L81) · [README.md:660](deploy/README.md#L660)
+- **2 — CLOSED.** Step 3 permits `docker start` only if no run replaced the database. That covers a retry that fails before moving anything. [README.md:655](deploy/README.md#L655)
+- **4 — PARTIAL (P1).** Both texts now qualify when recording begins. « Le code donné par Facebook s’il y en a un » still promises to keep an unrecognized code, which the classifier discards. Use « le code d’erreur de Facebook s’il est reconnu et conservé ». In the conditions, qualify the post link with « s’il est connu » because Facebook can accept a post whose response is lost. [donnees.html:46](frontend/public/donnees.html#L46) · [terms.py:33](backend/src/affiche/posters/terms.py#L33) · [facebook.py:139](backend/src/affiche/posters/facebook.py#L139) · [facebook.py:155](backend/src/affiche/posters/facebook.py#L155)
+- **5 — CLOSED.** « Vos données » names both fingerprints stored during connection, `session_sha` and `state_sha`. [donnees.html:45](frontend/public/donnees.html#L45) · [facebook_connect.py:99](backend/src/affiche/posters/facebook_connect.py#L99)
+
+**New P1 — A retry can separate the live database from its WAL.** If the first run stops between the two `mv` commands, the retry moves the live WAL under its own timestamp. Reading the first path can then silently omit a committed publication and allow a duplicate. Add a step before retrying a partial replacement: if the live database moved but its WAL is still at `/data/affiche.db-wal`, reunite it with the first saved database while the service is stopped. [restore.sh:42](deploy/restore.sh#L42) · [README.md:656](deploy/README.md#L656)
+
+**New P2 — « La légende envoyée » can describe a caption that never left the server.** The caption is stored at admission, and an expired send window records `not_sent` before the Facebook call. Use « la légende de la demande » in both texts. [donnees.html:46](frontend/public/donnees.html#L46) · [terms.py:32](backend/src/affiche/posters/terms.py#L32) · [facebook_publish.py:207](backend/src/affiche/posters/facebook_publish.py#L207)
+
+Static review only. The pending browser run is excluded.
+
+**REJECT**

@@ -83,9 +83,9 @@ def test_a_backup_from_before_0013_names_the_password_of_shop_1_among_the_repair
     ({"start": "failed"}, "run1", f"the application's start on the backup (migrations, checks). THE SERVICE IS STOPPED; "
                                   f"the database is the backup {FILE}, not yet brought to this version"),
     ({"docker_fail": "run2"}, "run2", f"ending every session. THE SERVICE IS STOPPED; the database is the backup {FILE} at "
-                                      "this version, its sessions not yet ended."),
+                                      "this version, its sessions not yet ended; the one before is /data/affiche.db.before-restore-"),
     ({"docker_fail": "run3"}, "run3", f"listing the shops. THE SERVICE IS STOPPED; the database is the backup {FILE} at "
-                                      "this version, with no session."),
+                                      "this version, with no session; the one before is /data/affiche.db.before-restore-"),
 ], ids=["no container", "stop", "copy", "docker fails the start", "the migration fails", "sessions", "list"])
 def test_a_failed_step_stops_the_restore_before_the_next_and_never_starts_the_service(tmp_path, fake, reached, message):
     code, output, calls = restore(tmp_path, **fake)

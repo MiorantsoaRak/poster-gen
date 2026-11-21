@@ -204,22 +204,34 @@ KEPT_IMAGES = ("SELECT j.id, p.identifier FROM poster_jobs j JOIN shop_profile p
                " WHERE j.takes_credit = 1 AND j.status = 'succeeded'")
 LOSS = ("nothing to copy: the restore's loss policy applies (the grants and corrections made since the backup are "
         "gone); redo them from your payment records")
+# Migration 0018's columns but shop_id, which is mapped by the shop's identifier; in the kept written order (rowid): the
+# poster's list and its sheet's `seen` read that order (facebook_publish.listed).
+PUBLICATION = ("id", "creation_id", "confirmation_id", "page_id", "page_name", "caption", "key", "payload_sha", "status",
+               "sent_at", "settled_at", "post_id", "link", "error_code", "said_by_owner")
+SETTLEMENT = ("status", "post_id", "link", "error_code", "said_by_owner", "settled_at")
+KEPT_PUBLICATIONS = (f"SELECT p.identifier, {', '.join(f'f.{column}' for column in PUBLICATION)} FROM facebook_publications"
+                     " f JOIN shop_profile p ON p.id = f.shop_id ORDER BY f.rowid")
 
 
 def _kept(kept: Path):
-    """(names by identifier, lines, counted images) of the database a restore replaced, None when it is older than
-    0014 (no line was ever granted there). Read through a read-only connection of its own: never written, and its -wal
-    never checkpointed into it. No ATTACH: SQLite refuses one inside the copy's transaction."""
+    """Of the database a restore replaced: (names by identifier, lines, counted images), None when it is older than
+    0014 (no line was ever granted there); and (its publications, its facebook_mode), None when it is older than 0018.
+    Read through a read-only connection of its own: never written, and its -wal never checkpointed into it. No ATTACH:
+    SQLite refuses one inside the copy's transaction."""
     try:
         if not kept.is_file():
             raise ValueError(f"no kept database at {kept}: {LOSS}")
         db = sqlite3.connect(f"{kept.resolve().as_uri()}?mode=ro", uri=True)
         try:
             db.row_factory = sqlite3.Row
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credit_grants'").fetchone() is None:
-                return None
-            return (dict(db.execute("SELECT identifier, name FROM shop_profile").fetchall()),
-                    db.execute(KEPT_LINES).fetchall(), db.execute(KEPT_IMAGES).fetchall())
+            tables = {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            credit = ((dict(db.execute("SELECT identifier, name FROM shop_profile").fetchall()),
+                       db.execute(KEPT_LINES).fetchall(), db.execute(KEPT_IMAGES).fetchall())
+                      if "credit_grants" in tables else None)
+            if "facebook_publications" not in tables:
+                return credit, None
+            mode = db.execute("SELECT value FROM meta WHERE key='facebook_mode'").fetchone()
+            return credit, (db.execute(KEPT_PUBLICATIONS).fetchall(), mode and mode[0])
         finally:
             db.close()
     except (sqlite3.Error, OSError) as error:
@@ -246,6 +258,94 @@ def _named_lines(lines) -> str:
 
 
 def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[str], list[str]]:
+    """After a restore, what the database it replaced knows: its credit lines (_credits), then its Facebook publishing
+    (_facebook). (the report, what blocks it): a shop missing here, or two Facebook modes; while anything blocks,
+    nothing of either is written, and the caller refuses with apply. A refusal is a ValueError: the caller's
+    transaction rolls back whatever was written."""
+    credit, facebook = _kept(kept)
+    here, there = conn.execute(text("SELECT value FROM meta WHERE key='facebook_mode'")).scalar(), facebook and facebook[1]
+    # One mode per database (D-FB-PUBLISH-001): a publication of the stand-in never sits beside real ones.
+    held = (f"facebook_mode is {here!r} here and {there!r} in the kept database: the stand-in's publications and real "
+            "ones never mix (deploy/README.md, Restore)") if here and there and here != there else None
+    report, missing = (([f"the kept database {kept} is older than migration 0014: no credit was ever granted there; "
+                         "nothing to copy"], []) if credit is None
+                       else _credits(conn, kept, credit, apply=apply, conflict=held))
+    blocked = [f"{', '.join(missing)} missing here; create each with the command above, then run after-restore again"
+               ] * bool(missing) + [held] * bool(held)
+    return report + _facebook(conn, facebook, here, held, apply=apply, blocked=bool(blocked)), blocked
+
+
+def _facebook(conn: Connection, read, here: str | None, held: str | None, *, apply: bool, blocked: bool) -> list[str]:
+    """The design's « A restore of the database » (facebook-publishing.md): this copy's connections are older than
+    Facebook's truth, so every Page and every attempt to connect goes, and each shop connects again. Its publications are
+    brought to what the kept database knows: a row it lacks is copied whole, a row both hold takes the kept settlement
+    only while it is sending or unknown here, and nothing else is overwritten; a row whose shop or poster is not here
+    (made after the backup, gone with it) is said and skipped. The mode is carried when this database has none. read:
+    (the kept rows, the kept mode), None when the kept database is older than 0018. Written only with apply and nothing
+    blocked, in the caller's transaction; the report says it all either way."""
+    rows, there = read or ([], None)
+    write = apply and not blocked
+    shops = dict(conn.execute(text("SELECT identifier, id FROM shop_profile")).all())
+    posters = set(conn.execute(text("SELECT shop_id, id FROM creations")).all())
+    statuses = dict(conn.execute(text("SELECT id, status FROM facebook_publications")).all())
+    pages = conn.execute(text("SELECT p.identifier FROM facebook_pages f JOIN shop_profile p ON p.id = f.shop_id"
+                              " ORDER BY 1")).scalars().all()
+    attempts = conn.execute(text("SELECT count(*) FROM facebook_connects")).scalar()
+    report, count = [], Counter()
+    for row in rows:
+        what, mine = f"publication {row['id']} ({row['identifier']}, poster {row['creation_id']})", statuses.get(row["id"])
+        shop = shops.get(row["identifier"])
+        if mine is None and (shop is None or (shop, row["creation_id"]) not in posters):
+            count["skipped"] += 1
+            report.append(f"facebook: skipped {what}: its {'shop' if shop is None else 'poster'} is not here (made after "
+                          "the backup)")
+        elif mine is None:
+            if write:
+                try:
+                    conn.execute(text(f"INSERT INTO facebook_publications (shop_id, {', '.join(PUBLICATION)}) VALUES "
+                                      f"(:shop, {', '.join(':' + column for column in PUBLICATION)})"),
+                                 {column: row[column] for column in PUBLICATION} | {"shop": shop})
+                except IntegrityError as error:
+                    raise ValueError(f"facebook: {what} is refused here ({error.orig}): nothing copied") from None
+            count["copy"] += 1
+            report.append(f"facebook: {'copied' if write else 'to copy'}: {what}, {row['status']} on the Page "
+                          f"{row['page_name']!r}, sent {row['sent_at']}")
+        elif mine in ("sending", "unknown") and row["status"] in ("published", "failed"):
+            if write:
+                conn.execute(text(f"UPDATE facebook_publications SET {', '.join(f'{c}=:{c}' for c in SETTLEMENT)}"
+                                  " WHERE id=:id AND status IN ('sending','unknown')"),
+                             {column: row[column] for column in ("id", *SETTLEMENT)})
+            count["settle"] += 1
+            report.append(f"facebook: {'settled' if write else 'to settle'}: {what}, {mine} here, {row['status']} in "
+                          "the kept database")
+        else:
+            count["here"] += 1
+    if rows:
+        report.insert(0, f"facebook: the kept database holds {len(rows)} publications: {count['here']} here already, "
+                         f"{count['copy']} to copy, {count['settle']} to settle, {count['skipped']} skipped")
+    if read is None:
+        report.insert(0, "facebook: the kept database is older than migration 0018: no publication to bring")
+    if pages or attempts:
+        if write:
+            conn.execute(text("DELETE FROM facebook_pages"))
+            conn.execute(text("DELETE FROM facebook_connects"))
+        count["delete"] += 1
+        report.append(f"facebook: {'deleted' if write else 'to delete'}: the Page of {len(pages)} shops"
+                      + (f" ({', '.join(pages)})" if pages else "") + f" and {attempts} attempts to connect; each shop "
+                      "connects its Page again")
+    if held:
+        report.append(f"facebook: {held}")
+    elif there and here is None:
+        if write:
+            conn.execute(text("INSERT INTO meta VALUES ('facebook_mode', :mode)"), {"mode": there})
+        count["carry"] += 1
+        report.append(f"facebook: {'carried' if write else 'to carry'}: facebook_mode {there!r} from the kept database")
+    if not apply and count["copy"] + count["settle"] + count["delete"] + count["carry"]:
+        report.append("facebook: report only, nothing written" + ("" if blocked else ": run again with --apply"))
+    return report
+
+
+def _credits(conn: Connection, kept: Path, read, *, apply: bool, conflict: str | None) -> tuple[list[str], list[str]]:
     """D-BALANCE-005, the restore's copy: (the report, the missing shops that block it). A line of the kept database is
     here when this database has its shop identifier, kind and reference key (credits._key), whatever the spelling. Each
     other one is copied with apply, in the kept ledger's order, by a plain INSERT that keeps its ref as stored, its
@@ -253,11 +353,7 @@ def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[st
     here a succeeded image that took a credit. A payment (a reference that carries ariary) is copied only when its lines
     here are the first ones of its kept history, shop, kind, credits and ariary: moved or typed otherwise since the restore, this database's history
     stands and the rest is skipped, as replaying it could take the payment out of every shop. Nothing is copied while
-    one of the lines belongs to a missing shop. A refusal is a ValueError: the caller's transaction rolls back whatever was copied."""
-    read = _kept(kept)
-    if read is None:
-        return [f"the kept database {kept} is older than migration 0014: no credit was ever granted there; nothing to "
-                "copy"], []
+    one of the lines belongs to a missing shop, nor while the two Facebook modes differ (conflict, after_restore)."""
     names, lines, images = read
     shops = dict(conn.execute(text("SELECT identifier, id FROM shop_profile")).all())
     jobs_here = {job.id: job for job in conn.execute(text("SELECT id, status, takes_credit FROM poster_jobs"))}
@@ -317,7 +413,7 @@ def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[st
         held.append({"shop": shop, "ref": row["ref"], "key": key, "name": f"line {row['id']} of the kept database"})
         copy.append(row)
     blocked = sorted({row["identifier"] for row in copy} - shops.keys())
-    copied = apply and not blocked
+    copied = apply and not blocked and not conflict
     for row in copy:
         if copied:
             try:
@@ -349,7 +445,8 @@ def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[st
         report.append("nothing to copy")
     elif not apply:
         report.append("report only, nothing written: " + ("create the missing shops first, then run again with "
-                                                          "--apply" if blocked else "run again with --apply to copy"))
+                                                          "--apply" if blocked else "the Facebook modes differ (below)"
+                                                          if conflict else "run again with --apply to copy"))
     elif copied:
         report.append(f"copied {len(copy)} lines")
     return [f"the kept database {kept} holds {len(lines)} credit lines: {present} here already, {len(copy)} to copy, "
@@ -534,8 +631,7 @@ def _after_restore(engine, args):
         report, blocked = after_restore(conn, args.kept, apply=args.apply)
     print("\n".join(report))
     if args.apply and blocked:
-        raise Refusal(f"nothing copied: {', '.join(blocked)} missing here; create each with the command above, then "
-                      "run after-restore again")
+        raise Refusal(f"nothing copied: {'; '.join(blocked)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -610,12 +706,14 @@ def build_parser() -> argparse.ArgumentParser:
     sentence.add_argument("text", nargs="?", help="the packs, the mobile money number, the reference to write, and when "
                                                   "credits arrive (1 to 500 characters)")
     sentence.set_defaults(handler=_purchase_text)
-    restore = commands.add_parser("after-restore", help="after a restore: the credit lines of the database it replaced "
-                                                        "that this one lacks; --apply copies them back")
+    restore = commands.add_parser("after-restore", help="after a restore: the credit lines and Facebook publications of "
+                                                        "the database it replaced that this one lacks, and this one's "
+                                                        "Facebook Page connections, which go; --apply does it")
     restore.add_argument("kept", type=Path, help="the database the restore replaced: "
                                                  "/data/affiche.db.before-restore-<time>, opened read-only")
     restore.add_argument("--apply", action="store_true", help="copy them in one transaction, in their order and with "
-                                                              "their dates; without it, only report")
+                                                              "their dates, and delete the connections; without it, "
+                                                              "only report")
     restore.set_defaults(handler=_after_restore)
     return parser
 

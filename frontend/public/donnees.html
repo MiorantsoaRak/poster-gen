@@ -42,13 +42,15 @@
           <li>Chaque demande faite à l’IA et son coût. Une demande d’image garde les textes de l’affiche, le nom et le contact de la boutique quand ils y figurent, et vos demandes d’ajustement mot pour mot.</li>
           <li>Chaque message lu dans « Par message » : son coût et la réponse de l’application, qui peut reprendre vos mots, jusqu’à votre demande entière.</li>
           <li>Les crédits : chaque crédit reçu, dépensé ou rendu ; pour un paiement, son montant, son moyen et sa référence.</li>
+          <li>Si vous connectez une Page Facebook : son nom, son identifiant et l’accès que Facebook a donné pour cette Page. Cet accès reste sur le serveur : il n’est jamais affiché ni envoyé au navigateur. Pendant la connexion, les Pages que vous avez autorisées et sur lesquelles vous pouvez publier sont gardées avec leur accès, pour votre choix, avec une empreinte de votre session et une empreinte du code de vérification de la connexion. Dès que vous choisissez une Page ou que vous déconnectez, les autres sont effacées. Sans choix, elles ne servent plus après dix minutes et sont effacées au nettoyage suivant.</li>
+          <li>Pour chaque publication demandée sur votre Page et prise en compte par le service, même si elle n’aboutit pas, un enregistrement : sa date, la Page, la légende de la demande, son résultat (publiée, non publiée, ou inconnue), ce que vous en avez dit, ce que le service a retenu de la réponse de Facebook (l’identifiant et le lien de la publication, ou un code d’erreur) et les identifiants techniques de la demande. Quand vous avez confirmé vous-même sa présence, le lien est celui de votre Page. La liste des publications reste avec l’affiche.</li>
           <li>Pour la sécurité : la connexion de chaque appareil, pour une durée limitée ; pour une connexion manquée, l’identifiant saisi, l’adresse IP (ou son début) et l’heure. Le journal du serveur garde des traces techniques, dont les actions de l’opérateur avec l’identifiant de la boutique.</li>
           <li>Des copies de secours de la base et des images, sur le même serveur, loué par l’opérateur (Hetzner).</li>
         </ul>
       </section>
       <section>
         <h2>Sur votre appareil</h2>
-        <p>La conversation de « Par message », vos textes en cours et la légende de chaque affiche restent dans ce navigateur, sur cet appareil seulement ; « Se déconnecter » efface les données que l’atelier conserve dans ce navigateur pour votre boutique. Si l’effacement échoue, l’atelier vous le signale. Les affiches téléchargées et les images gardées par le navigateur restent sur l’appareil.</p>
+        <p>La conversation de « Par message », vos textes en cours et le brouillon de la légende de chaque affiche restent dans ce navigateur, sur cet appareil seulement ; la légende d’une demande de publication (« Publier sur ma Page ») est aussi gardée sur le serveur, avec cette demande ; « Se déconnecter » efface les données que l’atelier conserve dans ce navigateur pour votre boutique. Si l’effacement échoue, l’atelier vous le signale. Les affiches téléchargées et les images gardées par le navigateur restent sur l’appareil.</p>
       </section>
       <section>
         <h2>Ce qui part vers d’autres services</h2>
@@ -61,12 +63,14 @@
           <li>« Créer un style » : Anthropic reçoit l’affiche modèle.</li>
           <li>« Proposer un ajustement » : Anthropic reçoit le texte choisi, son réglage et votre consigne.</li>
           <li>Si la composition est demandée à Claude, Anthropic reçoit aussi les photos du produit et les indications de composition.</li>
+          <li>« Publier sur ma Page » : Facebook reçoit le fichier final confirmé de l’affiche et la légende de la publication, pour les publier sur votre Page. Le service ne lit pas le contenu de votre Page : ni messages, ni audience, ni autres publications. À la connexion, Facebook lui donne le nom et l’identifiant des Pages que vous autorisez, et ce que vous pouvez y faire.</li>
         </ul>
         <p class="muted">Ces services traitent ce qu’ils reçoivent selon leurs propres conditions.</p>
       </section>
       <section>
         <h2>Effacer vos données</h2>
         <p>Dès votre demande, l’opérateur suspend la boutique : plus personne ne peut s’y connecter. La suspension bloque les nouvelles demandes. Une demande déjà lancée peut encore aboutir. Il vous dit ensuite ce qui peut être effacé, et quand. Pour le joindre : l’opérateur qui vous a remis votre identifiant.</p>
+        <p>Votre Page Facebook : « Déconnecter », dans « Mon compte », efface aussitôt l’accès à la Page gardé par le service. Les copies de secours de la base peuvent encore le contenir. Cela ne retire pas l’autorisation donnée sur Facebook : vous la retirez sur Facebook, dans Paramètres → Intégrations professionnelles. Les publications déjà faites restent sur votre Page jusqu’à ce que vous les supprimiez sur Facebook ; leur liste reste avec l’affiche dans l’atelier.</p>
       </section>
       <a href="/">Retour à l’atelier</a>
     </main>

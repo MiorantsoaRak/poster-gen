@@ -540,12 +540,76 @@ password is set, and fails when it is not (for example after a restore of an old
 `operator-password`, then `verify.sh` again. The only exception is the release run with `OPERATOR_BOOTSTRAP=1`
 ("Release 1: the operator dashboard"), which warns.
 
+## Publishing on a Facebook Page
+
+Design: `docs/project/designs/facebook-publishing.md`. A shop connects its Facebook Page once in « Mon compte », then
+publishes a confirmed poster on it from the final panel (« Publier sur ma Page »). The server makes every call to
+Facebook; the browser never holds a token or the Meta app's secret. Publishing takes no credit.
+
+**Settings**, in `/opt/affiche-ia/secrets/app.env` ("Secrets"), then the recreate command ("Operate"):
+- `FACEBOOK_PROVIDER`: `off` (the default: no card, no button, and the routes answer 404), `stub` or `meta`. `stub` is
+  a local stand-in for the tests, the smokes and local work: **never on the box**. The first Facebook call of a
+  database records its mode (`facebook_mode`), and from then on the other mode is refused. Set `meta` only after the
+  gates below.
+- `FACEBOOK_APP_ID`: the id of the Meta app « Doka studio ». Required with `meta`.
+- `FACEBOOK_APP_SECRET`: its secret. Required with `meta`. **Only in `app.env`**: never in git, a log, a message or a
+  screenshot. Each call that sends a token also sends a proof made with it (`appsecret_proof`): once « Clé requise »
+  is on (gate 2), a copy of the database, which every backup is, holds Page tokens that Facebook refuses without the
+  secret. If the secret leaks, reset it in the Meta app and in `app.env`, then run the recreate command: every call
+  made with a token of before then fails. A shop sees it only when it publishes: that publication fails, and when
+  Facebook answers with code 190 (what the design expects; not tried) the line and the button say « Reconnectez
+  votre Page. ». A shop that does not publish sees nothing until it does. Tell each owner to connect again; nothing
+  else is lost.
+
+**In the Meta app** (developers.facebook.com, the owner's account). Done on 2026-11-21: the permissions
+`pages_manage_posts` and `pages_read_engagement` added; the privacy policy address
+`https://affiches.miorantsoa.app/donnees.html` (« Vos données »: when this feature keeps something new, that page
+says it); the Meta app published.
+- « Valid OAuth redirect URIs »: `https://affiches.miorantsoa.app/facebook.html`, and
+  `http://127.0.0.1:5173/facebook.html` for local work.
+- Add each shop's Page admin as a **tester** of the Meta app, before that shop connects: 50 testers at most while the
+  Meta app is not tied to a verified business. He accepts the invitation with his own Facebook account; what Meta
+  asks of him then (perhaps a developer registration) is not tried yet. Without the role he cannot finish Facebook's
+  dialog, and the card tells him to ask the operator.
+
+**Gates before `meta`, in this order.** If a gate fails, `FACEBOOK_PROVIDER` stays `off`.
+1. **The front proxy's log** (D-FB-PUBLISH-002). Facebook sends the owner back to `/facebook.html` with a code in the
+   address. Open `https://affiches.miorantsoa.app/facebook.html?code=test`, then read the log of the front proxy
+   (Maizina's Caddy: `sudo docker compose -f /opt/maizina/deploy/compose.yml logs caddy`). If it keeps the query
+   (`code=test`), `meta` stays off and the owner decides: the proxy is shared with the other projects and is not this
+   project's to change. The application itself logs no address (its access log is off).
+2. **« Clé requise »** ("Require app secret") on in the Meta app's advanced settings, **before any shop connects**.
+   Then make two calls with one token: without the proof, Facebook must refuse the token; with the proof, it must
+   accept it. If either call gives the other answer, no shop is connected, and the design's token rule is reopened
+   (tell Claude). From `backend/` on the development machine, with a Page token of « Doka studio » (Graph API
+   Explorer, that Meta app selected):
+
+   ```bash
+   read -rs TOKEN && export TOKEN    # paste the token; nothing is shown
+   PROOF="$(uv run python -c "import getpass, os; from affiche.posters.facebook import appsecret_proof; print(appsecret_proof(os.environ['TOKEN'], getpass.getpass('App secret: ')))")"
+   curl -s https://graph.facebook.com/v27.0/me -H "Authorization: Bearer $TOKEN"                            # must be an error
+   curl -s "https://graph.facebook.com/v27.0/me?appsecret_proof=$PROOF" -H "Authorization: Bearer $TOKEN"   # must give the Page's id and name
+   unset TOKEN PROOF
+   ```
+3. Set `FACEBOOK_PROVIDER='meta'`, `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` in `app.env`, then run the recreate
+   command. The first connection and the first public post are made with the owner (the design's task 5).
+
+**While it runs:**
+- When Facebook's answer is lost, the publication is « unknown »: the owner opens his Page and says whether the poster
+  is there. The application never looks on the Page and never sends again by itself.
+- A restart (a release, `docker restart`, a restore) turns each publication still in progress into « unknown », and
+  the owner settles it the same way. A send that hangs while the server runs keeps that one poster and Page at
+  « Publication en cours… » until a restart.
+- A restore: `FACEBOOK_PROVIDER` is `off` until `after-restore --apply` has run ("Restore", "Facebook after a
+  restore").
+
 ## Secrets (on the box, never in git)
 
 `/opt/affiche-ia/secrets/app.env` (root, 600): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SPEND_CAP_USD`,
 `SPEND_CAP_SINCE`; `SHOP_PASSWORD_HASH` until step 9 of Release 1 removes it. Optional: `SUPPORT_CONTACT_FR`
 (the contact shown under the sign-in form for a forgotten password, and in the conditions of use) and `SHOP_DAILY_SPEND_USD` (each shop's
-provider spend per UTC day, default 2.00). Every value in single quotes.
+provider spend per UTC day, default 2.00); `FACEBOOK_PROVIDER`, `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET`
+("Publishing on a Facebook Page"). Every value in single quotes.
 
 - Edit with `sudo nano /opt/affiche-ia/secrets/app.env`, then run the recreate command above.
 - **New shop password** (also when a phone is lost): `python -m affiche.shops set-password <identifier>`
@@ -574,7 +638,9 @@ provider calls again, and a shop created after that time is gone. The operator's
 maybe to one you replaced since. So the service stays stopped until the repairs are done.
 `/opt/affiche-ia/restore.sh` does the part that can be checked, and never starts the service.
 
-1. Choose a copy: `sudo ls -lt /opt/affiche-ia/backups/db`.
+1. Choose a copy: `sudo ls -lt /opt/affiche-ia/backups/db`. If `FACEBOOK_PROVIDER` is not `off` in
+   `/opt/affiche-ia/secrets/app.env`, set it to `'off'` now ("Publishing on a Facebook Page"): until `after-restore
+   --apply` has run, the restored copy's Facebook connections and publications are older than what Facebook shows.
 2. Run `sudo sh /opt/affiche-ia/restore.sh <file>`, with the file name only (for example
    `affiche-20261116T004000Z.db`). Under the lock that the releases and the nightly backup take, it stops the
    service, puts the copy in place, runs the application's start once in a one-off container (migrations and
@@ -583,11 +649,22 @@ maybe to one you replaced since. So the service stays stopped until the repairs 
    `/data/affiche.db.before-restore-<time>` (with its `-wal` file) in the volume `affiche-ia_data`, and never
    overwrites one. A missing asset file is copied beside its place and then renamed, so a copy cut short is done
    again by the next run. Last, it runs `after-restore` on the
-   database it replaced: a report of the credit lines that the backup lacks ("Credits after a restore", below). The
-   report writes nothing.
+   database it replaced: a report of the credit lines that the backup lacks ("Credits after a restore", below), and
+   of the Facebook connections and publications (its `facebook:` lines, "Facebook after a restore"). The report
+   writes nothing.
 3. If a step fails, the script stops with `RESTORE FAILED: <step>. <state>.`: the state says whether the service
-   is stopped and which database is in place. Correct the cause and run the script again, or, if the database was
-   not replaced, start the service again with `sudo docker start affiche-ia-affiche-ia-1`. A failed report is not a
+   is stopped and which database is in place. Correct the cause and run the script again, or, if **no run of this
+   restore** has replaced the database (this one says `the database was not replaced`, and no earlier one moved
+   it), start the service again with `sudo docker start affiche-ia-affiche-ia-1`. Once any run has replaced it,
+   the only way on is to the end of this procedure. **When a run replaces the database and then fails, write down
+   the `before-restore-<time>` path that it names (`the one before is …`): the first run that moved the live
+   database names the database that was live.** A second run sets aside the restored backup under a new time, and its report and the
+   path it prints then compare the backup with itself: applied, it brings nothing back, and a poster published
+   after the backup would look unpublished. Give `after-restore` that first path, for the report and for `--apply`.
+   Before a new run after `RESTORE FAILED: putting the backup in place`, look in the volume (`sudo docker run --rm -v
+   affiche-ia_data:/data --entrypoint ls affiche-ia:<revision> -la /data`): if the first run moved `affiche.db` and
+   left `/data/affiche.db-wal` (it stopped between the two moves), move that file to `<the first before-restore
+   path>-wal` first. Without its `-wal` file the kept database can lack its last writes, a publication among them. A failed report is not a
    failed restore: the script says `THE CREDIT REPORT FAILED`, and continues to `RESTORED`. Run `after-restore`
    yourself.
 4. On success it ends with `RESTORED: <file> is in place, at this version, with every session ended. THE SERVICE IS
@@ -600,19 +677,30 @@ maybe to one you replaced since. So the service stays stopped until the repairs 
      The line is quoted for the shell: type it after `sudo env REVISION=… docker compose … run --rm operator`. The
      shop's own welcome credits come back with the copy. If there is no report, `create <identifier> --name "<name>"
      --welcome 0`.
-   - The credit lines: `after-restore /data/affiche.db.before-restore-<time> --apply`, with the path that the
-     script printed. It copies them in one transaction, in the order they were written, with their dates. It copies
+   - The credit lines: `after-restore /data/affiche.db.before-restore-<time> --apply`, with the path of the
+     database that was live (the one the script printed; after a retry, the first run's: step 3). It copies them
+     in one transaction, in the order they were written, with their dates. It copies
      nothing while a shop it needs is missing. After each correction, run it again: it skips a line that is already
-     here.
+     here. In the same transaction it deletes every Facebook Page connection and brings the publications back
+     ("Facebook after a restore"). **Every run with `--apply` deletes the connections again**, a later one too (a
+     repayment that waits for its job to end): no shop connects its Page before the last one has run (step 7).
    - Each `set-password` and `suspend --yes` made after the time of the backup; `pause --yes` and `purchase-text` if
      they were set since.
 5. If it says `originalphone has no password (a backup from before migration 0013)`, run `set-password
    originalphone`, or put the pilot's hash back in `/opt/affiche-ia/secrets/app.env` as `SHOP_PASSWORD_HASH`. With
    neither, the service refuses to start.
 6. Check with the operator service's `list` that each shop has the state it must have now.
-7. Start the service: `sudo docker start affiche-ia-affiche-ia-1`. Check `journalctl -t affiche-ia --since "10 min
-   ago"`, then sign in.
+7. Start the service. If `FACEBOOK_PROVIDER` was never `meta` on this box: `sudo docker start
+   affiche-ia-affiche-ia-1`. Otherwise never `docker start`, which keeps the settings that the container was created
+   with (`meta` among them, whatever `app.env` says now): check that `app.env` says `FACEBOOK_PROVIDER='off'` and run
+   the recreate command ("Operate"). Check `journalctl -t affiche-ia --since "10 min ago"`, then sign in.
+   Set `'meta'` back, and recreate again, only when both are true: `after-restore … --apply` ended with success
+   (exit 0; a refusal says `nothing copied` and leaves the old connections in place), and no further run of it is
+   expected (no repayment still waits for its job: "Credits after a restore"). Until then the service runs with no
+   Facebook card and no button, and « Partager » and « Télécharger » work.
 8. Give each owner whose password changed after the time of the backup the new password that `set-password` printed.
+   Once `meta` is back (step 7), tell each owner whose Page the report named to connect it again ("Facebook after a
+   restore").
 
 **Credits after a restore** (`python -m affiche.shops after-restore <kept database> [--apply]`). The grants,
 corrections and generations go back to the time of the backup. The images made after that time are gone, so they
@@ -636,6 +724,32 @@ copied back from the database that the restore replaced, which the command only 
   that ends without an image gives one credit back. What stays below zero is yours to settle.
 - **No kept database, or one that cannot be read:** the loss policy applies. Do the grants and corrections made
   since the backup again from your payment records. A kept database from before migration 0014 has nothing to copy.
+
+**Facebook after a restore** (the same command, its lines that start with `facebook:`; design:
+`docs/project/designs/facebook-publishing.md`, "A restore of the database"). The restored copy is older than what
+Facebook shows: a poster published since would look unpublished, and a Page disconnected since would be connected
+again.
+
+- **Every Page connection goes**, and every attempt to connect: each shop connects its Page again in « Mon compte ».
+  The report names the shops whose Page was connected. Tell each of their owners, for example: « Doka Studio a été
+  restauré. Pour publier sur Facebook, connectez de nouveau votre Page dans « Mon compte ». »
+- **A publication that the backup lacks** is copied back with all its columns, in the order it was written. A
+  publication whose poster or shop is not here (made after the backup) is named and skipped: the restore removed that
+  poster.
+- **A publication that both databases hold** takes the kept result (published or failed, with its post, its link, its
+  code and the owner's word) only while it is in progress or unknown here. Nothing else is overwritten.
+- **The mode** (`facebook_mode`: `stub` or `meta`) is copied when this database has none. If the two databases have
+  different modes, the command copies nothing, the credit lines included, and says why. That can only happen if
+  `stub` ran on the box: stop, and decide with Claude.
+- A kept database from before migration 0018 has no publication to bring. The connections still go.
+- **No kept database, or one that cannot be read:** run the command on the restored database itself,
+  `after-restore /data/affiche.db --apply`. It copies nothing and deletes the connections. Then tell each owner who
+  publishes on Facebook to look at his Page before he publishes: a poster published after the time of the backup can
+  be on it, and the application does not show it. For example: « Doka Studio a été restauré. Avant de publier sur
+  Facebook, ouvrez votre Page : une affiche publiée après le <date> peut déjà y être, même si Doka Studio ne
+  l’affiche pas. Puis connectez de nouveau votre Page dans « Mon compte ». »
+- At its start, the service turns each publication that was still in progress into « unknown »: the owner opens his
+  Page and says whether the poster is there (« Elle est sur ma Page » or « Elle n’y est pas »).
 
 Never mount `/data` read-only for any of this: a database in write-ahead mode cannot be opened on a read-only
 volume. After a restore, **the ledger has lost the spend made since that backup**, and a generation that was
@@ -665,6 +779,8 @@ stops at the rehearsal (`No such revision`) and changes nothing.
   Maizina's next deploy. If it is missing, redeploy Maizina, then run the recreate command.
 - `IMAGE_PROVIDER` is recorded in the data at the first start and cannot change afterwards. It is set in
   `deploy/compose.yml`; the deploy checks it before the first start.
+- `FACEBOOK_PROVIDER=stub` never on the box: the first Facebook call records its mode in the data, and `meta` is then
+  refused on it.
 - One SQLite file, one writer: never start a second container on the `affiche-ia_data` volume while the
   application runs (the application's own lock would refuse it, and a backup needs no second container).
 - The box has no swap. The container is limited to 1 GB so that a runaway render is killed alone instead of

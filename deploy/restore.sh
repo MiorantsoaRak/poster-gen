@@ -58,9 +58,9 @@ fi
 STATE="THE SERVICE IS STOPPED; the database is the backup $FILE, not yet brought to this version; the one before is $BEFORE"
 op python -c 'from affiche import runtime; from affiche.config import load_settings; runtime.start(load_settings(), "api"); print("the application started once on the backup: migrations and checks passed")' \
   || fail "the application's start on the backup (migrations, checks)"
-STATE="THE SERVICE IS STOPPED; the database is the backup $FILE at this version, its sessions not yet ended"
+STATE="THE SERVICE IS STOPPED; the database is the backup $FILE at this version, its sessions not yet ended; the one before is $BEFORE"
 op python -m affiche.shops end-sessions --all || fail "ending every session"
-STATE="THE SERVICE IS STOPPED; the database is the backup $FILE at this version, with no session"
+STATE="THE SERVICE IS STOPPED; the database is the backup $FILE at this version, with no session; the one before is $BEFORE"
 shops="$(op python -m affiche.shops list)" || fail "listing the shops"
 printf '%s\n' "$shops"
 # Read only, and the restore is done by now: a failure here is said, and changes nothing above.
@@ -78,4 +78,5 @@ echo "  a pause set since:     pause --yes; a purchase text set since: purchase-
 # A backup from before migration 0013 has no password for shop 1: without one, the service refuses to start.
 printf '%s\n' "$shops" | awk -F '\t' '$4 == "no password" { print "  " $2 " has no password (a backup from before migration 0013): set-password " $2 (($1 == 1) ? ", or put its hash back in /opt/affiche-ia/secrets/app.env as SHOP_PASSWORD_HASH; without either the service refuses to start" : "") }'
 echo "Run each one as: sudo env REVISION=$REV docker compose -f $DIR/app/deploy/compose.yml run --rm operator python -m affiche.shops <command>"
-echo "Check the shops with the command list. Then start the service: sudo docker start $C"
+echo "If an earlier run of this restore already moved the live database, that run's before-restore file is the database that was live, not $BEFORE (then a copy of the backup): give after-restore that one."
+echo "Check the shops with the command list. Then start the service: sudo docker start $C; if FACEBOOK_PROVIDER is or was 'meta', not that: recreate it with 'off' (deploy/README.md, Restore, step 7)"
