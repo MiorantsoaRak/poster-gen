@@ -8,7 +8,7 @@ No work order: the owner's own project. Goal: both interfaces follow the mockup 
 ([mockups/doka-console/](mockups/doka-console/README.md)); ADR-123, [requirements](requirements/app-redesign.md),
 [design](designs/app-redesign.md) v2, tasks T-REDESIGN-001 … 007 in TODO.md.
 
-**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and merged into `main` (2026-11-21, on the owner's word "merge redesign into main": a `--no-ff` merge, no conflict). NOT deployed, and the merge is NOT pushed.** `origin/main` is still the commit before the merge; `origin/redesign` holds the same code.
+**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and merged into `main` (2026-11-21, on the owner's word "merge redesign into main": a `--no-ff` merge, no conflict). Pushed on his word ("push", the same day): `origin/main` holds the merge. NOT deployed.** `origin/redesign` holds the same code.
 The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `node_modules`, `.venv`; smoke ports
 5273/8100). `redesign-chat` (worktree `../affiche-ia-worktrees/chat`) and `redesign-console`
 (`../affiche-ia-worktrees/console`) are merged into it. After the merge the code of `main` equals the branch
@@ -44,7 +44,7 @@ mode on the web port, and `design_capture.seed()` for the data.
    then open `outputs/design-capture/look/sheets/` there.
 2. Decide the five points of « For the owner » in the report (placement of « Needs you », the cost sentence, « Images »,
    « Payments », the theme switch in the phone drawer).
-3. On his word only: push `main` (the merge is local), then deploy as an ordinary release (no migration).
+3. On his word only: deploy as an ordinary release (no migration).
 
 **Open, small (from the `DESIGN.md` rewrite, not yet tasks):** the console's yellow hover is a `color-mix()` (the
 shops' app uses `--signal-hover`); the two apps' blur values differ; the console's scrim is a literal; the console's
