@@ -581,6 +581,40 @@ def test_a_purchase_text_whose_read_back_fails_is_not_saved(command, engine, mon
         assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='purchase_text_fr'").first() is None
 
 
+def test_the_operator_shows_sets_changes_and_removes_a_shops_limit_of_images_per_post(command, engine, capsys):
+    """D-FB-POST-004: no limit by default; one shop's, never another's; `list` shows each."""
+    shop_b, _ = second_shop(engine)
+    named = f"boutiquedeux (shop {shop_b}, « Boutique Deux »)"
+
+    def limits():
+        with engine.connect() as conn:
+            return conn.exec_driver_sql("SELECT id, post_image_limit FROM shop_profile ORDER BY id").all()
+
+    assert command("post-limit", "Boutique Deux") == (0, f"{named}: no post limit\n", "")
+    assert command("post-limit", "boutiquedeux", "5") == (0, f"{named}: at most 5 images per post (before: no post "
+                                                             "limit)\n", "")
+    assert command("post-limit", "boutiquedeux") == (0, f"{named}: at most 5 images per post\n", "")
+    assert command("post-limit", "boutiquedeux", "1") == (0, f"{named}: at most 1 images per post (before: at most 5 "
+                                                             "images per post)\n", "")
+    assert limits() == [(1, None), (shop_b, 1)]
+    code, out, _ = command("list")
+    assert code == 0 and [line.split("\t")[4] for line in out.splitlines()] == ["no post limit",
+                                                                                "at most 1 images per post"]
+    assert command("post-limit", "boutiquedeux", "none") == (0, f"{named}: no post limit (before: at most 1 images per "
+                                                                "post)\n", "")
+    assert limits() == [(1, None), (shop_b, None)]
+    assert command("post-limit", "nobody", "3") == (1, "", "refused: no shop has the identifier nobody\n")
+    assert command("post-limit", "boutiquedeux", "1000000001")[0] == 0 and limits() == [(1, None), (shop_b, 1000000001)]
+    assert command("post-limit", "boutiquedeux", "0" * 5000 + "7")[0] == 0 and limits() == [(1, None), (shop_b, 7)]
+    assert command("post-limit", "boutiquedeux", "none")[0] == 0  # past a credit's ceiling: a limit is no credit
+    for typed in ("0", "000", "-3", "2.5", "trois", "", "None", "+5", "٣", "9223372036854775808", "1" * 5000):
+        with pytest.raises(SystemExit) as exited:  # a usage error: nothing is read or written
+            command("post-limit", "boutiquedeux", typed)
+        assert exited.value.code == 2 and capsys.readouterr().err.endswith(
+            f"python -m affiche.shops post-limit: error: argument N | none: a whole number from 1, or none: {typed!r}\n")
+    assert limits() == [(1, None), (shop_b, None)]
+
+
 # --- The restore's copy (D-BALANCE-005): a backup by affiche.backup, lines written after it, then the backup put back
 # as restore.sh puts it, the database it replaced kept beside it -------------------------------------------------------
 

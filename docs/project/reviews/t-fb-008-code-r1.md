@@ -1,0 +1,17 @@
+# Code review r1 — T-FB-008: migration 0019, the Graph client's two calls, the operator's limit
+
+Reviewer: Codex, read-only, 2026-11-21. Verdict: REJECT (two P1, two P2, one P3; the migration, `publish_photo` and the other choices confirmed). Answered in the code the same day; see r2.
+
+- **P1 — `classify` accepts a caller-supplied log label.** Both production callers pass constants, but `classify(response_500, page, (token,), what=token)` writes the token verbatim through `_not_200` and `_said`. Keep the shared classifier and remove `field` and `what` from its public arguments. One `feed_post` flag can select both the field and the fixed log label internally. [facebook.py:164](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/posters/facebook.py:164)
+- **P1 — Malformed stand-in arguments can raise from a frame holding the Page token.** `hint=None`, a nonnumeric `position`, or `message=None` raises `TypeError` during marker handling. The stub also reports success for an invalid token or a non-byte PNG that MetaGraph refuses. Keep the marker keywords, apply the real client’s argument checks, and validate `hint` and `position` before using them. Exercise the same invalid-input cases against both clients. [facebook.py:395](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/posters/facebook.py:395) · [facebook.py:404](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/posters/facebook.py:404)
+- **P2 — A `post_id` key alone is treated as proof of publication.** A 200 with `{"id":"123","post_id":null}` produces `failed/published`. Stopping retries is sound, but this answer supplies no post ID. Reserve `published` for a validated ID belonging to the requested Page. For an ambiguous `post_id`, return a distinct non-retryable failure so the caller neither repeats the upload nor claims it was public. [facebook.py:193](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/posters/facebook.py:193)
+- **P2 — `post-limit` refuses valid limits.** `1000000001` exits 2 because `_limit` uses the credit-ledger ceiling. D-FB-POST-004 accepts positive integers, and SQLite can store this value. Parse the integer directly and enforce `1..2**63-1`. Keep exit 2 for invalid input. [shops.py:652](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/src/affiche/shops.py:652)
+- **P3 — The operator cheat sheet omits the required shop identifier.** Following `post-limit 5` looks up a shop named `5`. Show `post-limit <identifier> [N|none]`. [AGENTS.md:53](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/AGENTS.md:53)
+
+**Column compatibility:** `restore.sh` reads columns 1, 2 and 4. Inserting the limit at column 5 preserves all three. The new CLI test intentionally reads column 5. I found no other positional consumer of the CLI output. [restore.sh:79](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/deploy/restore.sh:79) · [test_shops.py:601](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/backend/tests/test_shops.py:601)
+
+Migration 0019 is additive. `publish_photo` retains its request, timing and default classification. Sharing `_not_200`, leaving duplicate-photo refusal to admission, using numeric UUID-derived stub IDs, and omitting a journal entry are sound choices.
+
+Read-only review. The 472 focused passes are implementer-reported. The running full suite is excluded.
+
+**REJECT**

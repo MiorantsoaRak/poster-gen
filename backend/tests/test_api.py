@@ -888,7 +888,7 @@ def test_an_upgraded_pilot_with_no_password_anywhere_refuses_to_start(settings, 
             TestClient(create_app(settings)):
         pass
     with sqlite3.connect(settings.data_dir / "affiche.db") as conn:  # migrated, nothing else: fixed forward
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0018",)
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0019",)
         assert conn.execute("SELECT password_hash FROM shop_profile").fetchall() == [(None,)]
         assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (1,)
 

@@ -1,13 +1,14 @@
-"""The Graph API client of the Facebook publishing (D-FB-PUBLISH-001 to 003): the connection's three calls and the photo's
-send, to Meta (`meta`) or to a local stand-in (`stub`). No database here but the mode guard: the routes admit, store
-and settle.
+"""The Graph API client of the Facebook publishing (D-FB-PUBLISH-001 to 003, D-FB-POST-002): the connection's three
+calls, the photo's send, and a post's two calls (an image uploaded unpublished, then the post that publishes them), to
+Meta (`meta`) or to a local stand-in (`stub`). No database here but the mode guard: the routes admit, store and settle.
 
-Nothing is retried: a send without an answer is the owner's to judge (D-FB-PUBLISH-003 §5). The module logs, returns
-and stores only its own words and its own known codes; of an answer it keeps a Page's id, a Page's name and a post's
-id, each through one gate (see « What this module keeps and says »). No token, code, `state` or secret is put in an
-exception or a log line, and none in an address. An expected failure of a connection call is returned as a
-GraphFailure, never raised: a traceback would keep the frames that hold the secret, the code, a token or the Pages'
-answer."""
+Nothing is retried here: a send without an answer is the owner's to judge (D-FB-PUBLISH-003 §5), and an upload tried
+again is its caller's decision (D-FB-POST-003 §4). The module logs, returns and stores only its own words and its own
+known codes; of an answer it keeps a Page's id, a Page's name, a post's id and a photo's id, each through one gate (see
+« What this module keeps and says »). No token, code, `state` or secret is put in an exception or a log line, and none
+in an address. An expected failure of a connection call is returned as a GraphFailure, never raised: a traceback would
+keep the frames that hold the secret, the code, a token or the Pages' answer."""
+import asyncio
 import hashlib
 import hmac
 import json
@@ -27,6 +28,8 @@ log = logging.getLogger(__name__)
 GRAPH = "https://graph.facebook.com/v27.0"
 CONNECT_TIMEOUT_S = 20  # each call of the connection (D-FB-PUBLISH-002 step 2)
 PHOTO_TIMEOUT_S = 60
+# Around each whole call of a post, beside the client's own timeouts, which an answer that trickles never trips.
+CALL_DEADLINE_S = 75
 RECONNECT_CODE = 190  # the access is cancelled, or its owner lost his role
 LIMIT_CODES = frozenset({4, 17, 32, 613, 80001, 368})  # limits, and 368: blocked
 REFUSED_CODES = frozenset({10, *range(200, 300), 100, 324, 506})  # a permission, a parameter, the image, a duplicate
@@ -35,12 +38,13 @@ KNOWN_CODES = frozenset({RECONNECT_CODE}) | LIMIT_CODES | REFUSED_CODES
 # ── What this module keeps and says (reviews r1 to r4) ──────────────────────────────────────────────────────────────
 # It logs, returns and stores only its own words: the names below and the codes of KNOWN_CODES, which are this file's
 # constants. An answer of Facebook is only compared with them; nothing of it is copied into a log line, a failure or an
-# error code. Three values of an answer are kept, because the feature is made of them: a Page's id, a Page's name and a
-# post's id. Each passes one gate, `_kept`: its own bounded shape, and no credential of the call inside it.
+# error code. Four values of an answer are kept, because the feature is made of them: a Page's id, a Page's name, a
+# post's id and an unpublished photo's id. Each passes one gate, `_kept`: its own bounded shape, and no credential of the
+# call inside it.
 # A credential (a token, the dialog's code, the Meta app's secret) has one shape, CREDENTIAL: printable ASCII, 20
 # characters at least, not digits only. So an id, which is digits only, can never be one.
 CREDENTIAL = re.compile(r"[!-~]{20,4096}")
-DIGITS = re.compile(r"[0-9]{1,32}")  # a Page's id
+DIGITS = re.compile(r"[0-9]{1,32}")  # a Page's id, a photo's id
 POST_ID = re.compile(r"[0-9]{1,32}_[0-9]{1,32}")  # a post's id: its Page's id, then its number
 NAME = re.compile(r"[^\x00-\x1f\x7f-\x9f]{1,200}")  # a Page's name: one line, no control character
 ADDRESS = re.compile(r"https?://[!-~]{1,500}")  # the return address, this application's own
@@ -78,12 +82,24 @@ class Page:
 
 @dataclass(frozen=True)
 class Outcome:
-    """A send's settlement, as facebook_publications keeps it. error_code: one of KNOWN_CODES, or this module's
-    `not_sent` and `caption`. reconnect: the Page becomes 'reconnect' (the route checks that its row is still the one
-    that gave the token)."""
+    """A send's settlement, as facebook_publications and facebook_posts keep it. error_code: one of KNOWN_CODES, or this
+    module's `not_sent` and `caption`. reconnect: the Page becomes 'reconnect' (the route checks that its row is still
+    the one that gave the token)."""
     status: Literal["published", "failed", "unknown"]
     post_id: str | None = None
     link: str | None = None
+    error_code: str | None = None
+    reconnect: bool = False
+
+
+@dataclass(frozen=True)
+class Upload:
+    """An image of a post sent unpublished (D-FB-POST-002): `uploaded` with the id of the photo Facebook made, which
+    shows nothing on the Page; `failed` on Facebook's own refusal (error_code one of KNOWN_CODES) or with this module's
+    `not_sent`, `published` (the answer names a post of this Page: the photo is public) or `unexpected` (it names
+    something else in `post_id`); `unknown` for everything else. reconnect: as Outcome's."""
+    status: Literal["uploaded", "failed", "unknown"]
+    photo_id: str | None = None
     error_code: str | None = None
     reconnect: bool = False
 
@@ -133,28 +149,58 @@ def _failed(what: str, kind: str, *words: object) -> GraphFailure:
     return GraphFailure(kind, next((word for word in words if type(word) is int), None))
 
 
-def classify(response: httpx2.Response | None, page_id: str, sent: tuple[str, ...] = ()) -> Outcome:
-    """The answers' table of D-FB-PUBLISH-003 §4, read in its order. None: no answer, or a cut connection. `sent`: the
-    credentials of the call, which a post id must not hold."""
-    if response is None:
-        return Outcome("unknown")
-    status, payload = _status(response), _json(response)
-    if status == "5xx":  # whatever its body
-        _said("photo", status)
-        return Outcome("unknown")
-    if status == "200":
-        post_id = payload.get("post_id") if isinstance(payload, dict) else None
-        # The gate takes the value that is kept, whole: an id with its underscore could be a credential's shape.
-        if _kept(post_id, POST_ID, sent) and post_id.partition("_")[0] == page_id:
-            return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
-        _said("photo", status, "without a post id of this Page")  # unreadable, or the unpublished photo's `id` alone
+def _not_200(what: str, status: str, payload: object) -> Outcome:
+    """Any answer but a 200, for every call that sends: a 5xx whatever its body, a 4xx, anything else."""
+    if status == "5xx":
+        _said(what, status)
         return Outcome("unknown")
     code = _known_code(payload)
-    _said("photo", status, "no code" if code is None else code)
+    _said(what, status, "no code" if code is None else code)
     # Only Facebook's own refusal of this request (a 4xx with one of the known codes) says that nothing was posted.
     if status != "4xx" or code is None or code == "other":
         return Outcome("unknown")
     return Outcome("failed", error_code=str(code), reconnect=code == RECONNECT_CODE)
+
+
+def classify(response: httpx2.Response | None, page_id: str, sent: tuple[str, ...] = (), *, post: bool = False) -> Outcome:
+    """The answers' table of D-FB-PUBLISH-003 §4, read in its order. None: no answer, or a cut connection. `sent`: the
+    credentials of the call, which a post id must not hold. `post`: a post's answer, whose id is in `id`; a photo's is
+    in `post_id` (D-FB-POST-002). The field and the log line's word are chosen here, never given by a caller."""
+    field, what = ("id", "post") if post is True else ("post_id", "photo")
+    if response is None:
+        return Outcome("unknown")
+    status, payload = _status(response), _json(response)
+    if status != "200":
+        return _not_200(what, status, payload)
+    post_id = payload.get(field) if isinstance(payload, dict) else None
+    # The gate takes the value that is kept, whole: an id with its underscore could be a credential's shape.
+    if _kept(post_id, POST_ID, sent) and post_id.partition("_")[0] == page_id:
+        return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
+    _said(what, status, "without a post id of this Page")  # unreadable, or the unpublished photo's `id` alone
+    return Outcome("unknown")
+
+
+def _uploaded(response: httpx2.Response | None, page_id: str, sent: tuple[str, ...]) -> Upload:
+    """An upload's answer: uploaded only on a 200 whose `id` is digits and holds no credential of the call (the proof's
+    answer is `{"id": "<digits>"}`); the rest as a post's."""
+    if response is None:
+        return Upload("unknown")
+    status, payload = _status(response), _json(response)
+    if status != "200":
+        refused = _not_200("upload", status, payload)
+        return Upload(refused.status, error_code=refused.error_code, reconnect=refused.reconnect)
+    # A `post_id` in the answer, against `published=false`: never tried again (a second one could be public too), and
+    # its post stops. `published` only when it is a post id of this Page; any other value is `unexpected`.
+    if isinstance(payload, dict) and "post_id" in payload:
+        named = payload["post_id"]
+        public = _kept(named, POST_ID, sent) and named.partition("_")[0] == page_id
+        _said("upload", status, "with a post id" if public else "with an unreadable post id")
+        return Upload("failed", error_code="published" if public else "unexpected")
+    photo_id = payload.get("id") if isinstance(payload, dict) else None
+    if _kept(photo_id, DIGITS, sent):
+        return Upload("uploaded", photo_id)
+    _said("upload", status, "without a photo id")
+    return Upload("unknown")
 
 
 class MetaGraph:
@@ -270,11 +316,60 @@ class MetaGraph:
             response = None
         return classify(response, page_id, (page_token, proof, self._secret.get_secret_value()))
 
+    async def _send(self, what: str, url: str, **request) -> httpx2.Response | None:
+        """A call of a post: one POST under CALL_DEADLINE_S, never retried. None: sent or not, nobody can say."""
+        try:
+            async with asyncio.timeout(CALL_DEADLINE_S):
+                return await self._request("POST", url, PHOTO_TIMEOUT_S, **request)
+        except TimeoutError:  # the deadline: the client's own timeouts never tripped
+            _said(what, "deadline")
+        except httpx2.TimeoutException:
+            _said(what, "timeout")
+        except Exception:  # noqa: BLE001 — as in `_call`: nothing the client raises leaves with this frame's token
+            _said(what, "network")
+        return None
+
+    async def upload_photo(self, page_id: str, page_token: str, png: bytes, *, hint: str = "",
+                           position: int = 0) -> Upload:
+        """D-FB-POST-002: one image of a post, a multipart POST of the file itself with `published=false`: Facebook
+        makes a photo that shows nothing on the Page. `hint` and `position` are the stand-in's (its markers): ignored
+        here, so that a caller calls both alike."""
+        # Checked before the proof or the request is built, as publish_photo's.
+        if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
+                or not isinstance(png, bytes)):
+            return Upload("failed", error_code="not_sent")
+        proof = self._proof(page_token)
+        response = await self._send("upload", f"{GRAPH}/{page_id}/photos",
+                                    data={"published": "false", "access_token": page_token, "appsecret_proof": proof},
+                                    files={"source": ("affiche.png", png, "image/png")})
+        return _uploaded(response, page_id, (page_token, proof, self._secret.get_secret_value()))
+
+    async def create_post(self, page_id: str, page_token: str, message: str, photo_ids: list[str]) -> Outcome:
+        """D-FB-POST-002: the one call that publishes, a form POST to the Page's feed that attaches the uploaded photos
+        in the order of `photo_ids`. An empty message is not sent. Its answer holds the post's id in `id`, not in
+        `post_id` (the proofs of 2026-11-21)."""
+        if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
+                or not isinstance(message, str) or not isinstance(photo_ids, list) or not photo_ids
+                or not all(isinstance(photo, str) and DIGITS.fullmatch(photo) for photo in photo_ids)):
+            return Outcome("failed", error_code="not_sent")
+        try:
+            message.encode("utf-8")
+        except UnicodeEncodeError:  # a lone surrogate
+            return Outcome("failed", error_code="caption")
+        proof = self._proof(page_token)
+        media = {f"attached_media[{n}]": json.dumps({"media_fbid": photo}, separators=(",", ":"))
+                 for n, photo in enumerate(photo_ids)}
+        form = ({"message": message} if message else {}) | media | {"access_token": page_token, "appsecret_proof": proof}
+        response = await self._send("post", f"{GRAPH}/{page_id}/feed", data=form)
+        return classify(response, page_id, (page_token, proof, self._secret.get_secret_value()), post=True)
+
 
 class StubGraph:
     """FACEBOOK_PROVIDER=stub, for tests, smokes and the dev server: the same calls, no network. Two Pages, so that a
     smoke chooses one; every photo is published, with a new post id of its Page's shape, unless its caption holds one of
-    MARKERS: then the answer a smoke needs to see, unknown or refused."""
+    MARKERS: then the answer a smoke needs to see, unknown or refused. A post is read the same way on its message; its
+    uploads read the same message (`hint`): `[stub:image:N]` refuses the Nth image (N from 1), `[stub:slow]` makes each
+    upload take a second, for the smoke's « Arrêter l’envoi »."""
     mode = "stub"
     PAGES = (Page("100000000000001", "Page d’essai 1", "stub-page-token-000000001"),
              Page("100000000000002", "Page d’essai 2", "stub-page-token-000000002"))
@@ -296,6 +391,30 @@ class StubGraph:
         if marked := next((answer for marker, answer in self.MARKERS.items() if marker in caption), None):
             return marked
         post_id = f"{page_id}_{uuid4().int % 10 ** 15}"
+        return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
+
+    async def upload_photo(self, page_id: str, page_token: str, png: bytes, *, hint: str = "",
+                           position: int = 0) -> Upload:
+        if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
+                or not isinstance(png, bytes) or not isinstance(hint, str) or type(position) is not int or position < 0):
+            return Upload("failed", error_code="not_sent")
+        if "[stub:slow]" in hint:
+            await asyncio.sleep(1)
+        # The marker's own number is read (three digits at most); `position` is only compared, never turned into text.
+        if any(int(marked) == position + 1 for marked in re.findall(r"\[stub:image:([0-9]{1,3})\]", hint)):
+            return Upload("failed", error_code="100")
+        return Upload("uploaded", str(uuid4().int % 10 ** 15))
+
+    async def create_post(self, page_id: str, page_token: str, message: str, photo_ids: list[str]) -> Outcome:
+        if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
+                or not isinstance(message, str) or not isinstance(photo_ids, list)
+                or not photo_ids or not all(isinstance(photo, str) and DIGITS.fullmatch(photo) for photo in photo_ids)):
+            return Outcome("failed", error_code="not_sent")
+        if marked := next((answer for marker, answer in self.MARKERS.items() if marker in message), None):
+            return marked
+        post_id = f"{page_id}_{uuid4().int % 10 ** 15}"
+        if not _kept(post_id, POST_ID, (page_token,)):  # as the real client's: an id never holds the call's token
+            return Outcome("unknown")
         return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
 
 

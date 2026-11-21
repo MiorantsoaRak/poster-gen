@@ -18,6 +18,8 @@ a later record of the action can join it. Passwords are hashed by the caller, ou
     python -m affiche.shops pause --yes                                   without --yes, only says whether it is paused
     python -m affiche.shops resume
     python -m affiche.shops purchase-text ["…"]                          without a text, prints the current one
+    python -m affiche.shops post-limit <identifier> [<N> | none]          the most images in one Facebook post; without
+                                                                          a value, prints it; none: no limit
     python -m affiche.shops after-restore <kept database> [--apply]      without --apply, only reports
 
 The command reads the data folder from the settings, as the other commands do, and never migrates: it refuses unless
@@ -65,8 +67,8 @@ def find_shop(conn: Connection, identifier: str):
 
 def list_shops(conn: Connection) -> list:
     """Whether a shop has a password, never its hash: shop 1 has none after a backup from before 0013 is restored."""
-    return conn.execute(text("SELECT id, identifier, name, state, created_at, password_hash IS NOT NULL AS has_password"
-                             " FROM shop_profile ORDER BY id")).all()
+    return conn.execute(text("SELECT id, identifier, name, state, created_at, password_hash IS NOT NULL AS has_password,"
+                             " post_image_limit FROM shop_profile ORDER BY id")).all()
 
 
 def create_shop(conn: Connection, identifier: str, name: str | None, password_hash: str) -> int:
@@ -173,6 +175,16 @@ def set_purchase_text(conn: Connection, sentence: str) -> None:
         raise ValueError("a purchase text has 1 to 500 characters")
     conn.execute(text("INSERT INTO meta VALUES ('purchase_text_fr', :sentence)"
                       " ON CONFLICT(key) DO UPDATE SET value=excluded.value"), {"sentence": sentence})
+
+
+def set_post_limit(conn: Connection, shop_id: int, limit: int | None) -> int | None:
+    """D-FB-POST-004: the most images one Facebook post of this shop may hold, None for no limit (the default). Returns
+    the limit it replaced."""
+    before = conn.execute(text("SELECT post_image_limit FROM shop_profile WHERE id=:shop"), {"shop": shop_id}).first()
+    if before is None:
+        raise LookupError(f"no shop {shop_id}")
+    conn.execute(text("UPDATE shop_profile SET post_image_limit=:limit WHERE id=:shop"), {"limit": limit, "shop": shop_id})
+    return before[0]
 
 
 IMAGE_COSTS = text(
@@ -469,11 +481,15 @@ def _named(shop) -> str:
     return f"{shop.identifier} (shop {shop.id}, « {shop.name or 'sans nom'} »)"
 
 
+def _images(limit: int | None) -> str:
+    return "no post limit" if limit is None else f"at most {limit} images per post"
+
+
 def _list(engine, _args):
     with engine.connect() as conn:
         for shop in list_shops(conn):
             print(f"{shop.id}\t{shop.identifier}\t{shop.state}\t{'password' if shop.has_password else 'no password'}"
-                  f"\t{shop.created_at[:10]}\t{shop.name or ''}")
+                  f"\t{_images(shop.post_image_limit)}\t{shop.created_at[:10]}\t{shop.name or ''}")
 
 
 def _create(engine, args):
@@ -626,6 +642,34 @@ def _purchase_text(engine, args):
           f"{'' if stored else ' (not set: the fallback every shop reads)'}")
 
 
+SHOW = object()  # post-limit without a value; not a string, so that argparse never passes it to _limit
+
+
+def _limit(typed: str) -> int | None:
+    """post-limit's value: a whole number from 1, or none. Not a credit's number: no ledger's ceiling, only what the
+    column can hold."""
+    if typed == "none":
+        return None
+    digits = typed.lstrip("0") if typed.isascii() and typed.isdigit() else ""
+    value = int(digits) if 0 < len(digits) <= 19 else 0  # 19 digits hold 2**63-1; no longer number is ever converted
+    if not 1 <= value <= 2 ** 63 - 1:
+        raise argparse.ArgumentTypeError(f"a whole number from 1, or none: {typed!r}")
+    return value
+
+
+def _post_limit(engine, args):
+    shop = _shop(engine, args.identifier)
+    if args.limit is SHOW:
+        with engine.connect() as conn:
+            limit = conn.execute(text("SELECT post_image_limit FROM shop_profile WHERE id=:shop"),
+                                 {"shop": shop.id}).scalar()
+        print(f"{_named(shop)}: {_images(limit)}")
+        return
+    with write_tx(engine) as conn:
+        before = set_post_limit(conn, shop.id, args.limit)
+    print(f"{_named(shop)}: {_images(args.limit)} (before: {_images(before)})")
+
+
 def _after_restore(engine, args):
     with write_tx(engine) if args.apply else engine.connect() as conn:
         report, blocked = after_restore(conn, args.kept, apply=args.apply)
@@ -640,8 +684,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="The operator's shop and credit commands (D-MULTI-SHOP-003, D-BALANCE-005). Never migrates: the "
                     "database must be at this code's head. Exit codes: 0 done; 1 refused, nothing written; 2 usage.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("list", help="every shop: id, identifier, state, password or not, created, name").set_defaults(
-        handler=_list)
+    commands.add_parser("list", help="every shop: id, identifier, state, password or not, images per post, created, "
+                                     "name").set_defaults(handler=_list)
     create = commands.add_parser("create", help="a new active shop; prints its password once")
     create.add_argument("identifier", help="3 to 32 letters or digits once case, accents, spaces and punctuation go")
     create.add_argument("--name", help="the shop's displayed name (the owner can change it)")
@@ -706,6 +750,12 @@ def build_parser() -> argparse.ArgumentParser:
     sentence.add_argument("text", nargs="?", help="the packs, the mobile money number, the reference to write, and when "
                                                   "credits arrive (1 to 500 characters)")
     sentence.set_defaults(handler=_purchase_text)
+    limit = commands.add_parser("post-limit", help="the most images one Facebook post of a shop may hold; without a "
+                                                   "value, prints it")
+    limit.add_argument("identifier")
+    limit.add_argument("limit", nargs="?", type=_limit, default=SHOW, metavar="N | none",
+                       help="a whole number from 1; none: no limit (the default)")
+    limit.set_defaults(handler=_post_limit)
     restore = commands.add_parser("after-restore", help="after a restore: the credit lines and Facebook publications of "
                                                         "the database it replaced that this one lacks, and this one's "
                                                         "Facebook Page connections, which go; --apply does it")

@@ -19,11 +19,14 @@ from affiche.posters import credits, terms
 
 FACEBOOK = ("facebook_pages", "facebook_connects", "facebook_publications")  # 0018, empty
 ADDED_0018 = [f"0018 ADDED {table}: empty: as expected" for table in FACEBOOK]
+POSTS = ("facebook_posts", "facebook_post_items")  # 0019, empty
+ADDED_0019 = ["0019 ADDED shop_profile: no limit of images per post: as expected",
+              *(f"0019 ADDED {table}: empty: as expected" for table in POSTS)]
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
                  "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
                  "product_inputs", "creations", "creation_versions", "mutation_keys", "sessions", "login_failures",
                  "poster_jobs", "poster_calls", "scene_plans", "poster_visuals", "text_proposals", "text_effects", "poster_renders", "confirmations", "looks", "chat_reads",
-                 "credit_grants", "operator_sessions", *FACEBOOK}
+                 "credit_grants", "operator_sessions", *FACEBOOK, *POSTS}
 GUARD_WHERE = {
     "req_one_revision": "WHERE parent_id IS NOT NULL AND status IN ('running','succeeded')",
     "req_one_initial": "WHERE parent_id IS NULL AND status IN ('running','succeeded')",
@@ -113,7 +116,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0018"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0019"
     finally:
         engine.dispose()
 
@@ -311,9 +314,9 @@ def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, mo
 
 def test_a_fresh_database_starts_with_shop_1_without_password(engine):
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0018"
-        assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at FROM shop_profile"
-                                    ).all() == [("originalphone", None, "active", 1)]
+        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0019"
+        assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at, post_image_limit"
+                                    " FROM shop_profile").all() == [("originalphone", None, "active", 1, None)]
         assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
 
 
@@ -394,7 +397,7 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
     assert out.endswith("REHEARSAL OK\n") and f"environment: SQLite {sqlite3.sqlite_version}, Python " in out
-    assert "pending migrations: 0013, 0014, 0015, 0016, 0017, 0018" in out and "schema version: 0012 -> 0018" in out
+    assert "pending migrations: 0013, 0014, 0015, 0016, 0017, 0018, 0019" in out and "schema version: 0012 -> 0019" in out
     assert "ledger provider_calls: 512881 -> 512881" in out and "(over id, ip, attempted_at)" in out
     # shop_profile from 0012: 0013's projection, the earliest pending one, over its six columns of then.
     assert "(over id, revision, name, contact, logo_asset, updated_at)" in out
@@ -409,6 +412,7 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert [line for line in lines if line.startswith("0016 ")] == ["0016 ADDED operator_sessions: empty: as expected"]
     assert [line for line in lines if line.startswith("0017 ")] == ["0017 ADDED shop_profile: nothing accepted: as expected"]
     assert [line for line in lines if line.startswith("0018 ")] == ADDED_0018
+    assert [line for line in lines if line.startswith("0019 ")] == ADDED_0019
     guards =[line for line in lines if line.startswith("guard ")]
     assert len(guards) == 14 and all(line.endswith(": as expected") for line in guards)  # a table, 12 triggers, a column
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and read(path)[0]["version"] == "0012"
@@ -461,10 +465,10 @@ def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(t
         before, _ = read(path, preserved)
         migrate(engine)
         after, _ = read(path, preserved)
-        assert {table: after["tables"].pop(table)[0] for table in ("credit_grants", "operator_sessions", *FACEBOOK)} \
-            == dict.fromkeys(("credit_grants", "operator_sessions", *FACEBOOK), 0)
+        new = ("credit_grants", "operator_sessions", *FACEBOOK, *POSTS)
+        assert {table: after["tables"].pop(table)[0] for table in new} == dict.fromkeys(new, 0)
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"]
-        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0018", 0, "ok")
+        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0019", 0, "ok")
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT kind, takes_credit FROM poster_jobs ORDER BY id").all() == [
                 ("plan", 0), ("scene", 0), ("text_patch", 0), ("text_texture", 0), ("render", 0), ("plan", 0)]
@@ -547,7 +551,7 @@ def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pen
             conn.exec_driver_sql(statement)
     assert rehearse.main(["rehearse", engine.url.database]) == 1
     out = capsys.readouterr().out
-    assert "pending migrations: none (code head 0018)" in out
+    assert "pending migrations: none (code head 0019)" in out
     assert out.splitlines()[-1] == f"REHEARSAL FAILED: {guard}"
 
 
@@ -597,7 +601,7 @@ def test_0017_on_a_populated_0016_database_keeps_every_shop_column_and_accepts_n
             credits.grant(conn, 2, 3, origin="offered", ref="welcome", actor="tests")
         assert rehearse.main(["rehearse", str(path)]) == 0
         out = capsys.readouterr().out
-        assert "pending migrations: 0017, 0018 (code head 0018)" in out and out.endswith("REHEARSAL OK\n")
+        assert "pending migrations: 0017, 0018, 0019 (code head 0019)" in out and out.endswith("REHEARSAL OK\n")
         assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at)"
                 in out)
         before, schema_before = read(path, preserved)
@@ -649,10 +653,10 @@ def test_0018_on_a_populated_0017_database_keeps_every_row_and_adds_three_empty_
                                  f"VALUES (1,'{T}','shopdeux','active','{T}')")
         assert rehearse.main(["rehearse", str(path)]) == 0
         out = capsys.readouterr().out
-        assert "pending migrations: 0018 (code head 0018)" in out and out.endswith("REHEARSAL OK\n")
+        assert "pending migrations: 0018, 0019 (code head 0019)" in out and out.endswith("REHEARSAL OK\n")
         assert [line for line in out.splitlines() if line.startswith("0018 ")] == ADDED_0018
         before, schema_before = read(path)
-        migrate(engine)
+        migrate_to(engine, "0018", monkeypatch)
         after, schema = read(path)
         assert {table: after["tables"].pop(table)[0] for table in FACEBOOK} == dict.fromkeys(FACEBOOK, 0)
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"]  # every column of every row
@@ -683,6 +687,91 @@ def test_0018_on_a_populated_0017_database_keeps_every_row_and_adds_three_empty_
                 (publication("p3", 1, "key-2", "admitted"), "CHECK"),  # v2's state, removed by v3
                 (publication("p3", 1, "key-2").replace("(id,", "(").replace("('p3',", "("), "NOT NULL"),  # no id
                 ("UPDATE facebook_publications SET status='removed' WHERE id='p1'", "CHECK")):
+            with pytest.raises(exc.IntegrityError, match=match), write_tx(engine) as conn:
+                conn.exec_driver_sql(refused)
+    finally:
+        engine.dispose()
+
+
+STATEMENTS_0019 = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0019").module.STATEMENTS
+
+
+def post(id, shop, key, status="uploading"):
+    return ("INSERT INTO facebook_posts (id,shop_id,page_id,page_name,description,key,payload_sha,status,sent_at) "
+            f"VALUES ('{id}',{shop},'111','Page','','{key}','s','{status}','{T}')")
+
+
+def item(post, position, creation="c1"):
+    return ("INSERT INTO facebook_post_items (post_id,position,creation_id,confirmation_id,png_sha256) "
+            f"VALUES ('{post}',{position},'{creation}','cf1','h')")
+
+
+def test_0019_on_a_populated_0018_database_keeps_the_publications_and_adds_the_limit_and_two_empty_tables(
+        tmp_path, monkeypatch, capsys):
+    """D-FB-POST-001: the pilot at 0018 with a second shop and a publication. 0019 widens shop_profile with the limit, no
+    shop having one, adds the posts and their images, empty, and leaves facebook_publications and its row as they were
+    (0020 converts them). Its checks refuse a limit below 1, a status the design does not have, a shop or a post that
+    does not exist, a key used twice by one shop, a poster or a position twice in one post; an image's poster and
+    confirmation are not foreign keys."""
+    path = pilot_0012(tmp_path, monkeypatch)
+    preserved = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0019").module.PRESERVED
+    engine = make_engine(tmp_path)
+    try:
+        migrate_to(engine, "0018", monkeypatch)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO shop_profile (revision,updated_at,identifier,state,created_at) "
+                                 f"VALUES (1,'{T}','shopdeux','active','{T}')")
+            conn.exec_driver_sql(publication("p1", 1, "key-1", "unknown"))
+        assert rehearse.main(["rehearse", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "pending migrations: 0019 (code head 0019)" in out and out.endswith("REHEARSAL OK\n")
+        assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at,"
+                " terms_version, terms_accepted_at)" in out)
+        assert [line for line in out.splitlines() if line.startswith("0019 ")] == ADDED_0019
+        before, schema_before = read(path, preserved)
+        migrate(engine)
+        after, schema = read(path, preserved)
+        assert {table: after["tables"].pop(table)[0] for table in POSTS} == dict.fromkeys(POSTS, 0)
+        assert after["tables"] == before["tables"] and after["sums"] == before["sums"]  # facebook_publications included
+        assert before["tables"]["facebook_publications"][0] == 1
+        assert (before["version"], after["version"], after["foreign_key_check"], after["integrity_check"]) == (
+            "0018", "0019", 0, "ok")
+        assert {name: schema[name] for name in schema_before if name != "shop_profile"} == {
+            name: sql for name, sql in schema_before.items() if name != "shop_profile"}
+        assert STATEMENTS_0019[0].split(" ADD COLUMN ", 1)[1] in schema["shop_profile"]
+        assert {name for name in schema.keys() - schema_before.keys() if not name.startswith("sqlite_autoindex_")} \
+            == {*POSTS, "facebook_post_items_creation"}
+        assert [schema[name] for name in (*POSTS, "facebook_post_items_creation")] == STATEMENTS_0019[1:]
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT id, post_image_limit FROM shop_profile ORDER BY id").all() == [
+                (1, None), (2, None)]
+            assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+        with write_tx(engine) as conn:  # what the routes will write: shop 2 may use shop 1's key
+            conn.exec_driver_sql("UPDATE shop_profile SET post_image_limit=1 WHERE id=1")
+            conn.exec_driver_sql("UPDATE shop_profile SET post_image_limit=NULL WHERE id=1")
+            for shop in (1, 2):
+                conn.exec_driver_sql(post(f"post{shop}", shop, "key-1"))
+            conn.exec_driver_sql(item("post1", 0))
+            conn.exec_driver_sql(item("post1", 1, "gone"))  # a poster that is not here: no foreign key
+            conn.exec_driver_sql("INSERT INTO facebook_post_items VALUES ('post2',0,'c1','missing',NULL,NULL)")
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT stop_asked, said_by_owner FROM facebook_posts").all() == [(0, 0), (0, 0)]
+            assert conn.exec_driver_sql("SELECT count(*) FROM facebook_post_items").scalar() == 3
+            assert conn.exec_driver_sql("SELECT id, status FROM facebook_publications").all() == [("p1", "unknown")]
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+        for refused, match in (
+                ("UPDATE shop_profile SET post_image_limit=0 WHERE id=1", "CHECK"),
+                ("UPDATE shop_profile SET post_image_limit=-1 WHERE id=1", "CHECK"),
+                (post("post3", 9, "key-2"), "FOREIGN KEY"),
+                (post("post3", 1, "key-1"), "UNIQUE"),  # one shop, one key
+                (post("post1", 1, "key-2"), "UNIQUE"),
+                (post("post3", 1, "key-2", "sending"), "CHECK"),  # 0018's status, not a post's
+                (post("post3", 1, "key-2").replace("(id,", "(").replace("('post3',", "("), "NOT NULL"),  # no id
+                ("UPDATE facebook_posts SET status='removed' WHERE id='post1'", "CHECK"),
+                (item("nopost", 0), "FOREIGN KEY"),
+                (item("post1", 2), "UNIQUE"),  # the same poster twice in one post
+                (item("post1", 1, "c2"), "UNIQUE"),  # the same position twice
+                (item("post1", -1, "c2"), "CHECK")):
             with pytest.raises(exc.IntegrityError, match=match), write_tx(engine) as conn:
                 conn.exec_driver_sql(refused)
     finally:
