@@ -1,0 +1,17 @@
+# Review r5 — D-TEXT-FIRST-007 v5 (the copy as an editor action) and its code
+
+Reviewer: Codex, read-only, 2026-11-21. Verdict: REJECT on five points (two P1, two P2, one P3), none in the copy itself: "I found no automatic charge in the copy path". All five are answered in the code; see r6 for the ruling.
+
+1. **P1 — Retrying a lost copy answer can overwrite the copy’s saved words.** Leave the source untouched, open the already-created copy from « Mes affiches » in another tab, and save a new subtitle without generating a version. On retry, `adopt` restores that subtitle. The zero-version check then passes, `headline.value = words` replaces it with the source’s subtitle, and the watcher saves over the copy’s entry. The next paid image can use the wrong words. Seed words only when the copy has no saved words, checking before `adopt`’s watcher runs. Apply the visibility edit only while the copy is still at its creation revision. [App.vue:2017](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/App.vue:2017)
+
+2. **P1 — A paid retry recap can show a product photo the generator will never use.** The released bundle appended attachments to `draft.pictures` on existing posters, including attachments labelled `product`. Filtering by role keeps those stale photos. After « Version refusée. Je peux en refaire une. », the recap can show replacement photo B, while « Créer l’affiche » spends a credit on the poster’s immutable input A. Render existing-poster thumbnails from its stored product input, or omit them when that input is unavailable. Keep the new-poster recap as it is. [ChatView.vue:569](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ChatView.vue:569)
+
+3. **P2 — The card reports an opening that can fail, and the error can disappear.** `made()` saves « elle s’ouvre dans Pas à pas » before the first opening read. Navigation or a failed read can leave the copy in « Mes affiches » with its words and visibility setup skipped. If a texture read fails inside `adopt` after the chat unmounts, `told` delegates the error to `copyWith`, whose `!mine(at)` return discards it. Use « La copie est créée. Retrouvez-la dans Mes affiches. » at `made()`, initialize the copy independently of navigation, and surface post-creation opening errors in the editor. [ChatView.vue:258](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ChatView.vue:258) · [App.vue:2016](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/App.vue:2016)
+
+4. **P2 — « Annuler » on a photo card can erase a saved message.** Send a photo alone, type the next instruction, then cancel the copy. `cancel()` replaces the composer with the photo card’s empty `said`, and the text watcher removes the persisted draft. Preserve a nonempty composer and restore `said` only into an empty field. [ChatView.vue:365](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ChatView.vue:365)
+
+5. **P3 — « Coque en silicone » triggers the features warning.** The unbounded `icon` pattern matches inside `silicone`, a common material for this shop. Match the whole normalized words `icon`, `icons`, `icone` and `icones`. [generation.ts:69](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/generation.ts:69)
+
+Static review only. I found no automatic charge in the copy path. `made()` checks chat ownership before writing the source thread, and the released bundle treats `photo` as text. The six pending smokes are excluded.
+
+**REJECT**

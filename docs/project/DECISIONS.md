@@ -1130,3 +1130,29 @@ The owner authorized closing T-SHOP-DASH-006 after fixing the round-three histor
 **Left as it was, on purpose.** The chat, the step editor, the review and final panels (reviewed three times in the redesign); the sections of one shop's page in the console; every approved sentence, including the check times. The Overview's short right column and the chevron before the row's words on a wide screen are noted in the report, not changed.
 
 **The owner may overturn:** the dark card in the light theme; « crédits » after the two figures (the shell's word, new in the card); the 64 px thumbnails; the 600 px column of one shop's page.
+
+## ADR-125 — The features warning follows the request's words (2026-11-21)
+
+**Context.** The redesign was released and the owner used it. Under a scene adjustment for « Podium smaller » the card said « Vous demandez des caractéristiques sans les lister ? … », "every time now". That was the design of 2026-11-17 (D-TERMS-005, owner decision 2): the sentence on every scene-adjustment card, because a field answered by the paid reader could be lost by a replayed or restored card. The requirement itself (R-TERMS-002) only asked for it "when a request asks for features without listing them".
+
+**Decision (the owner: "word test").** The page shows the warning only when the request's own words could ask for features or for text to write: one fixed list, French and English, in `generation.ts` (`asksText`), used by the chat's card and by the confirmation of « Ajuster la scène ». The words of a scene are kept out of the list (« texture », « qualité », « plus de détails » alone, « affiche »).
+
+**Consequence, accepted.** A request worded outside the list has no warning before the paid tap. The check before download still names the texts that were added and cannot be skipped, and the accepted conditions still say that the AI chooses unlisted features. Not chosen: the warning once per poster (it would still stand under « Podium smaller »), no warning at all (the only notice before payment), a field from the paid reader (a server change; the next step if the list misses too much).
+
+**The owner may overturn:** any word of the list; the choice to warn on icons, badges, labels and banners (they carry invented text).
+
+## ADR-126 — A product photo sent on an existing poster offers a copy on that photo (2026-11-21)
+
+**Context.** On the released app the owner sent an image with « Use this as product » on an existing poster. The image was labelled « Inspiration » (the poster's own photo counted as the first image), and the answer was a paid scene adjustment that never used the image. The chat also said « Les photos d’une affiche se changent dans Pas à pas », which was not true. A version belongs to its product's photos and a poster's product never changes on the server; the one way to other photos is a copy onto a new product input (`replace_input`, as « Refaire en … »).
+
+**Decision (the owner: "yes copy with the new photo").** Page only, no server change, no new paid path, no change to an existing one (D-TEXT-FIRST-007 v5).
+- On an existing poster every attached image is a product photo. A message with images is not sent to the paid reader; the chat answers with a card that offers a copy of the poster on the new photos. The copy costs nothing; the poster it came from is unchanged.
+- The copy is the editor's own action, as « Refaire en … »: it opens in « Pas à pas », without a version, and its image is the editor's « Générer l’affiche ». The chat adds no paid card and keeps nothing of the copy.
+
+**How it got there.** Four designs made the copy and its first image in the chat (v1 to v4), and four reviews rejected them. v1 also took an inspiration image on an existing poster: a tab on the released bundle could have paid for it without sending the image. From v2 on, every blocking finding was in the recap that the chat added by itself for a poster without an image: a stale list of versions, a card restored from the device, a card replaced after a refusal, a card pushed out of what is stored. The owner's word after the fourth: "When blocked, think of another way it can be done, without keeping on polishing it." v5 removes that recap and reaches the image through what is already released and reviewed.
+
+**Cost of the choice.** The copy's image is made in « Pas à pas », not in the chat: one change of screen. A poster without a version is still not served by the chat. A second tap after a reload can make a second free copy, as « Refaire en … » can.
+
+**Not chosen.** A new poster from the chat's ordinary path with the photo, name and price filled (the brand, subtitle, layout and format are lost): the devil's advocate's alternative. Changing the photo in place (a server change against `input_immutable`).
+
+**The owner may overturn:** the copy's image in « Pas à pas » rather than in the chat; no inspiration image on an existing poster; the French sentences of the card and of the editor's notice.

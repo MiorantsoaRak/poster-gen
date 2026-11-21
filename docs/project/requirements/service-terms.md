@@ -26,6 +26,11 @@
   - [ ] The check before download keeps its point on texts that were added, and it cannot be skipped.
 - **Not chosen (the image writes only what the owner listed):** a request for features must list them; the image request forbids any other; « ajoute 4 lignes de caractéristiques » is answered by asking for them. Safer, and it removes what the user did with his own poster on 2026-11-15.
 - [ ] Whichever is chosen applies to the chat and to « Ajustement de la scène » alike.
+
+**Amendment of 2026-11-21 (ADR-125; owner's report on the released app: the warning stood under « Podium smaller », "every time now"):**
+- [ ] The warning is shown only when the request's own words could ask for text or features: a fixed list of words, French and English, tested by the page (« caractéristiques », « specs », « détails », « infos », « texte », « écris »…). « Podium smaller » and « fond plus sombre » show nothing.
+- [ ] The test is the same in the chat (the owner's message and the instruction read from it) and in « Ajuster la scène » (the typed instruction, when its confirmation opens).
+- [ ] Known limit, accepted by the owner: a request worded with none of the listed words loses the warning before the paid tap. The check before download still names the added texts and cannot be skipped, and the accepted conditions still say it.
 - **Out of scope:** checking a feature against a product database.
 
 ## R-TERMS-003 — What is kept, and where it goes

@@ -100,6 +100,15 @@ Research: [text-first generation findings](../reviews/text-first-generation-rese
 
 **Out of scope, still done in « Pas à pas »:** the shop's identity on an existing poster; the seal, the positions, the shop's name alone; a saved style and « Décrire moi-même »; another format made from the chat; and, unchanged, framing, typography and place of a laid-over text, photos, undo and redo.
 
+**Amendment of 2026-11-21 (ADR-126; owner's report on the released app: an image sent with « Use this as product » on an existing poster was labelled « Inspiration », and the answer was a paid scene adjustment that never used the image):**
+- [ ] On an existing poster, an image attached in the chat is never ignored: no paid card is offered for a message whose images it would not use, and no message with images is sent to the paid reader.
+- [ ] On an existing poster every attached image is a product photo (up to three per message); there is no inspiration image there and no label to swap. A poster's style is changed by words, as before (ADR-103).
+- [ ] A product photo sent on an existing poster, with or without a version, offers a copy: the same poster (words, price, layout, format, shop identity) on the new photos, with no version yet. The copy costs nothing; the poster it was made from is unchanged and stays in « Mes affiches ».
+- [ ] The copy opens in « Pas à pas », where its image is made by the editor's own « Générer l’affiche », with the editor's cost line and guards. The chat adds no paid card for it.
+- [ ] The words typed with the images are shown in the thread and are not read: the card says what will be done, and another change is written afterwards.
+- [ ] The sentence « Les photos d’une affiche se changent dans Pas à pas » is removed: it was not true.
+- **Out of scope:** changing the photos of a poster in place (a version belongs to its product's photos: the server's rule); a photo control in « Pas à pas » for an existing poster; reading the message that came with the images; an inspiration image on an existing poster (v1 of the design had it; the review showed that a tab on the released bundle could pay for it without sending the image); the copy's first image asked in the chat (v2 to v4 had a recap added by the chat itself; four reviews found a new way to pay wrongly in it each time).
+
 ## R-TEXT-FIRST-005 — Paid reading of messages, limits and failures
 
 - **Story:** As the shop owner, I can write freely without a surprise on the bill and without losing my words when something fails.

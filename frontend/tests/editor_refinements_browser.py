@@ -148,6 +148,14 @@ def run():
                         expect(page.get_by_label(name, exact=True)).to_be_disabled()
                     expect(page.get_by_text('Le cadrage est verrouillé', exact=False)).to_be_visible()
                     # « Ajuster la scène » warns before its paid button, the chat's words (D-TERMS-005); closed, nothing is sent.
+                    # A scene's words alone do not warn (ADR-125).
+                    page.get_by_label('Ajustement de la scène', exact=True).fill('Podium plus petit')
+                    page.get_by_role('button', name='Ajuster la scène', exact=True).click()
+                    quiet = page.get_by_role('dialog', name='Ajuster la scène ?')
+                    expect(quiet.get_by_role('button', name='Lancer l’ajustement')).to_be_visible()
+                    expect(quiet.get_by_text(WARNING, exact=True)).to_have_count(0)
+                    quiet.get_by_role('button', name='Annuler').click()
+                    expect(quiet).to_have_count(0)
                     page.get_by_label('Ajustement de la scène', exact=True).fill('Ajoute ses caractéristiques')
                     page.get_by_role('button', name='Ajuster la scène', exact=True).click()
                     sheet = page.get_by_role('dialog', name='Ajuster la scène ?')

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { bind, open } from '../src/api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, productsOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 import { memory } from './fixture'
 
@@ -150,6 +150,22 @@ it('pays for a style change as for a change, and shows a kind it does not know a
   expect(paid(unknown.card) || changes(unknown.card)).toBe(false)
   for (const state of [{}, { spent: true }, { spent: true, request }, { done: true }]) expect(cardButton({ ...unknown, ...state })).toBeNull()
 })
+it('offers the editor’s free copy on a photo card; never a paid card (D-TEXT-FIRST-007)', () => {
+  const a = 'a'.repeat(64), b = 'b'.repeat(64)
+  const photo = item({ card: { kind: 'photo', pictures: [{ asset: a, role: 'product' }] } })
+  expect(cardButton(photo)).toBe('copy')
+  expect(cardButton({ ...photo, done: true })).toBeNull()
+  // What stops a new image stops the copy: it would stay without one. The conditions are offered, as on a paid card.
+  expect(cardButton(photo, undefined, undefined, null, true)).toBeNull()
+  expect(cardButton(photo, undefined, undefined, null, 'terms')).toBe('conditions')
+  // Nothing of it is a paid card: no request is kept, followed or waited for.
+  expect([paid(photo.card), changes(photo.card), unresolved({ ...photo, spent: true })]).toEqual([false, false, false])
+  // Its product photos, as stored data: distinct, three at most, and nothing that is not a product photo.
+  expect(productsOf({ kind: 'photo', pictures: [{ asset: a, role: 'product' }, { asset: a, role: 'product' }, { asset: b, role: 'inspiration' }, { asset: 5 } as any, null as any] })).toEqual([a])
+  expect(productsOf({ kind: 'photo', pictures: ['1', '2', '3', '4'].map(asset => ({ asset, role: 'product' as const })) })).toEqual(['1', '2', '3'])
+  expect(productsOf({ kind: 'photo', pictures: 'x' as any })).toEqual([])
+  expect(cardButton(item({ card: { kind: 'photo', pictures: [{ asset: b, role: 'inspiration' }] } }))).toBeNull()
+})
 it('says on the recap what the shop’s profile gives the poster', () => {
   const shop = (logo: boolean, contact: boolean, ticked = false) => ({ logo, contact, ticked })
   expect(identityLine(shop(true, true), true)).toBe('Avec le logo et le contact de la boutique')
@@ -193,8 +209,13 @@ it('warns about unlisted features on a scene adjustment until it has its outcome
   const offered = item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'ajoute ses caractéristiques', visual_id: 'v' } })
   expect(warns(offered)).toBe(true)
   // Restored from the device, in today's shape and in the shape from before `effect` (normal makes it a refinement).
-  const stored = readThread(JSON.stringify({ items: [offered, { ...offered, id: 'old', card: { kind: 'change', change: 'scene', instruction_fr: 'fond bleu' } }] })).items
+  const stored = readThread(JSON.stringify({ items: [offered, { ...offered, id: 'old', card: { kind: 'change', change: 'scene', instruction_fr: 'ajoute 4 specs' } }] })).items
   expect(stored.map(warns)).toEqual([true, true])
+  // Only when the words could ask for features or text (ADR-125): the owner's message or the instruction read from it.
+  expect(warns(item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'Podium plus petit', said: 'Podium smaller', visual_id: 'v' } }))).toBe(false)
+  expect(warns(item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'Ajouter les points forts', said: 'mets ce qu’il faut', visual_id: 'v' } }))).toBe(true)
+  expect(warns(item({ card: { kind: 'change', effect: 'refine', instruction_fr: 'fond bleu', said: 'fond bleu et ajoute la config', visual_id: 'v' } }))).toBe(true)
+  expect(warns(item({ card: { kind: 'change', effect: 'refine', visual_id: 'v' } }))).toBe(false)  // a stored card without its words
   // Tapped and kept for « Réessayer » or « Reprendre »: still a request for an adjustment.
   const kept = { path: '/api/creations/c/refinements', body: {}, revision: 2 }
   expect(warns({ ...offered, spent: true, request: kept })).toBe(true)

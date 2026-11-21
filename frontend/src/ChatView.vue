@@ -7,7 +7,7 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from './api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, productsOf, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
 import { ended, FEATURES_WARNING, ONCE } from './generation'
@@ -18,7 +18,7 @@ const state = props.adapter.state
 
 interface Unsaved { id: string; role: Role; file: File; url: string; status: 'sending' | 'done' | 'failed'; asset?: string; warnings: string[]; error: string }
 const items = ref<Item[]>([]), draft = reactive<Draft>({ name: null, price_ar: null, style: 'clair', identity: null, pictures: [] })
-const tray = ref<Unsaved[]>([]), text = ref(''), reading = ref(false), starting = ref(false), typing = ref(false), smallAccepted = ref(false), needsAgreement = ref(false)
+const tray = ref<Unsaved[]>([]), text = ref(''), reading = ref(false), starting = ref(false), copying = ref(false), typing = ref(false), smallAccepted = ref(false), needsAgreement = ref(false)
 const root = ref<HTMLElement>(), thread = ref<HTMLElement>(), field = ref<HTMLTextAreaElement>(), picker = ref<HTMLInputElement>(), height = ref(0)
 // The read on its way, apart from the text being typed; the ref is the copy that holds when storage fails.
 const pending = ref<Pending | null>(null)
@@ -37,7 +37,9 @@ const roleNames: Record<Role, string> = { product: 'Produit', inspiration: 'Insp
 const src = (asset: string) => preparedUrl(`/api/assets/${asset}`)
 const price = (value?: number | null) => `${(value ?? 0).toLocaleString('fr-FR')} Ar`
 const products = () => draft.pictures.filter(item => item.role === 'product')
-const inspiration = computed(() => [...draft.pictures, ...tray.value].some(item => item.role === 'inspiration'))
+// On an existing poster the style's model image is the editor's (the selected version's): what `start` sends. The
+// thread's draft is not asked there: the bundle from before added every attached image to it (D-TEXT-FIRST-007).
+const inspiration = computed(() => state.creation ? !!state.styleReference : [...draft.pictures, ...tray.value].some(item => item.role === 'inspiration'))
 const smallPhoto = computed(() => needsAgreement.value || products().some(item => item.warnings?.includes('low_resolution')))
 // Only the open poster's versions; the one shown is the one selected in its document.
 const versions = computed(() => state.creation ? state.visuals : [])
@@ -59,7 +61,7 @@ const openCard = () => items.value.find(unresolved)
 const awaited = computed(() => !!pending.value && pendingFor(pending.value) === (state.creation?.id ?? null))
 // One paid tap, never two, and one read at a time: while anything runs, paid buttons are off and « Envoyer » waits
 // (the server's own guard is image_job_running).
-const working = computed(() => state.busy || !!state.job || reading.value || starting.value)
+const working = computed(() => state.busy || !!state.job || reading.value || starting.value || copying.value)
 const locked = computed(() => !owner.value || working.value || awaited.value)
 // A paid card that still waits for its answer comes first: no message is read and no other card is tapped meanwhile,
 // so no second card can pay for the same wish, and the card being followed is always the one open card.
@@ -67,7 +69,7 @@ const held = computed(() => locked.value || !!openCard())
 // One pending read, never replaced: while it waits in another thread nothing is read here, and the way there is offered.
 const elsewhere = computed(() => !!pending.value && !awaited.value)
 const toPending = () => { const id = pending.value && pendingFor(pending.value); window.location.hash = id ? `message-${id}` : 'message' }
-const waitLine = computed(() => reading.value ? 'Je lis votre message…'
+const waitLine = computed(() => reading.value ? 'Je lis votre message…' : copying.value ? 'Je copie l’affiche…'
   : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: 'Je dessine l’affiche…', receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
   : state.job?.kind === 'render' ? 'Je prépare le fichier…'
   : starting.value ? state.paletteLoading ? 'Je lis les couleurs de la photo…' : 'Je prépare la scène…' : '')
@@ -90,6 +92,8 @@ const staleCard = computed(() => items.value.filter(untapped).pop())
 const asksPhoto = (item: Item) => smallPhoto.value && [null, 'scene'].includes(effect(item))
 // A card whose tap would be a new image request: it says what that costs, or what stops it in place of its button.
 const costs = (item: Item) => paid(item.card) && !item.spent && !item.done && !free(item)
+// A `photo` card that still offers its copy: what stops a new image is said on it.
+const copies = (item: Item) => item.card?.kind === 'photo' && !item.done
 const limitOf = (item: Item) => costs(item) ? limitLine(left.value) : ''
 // A price card from before says the price is redrawn; a price that is a layer is only changed.
 const lineOf = (item: Item) => !item.spent && !item.done && !item.card?.effect && free(item) ? `Je change le prix sur l’affiche : ${price(item.card!.words?.price_ar)}.` : item.text
@@ -168,9 +172,11 @@ function importForm() {
 // ── images: uploaded when attached, one request each ─────────────────────────────────────────────────────
 function attach(event: Event) {
   const input = event.target as HTMLInputElement
+  if (copying.value) { input.value = ''; return }  // the poster is about to change
   for (const file of [...(input.files ?? [])]) {
-    const role = nextRole([...draft.pictures, ...tray.value])
-    if (!role) { state.notice = 'Trois photos du produit et une image d’inspiration au plus.'; break }
+    // On an existing poster every image is a product photo, the copy's (D-TEXT-FIRST-007).
+    const role = state.creation ? tray.value.length < PRODUCT_PHOTOS ? 'product' : null : nextRole([...draft.pictures, ...tray.value])
+    if (!role) { state.notice = state.creation ? 'Trois photos du produit au plus.' : 'Trois photos du produit et une image d’inspiration au plus.'; break }
     tray.value.push({ id: crypto.randomUUID(), role, file, url: URL.createObjectURL(file), status: 'sending', warnings: [], error: '' })
     void sendFile(tray.value[tray.value.length - 1])
   }
@@ -216,20 +222,44 @@ async function savedFirst() {
 }
 const sendable = () => !(held.value || pending.value || tray.value.some(item => item.status !== 'done') || (!text.value.trim() && !tray.value.length))
 async function send() {
-  if (!sendable() || (text.value.trim() && versions.value.length && !(await savedFirst() && sendable()))) return
+  // Saved first only for words that will be read: images on a poster are not (the copy saves by itself).
+  if (!sendable() || (text.value.trim() && versions.value.length && !tray.value.length && !(await savedFirst() && sendable()))) return
   const message = text.value.trim()
   const history = lines(items.value), pictures: Picture[] = tray.value.map(item => ({ asset: item.asset!, role: item.role, warnings: item.warnings }))
   add({ role: 'owner', text: message, pictures })
-  draft.pictures.push(...pictures); tray.value.forEach(item => URL.revokeObjectURL(item.url)); tray.value = []; text.value = ''
+  if (!state.creation) draft.pictures.push(...pictures)
+  tray.value.forEach(item => URL.revokeObjectURL(item.url)); tray.value = []; text.value = ''
   nextTick(() => { if (field.value) field.value.style.height = 'auto'; field.value?.focus() })
-  // No read is paid for what the chat cannot carry out: a change needs a version, and a poster's photos are the editor's.
-  if (state.creation && !versions.value.length) app('L’affiche n’a pas encore de version.')
-  else if (state.creation && !message) app('Les photos d’une affiche se changent dans Pas à pas.', { kind: 'steps' })
+  // No read is paid for what the chat cannot carry out: images sent on a poster are never read past (the chat's own
+  // card says what they are for, D-TEXT-FIRST-007), and a change needs a version.
+  if (state.creation && pictures.length) offer(pictures, message)
+  else if (state.creation && !versions.value.length) app('L’affiche n’a pas encore de version.')
   else if (!message) { if (complete(draft)) recap(); else app('Photo ajoutée.') }
   else setPending(readOf(message, history))
   // The bubble and the draft with its uploaded images are stored before the read leaves.
   save()
   if (awaited.value) void ask()
+}
+// Images on an existing poster (D-TEXT-FIRST-007): never read past. A version belongs to its product's photos, so the
+// chat offers the editor's copy of the poster on the new ones; the words sent with them are shown and not read.
+function offer(pictures: Picture[], said: string) {
+  supersede(items.value)
+  app(`Cette affiche garde sa photo. Je peux en faire une copie avec ${pictures.length > 1 ? 'les nouvelles photos' : 'la nouvelle photo'} : même titre, même prix. La copie s’ouvre dans Pas à pas, où vous créez son image. L’affiche actuelle reste dans Mes affiches.${said ? ' Votre message n’est pas lu avec une photo : envoyez-le ensuite.' : ''}`,
+    { kind: 'photo', pictures, said })
+}
+// « Copier avec cette photo »: nothing paid, and no paid card follows it here. The copy is the editor's own action, as
+// « Refaire en … »: it opens in « Pas à pas », where « Générer » makes its image. The card is over once the copy exists.
+async function copyWith(item: Item) {
+  const at = token, card = item.card!
+  if (held.value || tray.value.length) return
+  card.error = undefined; copying.value = true
+  let failure: unknown
+  const made = () => { if (!mine(at)) return; item.done = true; item.text = 'La copie est créée : retrouvez-la dans Mes affiches. Cette affiche reste telle quelle.'; save() }
+  try { await props.adapter.remake(productsOf(card), () => { if (!mine(at)) throw new Stopped() }, made) } catch (reason) { failure = reason }
+  if (!mine(at)) return  // opened in « Pas à pas »: this view is closed
+  copying.value = false
+  // Refused before the copy existed: the card stays and says why. Once it exists, the editor says what stopped its opening.
+  if (failure && !item.done) { card.error = failure instanceof Error && failure.message ? failure.message : 'La copie n’a pas pu être faite. Réessayez.'; save() }
 }
 // A read's record; on a poster it names it, and the answer is a change card.
 // It also names the version the owner looks at; a refused one is not changed: the poster's own version then.
@@ -329,7 +359,9 @@ async function create(item: Item) {
 // « Annuler »: the owner's words go back to the field and the card goes. Nothing was paid for the change; the read was.
 function cancel(item: Item) {
   if (!mine()) return
-  text.value = item.card!.said ?? ''; items.value = items.value.filter(entry => entry !== item); save()
+  // A photo card may have come without words: what was typed since stays in the field.
+  if (item.card!.kind !== 'photo' || !text.value.trim()) text.value = item.card!.said ?? ''
+  items.value = items.value.filter(entry => entry !== item); save()
   nextTick(() => { grow(); field.value?.focus() })
 }
 // The editor's own edit of the document's words, nothing paid: a free change (`close`: its card is over), and « Remettre
@@ -462,7 +494,7 @@ const resized = () => nextTick(measure)
 
 // The tab that holds the chat reads it from storage, as it is; one that takes it over follows the new poster's thread.
 function begin(takenOver = false) {
-  reading.value = starting.value = false; checking = false  // what an earlier hold had begun is not this one's
+  reading.value = starting.value = copying.value = false; checking = false  // what an earlier hold had begun is not this one's
   try { pending.value = readPending(localStorage.getItem(pendingKey())); text.value = localStorage.getItem(unsentKey()) ?? '' } catch { /* nothing was kept */ }
   const moved = takenOver && !state.creation ? (() => { try { return readThread(localStorage.getItem(key)).moved } catch { return undefined } })() : undefined
   if (moved) { window.location.hash = `message-${moved}`; return }
@@ -533,7 +565,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
         <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
         <template v-if="item.card?.kind === 'recap'">
-          <div v-if="draft.pictures.length" class="pics"><span v-for="picture in draft.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
+          <div v-if="!state.creation && draft.pictures.length" class="pics"><span v-for="picture in draft.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
           <p class="recap"><b translate="no">{{ item.card.name }}</b><span class="recap-price">{{ price(item.card.price_ar) }}</span><small>Style : {{ styleName(item) }}</small><small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small></p>
         </template>
         <template v-for="version in item.card?.kind === 'result' ? [versionOf(item)] : []" :key="item.id">
@@ -553,24 +585,26 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
         <template v-for="button in [buttonOf(item)]" :key="button ?? ''">
           <p v-if="button === 'resume'">L’affiche n’a peut-être pas été lancée.</p>
           <p v-if="limitOf(item)" class="chat-limit">{{ limitOf(item) }}</p>
-          <p v-if="costs(item) && state.credit.stop" class="why" role="status">{{ state.credit.text }}</p>
+          <p v-if="(costs(item) || copies(item)) && state.credit.stop" class="why" role="status">{{ state.credit.text }}</p>
           <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
-          <div v-if="button || untapped(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
+          <div v-if="button || untapped(item) || copies(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
             <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
             <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, 'une-fois-' + item.id].filter(Boolean).join(' ')" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>
+            <button v-else-if="button === 'copy'" :aria-describedby="'copie-' + item.id" type="button" class="primary" :disabled="held || tray.length > 0" @click="copyWith(item)">{{ productsOf(item.card!).length > 1 ? 'Copier avec ces photos' : 'Copier avec cette photo' }}</button>
             <button v-else-if="button === 'review'" type="button" class="primary" @click="adapter.review(versionOf(item)!)">Vérifier</button>
             <button v-else-if="button === 'download'" type="button" class="primary" :disabled="locked" @click="adapter.download()">Télécharger ou partager</button>
-            <button v-if="untapped(item)" type="button" class="secondary" @click="cancel(item)">Annuler</button>
+            <button v-if="untapped(item) || (copies(item) && !copying)" type="button" class="secondary" @click="cancel(item)">Annuler</button>
             <button v-if="stale && item === staleCard" type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.', item)">Remettre les textes de l’image</button>
             <button v-if="item.card && !item.done && offersSteps(item.card)" type="button" class="secondary" @click="emit('steps')">Pas à pas</button>
           </div>
           <small v-if="button === 'create' && !free(item)" :id="'cout-' + item.id">{{ state.credit.text }}</small>
           <small v-else-if="button === 'retry' || button === 'resume'" :id="'une-fois-' + item.id">{{ ONCE }}</small>
+          <small v-else-if="button === 'copy'" :id="'copie-' + item.id">La copie est gratuite. Sa nouvelle image coûtera 1 crédit.</small>
           <small v-if="button === 'create' && item.card?.kind === 'recap'">Une erreur ? Écrivez la correction.</small>
         </template>
       </div>
@@ -581,6 +615,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
         <span v-for="entry in tray" :key="entry.id" class="pic" :aria-busy="entry.status === 'sending' || undefined">
           <img :src="entry.url" width="68" height="68" :alt="entry.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />
           <button v-if="entry.status === 'failed'" type="button" class="pic-role" @click="sendFile(entry)">Réessayer</button>
+          <template v-else-if="state.creation">{{ roleNames[entry.role] }}</template>
           <button v-else type="button" class="pic-role" :class="entry.role" :disabled="entry.status === 'sending'" :aria-label="`${roleNames[entry.role]} : changer le rôle de cette image`" title="Toucher pour changer" @click="swap(entry)">{{ roleNames[entry.role] }}</button>
           <button type="button" class="pic-drop" aria-label="Retirer cette image" @click="drop(entry)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
         </span>
@@ -590,7 +625,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
         @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
       <div class="tools">
-        <button type="button" class="ghost attach" aria-label="Ajouter des images" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Images</span></button>
+        <button type="button" class="ghost attach" aria-label="Ajouter des images" :disabled="copying" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Images</span></button>
         <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
         <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
           <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>

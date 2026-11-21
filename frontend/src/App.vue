@@ -11,7 +11,7 @@ import ShopAccount from './ShopAccount.vue'
 import signalHorizontal from './assets/doka-horizontal.svg'
 import signalReverse from './assets/doka-horizontal-reverse.svg'
 import { sectionRead, stateBadges, stateNames, type LibraryItem, type Listing } from './dashboard'
-import { credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
+import { asksText, credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
 import { readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
@@ -858,7 +858,7 @@ function askLook() {
 function askRefine() {
   void readBalance()
   paid.value = { title: 'Ajuster la scène ?', label: 'Lancer l’ajustement', cost: '', charged: 'scene', again: unanswered('refinements'),
-    text: 'L’IA refait la scène selon votre consigne. C’est une nouvelle version : les autres sont conservées.', warning: FEATURES_WARNING, run: refineScene }
+    text: 'L’IA refait la scène selon votre consigne. C’est une nouvelle version : les autres sont conservées.', warning: asksText(refinement.value) ? FEATURES_WARNING : undefined, run: refineScene }
 }
 function askText() {
   paid.value = { title: 'Proposer un ajustement du texte ?', label: 'Lancer la proposition', cost: 'Sans crédit.',
@@ -1927,6 +1927,7 @@ function setWords(words: Words) {
   if ('brand' in words) headline.value.brand = words.brand ?? ''
   if ('subtitle' in words) headline.value.subtitle = words.subtitle ?? ''
 }
+let copyInput: { signature: string; id: string } | null = null  // kept only for a retry of this copy
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
     shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
@@ -1989,6 +1990,48 @@ const chat: ChatAdapter = {
       acceptPlan(kept); planSignature = ''  // generateScene saves it as a revision at the document's revision
       await generateScene(key, sending, owned)
     } finally { keptAlign = keptFrom = null }
+  }),
+  // « Copier avec cette photo » (D-TEXT-FIRST-007): the editor's own action, as « Refaire en … » (remakeIn). The same
+  // product gets a new input with the photos sent in the chat, the poster is copied onto it, and the copy opens in
+  // « Pas à pas » without a version: its image is the editor's « Générer ». Nothing is paid; the poster left behind is
+  // unchanged.
+  // ponytail: nothing is stored for the two requests. A lost answer tapped again on this page gets the same copy (the
+  // input made for it is kept here, as createPoster keeps its own, and api.ts keeps the key of an unanswered request);
+  // after a reload a second copy is possible, as for « Refaire en … ». It costs nothing and is removed from the list.
+  remake: (photos, owned, made) => told(async () => {
+    const at = window.location.hash.slice(1)
+    await flush(); owned()
+    const from = creation.value!.id, old = doc.value!.input_id
+    const source = await api<{ name: string; variant: string; facts: string[] }>(`/api/product-inputs/${old}`)
+    owned()
+    const signature = JSON.stringify([from, old, photos])
+    if (copyInput?.signature !== signature) copyInput = { signature, id: (await mutation<{ id: string }>('/api/product-inputs', { name: source.name, variant: source.variant, photo_assets: photos, facts: source.facts, supersedes_id: old })).id }
+    const input = copyInput
+    owned()
+    const copied = await mutation<Creation>(`/api/creations/${from}/copies`, { source_revision: saver!.revision, reason: 'replace_input', new_input_id: input.id })
+    copyInput = null; made(); madePoster()
+    // The copy is prepared where it is stored, before it is opened and whether or not it is: the answer may be the one
+    // of an earlier tap, and the copy may have been opened and edited since. So nothing of it is written over.
+    // Its words (brand, subtitle, coloured word: the same product) go under its own key only when it has none (ADR-083).
+    try { if (localStorage.getItem(wordsPrefix() + copied.id) === null) keepWords(copied.id) } catch { /* convenience only */ }
+    // What the source's scene had hidden is shown again, as on any poster without a version; no layer moves. Saved at the
+    // copy's creation revision: refused once the copy was saved by anyone, and then left as it is.
+    const shown = copy(copied.document)
+    for (const layout of Object.values(shown.formats)) for (const layer of layout!.layers) {
+      if (layer.role === 'title' || layer.role === 'price') layer.visible = true
+      else if (layer.role === 'shop_name' || layer.role === 'contact') layer.visible = shown.include[layer.role]
+    }
+    if (JSON.stringify(shown) !== JSON.stringify(copied.document)) {
+      try { await mutation<Creation>(`/api/creations/${copied.id}`, shown, copied.revision, undefined, 'PUT', true) } catch { /* edited since, or not saved now: left as it is */ }
+    }
+    // Opened in « Pas à pas », read as it is now, unless the owner has gone elsewhere meanwhile. The chat may be closed
+    // by then: what stops the opening is said by the editor, and the copy is in « Mes affiches » either way.
+    try {
+      await openCreation(copied.id, at, false)
+      if (creation.value?.id !== copied.id || visuals.value.length) return
+      visited.value = ['textes', 'boutique', 'style']; group.value = 'style'  // the steps were all walked once
+      notice.value = 'Copie de l’affiche avec la nouvelle photo, sans version : générez-la quand vous êtes prêt. L’affiche d’origine est conservée.'
+    } catch (reason) { error.value = `La copie est dans Mes affiches, mais son chargement est incomplet${reason instanceof Error && reason.message ? ` (${reason.message})` : ''}.` }
   }),
   words: (visual, values, owned) => told(async () => { await pickVersion(visual, owned); await flush(); owned(); setWords(values); await flush() }),
   select: (id, owned) => told(() => pickVersion(id, owned)),  // a version that is not listed is a failure, not a success
@@ -2336,11 +2379,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p class="help lead">Les mots de l’affiche. Seuls le titre et le prix sont obligatoires.</p>
             <label>Titre<textarea :value="doc.offer.title" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" @input="event => edit(d => { d.offer.title = (event.target as HTMLTextAreaElement).value }, 'title')" /></label>
             <p v-if="headline.on" id="limite-titre" class="help">{{ doc.offer.title.length }} / 60 caractères pour un titre dessiné.</p><p v-if="headlineFaults.title" id="erreur-titre" class="why" role="status">{{ headlineFaults.title }}</p>
-            <p v-if="staleTitle" class="why" role="status">Le titre est dessiné dans l’image<template v-if="currentVisual?.headline"> (« {{ currentVisual.headline.title }} »)</template>. Pour le changer, générez une nouvelle version, ou remettez l’ancien titre.</p>
+            <p v-if="staleTitle && currentVisual" class="why" role="status">Le titre est dessiné dans l’image<template v-if="currentVisual?.headline"> (« {{ currentVisual.headline.title }} »)</template>. Pour le changer, générez une nouvelle version, ou remettez l’ancien titre.</p>
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" name="price" autocomplete="off" inputmode="numeric" :disabled="drawingTexts && headline.price" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="changePrice" @blur="tidyPrice" /></span></label>
             <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
             <p v-if="headline.on" id="next-version-words" class="help">Ces réglages servent à la prochaine version. Le titre et le prix restent dessinés ensemble dans l’image.</p>
-            <p v-if="stalePrice" class="why" role="status">Le prix est dessiné dans l’image<template v-if="currentVisual?.headline?.price_ar !== undefined"> ({{ currentVisual.headline.price_ar.toLocaleString('fr-FR') }} AR)</template>. Pour le changer, générez une nouvelle version.</p>
+            <p v-if="stalePrice && currentVisual" class="why" role="status">Le prix est dessiné dans l’image<template v-if="currentVisual?.headline?.price_ar !== undefined"> ({{ currentVisual.headline.price_ar.toLocaleString('fr-FR') }} AR)</template>. Pour le changer, générez une nouvelle version.</p>
             <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" aria-describedby="erreur-marque aide-marque" :aria-invalid="!!headlineFaults.brand || undefined" /></label><p id="aide-marque" class="help">60 caractères maximum.<template v-if="duplicateBrand"> La marque est déjà dans le titre : elle ne sera pas répétée au-dessus.</template></p><p v-if="headlineFaults.brand" id="erreur-marque" class="why" role="status">{{ headlineFaults.brand }}</p><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" aria-describedby="erreur-sous-titre aide-sous-titre" :aria-invalid="!!headlineFaults.subtitle || undefined" /></label><p id="aide-sous-titre" class="help">60 caractères maximum.</p><p v-if="headlineFaults.subtitle" id="erreur-sous-titre" class="why" role="status">{{ headlineFaults.subtitle }}</p><div class="choice"><span id="accent-word-label">Mot du titre en couleur</span><div class="chips" role="group" aria-labelledby="accent-word-label"><button v-for="word in accentWords" :key="word" type="button" class="chip" translate="no" :aria-pressed="accentWord === word" :disabled="busy || !!job" @click="headline.accent_word = word">{{ word }}</button><button type="button" class="chip" :aria-pressed="!accentWord" :disabled="busy || !!job" @click="headline.accent_word = ''">Aucun</button></div></div></template>
             <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="sceneAccent.toLowerCase() === value" :disabled="busy || !!job" @click="pickAccent(value)" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === sceneAccent.toLowerCase()) }">Autre…<input :value="sceneAccent" type="color" aria-label="Autre couleur d’accent" @input="pickAccent(($event.target as HTMLInputElement).value)" :disabled="busy || !!job" /></label></div></div>
             <p class="sub">Pour la prochaine version</p><p class="help">Par défaut, l’IA compose le titre et le prix avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant d’approuver la version ; pour corriger, générez une nouvelle version.</p>

@@ -2,7 +2,7 @@
 // The conversation is never sent whole to the server: the posters, their versions and states are already there.
 import { shopKey } from './api'
 import type { Creation, Visual } from './document'
-import type { Phase } from './generation'
+import { asksText, type Phase } from './generation'
 import { staleWords } from './words'
 
 export type Role = 'product' | 'inspiration'
@@ -20,11 +20,13 @@ export interface Picture { asset: string; role: Role; warnings?: string[] }
  *  A `restyle` card (D-TEXT-FIRST-006) is a whole new image in another `style`, on a fresh plan, with its `words`.
  *  `identity` (a recap): the shop's logo and contact were asked for the first poster (true), or asked to be left
  *  off (false).
- *  `said` is the owner's message, for « Annuler »; `whole`: a whole new scene because the drawn words changed. */
+ *  `said` is the owner's message, for « Annuler »; `whole`: a whole new scene because the drawn words changed.
+ *  Images sent on an existing poster are not read (D-TEXT-FIRST-007): the chat adds a `photo` card with its `pictures`,
+ *  which offers the editor's copy of the poster on them. Nothing paid; a kind the bundle from before shows as text. */
 export type Effect = 'refine' | 'scene' | 'free'
 export interface Words { title?: string; price_ar?: number; brand?: string | null; subtitle?: string | null }
 export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; identity?: boolean; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
-  effect?: Effect; words?: Words; instruction_fr?: string; said?: string; whole?: boolean
+  effect?: Effect; words?: Words; instruction_fr?: string; said?: string; whole?: boolean; pictures?: Picture[]
   /** `ask_photo` only: photos this shop already used for the same product (D-TEXT-FIRST-004). */
   suggestions?: { asset: string; name: string }[] }
 /** `done`: the card has its outcome, or a later card replaced it. A paid card records each step before the next request
@@ -63,6 +65,9 @@ export interface ChatAdapter {
    *  look, coloured word and contact stay the editor's. With `style`, a fresh plan in that style: the version's model
    *  image and kept adjustments are not carried. */
   revise(card: string, visual: string, words: Words, smallPhotoAccepted: boolean, owned: () => void, sending: (request: SceneRequest) => void, style?: Style): Promise<void>
+  /** The editor's copy of the open poster on the same product with other photos, opened in « Pas à pas » without a
+   *  version (D-TEXT-FIRST-007). Nothing paid. `owned` runs before each request; `made` once the copy exists. */
+  remake(photos: string[], owned: () => void, made: () => void): Promise<void>
   /** `visual` becomes the poster's version and the document's words are set, saved. Nothing paid. */
   words(visual: string, values: Words, owned: () => void): Promise<void>
   /** The editor's choice of a version for the poster, saved. */
@@ -217,6 +222,8 @@ export function storeThread(device: Storage, write: Pick<Storage, 'setItem' | 'r
   } catch { /* the next save tries the cap again */ }
   return device.getItem(key) === value
 }
+/** A `photo` card's product photos, as assets: distinct, three at most. The storage is never trusted. */
+export const productsOf = (card: Card) => [...new Set((Array.isArray(card.pictures) ? card.pictures : []).filter(picture).filter(item => item.role === 'product').map(item => item.asset))].slice(0, PRODUCT_PHOTOS)
 /** The cards of an existing poster's change. */
 export const changes = (card?: Card) => card?.kind === 'change' || card?.kind === 'restyle'
 /** The cards that pay for a version. A kind this bundle does not know is text: it pays for nothing. */
@@ -239,16 +246,17 @@ export function normal({ change, previous, ...card }: Card & { change?: unknown;
  *  scene; a price that is a layer changes without a new image, nothing to pay. */
 export const effectOf = (card: Card, selected?: Pick<Visual, 'headline'>): Effect => card.kind === 'restyle' ? 'scene' : card.effect ?? (card.whole || Number.isInteger(selected?.headline?.price_ar) ? 'scene' : 'free')
 export const CHANGE_BUTTONS: Record<Effect, string> = { refine: 'Créer', scene: 'Refaire l’affiche', free: 'Changer' }
-/** Whether a card shows the features warning (generation.ts FEATURES_WARNING, D-TERMS-005): a scene adjustment until it
- *  has its outcome, whether offered, restored from the device, re-offered after a refusal or kept for « Réessayer » /
+/** Whether a card shows the features warning (generation.ts FEATURES_WARNING, D-TERMS-005): a scene adjustment whose
+ *  words could ask for features or text (ADR-125: the owner's message and the instruction read from it), until it has
+ *  its outcome, whether offered, restored from the device, re-offered after a refusal or kept for « Réessayer » /
  *  « Reprendre ». A new scene or a free change sends no adjustment. */
-export const warns = (item: Item) => changes(item.card) && effectOf(item.card!) === 'refine' && !item.done
+export const warns = (item: Item) => changes(item.card) && effectOf(item.card!) === 'refine' && !item.done && asksText(`${item.card!.said ?? ''} ${item.card!.instruction_fr ?? ''}`)
 /** A new message or card replaces the open questions and recaps before it: only the latest may be tapped. */
 export function supersede(items: Item[]) {
   for (const item of items) if (item.card && item.card.kind !== 'result' && !item.spent) item.done = true
 }
 
-export type CardButton = 'photo' | 'create' | 'conditions' | 'retry' | 'resume' | 'fix' | 'resend' | 'review' | 'download'
+export type CardButton = 'photo' | 'copy' | 'create' | 'conditions' | 'retry' | 'resume' | 'fix' | 'resend' | 'review' | 'download'
 /** The one action a card shows; null when it only shows its text or its outcome. `version` is the state of a result's
  *  version; it is downloaded only while it is the one `selected` in the document (the export renders that one).
  *  `left`: the versions the poster may still ask for; at none, no card offers a new one. `stop`: the shop's credits or
@@ -265,6 +273,8 @@ export function cardButton(item: Item, version?: Visual['status'], selected?: st
   // after a refusal seen here, « Reprendre » in a later view (a reload, a return from « Pas à pas »).
   if (paid(card)) return !item.spent ? stop === 'terms' ? 'conditions' : (left !== null && left <= 0) || stop ? null : 'create' : item.request && !item.job ? card.error ? 'retry' : 'resume' : null
   if (card.kind === 'ask_photo') return 'photo'
+  // Free: the editor's copy on the card's photos. What stops a new image stops it too: the copy would stay without one.
+  if (card.kind === 'photo') return !productsOf(card).length ? null : stop === 'terms' ? 'conditions' : stop ? null : 'copy'
   return card.kind === 'failed' && card.retry ? 'resend' : null
 }
 

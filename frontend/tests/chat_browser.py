@@ -606,8 +606,8 @@ def walk_changes(browser, errors, session, data):
     expect(card).to_contain_text("Scène : « fond plus sombre »")
     expect(card).to_contain_text(COST)
     # The warning, then the cost line under the buttons (D-REDESIGN-003).
-    expect(create).to_have_accessible_description(re.compile("^" + re.escape(WARNING) + " " + COST.pattern + "$"))
-    expect(card.get_by_text(WARNING, exact=True)).to_be_visible()  # a fresh scene adjustment warns
+    expect(create).to_have_accessible_description(COST)
+    expect(card.get_by_text(WARNING, exact=True)).to_have_count(0)  # a scene's words alone do not warn (ADR-125)
     first = versions()[0]["id"]
     assert len(reads) == 1 and bodies[-1]["visual_id"] == first, (reads, bodies)  # the read names the version shown
     both_themes(page, "change card, desktop", "chat-change-1366")
@@ -642,8 +642,8 @@ def walk_changes(browser, errors, session, data):
     resume = thread.get_by_role("button", name="Reprendre")
     expect(resume).to_be_visible()
     expect(resume.locator("xpath=../..")).to_contain_text(ONCE)
-    expect(resume).to_have_accessible_description(f"{WARNING} {ONCE}")  # the warning, then the once line (D-REDESIGN-003)
-    expect(resume.locator("xpath=../..").get_by_text(WARNING, exact=True)).to_be_visible()  # restored from the device
+    expect(resume).to_have_accessible_description(ONCE)
+    expect(resume.locator("xpath=../..").get_by_text(WARNING, exact=True)).to_have_count(0)  # restored from the device: still no features asked
     expect(page.get_by_role("button", name="Envoyer")).to_be_disabled()  # the waiting card comes first
     page.wait_for_timeout(500)
     assert sent["refinements"] == [kept["id"]], sent
@@ -914,7 +914,7 @@ def walk_changes(browser, errors, session, data):
     expect(mods).to_have_count(7)
     context.unroute("**/creations/*/visuals")
     context.route("**/api/reads", lambda route: route.continue_(post_data=json.dumps(route.request.post_data_json | {"visual_id": second["id"]})))
-    say(page, "fond rouge")
+    say(page, "fond rouge, écris ses caractéristiques")
     expect(create).to_be_visible()
     context.unroute("**/api/reads")
     assert items()[-1]["card"]["visual_id"] == second["id"], items()[-1]
@@ -2325,6 +2325,137 @@ def walk_rest(browser, errors, product, inspiration):
     context.close()
 
 
+def walk_photo(browser, errors, product, other):
+    """D-TEXT-FIRST-007: an image sent on an existing poster is a product photo and is never read past. It offers the
+    editor's copy of the poster on the new photo: nothing paid, no paid card added to the chat, the copy opened in
+    « Pas à pas » without a version, the poster left behind unchanged. The features warning follows the request's
+    words (ADR-125). Its own session."""
+    reads, sent = [], {"product-inputs": [], "copies": [], "scenes": [], "refinements": []}
+
+    def seen(request):
+        if request.method != "POST":
+            return
+        if request.url.endswith("/api/reads"):
+            reads.append(request.post_data_json)
+        for path in sent:
+            if request.url.endswith("/" + path):
+                sent[path].append((request.headers["idempotency-key"], request.post_data_json, request.url))
+
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    context.on("request", seen)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
+    sign_in(page)
+    page.get_by_role("link", name="Créer une affiche").click()
+    page.wait_for_url("**/#message")
+    thread, files = page.get_by_role("log"), page.locator(".composer input[type=file]")
+    last = thread.locator(".bubble.bot").last
+    first_tap, copy = thread.get_by_role("button", name="Créer l’affiche"), thread.get_by_role("button", name="Copier avec cette photo")
+    get = lambda path: page.request.get(f"{smoke.ORIGIN}/api/{path}").json()
+    asset = lambda image: re.search(r"/api/assets/([a-f0-9]{64})", image.get_attribute("src"))[1]
+
+    files.set_input_files([product])
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    expect(page.locator(".tray button.pic-role")).to_have_text("Produit")  # a new poster: the label is the swap button
+    say(page, "Enceinte Marshall Willen, 450 000 Ar")
+    first_tap.click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+    poster = page.url.split("#message-")[1]
+    source = get(f"creations/{poster}")
+    title = source["document"]["offer"]["title"]
+    read_before, scenes_before = len(reads), len(sent["scenes"])
+
+    # ADR-125, first: the warning stands under a request for features, and not under a scene's words alone.
+    create, cancel = thread.get_by_role("button", name="Créer", exact=True), thread.get_by_role("button", name="Annuler")
+    say(page, "fond bleu, ajoute ses caractéristiques")
+    expect(create).to_be_visible()
+    expect(last.get_by_text(WARNING, exact=True)).to_be_visible()
+    cancel.click()
+    page.get_by_label("Votre message").fill("")
+    say(page, "fond plus sombre")
+    expect(create).to_be_visible()
+    expect(last.get_by_text(WARNING, exact=True)).to_have_count(0)
+    expect(create).to_have_accessible_description(COST)
+    cancel.click()
+    page.get_by_label("Votre message").fill("")
+    read_before = len(reads)
+
+    # On the poster, an attached image is a product photo: plain words, nothing to swap, never an inspiration.
+    files.set_input_files([other])
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    expect(page.locator(".tray .pic")).to_have_text("Produit")
+    expect(page.locator(".tray .pic-role")).to_have_count(0)
+    say(page, "Use this as product")
+    expect(last).to_contain_text("Cette affiche garde sa photo. Je peux en faire une copie avec la nouvelle photo : même titre, même prix.")
+    expect(last).to_contain_text("La copie s’ouvre dans Pas à pas, où vous créez son image.")
+    expect(last).to_contain_text("Votre message n’est pas lu avec une photo : envoyez-le ensuite.")
+    expect(copy).to_be_enabled()
+    expect(copy).to_have_accessible_description("La copie est gratuite. Sa nouvelle image coûtera 1 crédit.")
+    new_photo = asset(thread.locator(".bubble.me").last.locator(".pic img"))
+    assert len(reads) == read_before, reads[read_before:]  # the message was not sent to the paid reader
+    stored = page.evaluate(THREAD, poster)
+    assert [picture["asset"] for picture in stored["draft"]["pictures"]] == source_photos(get, source), stored["draft"]  # the thread's draft keeps the poster's own photo
+    card = stored["items"][-1]
+    assert card["card"]["kind"] == "photo" and "spent" not in card and [picture["asset"] for picture in card["card"]["pictures"]] == [new_photo], card
+
+    # The copy's answer is lost: the card stays, and the same tap on this page sends the same two requests. One copy.
+    lost = []
+
+    def lose_answer(route):
+        route.fetch()
+        lost.append(route.request.url)
+        route.abort()
+    context.route("**/copies", lose_answer)
+    copy.click()
+    expect(last.locator(".why[role=alert]")).to_be_visible()
+    context.unroute("**/copies")
+    assert len(lost) == 1 and page.url.endswith(f"#message-{poster}"), (lost, page.url)
+    expect(copy).to_be_enabled()
+    copy.click()
+    # The copy opens in « Pas à pas », at its own address, with the editor's notice and no version.
+    page.wait_for_url(re.compile(r"#[a-f0-9-]{36}$"))
+    made = page.url.split("#")[1]
+    assert made != poster
+    expect(page.get_by_text("Copie de l’affiche avec la nouvelle photo, sans version : générez-la quand vous êtes prêt. L’affiche d’origine est conservée.")).to_be_visible()
+    inputs, copies = sent["product-inputs"], sent["copies"]
+    assert len(inputs) == 2, inputs  # the poster's own, then one for the copy: the second tap made no other
+    assert inputs[1][1]["photo_assets"] == [new_photo] and inputs[1][1]["supersedes_id"] == source["document"]["input_id"], inputs
+    assert len(copies) == 2 and copies[0][:2] == copies[1][:2], copies
+    copied = get(f"creations/{made}")
+    assert copies[0][1] == {"source_revision": source["revision"], "reason": "replace_input", "new_input_id": copied["document"]["input_id"]}, copies
+    assert len([row for row in get("creations")["items"] if row["title"] == title]) == 2  # the poster and its one copy
+    assert copied["document"]["input_id"] != source["document"]["input_id"] and source_photos(get, copied) == [new_photo]
+    assert not get(f"creations/{made}/visuals")["items"] and len(get(f"creations/{poster}/visuals")["items"]) == 1
+    # Its title and price, drawn in the source's image, are layers to see again until its own image draws them. The
+    # editor's save carries that: asked until it has arrived.
+    for _ in range(50):
+        layers = {layer.get("role"): layer for layer in get(f"creations/{made}")["document"]["formats"]["feed"]["layers"]}
+        if layers["title"]["visible"] and layers["price"]["visible"]:
+            break
+        page.wait_for_timeout(200)
+    else:
+        raise AssertionError("the copy's title and price are still hidden")
+    assert [layer["id"] for layer in get(f"creations/{made}")["document"]["formats"]["feed"]["layers"]] == [layer["id"] for layer in source["document"]["formats"]["feed"]["layers"] if layer["kind"] != "product_cutout"]
+    after = get(f"creations/{poster}")
+    assert after["revision"] == source["revision"] and after["document"] == source["document"]  # the poster left behind is unchanged
+    # Nothing was read or paid for the copy, and its image is the editor's own « Générer ».
+    assert len(reads) == read_before and len(sent["scenes"]) == scenes_before and not sent["refinements"], (reads[read_before:], sent)
+    expect(page.get_by_role("button", name="Générer l’affiche")).to_be_visible()
+    # Back on the poster's chat: its card is over, and no paid card was added.
+    page.goto(f"{smoke.ORIGIN}/#message-{poster}")
+    expect(thread).to_contain_text("La copie est créée : retrouvez-la dans Mes affiches. Cette affiche reste telle quelle.")
+    expect(copy).to_have_count(0)
+    expect(first_tap).to_have_count(0)
+    context.close()
+
+
+def source_photos(get, creation):
+    return get(f"product-inputs/{creation['document']['input_id']}")["photo_assets"]
+
+
 def walk_choice_phone(browser, errors):
     context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True, color_scheme="dark")
     page = context.new_page()
@@ -2354,6 +2485,10 @@ def run():
     ImageDraw.Draw(photo).rounded_rectangle((250, 160, 750, 840), 50, fill="#202020")
     photo.save(product)
     inspiration = smoke.ROOT / "frontend/public/styles/sombre.jpg"
+    other = OUT / "product-other.png"  # the same product, another photo
+    again = Image.new("RGB", (1000, 1000), "white")
+    ImageDraw.Draw(again).ellipse((220, 220, 780, 780), fill="#1b3a6b")
+    again.save(other)
     small = [OUT / f"small-{index}.png" for index in range(5)]
     for index, file in enumerate(small):  # under the server's 800 px, each its own file
         Image.new("RGB", (600, 600), (40 * index, 90, 160)).save(file)
@@ -2383,6 +2518,7 @@ def run():
                         walk_late_401(browser, errors, session)
                         walk_changes(browser, errors, session, data)  # last of this server: it signs in again
                         walk_rest(browser, errors, product, inspiration)  # its own session; it fills the shop's profile
+                        walk_photo(browser, errors, product, other)
                         walk_choice_phone(browser, errors)
                         walk_sign_out(browser, errors, product)
                         smoke.stop(*server)

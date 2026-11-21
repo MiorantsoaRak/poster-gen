@@ -2,13 +2,34 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
-## App redesign — Claude, 2026-11-21 (READ FIRST)
+## After the release: the warning by words and the copy on a new photo — Claude, 2026-11-21 (READ FIRST)
+
+No work order. The owner released the redesign and reported two things; his word: "handle now, word test, and yes copy with the new photo".
+
+**State: on `main`, committed and pushed on the owner's word (2026-11-21: "commit and push"). NOT deployed.**
+- **T-WARN-WORDS (ADR-125):** the features warning shows only when the request's words could ask for features or text (`asksText`, `generation.ts`; used by `warns` in `chat.ts` and by `askRefine` in `App.vue`).
+- **T-CHAT-PHOTO (ADR-126, D-TEXT-FIRST-007 v5):** on an existing poster every attached image is a product photo; the chat's `photo` card offers a free copy of the poster on it (`offer`, `copyWith` in `ChatView.vue`); the copy is the editor's own action (`remake` in the chat adapter, `App.vue`, modelled on `remakeIn`) and opens in « Pas à pas », where « Générer l’affiche » makes its image. The chat adds no paid card and stores nothing of the copy.
+- **How it got there (read before changing it):** four designs made the copy's first image in the chat and four reviews rejected them, each time in the recap the chat added by itself. The owner: "When blocked, think of another way it can be done, without keeping on polishing it". v5 is that other way. Do not bring the chat's own recap back.
+- **Reviews:** six Codex reports in `reviews/chat-photo-*-2026-11-21.md` and a devil's advocate. r5 (on v5): no automatic charge, five smaller points, all fixed. r6 (confirmation): the preparing save cannot overwrite an edit; nothing is paid, read or generated without a tap on an existing paid control; two sentences fixed after it; one cross-tab race on the words store recorded in the design as known and left. Its formal verdict stayed REJECT on those three; no further round was run, on the owner's word about polishing.
+- **Proof on the final code (Linux, local stub):** Vitest 359; the build; all seven browser smokes (`chat_browser.py` with `walk_photo`, `editor_refinements_browser.py`, `browser_smoke.py`, `shop_dashboard_browser.py`, `share_browser.py`, `terms_browser.py`, `admin_browser.py`). Backend untouched, not run.
+- **French sentences to read:** the copy card and its two buttons, « La copie est créée : retrouvez-la dans Mes affiches. … », the editor's notice « Copie de l’affiche avec la nouvelle photo, sans version : … », « … son chargement est incomplet … » (all in D-TEXT-FIRST-007).
+
+**Left uncommitted in this checkout:** only the other session's work (its hunks of DECISIONS.md, TODO.md and this file, PROJECT.md, the untracked brand and mockup folders). Do not stage it.
+
+**Exact next step:** the owner's release (pyinfra, no migration: the change is the page only). To check a checkout first:
+```
+cd frontend && corepack npm@10 test && corepack npm@10 run build
+cd ../backend && SMOKE_WEB_PORT=5473 SMOKE_API_PORT=8300 uv run python ../frontend/tests/chat_browser.py
+```
+Expected: 359 tests passed; « Chat smoke passed: … ».
+
+## App redesign — Claude, 2026-11-21
 
 No work order: the owner's own project. Goal: both interfaces follow the mockup he approved
 ([mockups/doka-console/](mockups/doka-console/README.md)); ADR-123, [requirements](requirements/app-redesign.md),
 [design](designs/app-redesign.md) v2, tasks T-REDESIGN-001 … 007 in TODO.md.
 
-**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and merged into `main` (2026-11-21, on the owner's word "merge redesign into main": a `--no-ff` merge, no conflict). Pushed on his word ("push", the same day): `origin/main` holds the merge. NOT deployed.** `origin/redesign` holds the same code.
+**State: all seven tasks, and the element pass T-REDESIGN-008 (ADR-124, below), are done and merged into `main` (2026-11-21, on the owner's word "merge redesign into main": a `--no-ff` merge, no conflict). Pushed on his word ("push", the same day): `origin/main` holds the merge. Deployed by the owner the same day (his word; checked from outside: https://affiches.miorantsoa.app/ serves the same three asset names as a build of `main`).** `origin/redesign` holds the same code.
 The branch lives in the git worktree `../affiche-ia-worktrees/app` (its own `node_modules`, `.venv`; smoke ports
 5273/8100). `redesign-chat` (worktree `../affiche-ia-worktrees/chat`) and `redesign-console`
 (`../affiche-ia-worktrees/console`) are merged into it. After the merge the code of `main` equals the branch
@@ -44,7 +65,7 @@ mode on the web port, and `design_capture.seed()` for the data.
    then open `outputs/design-capture/look/sheets/` there.
 2. Decide the five points of « For the owner » in the report (placement of « Needs you », the cost sentence, « Images »,
    « Payments », the theme switch in the phone drawer).
-3. On his word only: deploy as an ordinary release (no migration).
+3. Done by the owner: the release is live. Open from his first look at it (2026-11-21, not yet tasks): the features warning shows on every scene-adjustment card (« Podium smaller »); on an existing poster an image attached in the chat is labelled « Inspiration » and is not used, and the product photo cannot be changed, in the chat or in « Pas à pas ».
 
 **Open, small (from the `DESIGN.md` rewrite, not yet tasks):** the console's yellow hover is a `color-mix()` (the
 shops' app uses `--signal-hover`); the two apps' blur values differ; the console's scrim is a literal; the console's

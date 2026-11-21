@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, termsDate, type Balance } from '../src/generation'
+import { asksText, credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, termsDate, type Balance } from '../src/generation'
 
 describe('phase of a generation, from the job and the image', () => {
   it.each([['queued', false, 'queued'], ['running', false, 'running'], ['succeeded', false, 'receiving'], ['succeeded', true, 'ready'],
@@ -86,6 +86,18 @@ describe('what a new image says it costs, and what stops it (D-BALANCE-006)', ()
   })
 })
 
+describe('whether a scene adjustment could ask for features or text (ADR-125)', () => {
+  it.each(['ajoute des caractéristiques', 'add 4 specs', 'écris un slogan', 'mets les caracs', 'Ajoute une FICHE technique', 'mets la config', '3 pts forts svp',
+    'add key points', 'add a caption', 'mets une accroche', 'ajoute une légende', 'plus d’infos sur le produit', 'put the phone specs', 'ajoute du texte',
+    'ajoute des icônes pour la batterie', 'add a tagline', 'ajoute les détails du produit', 'add more details', 'ajoute 3 lignes sur le produit', 'deux lignes de texte',
+    'mets un badge', 'ajoute un bandeau', 'rends-la plus vendeuse', 'ajoute les fonctionnalités', 'ajoute ses avantages', 'les atouts du produit', 'ajoute des icones',
+    'add icons for the battery', 'les spécifications'])('« %s » does', words => expect(asksText(words)).toBe(true))
+  // « affiche » is not « fiche »: the word names the poster itself.
+  // Nor the words of a scene: a texture, the quality, more details in the background, lines of light.
+  it.each(['Podium smaller', 'fond plus sombre', 'assombris l’affiche', 'agrandis le téléphone', 'Use this as product', 'enlève le reflet', '',
+    'améliore la qualité', 'texture du fond plus douce', 'plus de détails dans le fond', 'en fonction du produit', 'lignes de lumière',
+    'coque en silicone plus brillante', 'davantage de lumière', 'le produit accroché au mur', 'une couleur spécifique'])('« %s » does not', words => expect(asksText(words)).toBe(false))
+})
 describe('the version of the conditions, as the dialog says it (D-TERMS-004)', () => {
   it.each([['2026-11-17', '17 novembre 2026'], ['2027-05-01', '1er mai 2027'], ['2027-08-09', '9 août 2027'], ['2028-02-29', '29 février 2028']])('%s reads « %s »', (version, said) => {
     expect(termsDate(version)).toBe(said)

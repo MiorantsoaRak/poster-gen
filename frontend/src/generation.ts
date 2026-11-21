@@ -50,9 +50,26 @@ export function ended(job: { status: string; kind: string; error_code: string | 
  *  what it stored, so the credit is taken once (D-BALANCE-006). */
 export const ONCE = '1 crédit, une seule fois pour cette demande'
 
-/** Before every paid scene adjustment, on the chat's card and in « Ajuster la scène » (D-TERMS-005, owner decision 2).
- *  Always the page's: the server decides nothing about it, so a card read before it shows it too. */
+/** Before a paid scene adjustment whose words could ask for features or text, on the chat's card and in « Ajuster la
+ *  scène » (D-TERMS-005, amended by ADR-125). Always the page's: the server decides nothing about it, so a card read
+ *  before it shows it too. */
 export const FEATURES_WARNING = 'Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier.'
+// ponytail: a fixed word list, French and English. A wording outside it gives no warning before the paid tap (the
+// owner's choice, ADR-125); the check before download still names the added texts. A false alarm only shows the warning.
+// Words of a scene are kept out: « affiche », « texture », « qualité », « en fonction de », « lignes de lumière », « plus de
+// détails » alone, « silicone », « davantage », « accroché », « spécifique ».
+const TEXT_WORDS = new RegExp([
+  // features, by their generic names
+  'carac', 'specificat', '\\bspecs?\\b', '\\bconfig', '\\bfiches?\\b', '\\binfos?\\b', 'information', 'feature', 'fonctionnalit', 'performance', 'descripti', 'propriete', 'propert', 'donnee',
+  '\\b(points?|pts) (forts?|cles?)\\b', 'key points?', '\\bavantages?\\b', '\\batouts?\\b', 'argument', 'benefi', 'highlight', 'selling', 'vendeu',
+  'details? (du |de la |de l.|des |of the |about the )?(produit|product|telephone|phone|article|appareil|modele|techni)', '(ajout\\w*|add|mets?|put|show|montre\\w*) (les |des |the |some |more |plus de )?details',
+  // text to write, and the things that carry it
+  '\\btextes?\\b', '\\btexts?\\b', '\\bmots?\\b', '\\bwords?\\b', 'phrase', 'slogan', '(une |des |les |l.|d.)accroches?\\b', 'tagline', 'legende', 'caption', 'mention', 'ecri', '\\bwrit', 'inscri',
+  'bullet', '\\bpuces?\\b', '\\blist', '\\b\\d+ (lignes?|lines?)\\b', '(lignes?|lines?) (de |of )?(texte?s?\\b|caract|spec)',
+  '\\bicon(e|s|es)?\\b', 'badge', 'etiquette', '\\blabels?\\b', 'callout', 'annotation', 'sticker', 'macaron', 'bandeau', 'banner', 'infograph',
+].join('|'))
+/** Whether a scene adjustment's words could ask for features or text to write: lower case, accents removed. */
+export const asksText = (words: string) => TEXT_WORDS.test(words.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
 
 // The shop's credits as GET /api/balance gives them (D-BALANCE-004). The browser holds null while they are unread or
 // their read failed: unknown, never 0.
