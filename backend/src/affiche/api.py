@@ -31,7 +31,8 @@ from starlette.staticfiles import StaticFiles
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.db import utc_now
-from affiche.posters import auth, credits, exports, jobs, looks, reads, rendering, store, terms, typography, visuals
+from affiche.posters import (auth, credits, exports, facebook, facebook_connect, jobs, looks, reads, rendering, store, terms,
+                             typography, visuals)
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -160,6 +161,12 @@ MESSAGES = {
         "reload_required": "Rechargez la page pour continuer.",
         # An older bundle in an open tab (BUNDLE): nothing it sends is saved, and a reload loses what it holds unsaved.
         "bundle_outdated": "Cette page est une ancienne version de l’application : rien n’est enregistré depuis sa mise à jour. Notez vos dernières modifications, puis rechargez la page.",
+        # Connecting the shop's Facebook Page (D-FB-PUBLISH-002); the card of « Mon compte » shows the return page's.
+        "facebook_state": "Recommencez la connexion.",
+        "facebook_no_page": "Aucune des Pages lues ne vous permet de publier. Recommencez la connexion et autorisez votre Page. Au-delà de cent Pages autorisées, seules les cent premières sont lues.",
+        "facebook_failed": "La connexion à Facebook n’a pas abouti. Réessayez.",
+        "facebook_cancelled": "Connexion annulée.",
+        "facebook_dialog_failed": "La connexion n’a pas abouti.",
 }
 
 
@@ -168,10 +175,13 @@ BLOCKED = {"budget_exhausted": "service", "provider_unavailable": "service", "sh
            "terms_required": "terms"}
 
 
-def error_response(request: Request, error: store.Refused, message: str | None = None):
+def sentence(code: str) -> str:
     # A refusal without a sentence is a programming error, not something the owner typed: say so, with the code.
-    fallback = f"Cette action a été refusée (code : {error.code}). Rechargez la page et réessayez ; si cela se répète, donnez ce code à l’administrateur."
-    body = {"code": error.code, "message_fr": message or MESSAGES.get(error.code, fallback),
+    return MESSAGES.get(code, f"Cette action a été refusée (code : {code}). Rechargez la page et réessayez ; si cela se répète, donnez ce code à l’administrateur.")
+
+
+def error_response(request: Request, error: store.Refused, message: str | None = None):
+    body = {"code": error.code, "message_fr": message or sentence(error.code),
             "retryable": error.status in (429, 503)}
     if error.field:
         body["field"] = error.field
@@ -546,6 +556,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             auth.adopt_password_setting(runtime.engine, settings)
             jobs.recover(runtime.engine, settings.data_dir)  # the service's sweep finalises the spooled jobs it leaves running
             reads.recover(runtime.engine)
+            facebook_connect.recover(runtime.engine)
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
             service.start()
@@ -626,7 +637,46 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     def capabilities():
         return {"image_mode": settings.image_provider, "planner_mode": settings.planner_provider,
                 "planner_available": settings.planner_provider == "stub" or (settings.planner_provider == "claude" and settings.anthropic_api_key is not None),
-                "formats_enabled": list(settings.formats_enabled), "chat_available": reads.available(settings)}
+                "formats_enabled": list(settings.formats_enabled), "chat_available": reads.available(settings),
+                "facebook": settings.facebook_provider != "off"}
+
+    # The shop's Facebook Page (D-FB-PUBLISH-002). With FACEBOOK_PROVIDER=off the routes do not exist: not_found whatever
+    # the request holds, before any body is read. No Idempotency-Key and not through store.mutate: the single-use `state`
+    # guards these (facebook_connect).
+    if settings.facebook_provider != "off":
+        said = {}  # a return page's refusal, for the card it opens next (facebook_connect.remember)
+
+        @protected.get("/api/facebook")
+        def facebook_card(request: Request):
+            facebook.make_graph(settings)
+            token = request.cookies.get(auth.COOKIE)
+            answer = facebook_connect.read(app.state.engine, request.state.shop, token)
+            code = facebook_connect.recall(said, token)  # after the read: until the next successful one
+            return answer | {"last_error": None if code is None else {"code": code, "message_fr": sentence(code)}}
+
+        @protected.post("/api/facebook/connect")
+        def connect_facebook(request: Request):
+            return facebook_connect.connect(app.state.engine, settings, facebook.make_graph(settings), request.state.shop,
+                                            request.cookies.get(auth.COOKIE))
+
+        @protected.post("/api/facebook/code")
+        async def facebook_code(body: facebook_connect.CodeRequest, request: Request):
+            graph, token = facebook.make_graph(settings), request.cookies.get(auth.COOKIE)
+            try:
+                return await facebook_connect.code(app.state.engine, settings, graph, request.state.shop, token, body)
+            except Exception as error:  # the return page goes on to the card, which reads the sentence from here
+                facebook_connect.remember(said, token, error.code if isinstance(error, store.Refused) else "facebook_failed")
+                raise
+
+        @protected.post("/api/facebook/page")
+        def choose_facebook_page(body: facebook_connect.Choice, request: Request):
+            facebook.make_graph(settings)
+            return facebook_connect.choose(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE), body.page_id)
+
+        @protected.delete("/api/facebook/page")
+        def disconnect_facebook(request: Request):
+            facebook.make_graph(settings)
+            return facebook_connect.disconnect(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE))
 
     @protected.post("/api/reads", status_code=201)
     async def new_read(body: reads.ReadRequest, request: Request, key: Key):

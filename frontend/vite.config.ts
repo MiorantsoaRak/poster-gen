@@ -13,7 +13,8 @@ export default defineConfig(({ mode }) => {
       host: '127.0.0.1', port: Number(env.SMOKE_WEB_PORT ?? 5173), strictPort: true,
       proxy: { '/api': { target: `http://127.0.0.1:${env.SMOKE_API_PORT ?? 8000}`, changeOrigin: false } },
     },
-    build: { target: 'es2022', rolldownOptions: { input: { app: 'index.html', render: 'render.html' } } },
+    // facebook.html: the return address of Facebook's dialog (D-FB-PUBLISH-002), served at /facebook.html.
+    build: { target: 'es2022', rolldownOptions: { input: { app: 'index.html', render: 'render.html', facebook: 'facebook.html' } } },
     // Tests read the stylesheets as text (the name, the mark, the contrast table); by default Vitest hands them over empty.
     test: { css: true },
   }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, ApiError, changePassword, upload, writeProfile, type Profile, type Terms } from './api'
+import { facebookCard, type FacebookAnswer } from './facebook'
 import { termsDate } from './generation'
 
 defineProps<{ terms: Terms | null; termsUnavailable: boolean; support: string }>()
@@ -82,7 +83,43 @@ async function password() {
       ? reason.message : 'La modification du mot de passe n’a pas pu être confirmée. Vérifiez le nouveau mot de passe à votre prochaine connexion.'
   } finally { current.value = ''; replacement.value = ''; changing.value = false }
 }
+
+// The « Page Facebook » card (D-FB-PUBLISH-004), only when the service has the feature. A refusal answered to the return
+// page comes back once in the answer's last_error: that page keeps nothing in the browser.
+const facebookOn = ref<boolean | null>(false), facebook = ref<FacebookAnswer>(), facebookPick = ref(''), facebookBusy = ref(false), facebookError = ref('')
+const facebookState = computed(() => facebook.value && facebookCard(facebook.value))
+function showFacebook(answer: FacebookAnswer) {
+  facebook.value = answer; facebookPick.value = answer.choice?.length === 1 ? answer.choice[0].id : ''
+}
+async function readFacebook() {
+  facebookError.value = ''
+  try {
+    // null while the service has not said: a failed read shows the card with its retry, a read `false` hides it.
+    if (facebookOn.value !== true) facebookOn.value = null
+    facebookOn.value = !!(await api<{ facebook?: boolean }>('/api/capabilities', { timeout: 20_000 })).facebook
+    if (!facebookOn.value) return
+    const answer = await api<FacebookAnswer>('/api/facebook', { timeout: 20_000 })
+    showFacebook(answer); facebookError.value = answer.last_error?.message_fr ?? ''
+  } catch (reason) { facebookError.value = message(reason) }
+}
+// A refusal of a choice or a disconnection: the card reads the state again, the refusal's sentence kept.
+async function onFacebook(run: () => Promise<void>) {
+  if (facebookBusy.value) return
+  facebookBusy.value = true; facebookError.value = ''
+  try { await run() }
+  catch (reason) {
+    facebookError.value = message(reason)
+    await api<FacebookAnswer>('/api/facebook', { timeout: 20_000 }).then(showFacebook, () => undefined /* the sentence above stays */)
+  } finally { facebookBusy.value = false }
+}
+const connectFacebook = () => onFacebook(async () => {
+  window.location.assign((await api<{ url: string }>('/api/facebook/connect', { method: 'POST', timeout: 20_000 })).url)
+})
+const choosePage = () => onFacebook(async () => showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'POST', timeout: 20_000,
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_id: facebookPick.value }) })))
+const disconnectFacebook = () => onFacebook(async () => showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'DELETE', timeout: 20_000 })))
 onMounted(readProfile)
+onMounted(readFacebook)
 </script>
 
 <template>
@@ -115,6 +152,28 @@ onMounted(readProfile)
       <button v-if="conflict || (!draft && profileError)" type="button" class="secondary" :disabled="working" @click="readProfile">{{ conflict ? 'Relire le profil enregistré' : 'Réessayer la lecture' }}</button>
       <button v-else-if="draft" class="primary" :disabled="working || !dirty || !!overlaps.length">{{ uncertain ? 'Réessayer l’enregistrement' : 'Enregistrer le profil' }}</button>
     </form>
+    <section v-if="facebookOn || (facebookOn === null && facebookError)" class="facebook" aria-labelledby="titre-facebook"><h2 id="titre-facebook">Page Facebook</h2>
+      <p v-if="facebookError" role="alert" class="why">{{ facebookError }}</p>
+      <template v-if="facebookState === 'choose'">
+        <fieldset :disabled="facebookBusy"><legend>Page à connecter</legend>
+          <label v-for="item in facebook?.choice ?? []" :key="item.id" class="check"><input v-model="facebookPick" type="radio" name="facebook-page" :value="item.id" /><span translate="no">{{ item.name }}</span></label>
+        </fieldset>
+        <button class="secondary" :disabled="facebookBusy || !facebookPick" @click="choosePage">Connecter cette Page</button>
+        <small>Votre Page manque ? Au-delà de cent Pages autorisées, seules les cent premières sont lues.</small>
+      </template>
+      <template v-else-if="facebook?.page">
+        <p v-if="facebookState === 'connected'">Page connectée : <strong translate="no">{{ facebook.page.name }}</strong></p>
+        <template v-else><p><strong translate="no">{{ facebook.page.name }}</strong></p><p class="why">Reconnectez votre Page.</p></template>
+      </template>
+      <template v-if="facebookState === 'connect' || facebookState === 'reconnect'">
+        <button class="secondary" :disabled="facebookBusy" aria-describedby="aide-facebook" @click="connectFacebook">{{ facebookState === 'reconnect' ? 'Reconnecter ma Page' : 'Connecter ma Page Facebook' }}</button>
+        <small id="aide-facebook">Facebook vous demandera quelles Pages autoriser.</small>
+        <small>Si Facebook refuse l’accès, votre Page doit d’abord être autorisée par Doka Studio : demandez-le à l’opérateur.</small>
+        <small>Au-delà de cent Pages autorisées, seules les cent premières sont lues.</small>
+      </template>
+      <button v-if="facebookState === 'connected' || facebookState === 'reconnect'" class="secondary" :disabled="facebookBusy" @click="disconnectFacebook">Déconnecter</button>
+      <template v-if="!facebook"><button v-if="facebookError" class="secondary" @click="readFacebook">Réessayer la lecture</button><p v-else role="status">Lecture de la Page Facebook…</p></template>
+    </section>
     <form aria-labelledby="titre-password" @submit.prevent="password"><h2 id="titre-password">Changer le mot de passe</h2>
       <fieldset :disabled="changing"><label>Mot de passe actuel<input v-model="current" type="password" autocomplete="current-password" maxlength="1024" required /></label>
         <label>Nouveau mot de passe<input v-model="replacement" type="password" autocomplete="new-password" minlength="10" maxlength="1024" aria-describedby="aide-password" required /></label>
@@ -142,6 +201,9 @@ h1, h2, p { margin: 0 }
 form, section > section { display: grid; gap: 12px; margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
 fieldset { display: grid; gap: 12px; border: 0; min-width: 0; margin: 0; padding: 0 }
 input[type=file] { max-width: 100% }
+/* The Pages to choose from (« Page Facebook »): native radios, sized as the application's checkboxes. */
+input[type=radio] { width: 22px; height: 22px; min-height: 22px; flex: none; margin: -1px 0 0; padding: 0; accent-color: var(--text); cursor: pointer }
+.facebook legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted) }
 .collision { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius) }
 .collision > div { display: grid; gap: 6px }
 button, a { justify-self: start }

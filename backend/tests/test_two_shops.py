@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import time
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,8 @@ from starlette.routing import Mount
 from affiche.api import create_app
 from affiche.db import write_tx
 from affiche.posters import credits, rendering, terms, visuals
+from affiche.posters.facebook import StubGraph
+from affiche.posters.facebook_connect import STUB_CODE
 from test_api import (HEADERS, ORIGIN, PASSWORD, client, create_draft, credentials, login, old_cancellation,  # noqa: F401
                       password_hash, post, second_shop, settings)
 from test_config import env  # noqa: F401
@@ -34,7 +37,9 @@ EXEMPT = {
 # A route that answers B with B's own data, checked by what it holds; it takes no id of A's.
 OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-profile"), ("GET", "/api/balance"),
        ("POST", "/api/assets"), ("GET", "/api/terms"), ("POST", "/api/terms"), ("GET", "/api/shop-dashboard"),
-       ("GET", "/api/shop-credit-history")}
+       ("GET", "/api/shop-credit-history"),
+       # The shop's Facebook Page and its one attempt, always the session's shop (D-FB-PUBLISH-002).
+       ("GET", "/api/facebook"), ("POST", "/api/facebook/connect"), ("DELETE", "/api/facebook/page")}
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
 PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 
@@ -42,6 +47,11 @@ PLAN = {"mode": "fixed", "direction": "Terrasse tropicale", "format": "feed"}
 @pytest.fixture
 def planner_stub(env):
     env.setenv("PLANNER_PROVIDER", "stub")
+
+
+@pytest.fixture
+def facebook_stub(env):
+    env.setenv("FACEBOOK_PROVIDER", "stub")  # with `off` every Facebook route answers 404 to both shops
 
 
 def send(client, method, path, body=None, revision=None):
@@ -118,8 +128,8 @@ def json_keys(value):
             yield from json_keys(item)
 
 
-def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothing(planner_stub, client, settings,
-                                                                                    monkeypatch):
+def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothing(planner_stub, facebook_stub, client,
+                                                                                    settings, monkeypatch):
     a, engine = client, client.app.state.engine
     answers = []  # every answer either shop receives, for the walk of dollar figures at the end
     a.event_hooks["response"].append(answers.append)
@@ -169,12 +179,17 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     read_key, read_body = key(), {"text": "JBL Flip 7, 700 000 Ar", "draft": {"product_photos": 1, "inspiration": False}, "history": []}
     assert a.post("/api/reads", json=read_body, headers={"Idempotency-Key": read_key}).status_code == 201
     rev, doc_a = 3, a.get(f"/api/creations/{cid}").json()["document"]
+    # A's attempt to connect a Facebook Page, at Facebook's dialog; B has its own.
+    state_a = parse_qs(urlsplit(a.post("/api/facebook/connect").json()["url"]).query)["state"][0]
+    assert b.post("/api/facebook/connect").status_code == 200
     theirs = {"creation": cid, "input": input_a, "plan": plan_a["id"], "visual": visual_a, "job": scene_job_a,
               "look": look_a, "proposal": proposal_a, "effect": effect_a, "render": render_a,
               "confirmation": confirmed.json()["confirmation_id"], "original": original_a, "scene": scene_sha_a,
-              "style": style_a, "logo": logo_a, "texture": texture_a, "png": render_row["png_sha256"]}
+              "style": style_a, "logo": logo_a, "texture": texture_a, "png": render_row["png_sha256"],
+              "state": state_a, "page": StubGraph.PAGES[0].id}
     # The same places, filled with ids of the same kinds that exist nowhere.
     nowhere = {name: secrets.token_hex(32) if len(value) == 64 else str(uuid4()) for name, value in theirs.items()}
+    nowhere["page"] = "9" * len(theirs["page"])  # a Page's id is digits
 
     # Shop B: its own poster, plan and style, to point at A's objects from.
     up_b = b.post("/api/assets", files={"file": ("b.png", photo(colour="green"), "image/png")}, data={"role": "original"}).json()["asset"]
@@ -269,6 +284,9 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         ("POST", "/api/creations/{id}/scenes", lambda x: (f"/api/creations/{bid}/scenes", {
             "plan_id": plan_b, "acknowledged_warnings": ["low_resolution"], "keep_adjustments_of": x["visual"]}, 1)),
         ("POST", "/api/reads", lambda x: ("/api/reads", read_body | {"creation_id": bid, "visual_id": x["visual"]}, None)),
+        # A's dialog `state` sent with B's session, and a Page B was never offered.
+        ("POST", "/api/facebook/code", lambda x: ("/api/facebook/code", {"state": x["state"], "code": STUB_CODE}, None)),
+        ("POST", "/api/facebook/page", lambda x: ("/api/facebook/page", {"page_id": x["page"]}, None)),
         # A copy kept after a save conflict, its unsaved document naming A's visual, effect, logo or input.
         *(("POST", "/api/creations/{id}/copies", lambda x, change=change: (f"/api/creations/{bid}/copies", {
             "source_revision": 1, "reason": "save_conflict", "unsaved_document": change(x)}, None)) for change in (
@@ -426,6 +444,12 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     done.append(send(a, "POST", f"/api/text-effects/{made('text-effects', {'layer_id': title_a, 'proposal_id': applied})}/reject"))
     copied = send(a, "POST", f"/api/creations/{cid}/copies", {"source_revision": current(), "reason": "price_update"})
     abandoned = send(a, "POST", f"/api/creations/{copied.json()['id']}/abandon", None, copied.json()["revision"])
+    # A's attempt was not touched by B's tries: its state still claims it, and its Page is A's alone.
+    done += [a.post("/api/facebook/code", json={"state": state_a, "code": STUB_CODE}),
+             a.post("/api/facebook/page", json={"page_id": theirs["page"]}), a.get("/api/facebook")]
+    assert b.get("/api/facebook").json()["page"] is None and b.delete("/api/facebook/page").is_success
+    assert a.get("/api/facebook").json()["page"]["id"] == theirs["page"]
+    done.append(a.delete("/api/facebook/page"))
     done += [copied, abandoned, send(a, "POST", f"/api/creations/{copied.json()['id']}/restore", None, abandoned.json()["revision"]),
              send(a, "PUT", f"/api/looks/{look_a}", {"name": "Style A bis"}), send(a, "DELETE", f"/api/looks/{look_a}"),
              a.post("/api/session/password", json={"current_password": PASSWORD, "new_password": secrets.token_hex(8)})]

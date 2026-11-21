@@ -1,12 +1,15 @@
 """Run from backend after the production frontend build. Stub stores and providers only."""
+import json
 import re
 import subprocess
 import tempfile
+from urllib.parse import urlencode
 from uuid import uuid4
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
+from affiche.posters.facebook_connect import STUB_CODE
 import browser_smoke as smoke
 import share_browser as sb
 from terms_browser import open_atelier, set_terms
@@ -1999,10 +2002,107 @@ def walk_account(browser, out, data):
         context.close()
 
 
+def walk_facebook(browser):
+    """D-FB-PUBLISH-002 and 004 on the stand-in, whose dialog sends the owner straight back to /facebook.html with a code.
+    The return page's address is clean before it sends anything, no request carries the code or the state, and nothing
+    of the feature is kept in the browser. The card offers both Pages by name, connects the one chosen, keeps it after a
+    reload and disconnects it; a return page loaded again, and a cancelled dialog, are said on the card."""
+    context = browser.new_context(viewport={"width": 360, "height": 640})
+    try:
+        page = context.new_page()
+        page.set_default_timeout(15000)
+        errors, referrers = [], []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("request", lambda request: referrers.append(request.headers.get("referer") or ""))
+        open_atelier(page, "#compte")
+        page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
+        page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
+        page.get_by_role("button", name="Ouvrir l’atelier").click()
+        card = page.get_by_role("region", name="Page Facebook", exact=True)
+        connect = card.get_by_role("button", name="Connecter ma Page Facebook")
+        expect(connect).to_be_visible()
+        for line in ("Facebook vous demandera quelles Pages autoriser.",
+                     "Si Facebook refuse l’accès, votre Page doit d’abord être autorisée par Doka Studio : demandez-le à l’opérateur."):
+            expect(card.get_by_text(line, exact=True)).to_be_visible()
+        stored = lambda: page.evaluate("() => [{...localStorage}, {...sessionStorage}]")  # noqa: E731
+        before, held = stored(), []
+        # Facebook sends the owner back: the return page's request is held while its address and storage are read.
+        page.route("**/api/facebook/code", lambda route: held.append(route))
+        with page.expect_request("**/api/facebook/code") as sent:
+            connect.click()
+        body = sent.value.post_data_json
+        assert set(body) == {"code", "state"} and body["code"] == STUB_CODE, body
+        assert page.evaluate("location.href") == smoke.ORIGIN + "/facebook.html"
+        assert stored() == before and not any(value in json.dumps(before) for value in body.values())
+        held[0].continue_()
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        page.unroute("**/api/facebook/code")
+        assert page.evaluate("location.search") == ""  # the application loads without a code
+        expect(card.get_by_role("radio")).to_have_count(2)
+        choose = card.get_by_role("button", name="Connecter cette Page")
+        expect(choose).to_be_disabled()  # two Pages: none is chosen for the owner
+        card.get_by_role("radio", name="Page d’essai 2").check()
+        choose.click()
+        expect(card).to_contain_text("Page connectée : Page d’essai 2")
+        expect(card.get_by_role("radio")).to_have_count(0)
+        page.reload()
+        expect(card).to_contain_text("Page connectée : Page d’essai 2")
+        # The same return address loaded again: refused before any call, said once on the card, the Page kept.
+        page.goto(smoke.ORIGIN + "/facebook.html?" + urlencode(body))
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        expect(card.get_by_role("alert")).to_have_text("Recommencez la connexion.")
+        expect(card).to_contain_text("Page connectée : Page d’essai 2")
+        card.get_by_role("button", name="Déconnecter").click()
+        expect(connect).to_be_visible()
+        expect(card.get_by_role("alert")).to_have_count(0)
+        page.reload()
+        expect(connect).to_be_visible()
+
+        # Facebook's dialog cancelled: the stand-in's address with Facebook's error in place of the code.
+        def cancelled(route):
+            answer = route.fetch()
+            route.fulfill(response=answer, json={"url": answer.json()["url"].replace(f"code={STUB_CODE}", "error=access_denied")})
+
+        page.route("**/api/facebook/connect", cancelled)
+        with page.expect_request("**/api/facebook/code"):
+            connect.click()
+        expect(card.get_by_role("alert")).to_have_text("Connexion annulée.")
+        expect(connect).to_be_visible()
+        # The return page's request never arrives: no sentence is kept anywhere for the card, so the return page says it
+        # itself, its address clean, with the way back.
+        page.unroute("**/api/facebook/connect")
+        page.route("**/api/facebook/code", lambda route: route.abort())
+        connect.click()
+        expect(page.get_by_text("La connexion à Facebook n’a pas pu être enregistrée.")).to_be_visible()
+        assert page.evaluate("location.href") == smoke.ORIGIN + "/facebook.html"
+        expect(page.get_by_text("Connexion à Facebook…")).to_be_hidden()
+        page.get_by_role("link", name="Retourner à Mon compte").click()
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        page.unroute("**/api/facebook/code")
+        expect(connect).to_be_visible()
+        # The return page's script cannot be loaded: its first lines, in the page itself, have already cleaned the
+        # address, and the way back is shown.
+        page.route(re.compile(r"/assets/facebook[^/]*\.js$|/src/facebook-return\.ts"), lambda route: route.abort())
+        connect.click()
+        expect(page.get_by_text("La connexion à Facebook n’a pas pu être enregistrée.")).to_be_visible()
+        assert page.evaluate("location.href") == smoke.ORIGIN + "/facebook.html"
+        page.unroute(re.compile(r"/assets/facebook[^/]*\.js$|/src/facebook-return\.ts"))
+        page.get_by_role("link", name="Retourner à Mon compte").click()
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        expect(connect).to_be_visible()
+        kept = json.dumps(stored())
+        assert "facebook" not in kept.lower() and not any(value in kept for value in body.values()), kept
+        assert not any(value in referrer for referrer in referrers for value in body.values()), referrers
+        assert not errors, errors
+    finally:
+        context.close()
+
+
 def run():
     out = smoke.ROOT / "outputs" / "shop-dash"
     out.mkdir(exist_ok=True, parents=True)
-    with tempfile.TemporaryDirectory() as data, (out / "home-preview.log").open("w") as log:
+    with (tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as facebook_data,
+          (out / "home-preview.log").open("w") as log):
         server = smoke.serve(Path(data))
         try:
             vite = subprocess.Popen(["node", "node_modules/vite/bin/vite.js", "preview", "--host", "127.0.0.1",
@@ -2019,6 +2119,10 @@ def run():
                         walk_drawer(browser, approved, draft, removed)
                         walk_gate(browser, data)
                         walk_account(browser, out, data)
+                        # The Facebook card exists only with the feature on: a server of its own, on the stand-in.
+                        smoke.stop(*server)
+                        server = smoke.serve(Path(facebook_data), facebook_provider="stub")
+                        walk_facebook(browser)
                     finally:
                         browser.close()
             finally:

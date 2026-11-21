@@ -102,7 +102,7 @@ def test_owned_job_status_credit_and_cancel(client, settings, monkeypatch):
     assert client.get(f"/api/creations/{uuid4()}/jobs").status_code == 404
     # The planner's estimate (100000 here) is not given: no dollar figure reaches a shop (D-BALANCE-004).
     assert client.get("/api/capabilities").json() == {"image_mode": "stub", "planner_mode": "disabled",
-        "planner_available": False, "formats_enabled": ["feed"], "chat_available": False}
+        "planner_available": False, "formats_enabled": ["feed"], "chat_available": False, "facebook": False}
     assert client.get("/api/jobs/" + str(uuid4())).status_code == 404
     assert client.get("/api/usage").status_code == 404  # removed: a shop reads credits, never dollars (D-BALANCE-004)
     with client.app.state.engine.connect() as conn:

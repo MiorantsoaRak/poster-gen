@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Facebook's code is in the address until the script removes it: no request of this page may carry it (D-FB-PUBLISH-002).
+         No image, no font; the empty icon keeps the browser from asking for /favicon.ico. -->
+    <meta name="referrer" content="no-referrer" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="data:," />
+    <title>Doka Studio</title>
+    <!-- First, and in the page itself: what Facebook sent is taken out of the address before any file is asked for, so
+         that a script that fails to load never leaves the code there. It is handed to the module in memory only. -->
+    <script>
+      window.facebookReturn = Object.fromEntries(['code', 'state', 'error'].map(function (name) {
+        return [name, new URLSearchParams(location.search).get(name)]
+      }))
+      history.replaceState(null, '', location.pathname)
+      function facebookLost() {  // the two lines are in the body, which may not be read yet
+        if (document.readyState === 'loading') return document.addEventListener('DOMContentLoaded', facebookLost)
+        document.getElementById('attente').hidden = true; document.getElementById('echec').hidden = false
+      }
+      // A script of this page that cannot be loaded (the build moves the tag below, so no attribute on it would stay).
+      window.addEventListener('error', function (event) { if (event.target && event.target.tagName === 'SCRIPT') facebookLost() }, true)
+    </script>
+  </head>
+  <body>
+    <p id="attente">Connexion à Facebook…</p>
+    <p id="echec" hidden>La connexion à Facebook n’a pas pu être enregistrée. <a href="/#compte">Retourner à Mon compte</a> et recommencez.</p>
+    <script type="module" src="/src/facebook-return.ts"></script>
+  </body>
+</html>
