@@ -33,3 +33,5 @@ pyinfra-debug.log
 .DS_Store
 Thumbs.db
 /.taste-skill/
+# Claude Code's local folder (agent worktrees, local settings)
+/.claude/
