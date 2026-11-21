@@ -9,7 +9,8 @@ NAMES = ("IMAGE_PROVIDER", "OPENAI_API_KEY", "STUB_FAIL", "SPEND_CAP_USD", "SPEN
          "ESTIMATE_BACKGROUND_USD", "ATTEMPT_LIMIT", "MIN_SOURCE_SHORT_EDGE", "REMBG_MODEL", "MAX_HOLE_RATIO",
          "DATA_DIR", "OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_QUALITY", "APP_ORIGIN", "SHOP_PASSWORD_HASH",
          "PLANNER_PROVIDER", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "ESTIMATE_PLAN_USD", "ESTIMATE_TEXTURE_USD",
-         "FORMATS_ENABLED", "ESTIMATE_READ_USD", "SUPPORT_CONTACT_FR", "SHOP_DAILY_SPEND_USD")
+         "FORMATS_ENABLED", "ESTIMATE_READ_USD", "SUPPORT_CONTACT_FR", "SHOP_DAILY_SPEND_USD", "FACEBOOK_PROVIDER",
+         "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET")
 TODAY = datetime.now(UTC).date()
 TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 SECRET = "sk-test-must-never-be-printed"
@@ -45,6 +46,30 @@ def test_valid_config_with_defaults(env):
     assert settings.stub_fail is None
     assert settings.planner_provider == "disabled" and settings.anthropic_api_key is None
     assert settings.formats_enabled == ("feed",)
+    assert settings.facebook_provider == "off" and settings.facebook_app_secret is None
+
+
+def test_facebook_with_meta_and_its_app(env):
+    env.setenv("FACEBOOK_PROVIDER", "meta")
+    env.setenv("FACEBOOK_APP_ID", "1234567890")
+    env.setenv("FACEBOOK_APP_SECRET", SECRET)
+    settings = load()
+    assert settings.facebook_app_secret.get_secret_value() == SECRET and SECRET not in repr(settings)
+    env.setenv("FACEBOOK_PROVIDER", "stub")
+    env.delenv("FACEBOOK_APP_SECRET")
+    assert load().facebook_provider == "stub"  # the stand-in needs no app
+
+
+@pytest.mark.parametrize("bad_secret", [f"{SECRET}​", f"{SECRET} ", f"sk-tést-{SECRET}"])
+def test_malformed_facebook_secret_is_refused_without_its_value(env, bad_secret):
+    env.setenv("FACEBOOK_PROVIDER", "meta")
+    env.setenv("FACEBOOK_APP_ID", "1234567890")
+    env.setenv("FACEBOOK_APP_SECRET", bad_secret)
+    with pytest.raises(ConfigError, match="printable ASCII with no whitespace") as caught:
+        load()
+    for text in (str(caught.value), repr(caught.value)):
+        assert SECRET not in text and bad_secret not in text
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
 
 
 def test_formats_enabled_is_a_comma_list(env):
@@ -98,6 +123,20 @@ def test_relative_data_dir_is_resolved_from_backend(env):
     ({"FORMATS_ENABLED": ","}, "formats_enabled"),
     ({"FORMATS_ENABLED": "story"}, "must include feed"),  # every new poster starts in feed
     ({"FORMATS_ENABLED": "square,story"}, "must include feed"),
+    ({"FACEBOOK_PROVIDER": "facebook"}, "facebook_provider"),
+    ({"FACEBOOK_PROVIDER": "meta"}, "FACEBOOK_APP_ID and FACEBOOK_APP_SECRET are required"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "1234567890"}, "FACEBOOK_APP_SECRET are required"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_SECRET": SECRET}, "FACEBOOK_APP_ID and"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "", "FACEBOOK_APP_SECRET": ""}, "FACEBOOK_APP_ID and"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "   ", "FACEBOOK_APP_SECRET": SECRET},
+     "FACEBOOK_APP_ID must be printable ASCII"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "123 456", "FACEBOOK_APP_SECRET": SECRET},
+     "FACEBOOK_APP_ID must be printable ASCII"),
+    # The secret has a credential's shape: a short one, or digits only, could be an id or a code that Facebook sends back.
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "1234567890", "FACEBOOK_APP_SECRET": "123456"},
+     "FACEBOOK_APP_SECRET must be at least 20 printable characters"),
+    ({"FACEBOOK_PROVIDER": "meta", "FACEBOOK_APP_ID": "1234567890", "FACEBOOK_APP_SECRET": "7" * 32},
+     "FACEBOOK_APP_SECRET must be at least 20 printable characters"),
 ])
 def test_invalid_config_is_refused(env, overrides, match):
     for name, value in overrides.items():

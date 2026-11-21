@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # Poster formats a poster may be created in, changed to and exported in, as a comma list. Square and Story stay
     # off until real scenes in them were judged on a phone (T-FMT-007, ADR-080).
     formats_enabled: Annotated[tuple[Format, ...], NoDecode, Field(min_length=1)] = ("feed",)
+    # Publishing on the shop's Facebook Page (D-FB-PUBLISH-001). `meta` only once the Meta app is published (runbook): an
+    # unpublished app's posts are seen by its own role holders only.
+    facebook_provider: Literal["off", "stub", "meta"] = "off"
+    facebook_app_id: str | None = None
+    facebook_app_secret: SecretStr | None = None
 
     @field_validator("formats_enabled", mode="before")
     @classmethod
@@ -84,7 +89,7 @@ class Settings(BaseSettings):
             raise ValueError("must not be after today (UTC)")
         return value
 
-    @field_validator("openai_api_key", "anthropic_api_key")
+    @field_validator("openai_api_key", "anthropic_api_key", "facebook_app_secret")
     @classmethod
     def _printable_ascii_key(cls, value: SecretStr | None) -> SecretStr | None:
         # A pasted invisible character (U+200B) would fail later, in header building, with an error that prints
@@ -102,6 +107,21 @@ class Settings(BaseSettings):
     def _key_for_openai(self) -> "Settings":
         if self.image_provider == "openai" and self.openai_api_key is None:
             raise ValueError("OPENAI_API_KEY is required when IMAGE_PROVIDER=openai")
+        return self
+
+    @model_validator(mode="after")
+    def _app_for_meta(self) -> "Settings":
+        if self.facebook_provider == "meta" and (self.facebook_app_id is None or self.facebook_app_secret is None):
+            raise ValueError("FACEBOOK_APP_ID and FACEBOOK_APP_SECRET are required when FACEBOOK_PROVIDER=meta")
+        # A blank id would fail only at the first exchange, and a pasted invisible character in the form's encoding.
+        if self.facebook_provider == "meta" and not re.fullmatch(r"[!-~]+", self.facebook_app_id):
+            raise ValueError("FACEBOOK_APP_ID must be printable ASCII with no whitespace when FACEBOOK_PROVIDER=meta")
+        # A credential's shape (posters/facebook.py CREDENTIAL): 20 printable characters at least, not digits only. An id
+        # or a code that Facebook sends back can then never be the secret.
+        secret = self.facebook_app_secret.get_secret_value() if self.facebook_provider == "meta" else None
+        if secret is not None and (not re.fullmatch(r"[!-~]{20,4096}", secret) or secret.isdigit()):
+            raise ValueError("FACEBOOK_APP_SECRET must be at least 20 printable characters, not digits only, "
+                             "when FACEBOOK_PROVIDER=meta")
         return self
 
     @model_validator(mode="after")

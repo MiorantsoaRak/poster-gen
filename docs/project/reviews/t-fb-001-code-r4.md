@@ -1,0 +1,21 @@
+# Code review r4 — T-FB-001: settings, migration 0018 and the Graph client
+
+Reviewer: Codex, read-only, 2026-11-21, asked by the owner. Verdict: REJECT (the three round-3 findings closed; five new of the same class: a value of an answer or an argument that could hold a credential). The owner's word for this case: find another way, do not patch where the error is. Answered by a rewrite of the client's core on another principle (it logs, returns and stores only its own words; three values of an answer are kept through one gate; a credential has one shape): see r5.
+
+| Round‑3 finding | Ruling | Evidence |
+|---|---|---|
+| 65,536-digit Page ID | **CLOSED** | `publish_photo` returns `not_sent` before building the URL. The regression covers that exact length. [facebook.py:247](backend/src/affiche/posters/facebook.py#L247) · [test_facebook.py:169](backend/tests/test_facebook.py#L169) |
+| Short numeric OAuth code reflected in `code` or `error_subcode` | **CLOSED** | The exchange rejects codes shorter than 20 characters before sending. The logged numbers have six- and seven-digit limits. [facebook.py:203](backend/src/affiche/posters/facebook.py#L203) · [facebook.py:105](backend/src/affiche/posters/facebook.py#L105) |
+| Page token echoed in the returned post ID | **CLOSED** | The Meta photo path passes the token to `classify`, which checks the entire post ID before constructing either `Outcome.post_id` or `link`. [facebook.py:261](backend/src/affiche/posters/facebook.py#L261) · [facebook.py:137](backend/src/affiche/posters/facebook.py#L137) |
+
+**The broader rule still fails.**
+
+- **P1 — Page metadata can expose credentials.** `pages()` accepts any nonblank `name`, with no length limit, and any 1–32-digit `id`. Neither is checked against credentials. A response can copy a user or Page token into `Page.name`, or a numeric token into `Page.id`. Both fields appear in `repr(Page)`. The ID can then enter the outbound `/{page_id}/photos` address before the post-ID check runs. The stub also copies its ID argument into `Outcome.post_id` and `link` without checking the token. [Page fields](backend/src/affiche/posters/facebook.py#L58) · [response mapping](backend/src/affiche/posters/facebook.py#L235) · [Meta address](backend/src/affiche/posters/facebook.py#L256) · [stub link](backend/src/affiche/posters/facebook.py#L283)
+- **P1 — The app secret has no minimum length.** Settings accept a six-digit secret. If an exchange response reflects it as Graph `code`, `_graph_error` accepts it, `_log_answer` prints it, and `GraphFailure.code` retains it. The same path accepts a seven-digit secret as `error_subcode`. [config.py:97](backend/src/affiche/config.py#L97) · [numeric checks](backend/src/affiche/posters/facebook.py#L105) · [log and return](backend/src/affiche/posters/facebook.py#L188)
+- **P2 — An invalid `redirect_uri` can escape in exception `repr`.** `exchange_code` passes the argument directly to the form encoder. A lone surrogate raises `UnicodeEncodeError`, whose `repr` includes the input string. `_call` catches only HTTP client errors. [facebook.py:205](backend/src/affiche/posters/facebook.py#L205) · [exception handling](backend/src/affiche/posters/facebook.py#L179)
+- **P2 — The Pages request puts `appsecret_proof` in the address.** The HMAC is bounded to 64 hex characters, but the client deliberately includes it in the GET query. Anyone recording that URL gets the proof for the user token. [facebook.py:220](backend/src/affiche/posters/facebook.py#L220)
+- **P3 — HTTP status is logged verbatim.** Both error paths pass `response.status_code` to the logger without a range check. The normal HTTP/1.1 wire format bounds it to three digits, but an injected transport can supply a credential-sized integer. [logger](backend/src/affiche/posters/facebook.py#L116) · [photo path](backend/src/affiche/posters/facebook.py#L132) · [connection path](backend/src/affiche/posters/facebook.py#L189)
+
+Read-only review. The 268 targeted passes were owner-reported. I ran no tests and excluded the pending full suite.
+
+**REJECT**

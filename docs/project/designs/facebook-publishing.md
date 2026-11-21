@@ -66,16 +66,17 @@ CREATE TABLE facebook_publications (
   id TEXT PRIMARY KEY, shop_id INTEGER NOT NULL REFERENCES shop_profile(id),
   creation_id TEXT NOT NULL, confirmation_id TEXT NOT NULL,
   page_id TEXT NOT NULL, page_name TEXT NOT NULL, caption TEXT NOT NULL,
-  key TEXT NOT NULL, payload_sha TEXT NOT NULL, UNIQUE (shop_id, key),
+  key TEXT NOT NULL, payload_sha TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('sending','published','failed','unknown')),
   sent_at TEXT NOT NULL, settled_at TEXT,
-  post_id TEXT, link TEXT, error_code TEXT, said_by_owner INTEGER NOT NULL DEFAULT 0
+  post_id TEXT, link TEXT, error_code TEXT, said_by_owner INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (shop_id, key)                    -- a table constraint comes after the columns (found at T-FB-001)
 );
 ```
 
 **One mode per database.** The first Facebook call of a data folder records `facebook_mode` in `meta` (`stub` or `meta`), as the planner's reads record theirs (`reads.py`, `planner_mode`); with the other mode the routes refuse (`provider_mode_mismatch`). A publication made by the stand-in can never sit beside real ones.
 
-**Logs.** The app logs no token, no code, no `state` and no secret. Of a Graph error it logs `code`, `error_subcode` and `fbtrace_id`, never the message's text. The HTTP client's own logging stays off for these calls. A token goes in the request's body or in the `Authorization` header. One exception, Meta's own: the two exchanges of §002 are documented as `GET` with the secret in the address; the proof of the first connection tries them as `POST` with a body first. If only the `GET` works, `meta` stays off until it is shown that nothing on the way out keeps that address (the app's client logs none; the server calls Facebook directly, through no proxy).
+**Logs, and what is kept of an answer** *(rewritten after the code's four review rounds, T-FB-001)*. The client logs, returns and stores only its own words: the call's name, a kind (`timeout`, `network`, `http`, `graph`, `invalid`), a status class (`200`, `4xx`, `5xx`, `other`) and a Graph code only when it is one of the codes this design names (190; 4, 17, 32, 613, 80001, 368; 10, 200–299, 100, 324, 506). An answer is compared with those; nothing of it is copied: no message, no sub-code, no trace id, no other code. Three values of an answer are kept, because the feature is made of them: a Page's id, a Page's name and a post's id. Each passes one gate: its bounded shape (digits, 32 at most; one line of 200 characters at most), and no credential of the call inside it. A credential (a token, the dialog's code, the Meta app's secret) has one shape: printable ASCII, 20 characters at least, not digits only; anything else is refused before a request is built, the secret by the settings. So an id, which is digits only, can never be a credential. The app logs no token, no code, no `state` and no secret. The HTTP client's own logging stays off for these calls. A token goes in the request's body or in the `Authorization` header. One exception, Meta's own: the two exchanges of §002 are documented as `GET` with the secret in the address; the proof of the first connection tries them as `POST` with a body first. If only the `GET` works, `meta` stays off until it is shown that nothing on the way out keeps that address (the app's client logs none; the server calls Facebook directly, through no proxy).
 
 ---
 
