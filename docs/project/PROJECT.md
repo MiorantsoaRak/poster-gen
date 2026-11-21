@@ -10,6 +10,10 @@ Affiche IA helps Original Phone Mada turn a product photo, verified information 
 
 The charter below describes the single-shop pilot and is kept as written. The user has since decided to open the tool to several shops **by invitation**, with a prepaid balance of generations, a dashboard for each shop and an administration dashboard. "Multi-shop SaaS" and "subscriptions/billing" in the non-goals below now mean: public sign-up, online payment, subscriptions and automated Facebook publishing stay out; shops invited by the operator and credited by hand are in. The plan, its order and its requirement files are in [ROADMAP.md](ROADMAP.md). **Nothing is deployed until that release is complete.**
 
+## Scope change of 2026-11-21 (user decision, ADR-127)
+
+Publishing a confirmed poster on the shop's own Facebook Page is in, as **stage 1**: for shops whose Page admin has a role on the owner's Meta app, with no credit taken, and a link to the post. [Requirements](requirements/facebook-publishing.md). Still out: Instagram, scheduling, several images in one post, and any shop without a role on the Meta app (stage 2: it needs Meta's Business Verification and App Review).
+
 ## Goal
 
 - **Primary outcome:** Reduce the operator's time and assistance needed to produce an accepted poster, measured against the current workflow. Track correction effort, product-detail errors and repeat usage as well.

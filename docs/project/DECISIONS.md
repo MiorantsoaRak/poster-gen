@@ -1156,3 +1156,19 @@ The owner authorized closing T-SHOP-DASH-006 after fixing the round-three histor
 **Not chosen.** A new poster from the chat's ordinary path with the photo, name and price filled (the brand, subtitle, layout and format are lost): the devil's advocate's alternative. Changing the photo in place (a server change against `input_immutable`).
 
 **The owner may overturn:** the copy's image in « Pas à pas » rather than in the chat; no inspiration image on an existing poster; the French sentences of the card and of the editor's notice.
+
+## ADR-127 — Publishing on the shop's Facebook Page is in scope, as stage 1 (2026-11-21)
+
+**Context.** Automated Facebook publishing was a non-goal (PROJECT.md; ADR-105 kept it out). The research of 2026-11-15 and its review had found the feature possible but its public form blocked by an unknown: Meta's Business Verification for a business in Madagascar. On 2026-11-21 the owner asked how to add publishing and gave his Meta app « Doka studio »: its use case is the Pages API with Facebook Login for Business, it is not published, and `pages_manage_posts` and `pages_read_engagement` are not yet added.
+
+**Decision (the owner: "yes stage 1, free, only link to the post").**
+- Publishing a confirmed poster on the shop's own Page is in scope, for shops whose Page admin has a role on the Meta app: Meta allows that without its review.
+- It takes no credit.
+- The app shows the link to the post. It does not edit or remove a post.
+- Any shop without a role (stage 2) waits for Meta's verification and review, and for stage 1 to work.
+
+**Before the implementation, three free proofs with the owner's hands on the Meta app** (the requirements list them): who sees a post made while the Meta app is not published; what a Page admin must do to accept the tester role; one real post of a poster's JPEG.
+
+**Later the same day, after the proofs and the design's three reviews (the owner: "yes to all").** The Meta app is published; no business verification was asked. Approved by him: the five requirement amendments (he says whether a lost publication is on his Page, the app does not look; a post removed on Facebook keeps its link; no Page picture; « a copy of the database cannot use the access » in place of « encrypted »; he chooses among the Pages he allowed); the permission `business_management`, which a Page in a business portfolio needs and which will weigh on Meta's review in stage 2; a new version of the conditions of use, read as released with the feature (his to correct: that point was an either-or). Design v3 is approved under the autonomy grant after reviews r1 (REJECT), r2 (REJECT) and r3 (APPROVE WITH FIXES): v1 was parked and the proofs run before v2, not patched.
+
+**The owner may overturn:** one Page per shop; the caption of « Partager » as the post's text.

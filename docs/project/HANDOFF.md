@@ -23,6 +23,15 @@ cd ../backend && SMOKE_WEB_PORT=5473 SMOKE_API_PORT=8300 uv run python ../fronte
 ```
 Expected: 359 tests passed; « Chat smoke passed: … ».
 
+## Publishing on a Facebook Page — Claude, 2026-11-21 (designed, nothing built)
+
+The owner opened the scope (ADR-127): stage 1, shops with a role on his Meta app « Doka studio », free, a link to the post. [Requirements](requirements/facebook-publishing.md) approved, then amended by the proofs (five amendments marked in their bullets, waiting for his word). [Design v3](designs/facebook-publishing.md) approved under the autonomy grant after three Codex rounds (REJECT, REJECT, APPROVE WITH FIXES) and a devil's advocate; v1 was parked, not patched, and the proofs came before v2 (the owner's rule: when blocked, another way).
+**Done in the Meta app, each on his word:** `pages_manage_posts` and `pages_read_engagement` added; the privacy address set to the public « Vos données » page; **the app published** (no business verification asked). In the Graph API Explorer: a scheduled, unpublished test photo on Original Phone Mada, read back and deleted. His consent there gave « Doka studio » access to four of his Pages; he can remove it in Facebook (Paramètres → Intégrations professionnelles).
+**What the proofs taught, all in the design's table:** a Page in a business portfolio needs `business_management`; a person allows several Pages, so the app lets him choose; an unpublished photo's answer has no `post_id`; Meta Business Suite does not list a post scheduled through the API.
+**The owner said "yes to all"** to the five requirement amendments, to `business_management`, and to a new version of the conditions (read as: with the feature, T-FB-004; his to correct).
+**Exact next step:** T-FB-001 in TODO.md (settings, migration 0018, the Graph client with its stub; no route): given on 2026-11-21 to an implementation agent in its own worktree, uncommitted there; its work is to be read, reviewed by Codex and brought to `main` before T-FB-002.
+**Committed on the owner's word (not pushed):** the requirements, the design, the five review reports, ADR-127, the scope note in PROJECT.md, the tasks.
+
 ## App redesign — Claude, 2026-11-21
 
 No work order: the owner's own project. Goal: both interfaces follow the mockup he approved
