@@ -12,7 +12,7 @@ The charter below describes the single-shop pilot and is kept as written. The us
 
 ## Scope change of 2026-11-21 (user decision, ADR-127)
 
-Publishing a confirmed poster on the shop's own Facebook Page is in, as **stage 1**: for shops whose Page admin has a role on the owner's Meta app, with no credit taken, and a link to the post. [Requirements](requirements/facebook-publishing.md). Still out: Instagram, scheduling, several images in one post, and any shop without a role on the Meta app (stage 2: it needs Meta's Business Verification and App Review).
+Publishing a confirmed poster on the shop's own Facebook Page is in, as **stage 1**: for shops whose Page admin has a role on the owner's Meta app, with no credit taken, and a link to the post. [Requirements](requirements/facebook-publishing.md). Since ADR-128 (2026-11-21) a publish page makes one post of several confirmed posters, in the order the owner chooses ([requirements](requirements/facebook-post-page.md)). Still out: Instagram, scheduling, and any shop without a role on the Meta app (stage 2: it needs Meta's Business Verification and App Review).
 
 ## Goal
 

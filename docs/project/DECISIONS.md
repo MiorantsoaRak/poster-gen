@@ -1172,3 +1172,29 @@ The owner authorized closing T-SHOP-DASH-006 after fixing the round-three histor
 **Later the same day, after the proofs and the design's three reviews (the owner: "yes to all").** The Meta app is published; no business verification was asked. Approved by him: the five requirement amendments (he says whether a lost publication is on his Page, the app does not look; a post removed on Facebook keeps its link; no Page picture; « a copy of the database cannot use the access » in place of « encrypted »; he chooses among the Pages he allowed); the permission `business_management`, which a Page in a business portfolio needs and which will weigh on Meta's review in stage 2; a new version of the conditions of use, read as released with the feature (his to correct: that point was an either-or). Design v3 is approved under the autonomy grant after reviews r1 (REJECT), r2 (REJECT) and r3 (APPROVE WITH FIXES): v1 was parked and the proofs run before v2, not patched.
 
 **The owner may overturn:** one Page per shop; the caption of « Partager » as the post's text.
+
+## ADR-128 — A publish page: one Facebook post with several posters is in scope (2026-11-21)
+
+**Context.** Stage 1 (ADR-127) publishes one confirmed poster from its final panel; « several images in one post » was out of scope. On 2026-11-21, with T-FB-003 built, the owner asked whether a post could hold several images and a formatted description, and showed a post of the pilot's Page: about fifteen lines, emoji, and « bold » made of Unicode look-alike letters whose accented letters show as empty boxes.
+
+**Decision (the owner's words).** "we will have a dedicated button/menu, while clicked, open a publish page where we choose confirmed poster to use, and add the post description"; the images in the order he chooses; "we can handle the publish page now, no max nb of image, as long as facebook support it; but add the feature for the max nb of image in case we add tier subscription. a post should be publication format only".
+- A publish page of its own is in scope, beside the final panel's one-poster button: [requirements](requirements/facebook-post-page.md), R-FB-POST-001 to 007, approved under the autonomy grant on those words.
+- The app sets no largest number of images: Meta documents none, so the limit is Facebook's and is said when it refuses. A limit per shop exists as a setting of the operator, none by default, for a later tier. No subscription is built.
+- Only posters confirmed in the « Publication » format (4:5) go in a post (my reading of "publication format only").
+- The description editor (look-alike bold with readable accents, emoji bullets, the shop's fixed block) is a separate candidate, T-FB-007, not approved.
+
+**Why a page and not more on the final panel.** A post of several posters belongs to no single poster; its choice, order and text need room that a confirmation sheet has not.
+
+**What it costs.** One post takes one call per image and then one that publishes: it cannot be one request as a single poster is, so it needs a design of its own for « never twice, never half ». Four free proofs with the owner's token come before the implementation (the requirements list them): the calls, the order shown, Facebook's own limit, and what becomes of a photo uploaded and never attached.
+
+**The owner may overturn:** the final panel's one-poster button stays; the limit is set with the `shops` command; the description starts empty and keeps the caption's 2 000 characters.
+
+## ADR-129 — One way to publish on the Page: a poster alone is a post of one image (2026-11-21)
+
+**Context.** T-FB-003 built the single poster's publication (`facebook_publications`, `facebook_publish.py`, three routes, the final panel's sheet), reviewed twice and committed the same day, on no remote. The publish page (ADR-128) adds a post of several posters. The page's design v1 kept both, with rules against one being played against the other (`seen_publication` / `seen_post`, in-flight checks both ways); its first review's worst findings were in those rules, and its devil's advocate argued that two records for one act cost two lists, two restore steps and two texts for ever once real rows exist.
+
+**Decision (the lead, under the autonomy grant; the owner's to overturn: the default told to him before was that the one-poster path stays as built).** One model. A publication of one poster is a post of one image. `facebook_posts` and `facebook_post_items` replace `facebook_publications`: migration 0019 converts what 0018's table holds, counts, and drops it; 0018 is not edited, and 0018 and 0019 are released together. `facebook_posts.py` replaces `facebook_publish.py` and keeps its proven parts (the key in the table's own column, `_live`, the shielded task, the 30 s rule on the monotonic clock, the settling retries, the start-up and shutdown rules). The final panel's « Publier sur ma Page » stays: it opens the publish page for that poster alone, with the poster's own caption, so R-FB-PUBLISH-002 to 004 keep their cover. Design: `designs/facebook-post-page.md` v3, approved after three reviews (REJECT, REJECT, APPROVE WITH FIXES) and a devil's advocate.
+
+**Also decided there:** nothing uploaded is deleted by the app (a photo left behind is not shown on the Page); the owner can stop a post while its images are being sent; the draft is kept until its post is published; the request and its key are kept on the device before they leave, and a device that cannot keep them sends nothing.
+
+**What it costs.** T-FB-003's backend and its sheet are rewritten before they ever ran for a shop; publishing one poster goes through two calls to Facebook in place of one (an upload that shows nothing, then the post). To prove before the backend task: that a post of one photo made this way reads as a photo post.
