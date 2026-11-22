@@ -1,7 +1,7 @@
 # PROJECT — Affiche IA
 
 **Status: Approved by the user on 2026-11-05 (charter and six-feature split; ADR-008). First feature: product-visuals.**  
-**Created:** 2026-11-05 · **Working name:** Affiche IA  
+**Created:** 2026-11-05 · **Pilot/technical name:** Affiche IA · **Selected brand:** Doka Studio · **Identity direction:** Signal (user, 2026-11-15; digital logo kit v1 delivered, app integration separate)
 **Phase:** Phase-1 product-visual evaluation backend implemented through T-PV-010; T-PV-011 report remains. The poster requirements, including separate manual/prompted text effects, are approved (ADR-028/030). Six matching phase-2 designs are approved (ADR-031); backend draft persistence and authenticated intake/profile/draft HTTP routes are implemented, together with durable scene generation/review and the French Vue/Konva editor. Isolated prompted typography and authoritative feed rendering/confirmation are implemented; a real R50i poster has been reviewed, polished and exported. Square/story/library enhancements, optional cutout and physical-device readiness remain queued.
 
 Affiche IA helps Original Phone Mada turn a product photo, verified information and a price into promotional posters that a shop operator can polish, export and reuse. The proposed approach combines an AI-generated product scene with editable text, prices and branding in a flexible canvas. The pilot supports full editing on phones and desktop, with a French interface and French captions.

@@ -1,0 +1,58 @@
+{
+  "brand": "Doka Studio",
+  "tagline": "Vos produits au premier plan.",
+  "brief": "Transformer les photos produits des commerçants en affiches, avec une identité claire, énergique et accessible. Signal est la direction choisie.",
+  "adjectives": [
+    "direct",
+    "énergique",
+    "clair",
+    "créatif"
+  ],
+  "criteria": "Un D reconnaissable à petite taille, des fichiers vectoriels exacts et une identité qui laisse la place aux produits des clients.",
+  "industry": "saas",
+  "mockups": [
+    "website",
+    "favicon-tab",
+    "app-icon",
+    "social",
+    "sticker",
+    "business-card"
+  ],
+  "nav": [
+    "Créer",
+    "Mes affiches",
+    "Aide"
+  ],
+  "brand_color": "#F2C744",
+  "tile_color": "#F2C744",
+  "greyscale": false,
+  "final": true,
+  "round": 3,
+  "designer": "Doka Studio — Signal",
+  "concepts": [
+    {
+      "name": "Signal",
+      "symbol": "../masters/doka-symbol.svg",
+      "lockup": "../masters/doka-horizontal.svg",
+      "stacked": "../masters/doka-stacked.svg",
+      "symbol_on_tile": "../masters/doka-symbol.svg",
+      "lockup_on_tile": "../masters/doka-horizontal.svg",
+      "stacked_on_tile": "../masters/doka-stacked.svg",
+      "symbol_on_dark": "../masters/doka-symbol-reverse.svg",
+      "lockup_on_dark": "../masters/doka-horizontal-reverse.svg",
+      "stacked_on_dark": "../masters/doka-stacked-reverse.svg",
+      "idea": "Un D au coin coupé, comme le bord d’une affiche.",
+      "rationale": [
+        "Un symbole compact pour les petits écrans.",
+        "Le jaune attire l’attention; le charbon garde le texte lisible.",
+        "Des lettres franches et un langage simple."
+      ]
+    }
+  ],
+  "recommendation": "Signal — direction sélectionnée par le propriétaire. Les applications présentées sont des exemples visuels, pas des écrans livrés.",
+  "next_steps": [
+    "Utiliser les masters et respecter les tailles minimales.",
+    "Adapter les chemins du dossier web lors de l’intégration.",
+    "Éprouver les couleurs avec l’imprimeur avant une production physique."
+  ]
+}

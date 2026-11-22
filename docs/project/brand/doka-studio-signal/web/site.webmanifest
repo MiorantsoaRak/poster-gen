@@ -1,0 +1,26 @@
+{
+  "name": "Doka Studio",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#F2C744",
+  "background_color": "#F5F1E8",
+  "display": "standalone",
+  "short_name": "Doka",
+  "lang": "fr"
+}

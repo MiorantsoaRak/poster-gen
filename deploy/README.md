@@ -566,8 +566,10 @@ Facebook; the browser never holds a token or the Meta app's secret. Publishing t
 `pages_manage_posts` and `pages_read_engagement` added; the privacy policy address
 `https://affiches.miorantsoa.app/donnees.html` (« Vos données »: when this feature keeps something new, that page
 says it); the Meta app published.
-- « Valid OAuth redirect URIs »: `https://affiches.miorantsoa.app/facebook.html`, and
-  `http://127.0.0.1:5173/facebook.html` for local work.
+- « Valid OAuth redirect URIs » (« Facebook Login for Business » → « Paramètres » → « URI de redirection OAuth
+  valides »): `https://affiches.miorantsoa.app/facebook.html`. Done on 2026-11-22. Without it, Facebook's dialog says
+  « Impossible de charger cette URL ». The Meta app enforces HTTPS for redirects, so a `http://127.0.0.1…` address is
+  not kept: local work uses `FACEBOOK_PROVIDER=stub`.
 - Add each shop's Page admin as a **tester** of the Meta app, before that shop connects: 50 testers at most while the
   Meta app is not tied to a verified business. He accepts the invitation with his own Facebook account; what Meta
   asks of him then (perhaps a developer registration) is not tried yet. Without the role he cannot finish Facebook's
@@ -582,8 +584,11 @@ says it); the Meta app published.
 2. **« Clé requise »** ("Require app secret") on in the Meta app's advanced settings, **before any shop connects**.
    Then make two calls with one token: without the proof, Facebook must refuse the token; with the proof, it must
    accept it. If either call gives the other answer, no shop is connected, and the design's token rule is reopened
-   (tell Claude). From `backend/` on the development machine, with a Page token of « Doka studio » (Graph API
-   Explorer, that Meta app selected):
+   (tell Claude). From `backend/` on the development machine, with a token of « Doka studio » (Graph API Explorer,
+   that Meta app selected: once « Clé requise » is on, the Explorer no longer lists the Pages, since it cannot make
+   its own call without the proof; its user token, in « Token d'accès », proves the same rule). Passed on 2026-11-22:
+   without the proof, code 100 « API calls from the server require an appsecret_proof argument »; with it, the
+   answer; `me/accounts?fields=id,name` with it, the Pages.
 
    ```bash
    read -rs TOKEN && export TOKEN    # paste the token; nothing is shown

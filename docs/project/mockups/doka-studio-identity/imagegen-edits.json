@@ -1,0 +1,13 @@
+{
+  "mode": "built-in image_gen edits",
+  "edits": [
+    {
+      "slug": "signal",
+      "prompt": "Edit this existing Doka Studio SIGNAL brand board with only these two targeted corrections. 1) In the social-launch panel at the right, recolor the complete headline 'LANCEMENT DOKA STUDIO' to solid charcoal #20201D for clear contrast against its light paper background; preserve its words, size, position and the headphone image. 2) In the phone screen, change only the small tool label 'Modèle' to 'Style'. Keep the exact composition, logo geometry and lettering, all palette swatches, photography, device placement, other text, colors, crop and dimensions unchanged. No new elements."
+    },
+    {
+      "slug": "editorial",
+      "prompt": "Edit this existing Doka Studio EDITORIAL brand board with only two small text corrections. In the desktop sidebar, change 'Modèles' to 'Styles'. Under the serif typography sample at the top-right, change the tiny label 'SÉRIE (TITRES)' to the correct label 'SÉRIF (TITRES)'. Preserve the exact logo, titlecase serif Doka/STUDIO lettering, all other words, palette hexes, composition, photographic objects, device screens, shadows, warm paper texture, borders, crop and dimensions. Do not redesign anything or add elements."
+    }
+  ]
+}

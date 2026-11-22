@@ -1,0 +1,53 @@
+[
+  {
+    "name": "Signal Yellow",
+    "hex": "#F2C744",
+    "rgb": [
+      242,
+      199,
+      68
+    ],
+    "cmyk_unprofiled_estimate": [
+      0,
+      18,
+      72,
+      5
+    ],
+    "spot": "Not specified; select with printer using physical proof",
+    "role": "Accent, primary-action surface, icon tile"
+  },
+  {
+    "name": "Charcoal",
+    "hex": "#20201D",
+    "rgb": [
+      32,
+      32,
+      29
+    ],
+    "cmyk_unprofiled_estimate": [
+      0,
+      0,
+      9,
+      87
+    ],
+    "spot": "Not specified; select with printer using physical proof",
+    "role": "Logo and primary text"
+  },
+  {
+    "name": "Warm Paper",
+    "hex": "#F5F1E8",
+    "rgb": [
+      245,
+      241,
+      232
+    ],
+    "cmyk_unprofiled_estimate": [
+      0,
+      2,
+      5,
+      4
+    ],
+    "spot": "Not specified; select with printer using physical proof",
+    "role": "Light surface, reverse logo"
+  }
+]

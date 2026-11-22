@@ -4,7 +4,7 @@
 
 ## Repository handoff · 23 November 2026
 
-The owner requested committing and pushing the seller and operator journey to main. The change includes the shared review, confirm-for-later, PNG and Facebook actions, four-step guide, relevant service contracts, tests and approved design records. Separate deployment notes, brand assets, older design experiments and their project-log edits remain local. The next release work is tracked by T-JOURNEY-08. Production deployment is a separate owner operation.
+The owner requested committing and pushing the seller and operator journey to main. The change includes the shared review, confirm-for-later, PNG and Facebook actions, four-step guide, relevant service contracts, tests and approved design records. The follow-up documentation commit includes the root README, deployment runbook, brand kit, design mockups, research and outstanding project-log edits. The local .impeccable/ tool files remain outside this commit. The next release work is tracked by T-JOURNEY-08. Production deployment is a separate owner operation.
 
 ## Confirmation feedback · 23 November 2026
 
@@ -140,7 +140,7 @@ Release checked through public HTML and sign-in, local matching asset names, stu
 
 No work order. The owner released the redesign and reported two things; his word: "handle now, word test, and yes copy with the new photo".
 
-**State: on `main`, committed and pushed on the owner's word (2026-11-21: "commit and push"). NOT deployed.**
+**State: on `main`, committed, pushed, and released with `05a12ee` on 2026-11-22 (the owner).**
 - **T-WARN-WORDS (ADR-125):** the features warning shows only when the request's words could ask for features or text (`asksText`, `generation.ts`; used by `warns` in `chat.ts` and by `askRefine` in `App.vue`).
 - **T-CHAT-PHOTO (ADR-126, D-TEXT-FIRST-007 v5):** on an existing poster every attached image is a product photo; the chat's `photo` card offers a free copy of the poster on it (`offer`, `copyWith` in `ChatView.vue`); the copy is the editor's own action (`remake` in the chat adapter, `App.vue`, modelled on `remakeIn`) and opens in « Pas à pas », where « Générer l’affiche » makes its image. The chat adds no paid card and stores nothing of the copy.
 - **How it got there (read before changing it):** four designs made the copy's first image in the chat and four reviews rejected them, each time in the recap the chat added by itself. The owner: "When blocked, think of another way it can be done, without keeping on polishing it". v5 is that other way. Do not bring the chat's own recap back.
@@ -148,37 +148,38 @@ No work order. The owner released the redesign and reported two things; his word
 - **Proof on the final code (Linux, local stub):** Vitest 359; the build; all seven browser smokes (`chat_browser.py` with `walk_photo`, `editor_refinements_browser.py`, `browser_smoke.py`, `shop_dashboard_browser.py`, `share_browser.py`, `terms_browser.py`, `admin_browser.py`). Backend untouched, not run.
 - **French sentences to read:** the copy card and its two buttons, « La copie est créée : retrouvez-la dans Mes affiches. … », the editor's notice « Copie de l’affiche avec la nouvelle photo, sans version : … », « … son chargement est incomplet … » (all in D-TEXT-FIRST-007).
 
-**Left uncommitted in this checkout:** only the other session's work (its hunks of DECISIONS.md, TODO.md and this file, PROJECT.md, the untracked brand and mockup folders). Do not stage it.
+**Nothing of this track is left uncommitted.** Its next step was the owner's release: done.
 
-**Exact next step:** the owner's release (pyinfra, no migration: the change is the page only). To check a checkout first:
+## Publishing on a Facebook Page — Claude, 2026-11-22 (READ FIRST: released, connected, no real post yet)
+
+No work order: the owner's own project. Scope ADR-127 (stage 1: shops whose Page admin has a role on his Meta app « Doka studio », app id `29711342541804784`; free; a link to the post), ADR-128 (a publish page: one post of one or several confirmed posters, in his order, no limit of the app, a limit per shop as the operator's setting, « Publication » format only), ADR-129 (one way to publish: a poster alone is a post of one image), ADR-130 (how a post is never sent twice; the rehearsal; the restore rule; his UI choices). Requirements `requirements/facebook-publishing.md`, `requirements/facebook-post-page.md` (with « What the proofs showed »); designs `designs/facebook-publishing.md`, `designs/facebook-post-page.md`; runbook `deploy/README.md` « Publishing on a Facebook Page ».
+
+**State:**
+- **Code: complete, on `main`, pushed (`05a12ee`) and released by the owner on 2026-11-22** (the container's image revision checked). Tasks T-FB-001 to 004, 008 to 011, 013, 014 done; reviews in `reviews/t-fb-0*`.
+- **On the box:** `FACEBOOK_PROVIDER='meta'`, the app id and secret set by the owner in `app.env`, recreated. Gates of T-FB-005 all passed: (1) the front proxy keeps no access log (Maizina's Caddy has no `log` directive; a dummy `facebook.html?code=…` is in no log); (2) « Clé requise » is on and works (without the proof: code 100; with it: the answers; `me/accounts` lists his four Pages); (3) the redirect URI `https://affiches.miorantsoa.app/facebook.html` was missing in « Facebook Login for Business → Paramètres » — added by Claude on his word, saved; then **the pilot's Page Original Phone Mada is connected** (his words: « It's connected now »).
+- **No real post yet** (T-FB-012).
+- **Meta app « Doka studio »:** published; permissions `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `business_management`; privacy address « Vos données »; « Domaines de l'app » holds `affiches.miorantsoa.app` twice (harmless). With « Clé requise » on, the Graph API Explorer no longer lists Pages (its own call has no proof); use a user token with the proof (`/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/gate2.py`, scratchpad, asks for the token and the secret with getpass, prints only Facebook's answers).
+- **Nothing of the proofs is left on Facebook:** every test post deleted by the owner, the three never-attached photos deleted by Claude on his word. Deleting a post on Facebook deletes its photos.
+
+**Open with the owner (his words awaited):**
+- **T-FB-015 (proposed, not confirmed):** on the released app he read the publish page as showing only « À vérifier » posters and not « Approuvée » ones. True to the rule: it offers only posters whose final file is confirmed at their current version (Willen II and WH-CH720N, whose list state « À vérifier » is a new version waiting); his six « Approuvée » posters have no confirmed final file (counted « 4 jamais vérifiées », « 2 modifiées depuis leur vérification »). Proposed: keep the rule, name each left-out poster in the list's words with a link « Confirmer le fichier final ». Asked: "go", or publishing « Approuvée » posters as they are (advised against: an unchecked price). To publish one now: open it, « Vérifier l'aperçu final », « Tout est conforme, confirmer ».
+- **T-FB-012:** the first real post, public, his choice of poster and moment. Then check with him: « Voir la publication » opens the post; the collage a visitor sees (order, layout); for several images, read the post back in the Explorer (`<post id>?fields=attachments{subattachments{target{id}}}`, with a proof now: use the script's approach).
+- **T-REHEARSE-ORDER:** the rehearsal hashes tables other than the posts in their primary key's order (`run_products` shows in `rowid` order): a reorder there would pass. From before this work; no pending migration touches it.
+
+**Landmines:**
+- Every Graph call needs `appsecret_proof` now; a token alone is refused (code 100).
+- Never set `FACEBOOK_PROVIDER=stub` on the box: the first Facebook call records the data folder's mode and the other is then refused.
+- A restore: `FACEBOOK_PROVIDER='off'` until the LAST successful `after-restore --apply`, then the recreate command (never `docker start`): runbook « Restore » steps 1, 3, 4, 7.
+- The publish page holds one tab at a time (Web Lock `affiche-publish`); a second tab shows « … ouverte dans un autre onglet » with « Continuer ici ».
+- The dev server (`/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/dev/dev_serve.py`, background in this session, http://127.0.0.1:5273, `FACEBOOK_PROVIDER=stub`, fresh data at each start; credentials in `/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/dev/credentials.txt`) dies with the session.
+
+**Uncommitted from this track (commit on his word):** `deploy/README.md` (gate 2 passed and why the Explorer lists no Page; the redirect URI done, and that the Meta app enforces HTTPS so no local address), ADR-130 in `DECISIONS.md`, this section, and TODO's lines (T-FB-005 closed with the gates' results; statuses now « pushed and released »; T-FB-015 proposed). The other session's hunks in `DECISIONS.md`, `TODO.md`, `PROJECT.md`, this file and its untracked folders are not this track's: never stage them.
+
+**Exact next step:** the owner's answer on T-FB-015 ("go" → build it: `frontend/src/ShopPublish.vue` left-out block and `publish.ts` `leftOutLines`, needing the server to name the left-out posters: `GET /api/facebook/posts/candidates` gains, for a page of left-out posters, their id, name and reason; one review; the share and publish smokes); and his moment for T-FB-012's first real post. Before any of it, commit this track's uncommitted docs on his word:
 ```
-cd frontend && corepack npm@10 test && corepack npm@10 run build
-cd ../backend && SMOKE_WEB_PORT=5473 SMOKE_API_PORT=8300 uv run python ../frontend/tests/chat_browser.py
+cd ~/Documents/Miorantsoa/Vite/affiche-ia
+git add deploy/README.md   # then this track's hunks only of DECISIONS.md, TODO.md, HANDOFF.md (git apply --cached on their hunks)
 ```
-Expected: 359 tests passed; « Chat smoke passed: … ».
-
-## Publishing on a Facebook Page — Claude, 2026-11-21 (designed, nothing built)
-
-The owner opened the scope (ADR-127): stage 1, shops with a role on his Meta app « Doka studio », free, a link to the post. [Requirements](requirements/facebook-publishing.md) approved, then amended by the proofs (five amendments marked in their bullets, waiting for his word). [Design v3](designs/facebook-publishing.md) approved under the autonomy grant after three Codex rounds (REJECT, REJECT, APPROVE WITH FIXES) and a devil's advocate; v1 was parked, not patched, and the proofs came before v2 (the owner's rule: when blocked, another way).
-**Done in the Meta app, each on his word:** `pages_manage_posts` and `pages_read_engagement` added; the privacy address set to the public « Vos données » page; **the app published** (no business verification asked). In the Graph API Explorer: a scheduled, unpublished test photo on Original Phone Mada, read back and deleted. His consent there gave « Doka studio » access to four of his Pages; he can remove it in Facebook (Paramètres → Intégrations professionnelles).
-**What the proofs taught, all in the design's table:** a Page in a business portfolio needs `business_management`; a person allows several Pages, so the app lets him choose; an unpublished photo's answer has no `post_id`; Meta Business Suite does not list a post scheduled through the API.
-**The owner said "yes to all"** to the five requirement amendments, to `business_management`, and to a new version of the conditions (read as: with the feature, T-FB-004; his to correct).
-**T-FB-001 is done and committed (not pushed):** the three settings (`FACEBOOK_PROVIDER` is `off` by default), migration 0018, the Graph client `backend/src/affiche/posters/facebook.py` with its stub. No route, no screen. Five Codex rounds, none an approval; after the fourth the client's core was rewritten on the owner's word (it logs, returns and stores only its own words; three values of an answer are kept through one gate; a credential has one shape: read the block « What this module keeps and says » before touching it). The owner accepted it on the tests. Whole backend suite: 1747 passed.
-**T-FB-002 is done and committed (not pushed)** (connect, choose, disconnect: `posters/facebook_connect.py`, five routes that exist only when the provider is not `off`, the return page `frontend/facebook.html` with `src/facebook-return.ts`, the card in `ShopAccount.vue`). Two Codex rounds, the second APPROVE WITH FIXES, the fixes in.
-**T-FB-003 is done and committed (not pushed)** (publish, the outcome said by the owner: `posters/facebook_publish.py`, three routes in `api.py`, the final panel's button, sheet and list in `App.vue`, `frontend/src/facebook.ts`, `style.css`, the stand-in's caption markers in `posters/facebook.py`). Two Codex rounds, the second APPROVE WITH FIXES, the fixes in. Not checked: the sheet and the list in the dark theme, by keyboard, and the sheet at phone width.
-French sentences of T-FB-003 that the design does not give, for the owner to read: the refusals in `api.py` `MESSAGES` (`facebook_too_large`, `facebook_not_connected`, `facebook_reconnect`, `facebook_stale`, `facebook_pending`, `facebook_running`, `facebook_settled`, `caption_invalid`, `publication_not_published`) and the page's own in `App.vue` (« Connectez d’abord votre Page Facebook dans « Mon compte ». », « Publications sur Facebook », « La Page Facebook et les publications de cette affiche n’ont pas pu être lues. », « La réponse n’est pas arrivée. Réessayez. », « La réponse n’est pas arrivée. Vérifiez les publications de cette affiche avant de réessayer. », « Publier sur {Page} ? », « Déjà publiée sur {Page} le {date}. Publier à nouveau ? », « L’image n’a pas pu être affichée : elle doit être vue avant d’être publiée. », « Elle n’est pas sur votre Page ? »).
-**T-FB-004 is done and committed (not pushed)** (`backend/src/affiche/shops.py`, `posters/terms.py`, `frontend/public/donnees.html`, `deploy/README.md`, `deploy/restore.sh`, `backend/tests/test_shops.py`, `test_terms.py`, `test_restore_script.py`, `reviews/t-fb-004-code-r1.md` to `r3.md`). Three Codex rounds, all REJECT on the wording of the public texts and of the restore procedure; the last remainder answered by saying the record one level up, not reviewed again (the 3-round limit); the owner read the paragraph and said to commit. The conditions' new version (2026-11-21) asks every shop to accept again at the release.
-**The publish page (ADR-128, the owner's words of 2026-11-21): requirements and design approved, nothing built.** `requirements/facebook-post-page.md` (R-FB-POST-001 to 007, with « What the proofs showed »); `designs/facebook-post-page.md` v3, approved under the autonomy grant after three reviews (`reviews/facebook-post-page-design-r1/r2/r3-2026-11-21.md`) and a devil's advocate. **ADR-129, the owner's to overturn: one way to publish. A poster alone is a post of one image; T-FB-003's table, module, routes and sheet are replaced; the final panel's button opens the page for that poster alone with its own caption.** Tasks T-FB-008 to 012 in TODO. Committed with T-FB-008, not pushed. T-FB-007 (the description editor) stays a candidate, NOT approved.
-**The two scheduled test posts of the proofs are gone:** the owner deleted them himself on 2026-11-21 (his words: "I deleted the two scheduled posts"). Still on the Page Original Phone Mada (111875903561009), unseen: the unpublished test photos `1468242568779509`, `1468245492112550`, `1468245505445882`, and perhaps the fifteen that the two posts held (not checked whether deleting a post removes its photos). To delete in the Graph API Explorer with the Page's token (method `DELETE`, path = the id) once the browser tool answers again: since the afternoon of 2026-11-21 every call of it, `tabs_context_mcp` included, answers « Could not verify this site's safety category ».
-**T-FB-008 is done and committed (not pushed)** (`backend/migrations/versions/0019_facebook_posts.py`, `posters/facebook.py`, `shops.py`, their tests and the head's pins in `test_api.py`, `test_reads.py`, `test_phone_session.py`, `test_db.py`, `AGENTS.md`'s operator row, `reviews/t-fb-008-code-r1.md` to `r3.md`): additive, the single poster's publishing untouched; third review APPROVE.
-**No test post is scheduled any more** (the owner deleted each one; the one-photo proof's post too, 2026-11-22). Deleting a post removes its photos (checked in the Explorer). The three photos uploaded and never attached (`1468242568779509`, `1468245492112550`, `1468245505445882`) were deleted by the lead in the Explorer on the owner's word (2026-11-22, each answered `success: true`): nothing of the proofs is left on the Page Original Phone Mada. The browser tool answers again since 2026-11-22.
-**T-FB-009 is done and committed (not pushed)** (`posters/facebook_posts.py` and its six routes beside the single poster's path; `db.py`'s `hide_parameters=True`; its tests; `reviews/t-fb-009-code-r1.md`, `r2.md`): second review APPROVE WITH FIXES, the one sentence fixed. Of the design's proofs: 40 images accepted (done, by the owner); a post of one photo through `attached_media` gates T-FB-013 and is not run; `temporary=true` is not run. The browser tool fails on and off (« Could not verify this site's safety category »): the owner runs the Explorer by hand from the steps given to him.
-**T-FB-010 is done and committed (not pushed)** (the page `ShopPublish.vue` with `publish.ts`, its ways in, its smoke `publish_browser.py`; `reviews/t-fb-010-code-r1.md` to `r3.md`): third review APPROVE WITH FIXES, both fixes in. The design's « What is kept on the device » was amended twice on its reviews (the stamp is the key; one tab holds the page). The final panel still has T-FB-003's button and sheet: the switch is T-FB-013, gated by the proof of a post of one photo.
-**T-FB-014 is done and committed (not pushed):** on the owner's three instructions of 2026-11-22, the draft's posters are reordered by sliding a handle at the row's right end (beside a bin icon; « Plus tôt » / « Plus tard » removed; arrows on the handle for the keyboard), and the draft card and the sheet show the description first, the images after. Not tried on a real phone.
-**T-FB-013 is done and committed (not pushed): one way to publish.** A poster alone is a post of one image (the proof of 2026-11-22: it reads as a photo post); T-FB-003's table (converted by migration 0020), module, routes, `publish_photo` and the final panel's sheet are gone; the final panel opens `#publier-<id>` and lists the poster's posts; the rehearsal refuses a populated dropped table and hashes the posts in `rowid` order; `after-restore` on posts (the kept row wins; a kept `posting`/`unknown` makes `unknown`; the restored file against itself makes every `uploading`/`posting` `unknown`). Three reviews, all REJECT; committed on the owner's word at the limit. Left from its last review: T-REHEARSE-ORDER (a rehearsal gap from before, another table).
-**T-FB-011 is done and committed (not pushed):** the conditions' version 2026-11-21 (unreleased, amended in place: one acceptance), « Vos données » and the runbook say what a post keeps and sends, the limit, and the images left with Facebook.
-**Exact next step:** the Facebook feature is complete in code and not pushed. With the owner: push on his word, release (his, with pyinfra), then T-FB-005's gates on the released app (the front proxy's log with a dummy query; « Clé requise » and its two calls; each shop's Page admin as a tester; `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_PROVIDER='meta'` in `app.env`) and T-FB-012's first real post (the collage a visitor sees; the link). The release asks every shop to accept the conditions again. T-REHEARSE-ORDER is a small task left.
-**Committed on the owner's word (not pushed):** the requirements, the design, the review reports, ADR-127, the scope note in PROJECT.md, the tasks, T-FB-001.
 
 ## App redesign — Claude, 2026-11-21
 
@@ -308,6 +309,75 @@ T-IMPECCABLE-DASH-CRITIQUE complete. [Mobile critique](../../.impeccable/critiqu
 Uncommitted implementation files are backend/src/affiche/api.py, backend/tests/test_shop_dashboard.py, frontend/src/{App.vue,ShopAccount.vue,ShopCredits.vue,ShopHome.vue,dashboard.ts,style.css}, frontend/src/assets/{doka-horizontal.svg,doka-horizontal-reverse.svg,doka-symbol-small.svg} and frontend/tests/{browser_smoke,shop_dashboard_browser}.py. Review records are docs/project/reviews/t-shop-dash-006-code-r{1,2,3}.md and t-shop-dash-007-011-code-r{1,2,3}.md. The first five dashboard tasks above describe the original release slice. Additional uncommitted documents include designs/{shop-dashboard,_INDEX}.md and the approval in DECISIONS.md. Both requirements files are uncommitted alongside the files listed below. The Partager requirements gate remains pending. Real phone, screen reader and owner copy checks remain open.
 
 This review added the uncommitted critique snapshot and updated TODO.md and HANDOFF.md. Other uncommitted work includes PRODUCT.md, .impeccable/config.json, docs/project/{PROJECT,DECISIONS}.md, brand, mockups and the social-publishing research listed above.
+
+## Impeccable initialization
+
+T-IMPECCABLE-INIT complete. New uncommitted PRODUCT.md and .impeccable/config.json carry confirmed positioning and workflow preference. Verified local evidence links, schema marker, platform and JSON. Workflow changes in TODO.md, DECISIONS.md and this handoff accompany the earlier uncommitted files listed above. The dashboard critique can now use this context; the release next step remains the Partager requirements gate.
+
+## Impeccable installation
+
+The user requested installation. The Codex skill installer installed upstream pbakaus/impeccable at d41d9860 in ~/.codex/skills/impeccable. SKILL.md and both critique and harden references verified. Available next turn. Release next step and prior uncommitted files are listed above. This installation entry updates TODO.md and HANDOFF.md.
+
+## Codex Impeccable skill assessment — 2026-11-17
+
+**Done:** T-IMPECCABLE-REVIEW, an opinion request about https://impeccable.style/. Reviewed official website/repository, the actual Codex SKILL.md and critique/harden playbooks, Live-mode docs and configuration; compared local frontend-design and design-taste skill text. These files were evaluated as reference material, not invoked to audit or edit Doka. No install, binary execution, hook changes, subagents or app audit.
+
+**Assessment:** useful as a focused design critique/refinement tool. The skill explicitly prioritizes the existing brief and distinguishes expressive marketing from restrained task-oriented app screens. Preserve Doka's chosen Signal palette/type/logo; useful commands cover critique, accessibility/technical audit, typography, UX copy, hardening and polish. Its benefit over the current design skills is the organized playbooks and detector feedback, not a guaranteed improvement in taste. It can complement UI SDK or Reka components; it is not a replacement component library. The agreed Reka UI trial remains unchanged.
+
+**Caveats:** detector findings are heuristics, not proof of user success or accessibility. Critique is a substantial workflow (two isolated assessments plus detector/browser evidence and persistence, with an explicit Codex subagent permission step); do not assume it is a lightweight pass. PRODUCT.md/DESIGN.md should align with current project/brand truth, not create another conflicting source of requirements. The official README documents Live copy Apply falling back to codex/claude with approvals/sandbox disabled if no active chat is polling; it documents `IMPECCABLE_LIVE_COPY_AGENT=chat` or `off` to avoid that fallback. This was discovered in documentation; it was not executed or penetration-tested.
+
+**Exact next step:** assessment delivered; no active task or pending approval. Recommendation only: evaluate a bounded existing screen, preserving project gates and the Signal brief, before adopting commands/hooks. No app changes, install, tests, commit, push or deploy for this task. Concurrent Release 1 work is untouched.
+
+**Sources:** [actual Codex skill](https://github.com/pbakaus/impeccable/blob/main/.agents/skills/impeccable/SKILL.md), [critique playbook](https://github.com/pbakaus/impeccable/blob/main/.agents/skills/impeccable/reference/critique.md), [harden playbook](https://github.com/pbakaus/impeccable/blob/main/.agents/skills/impeccable/reference/harden.md), [official repository/Live disclosure](https://github.com/pbakaus/impeccable), [command docs](https://impeccable.style/docs/).
+
+**Files changed by this assessment:** TODO.md and this HANDOFF only. Uncommitted snapshot (other agents may change it):
+
+```text
+ M backend/api/README.md
+ M backend/src/affiche/admin.py
+ M backend/src/affiche/api.py
+ M backend/src/affiche/posters/reads.py
+ M backend/src/affiche/posters/store.py
+ M backend/src/affiche/shops.py
+ M backend/tests/test_admin.py
+ M deploy/README.md
+ M docs/project/DECISIONS.md
+ M docs/project/HANDOFF.md
+ M docs/project/PROJECT.md
+ M docs/project/TODO.md
+?? docs/project/brand/
+?? docs/project/mockups/brand-directions/
+?? docs/project/mockups/doka-studio-identity/
+?? docs/project/mockups/text-first/
+?? docs/project/reviews/social-publishing-saas-research-2026-11-15.md
+```
+
+
+## Codex UI SDK assessment — 2026-11-16
+
+**Done:** T-UI-SDK-REVIEW, answering the user's opinion request about https://ui-sdk.dev/. Read the official Vue introduction/installation, styling, agent bridge/permissions and benchmark, changelog, repository and package metadata; compared `frontend/package.json`. No adoption or implementation requested.
+
+**Assessment:** promising for selectively building Signal-styled controls. The Vue package requires >=3.5; the app pins 3.5.45. Unstyled components/interaction behaviors leave visual design to Doka. Candidate trials: shop/Page selector, ordered poster selection, attachment input or dialogs. Keep existing Konva document/rendering behavior and domain validation separate from UI primitives. The optional agent bridge is a distinct capability; it does not supply Doka's chat intelligence or persistence. Avoid equating direct UI actions with authorization for generation spend, publication or purchases. The docs explain its allow callback/defaults and confirmation annotations.
+
+**Limits:** beta; changelog introduction dated November 12, 2026. Public benchmark is a vendor-reported settings task with three runs per column, comparing its bridge with browser tooling; it does not establish speed/cost gains for Doka. Some direct docs opens initially failed; subsequent linked navigation loaded the Vue installation and changelog. No packages/skills installed; no runtime integration, bundle measurement, mobile/keyboard/accessibility verification, app tests, commit, push or deploy.
+
+**Exact next step:** opinion delivered; no active task remains. If the user requests an evaluation implementation, scope one component and follow requirements/design/task gates before application changes. This recommendation is not an architecture/adoption decision. All concurrent tracks remain untouched.
+
+**Sources:** [Vue setup](https://ui-sdk.dev/docs/vue/installation), [agent capabilities/benchmark](https://ui-sdk.dev/docs/agents), [permissions](https://ui-sdk.dev/docs/agents/connect-an-agent/permissions), [changelog](https://ui-sdk.dev/docs/core/changelog), [repository](https://github.com/vercel-labs/ui).
+
+**Files changed by this assessment:** TODO.md and this HANDOFF only. Current uncommitted snapshot (other agents may change it):
+
+```text
+ M docs/project/DECISIONS.md
+ M docs/project/PROJECT.md
+ M docs/project/TODO.md
+?? docs/project/brand/
+?? docs/project/mockups/brand-directions/
+?? docs/project/mockups/doka-studio-identity/
+?? docs/project/mockups/text-first/
+?? docs/project/reviews/social-publishing-saas-research-2026-11-15.md
+```
+
 
 ## Codex Doka Studio — Signal kit v1 delivered, 2026-11-15
 

@@ -1005,6 +1005,21 @@
 - User: “Let’s go with Doka studio, explore more style and more design identity using logo-design and image-gen.” Doka Studio is the selected name for this identity work; the other three names are no longer the recommendation.
 - Authorized: further visual exploration and AI-generated brand mockups. Three styles will share the selected name and build from the cut-corner D, with different typography, composition, graphic language and palettes. A final style and application rollout are not yet selected. No paid application-provider evaluation or app rename is implied.
 
+## Identity direction selected — Codex, 2026-11-15 — Signal
+
+- User: “I think I prefer more the Signal version.” Record Signal as the chosen direction for further Doka Studio identity work: yellow `#F2C744`, charcoal `#20201D`, paper `#F5F1E8`, bold Space Grotesk lettering and the cut-corner D. Editorial and Complice remain archived alternatives; no hybrid was requested.
+- This selects the direction, not final production artwork or an application rollout. The next proposed deliverable is the refined Signal kit; no additional generation or export task was requested in this message.
+
+## Signal kit authorized — Codex, 2026-11-15
+
+- User says “go” to the offered final Signal logo kit. This authorizes Phase 7 asset refinement, vector/raster/icon exports and usage notes; the previously selected identity brief is the scope. No new app feature, implementation or deployment is included.
+- Keep the selected D and bold wordmark; derive compact/stacked layouts from the same outlines. Use charcoal on yellow for icon tiles, paper or white on charcoal for reverse artwork, and a slightly expanded D counter for large reverse marks. Print color numbers will be explicitly provisional; do not invent Pantone matches or claim physical proofing.
+
+## Signal kit delivered — Codex, 2026-11-15
+
+- [Digital kit v1](brand/doka-studio-signal/README.md) delivers exact outlined SVGs and transparent PNGs, horizontal/stacked/name-only/symbol layouts, optically lighter reverse D, yellow-backed favicons and platform-safe icons. Minimum screen widths are 220 px horizontal, 160 px stacked/name-only and 16 px favicon; these are conservative inspected sizes, not print-proof claims.
+- Fonts are bundled unchanged with SIL OFL notices. Presentation examples use explicit placeholder contact/domain details. The manifest/head snippet is integration material only; no PWA behavior or application rollout is implemented. Digital/structural/browser/export checks pass; print and naming clearance remain open. ZIP content hashes and CRC verified.
+
 ## ADR-108 — Sign-out keeps nothing on the device; the server is the authority for a paid request — Claude, 2026-11-16
 
 - **Decision (user: "explore a new solution instead of patching it", then "go" on the comparison):** the `kept` record that carried a waiting paid chat card across a sign-out is removed. Sign-out ends the session on the server first, then deletes every key of the shop on the device. A paid request leaves the browser only after its thread was stored. R-MULTI-SHOP-004 is amended; the design's amendment section "After round 4" has the detail.
@@ -1065,6 +1080,10 @@ The owner approved closing T-SHOP-DASH-004 after fixing the current-poster histo
 ## ADR-118 — Account review closure (2026-11-18)
 
 The owner approved fixing the delayed terms read on a verified return to Account and closing T-SHOP-DASH-005 after its two-device regression and Account checks pass.
+
+## Impeccable product context — 2026-11-18
+
+Owner confirmed the invited Malagasy shop positioning and chose image mockups first for landing pages and showcases. App screens and documents follow the code-first workflow.
 
 ## Mobile dashboard follow-up — 2026-11-18
 
@@ -1198,6 +1217,20 @@ The owner authorized closing T-SHOP-DASH-006 after fixing the round-three histor
 **Also decided there:** nothing uploaded is deleted by the app (a photo left behind is not shown on the Page); the owner can stop a post while its images are being sent; the draft is kept until its post is published; the request and its key are kept on the device before they leave, and a device that cannot keep them sends nothing.
 
 **What it costs.** T-FB-003's backend and its sheet are rewritten before they ever ran for a shop; publishing one poster goes through two calls to Facebook in place of one (an upload that shows nothing, then the post). To prove before the backend task: that a post of one photo made this way reads as a photo post.
+
+## ADR-130 — How the publish page keeps one post from being sent twice, and what the release checks (2026-11-22)
+
+**Context.** The reviews of T-FB-010 and T-FB-013 found, round after round, races in a second stored object, between two tabs, and in a release rehearsal that counted rows. Each time the cause was removed rather than patched (the owner's rule, memory `blocked-change-approach`). The design `designs/facebook-post-page.md` holds the details; this records the decisions.
+
+**Decisions (the lead, under the autonomy grant).**
+- The draft's stamp, made anew at each edit, is the request's `Idempotency-Key`; the request's hash leaves out what the page had seen. No second stored object.
+- One tab at a time holds the publish page (a Web Lock, as the chat); a draft that cannot be read is never taken for an empty one.
+- The release's rehearsal refuses a table that a pending migration drops while it holds rows; the posts are hashed in `rowid` order. (Migrations 0018 to 0020 are released together, so the live database never holds the old table.)
+- `shops after-restore` on posts: the kept row wins; a kept `posting` or `unknown` makes the post `unknown`; the restored file compared with itself makes every `uploading` or `posting` post `unknown`.
+- The owner's own choices on the page (2026-11-22): drag by a handle at the row's right end, a bin icon, no « Plus tôt » / « Plus tard » (the gap for whoever cannot drag was told to him once), the description before the images.
+
+**Left:** T-REHEARSE-ORDER (a rehearsal gap from before, in another table).
+
 
 ## 2026-11-22 · Product UX review scope
 

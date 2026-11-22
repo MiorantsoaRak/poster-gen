@@ -1,0 +1,444 @@
+[
+ {
+  "file": "doka-horizontal-reverse.svg",
+  "bytes": 4626,
+  "viewBox": [
+   0.0,
+   0.0,
+   717.0,
+   256.0
+  ],
+  "aspect": 2.801,
+  "aspect_class": "horizontal",
+  "colors": [
+   "#f5f1e8"
+  ],
+  "gradients": 0,
+  "anchors": 227,
+  "library_anchor_percentiles": {
+   "p10": 23.0,
+   "p25": 37.0,
+   "median": 75.0,
+   "p75": 155.0,
+   "p90": 257.8,
+   "p95": 379.45
+  },
+  "content_bbox": [
+   55.2,
+   38.5,
+   658.75,
+   219.39
+  ],
+  "margins": {
+   "left": 55.2,
+   "right": 58.2,
+   "top": 38.5,
+   "bottom": 36.6
+  },
+  "bbox_fill_ratio": 0.595,
+  "score": 91,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "227 anchor points (library median 75.0, p75 155.0). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (562,74); 47.2° (→45°) len 61.1 at (522,116). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   }
+  ]
+ },
+ {
+  "file": "doka-horizontal.svg",
+  "bytes": 4618,
+  "viewBox": [
+   0.0,
+   0.0,
+   717.0,
+   256.0
+  ],
+  "aspect": 2.801,
+  "aspect_class": "horizontal",
+  "colors": [
+   "#20201d"
+  ],
+  "gradients": 0,
+  "anchors": 227,
+  "library_anchor_percentiles": {
+   "p10": 23.0,
+   "p25": 37.0,
+   "median": 75.0,
+   "p75": 155.0,
+   "p90": 257.8,
+   "p95": 379.45
+  },
+  "content_bbox": [
+   55.2,
+   38.5,
+   658.75,
+   219.39
+  ],
+  "margins": {
+   "left": 55.2,
+   "right": 58.2,
+   "top": 38.5,
+   "bottom": 36.6
+  },
+  "bbox_fill_ratio": 0.595,
+  "score": 91,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "227 anchor points (library median 75.0, p75 155.0). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (562,74); 47.2° (→45°) len 61.1 at (522,116). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   }
+  ]
+ },
+ {
+  "file": "doka-stacked-reverse.svg",
+  "bytes": 4706,
+  "viewBox": [
+   0.0,
+   0.0,
+   512.0,
+   512.0
+  ],
+  "aspect": 1.0,
+  "aspect_class": "square",
+  "colors": [
+   "#f5f1e8"
+  ],
+  "gradients": 0,
+  "anchors": 227,
+  "library_anchor_percentiles": {
+   "p10": 21.0,
+   "p25": 31.0,
+   "median": 53.0,
+   "p75": 95.5,
+   "p90": 194.0,
+   "p95": 274.0
+  },
+  "content_bbox": [
+   64.05,
+   50.4,
+   458.75,
+   441.39
+  ],
+  "margins": {
+   "left": 64.1,
+   "right": 53.2,
+   "top": 50.4,
+   "bottom": 70.6
+  },
+  "bbox_fill_ratio": 0.589,
+  "score": 90,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "227 anchor points (library median 53.0, p75 95.5). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (362,292); 47.2° (→45°) len 61.1 at (322,334). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   },
+   {
+    "level": "INFO",
+    "code": "off-centre-y",
+    "message": "Vertical margins differ (top 50.4, bottom 70.6). Remember the optical centre sits slightly above the geometric centre."
+   }
+  ]
+ },
+ {
+  "file": "doka-stacked.svg",
+  "bytes": 4698,
+  "viewBox": [
+   0.0,
+   0.0,
+   512.0,
+   512.0
+  ],
+  "aspect": 1.0,
+  "aspect_class": "square",
+  "colors": [
+   "#20201d"
+  ],
+  "gradients": 0,
+  "anchors": 227,
+  "library_anchor_percentiles": {
+   "p10": 21.0,
+   "p25": 31.0,
+   "median": 53.0,
+   "p75": 95.5,
+   "p90": 194.0,
+   "p95": 274.0
+  },
+  "content_bbox": [
+   64.05,
+   50.4,
+   458.75,
+   441.39
+  ],
+  "margins": {
+   "left": 64.1,
+   "right": 53.2,
+   "top": 50.4,
+   "bottom": 70.6
+  },
+  "bbox_fill_ratio": 0.589,
+  "score": 90,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "227 anchor points (library median 53.0, p75 95.5). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (362,292); 47.2° (→45°) len 61.1 at (322,334). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   },
+   {
+    "level": "INFO",
+    "code": "off-centre-y",
+    "message": "Vertical margins differ (top 50.4, bottom 70.6). Remember the optical centre sits slightly above the geometric centre."
+   }
+  ]
+ },
+ {
+  "file": "doka-symbol-reverse.svg",
+  "bytes": 321,
+  "viewBox": [
+   0.0,
+   0.0,
+   256.0,
+   256.0
+  ],
+  "aspect": 1.0,
+  "aspect_class": "square",
+  "colors": [
+   "#f5f1e8"
+  ],
+  "gradients": 0,
+  "anchors": 11,
+  "library_anchor_percentiles": {
+   "p10": 21.0,
+   "p25": 31.0,
+   "median": 53.0,
+   "p75": 95.5,
+   "p90": 194.0,
+   "p95": 274.0
+  },
+  "content_bbox": [
+   44.0,
+   32.0,
+   212.0,
+   224.0
+  ],
+  "margins": {
+   "left": 44.0,
+   "right": 44.0,
+   "top": 32.0,
+   "bottom": 32.0
+  },
+  "bbox_fill_ratio": 0.492,
+  "score": 100,
+  "findings": []
+ },
+ {
+  "file": "doka-symbol-small.svg",
+  "bytes": 387,
+  "viewBox": [
+   0.0,
+   0.0,
+   256.0,
+   256.0
+  ],
+  "aspect": 1.0,
+  "aspect_class": "square",
+  "colors": [
+   "#20201d"
+  ],
+  "gradients": 0,
+  "anchors": 11,
+  "library_anchor_percentiles": {
+   "p10": 21.0,
+   "p25": 31.0,
+   "median": 53.0,
+   "p75": 95.5,
+   "p90": 194.0,
+   "p95": 274.0
+  },
+  "content_bbox": [
+   32.0,
+   18.29,
+   224.0,
+   237.71
+  ],
+  "margins": {
+   "left": 32.0,
+   "right": 32.0,
+   "top": 18.3,
+   "bottom": 18.3
+  },
+  "bbox_fill_ratio": 0.643,
+  "score": 99,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "precision",
+    "message": "Coordinates with 4+ decimals: round to 0–2 decimals to reduce size and reveal misalignments."
+   }
+  ]
+ },
+ {
+  "file": "doka-symbol.svg",
+  "bytes": 313,
+  "viewBox": [
+   0.0,
+   0.0,
+   256.0,
+   256.0
+  ],
+  "aspect": 1.0,
+  "aspect_class": "square",
+  "colors": [
+   "#20201d"
+  ],
+  "gradients": 0,
+  "anchors": 11,
+  "library_anchor_percentiles": {
+   "p10": 21.0,
+   "p25": 31.0,
+   "median": 53.0,
+   "p75": 95.5,
+   "p90": 194.0,
+   "p95": 274.0
+  },
+  "content_bbox": [
+   44.0,
+   32.0,
+   212.0,
+   224.0
+  ],
+  "margins": {
+   "left": 44.0,
+   "right": 44.0,
+   "top": 32.0,
+   "bottom": 32.0
+  },
+  "bbox_fill_ratio": 0.492,
+  "score": 100,
+  "findings": []
+ },
+ {
+  "file": "doka-wordmark-reverse.svg",
+  "bytes": 4510,
+  "viewBox": [
+   0.0,
+   0.0,
+   464.0,
+   256.0
+  ],
+  "aspect": 1.812,
+  "aspect_class": "wide",
+  "colors": [
+   "#f5f1e8"
+  ],
+  "gradients": 0,
+  "anchors": 216,
+  "library_anchor_percentiles": {
+   "p10": 23.0,
+   "p25": 37.0,
+   "median": 75.0,
+   "p75": 155.0,
+   "p90": 257.8,
+   "p95": 379.45
+  },
+  "content_bbox": [
+   40.05,
+   38.5,
+   434.75,
+   219.39
+  ],
+  "margins": {
+   "left": 40.1,
+   "right": 29.2,
+   "top": 38.5,
+   "bottom": 36.6
+  },
+  "bbox_fill_ratio": 0.601,
+  "score": 91,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "216 anchor points (library median 75.0, p75 155.0). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (338,74); 47.2° (→45°) len 61.1 at (298,116). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   }
+  ]
+ },
+ {
+  "file": "doka-wordmark.svg",
+  "bytes": 4502,
+  "viewBox": [
+   0.0,
+   0.0,
+   464.0,
+   256.0
+  ],
+  "aspect": 1.812,
+  "aspect_class": "wide",
+  "colors": [
+   "#20201d"
+  ],
+  "gradients": 0,
+  "anchors": 216,
+  "library_anchor_percentiles": {
+   "p10": 23.0,
+   "p25": 37.0,
+   "median": 75.0,
+   "p75": 155.0,
+   "p90": 257.8,
+   "p95": 379.45
+  },
+  "content_bbox": [
+   40.05,
+   38.5,
+   434.75,
+   219.39
+  ],
+  "margins": {
+   "left": 40.1,
+   "right": 29.2,
+   "top": 38.5,
+   "bottom": 36.6
+  },
+  "bbox_fill_ratio": 0.601,
+  "score": 91,
+  "findings": [
+   {
+    "level": "INFO",
+    "code": "complexity",
+    "message": "216 anchor points (library median 75.0, p75 155.0). Check every point earns its place."
+   },
+   {
+    "level": "WARN",
+    "code": "near-miss-angle",
+    "message": "2 straight edge(s) are 0.3–3° off a clean angle — they read as mistakes. Snap them: 133.7° (→135°) len 58.1 at (338,74); 47.2° (→45°) len 61.1 at (298,116). (Expected — and fine — for type set on a curve or deliberately rotated elements.)"
+   }
+  ]
+ }
+]

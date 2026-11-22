@@ -1,0 +1,35 @@
+[
+  {
+    "slug": "signal",
+    "name": "Signal",
+    "word": "doka",
+    "font": "/usr/share/fonts/truetype/space-grotesk/SpaceGrotesk-Bold.ttf",
+    "size": 175,
+    "track": -4,
+    "ink": "#20201D",
+    "paper": "#F5F1E8",
+    "accent": "#F2C744"
+  },
+  {
+    "slug": "editorial",
+    "name": "Editorial",
+    "word": "Doka",
+    "font": "frontend/public/fonts/NotoSerif-Regular.ttf",
+    "size": 174,
+    "track": -5,
+    "ink": "#632F35",
+    "paper": "#F5EDE2",
+    "accent": "#E5B39A"
+  },
+  {
+    "slug": "complice",
+    "name": "Complice",
+    "word": "doka",
+    "font": "frontend/public/fonts/NotoSans-Bold.ttf",
+    "size": 172,
+    "track": -4,
+    "ink": "#113F43",
+    "paper": "#D9F4E6",
+    "accent": "#F2B9B1"
+  }
+]
