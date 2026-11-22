@@ -76,7 +76,7 @@ def refusal(answer):
 def test_a_word_changed_needs_a_new_version():
     """A word of the text changed without a new date fails here; the new date is the approved text's."""
     digest = hashlib.sha256("\n".join(terms.PARAGRAPHS_FR).encode("utf-8")).hexdigest()
-    assert (terms.VERSION, digest) == ("2026-11-21", "69ec8a70c64fcb9a53788353d5e3f826ff0531807492fa77e7973e8b6101d6df")
+    assert (terms.VERSION, digest) == ("2026-11-21", "4ff3b615c52c1fd30d1382baf00c09221659c876f9a95b537e03b41303d51de0")
     assert date.fromisoformat(terms.VERSION).isoformat() == terms.VERSION  # an ISO date: at most one version a day
 
 

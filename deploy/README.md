@@ -380,8 +380,8 @@ The operator dashboard ("Operator dashboard") does the same from a phone: « New
   cancelled.
 - **end-sessions** signs one shop out on every device. `--all` signs out every shop and the operator's dashboard
   (after a restore); `--operator` signs out the operator's dashboard only ("Operator dashboard").
-- **list** shows each shop's id, identifier, state, `password` or `no password` (never the password itself),
-  creation day and name.
+- **list** shows each shop's id, identifier, state, `password` or `no password` (never the password itself), its
+  largest number of images per Facebook post ("Publishing on a Facebook Page"), creation day and name.
 
 Exit codes: 0 done; 1 refused (one line on stderr, nothing written); 2 wrong command line. The command never
 migrates: it refuses when the database is not at the version of the image.
@@ -542,8 +542,9 @@ password is set, and fails when it is not (for example after a restore of an old
 
 ## Publishing on a Facebook Page
 
-Design: `docs/project/designs/facebook-publishing.md`. A shop connects its Facebook Page once in « Mon compte », then
-publishes a confirmed poster on it from the final panel (« Publier sur ma Page »). The server makes every call to
+Design: `docs/project/designs/facebook-publishing.md` (the connection) and `docs/project/designs/facebook-post-page.md`
+(the post). A shop connects its Facebook Page once in « Mon compte », then publishes one post of one or several
+confirmed posters from « Publier sur Facebook »; a poster's final panel (« Publier sur ma Page ») opens that page for one poster. The server makes every call to
 Facebook; the browser never holds a token or the Meta app's secret. Publishing takes no credit.
 
 **Settings**, in `/opt/affiche-ia/secrets/app.env` ("Secrets"), then the recreate command ("Operate"):
@@ -594,6 +595,12 @@ says it); the Meta app published.
 3. Set `FACEBOOK_PROVIDER='meta'`, `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` in `app.env`, then run the recreate
    command. The first connection and the first public post are made with the owner (the design's task 5).
 
+**The largest number of images per post, for one shop** (none by default: Facebook's own limit applies; 40 were
+accepted on 2026-11-21): `python -m affiche.shops post-limit <identifier>` shows it, `post-limit <identifier> <N>` sets
+it, `post-limit <identifier> none` removes it; `list` shows it. The shop's page says the limit and refuses beyond it.
+A post being sent that holds more images than a lowered limit stops at its next check, unpublished; once its last
+call has started (`posting`), a change of the limit cannot stop it.
+
 **While it runs:**
 - When Facebook's answer is lost, the publication is « unknown »: the owner opens his Page and says whether the poster
   is there. The application never looks on the Page and never sends again by itself.
@@ -602,6 +609,10 @@ says it); the Meta app published.
   the owner says whether it is on his Page.
 - A restore: `FACEBOOK_PROVIDER` is `off` until `after-restore --apply` has run ("Restore", "Facebook after a
   restore").
+- The images Facebook received for a post that was not published (stopped, refused, a restart during its sending)
+  stay with Facebook, unseen on the Page, and the application never deletes them (one of them could belong to a post
+  whose outcome is unknown). A post deleted on Facebook takes its images with it. If Facebook ever publishes one
+  image on its own (the post then stops with « Facebook a publié l’image {n} seule… »), the owner checks his Page.
 
 ## Secrets (on the box, never in git)
 
