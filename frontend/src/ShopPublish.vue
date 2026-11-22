@@ -4,8 +4,8 @@ import { api, ApiError, mutation, shopKey, shopStorage, type Terms } from './api
 import { captionFault, readCaption } from './share'
 import { retryDelay } from './generation'
 import {
-  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe, emptyDraft, faultLine, inFlight, isCandidate,
-  keptForSending, leftOutLines, limitLine, LOST, move, postLine, posterCount, publishAction, readStored, refusalOf, remove,
+  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe, dropIndex, emptyDraft, faultLine, inFlight, isCandidate,
+  keptForSending, leftOutLines, limitLine, LOST, move, moveTo, placeLine, postLine, posterCount, reorder, SLACK, publishAction, readStored, refusalOf, remove,
   requestOf, seenOf, takenOut, toggle, whyNot, without, type Candidate, type Candidates, type Draft, type Item, type LeftOut,
   type Page, type Post, type PostBody,
 } from './publish'
@@ -35,7 +35,7 @@ const titleOf = (item: Candidate) => item.title || item.name
 const owner = ref<boolean | null>(null), lockless = !navigator.locks
 let release: (() => void) | undefined, closed = false, token = 0
 const holding = (at = token) => !closed && owner.value === true && at === token
-function lost() { owner.value = false; clearTimeout(pollTimer); clearTimeout(checkTimer); sheet.value = null; absent.value = null }
+function lost() { owner.value = false; clearTimeout(pollTimer); clearTimeout(checkTimer); sheet.value = null; absent.value = null; settle() }
 const hold = (options: LockOptions) => navigator.locks.request('affiche-publish', options, lock => {
   if (closed) return
   if (!lock) { owner.value = false; return }
@@ -267,6 +267,7 @@ const shown = computed(() => !!sheet.value?.items.every(item => item.shot === 'l
 const sheetWhy = computed(() => running.value ? RUNNING : checking.value ? LOST : shown.value ? '' : 'Le bouton s’active quand toutes les images sont affichées.')
 function openSheet() {
   line.value = ''
+  settle()  // a drag under way is put back, never committed: the sheet freezes the order as it is stored
   if (!holding() || action.value !== 'ready' || reading.value || unread.value || !page.value) return
   const items = chosen.value.map(item => ({ creation_id: item.id, confirmation_id: item.confirmation_id, seen: seenOf(item), title: titleOf(item),
     thumb: item.thumbnail_url ?? item.download_url, file: item.download_url, shot: 'loading' as const, tries: 0 }))
@@ -350,18 +351,112 @@ async function sayOutcome(post: Post, present: boolean) {
   } catch (reason) { absent.value = null; if (holding(at)) { postsLine.value = message(reason); void readPosts(); marksMoved() } }
   finally { answering.value = false }
 }
-// The draft's buttons keep the focus on the poster moved.
-function shift(id: string, by: -1 | 1) {
-  keep(move(draft.value, id, by))
-  void nextTick(() => {
-    const row = document.querySelector(`[data-chosen="${id}"]`)
-    const same = row?.querySelector<HTMLButtonElement>(by < 0 ? '.earlier' : '.later'), other = row?.querySelector<HTMLButtonElement>(by < 0 ? '.later' : '.earlier')
-    ;(same && !same.disabled ? same : other)?.focus()
-  })
-}
 function drop(id: string) {
   keep(remove(draft.value, id))
   void nextTick(() => document.getElementById('titre-votre-publication')?.focus())
+}
+
+// ── sliding (D-FB-POST-005): a chosen poster dragged by its handle, with Pointer Events (mouse, finger, pen) ─────
+// `sliding`: the drag shown, nothing of it stored: the poster, its place when the drag began, the place it would take
+// now, and how far it has moved (page pixels). `grab`: the pointer behind it, and the rows as they were laid out then.
+// The rows stay where they are in the page while it lasts: the others make room by a transform, the numbers follow;
+// the drop is one edit of the draft, only when the order changed.
+const sliding = ref<{ id: string; from: number; to: number; dy: number } | null>(null), placeSaid = ref('')
+let grab: { id: string; pointer: number; handle: HTMLElement; startY: number; startScroll: number; clientY: number; base: Draft; middles: number[]; heights: number[] } | null = null
+let scrollFrame = 0
+const EDGE = 64  // near the top or the bottom of the window the page scrolls by itself
+const order = computed(() => sliding.value ? reorder(draft.value.items, sliding.value.from, sliding.value.to) : draft.value.items)
+const placeOf = (id: string) => order.value.indexOf(id)
+function rowStyle(index: number) {
+  const now = sliding.value
+  if (!now || !grab) return undefined
+  const room = grab.heights[now.from]
+  const shift = index === now.from ? now.dy : now.to > now.from && index > now.from && index <= now.to ? -room
+    : now.to < now.from && index >= now.to && index < now.from ? room : 0
+  return shift ? { transform: `translateY(${shift}px)` } : undefined
+}
+function press(event: PointerEvent, id: string) {
+  if (grab || !holding() || modal.value || sending.value || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
+  const handle = event.currentTarget as HTMLElement
+  event.preventDefault()  // no text selected under a mouse
+  handle.setPointerCapture(event.pointerId)
+  handle.focus()
+  grab = { id, pointer: event.pointerId, handle, startY: event.clientY, startScroll: window.scrollY, clientY: event.clientY, base: draft.value, middles: [], heights: [] }
+  window.addEventListener('keydown', escape, true)
+  // A handle Vue removes (its poster taken out of the draft) loses its capture with no event of its own: the document
+  // still hears it. Only this pointer's: a second finger's cancel leaves the first one's drag alone.
+  document.addEventListener('lostpointercapture', released, true)
+  document.addEventListener('pointercancel', released, true)
+}
+function released(event: PointerEvent) { if (grab && event.pointerId === grab.pointer) settle() }
+function dragged(event: PointerEvent) {
+  if (!grab || event.pointerId !== grab.pointer) return
+  grab.clientY = event.clientY
+  track()
+}
+function track() {
+  const held = grab!, dy = held.clientY - held.startY + window.scrollY - held.startScroll
+  if (!sliding.value) {
+    if (Math.abs(dy) <= SLACK) return  // a tap, or a finger that trembles
+    const from = draft.value.items.indexOf(held.id)
+    const rows = [...document.querySelectorAll<HTMLElement>('ol.chosen > li')].map(row => row.getBoundingClientRect())
+    if (from < 0 || rows.length !== draft.value.items.length) return
+    held.heights = rows.map(box => box.height)
+    held.middles = rows.map(box => box.top + window.scrollY + box.height / 2)
+    sliding.value = { id: held.id, from, to: from, dy }
+    scrollFrame = requestAnimationFrame(autoscroll)
+  }
+  const now = sliding.value!
+  now.dy = dy
+  now.to = dropIndex(held.middles, now.from, held.middles[now.from] + dy)
+}
+// While the pointer stays near an edge, the page scrolls a little at each frame, faster nearer the edge, and the row
+// keeps following it.
+function autoscroll() {
+  if (!grab || !sliding.value) return
+  const y = grab.clientY, depth = y < EDGE ? y - EDGE : y > innerHeight - EDGE ? y - innerHeight + EDGE : 0
+  if (depth) { window.scrollBy({ top: Math.sign(depth) * Math.min(16, Math.max(2, Math.abs(depth) / 4)), behavior: 'instant' }); track() }
+  scrollFrame = requestAnimationFrame(autoscroll)
+}
+function settle() {
+  cancelAnimationFrame(scrollFrame)
+  window.removeEventListener('keydown', escape, true)
+  document.removeEventListener('lostpointercapture', released, true)
+  document.removeEventListener('pointercancel', released, true)
+  if (grab?.handle.hasPointerCapture(grab.pointer)) grab.handle.releasePointerCapture(grab.pointer)
+  grab = null; sliding.value = null
+}
+// The drop: one edit, only when the order changed and the draft is still the one the drag began on.
+function dropped(event: PointerEvent) {
+  if (!grab || event.pointerId !== grab.pointer) return
+  const now = sliding.value, base = grab.base
+  settle()
+  if (!now || draft.value !== base || modal.value || sending.value) return
+  const next = moveTo(draft.value, now.from, now.to)
+  if (next !== draft.value) { keep(next); said(now.id) }
+}
+// Escape, a pointer the browser cancels, or the page lost to another tab: the order as it was, nothing edited.
+function escape(event: KeyboardEvent) { if (event.key === 'Escape' && grab) { event.preventDefault(); event.stopPropagation(); settle() } }
+function said(id: string) {
+  const at = draft.value.items.indexOf(id), item = known.value[id]
+  if (at < 0 || !item) return
+  const line = placeLine(titleOf(item), at + 1, draft.value.items.length)
+  placeSaid.value = ''
+  void nextTick(() => { placeSaid.value = line })  // emptied first: the same words twice are spoken twice
+}
+// The draft's posters changing under a drag (a refresh took one out, another edit): the drag is put back, nothing edited.
+watch(() => draft.value.items.join(), () => { if (grab) settle() })
+// With the handle focused, the arrow keys move the poster one place; the focus stays
+// on its handle.
+function nudge(event: KeyboardEvent, id: string) {
+  const by = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+  if (!by || grab) return
+  event.preventDefault()
+  const next = move(draft.value, id, by)
+  if (next === draft.value) return
+  keep(next)
+  said(id)
+  void nextTick(() => document.querySelector<HTMLElement>(`[data-chosen="${id}"] .grip`)?.focus())
 }
 const followed = computed(() => { const id = followedPost().post; return posts.value.find(post => post.id === id)?.message_fr ?? '' })
 
@@ -380,7 +475,7 @@ defineExpose({ modal })
 
 // Each hold starts afresh: what an earlier one had begun is not this one's.
 function begin() {
-  clearTimeout(pollTimer); clearTimeout(checkTimer)
+  clearTimeout(pollTimer); clearTimeout(checkTimer); settle(); placeSaid.value = ''
   sheet.value = null; absent.value = null; replacing.value = null; checking.value = false; checkFailures = 0; pollFailures = 0
   line.value = ''; postsLine.value = ''; draftLine.value = ''; unreadLine.value = ''; takenLines.value = []; stale.value = false
   single.value = { stamp: crypto.randomUUID(), post: null }; alone.value = null; remarked = new Set(); sought = new Set()
@@ -394,7 +489,7 @@ if (!lockless) void hold({ ifAvailable: true })
 // before this instance had given it back. Another poster starts afresh, and what the earlier one began stays stopped.
 watch(() => props.poster, () => { if (holding()) { token++; begin() } })
 // Ownership goes before the lock: what was on its way when the view closed finds it closed, and does nothing.
-onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTimeout(pollTimer); clearTimeout(checkTimer) })
+onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTimeout(pollTimer); clearTimeout(checkTimer); settle() })
 </script>
 
 <template>
@@ -420,22 +515,6 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
       <template v-else-if="unread"><p class="why" role="alert">{{ UNREAD }}</p>
         <div class="row"><button type="button" class="secondary" @click="readAgain">Réessayer</button><button v-if="unread === 'damaged'" type="button" class="secondary" @click="dropDamaged">Vider</button></div>
         <p v-if="unreadLine" class="why" role="alert">{{ unreadLine }}</p></template>
-      <template v-else>
-        <p v-for="taken in takenLines" :key="taken" class="why" role="status">{{ taken }}</p>
-        <p v-if="!chosen.length" class="help">Choisissez vos affiches plus bas, dans l’ordre de la publication.</p>
-        <ol v-else class="chosen">
-          <li v-for="(item, index) in chosen" :key="item.id" :data-chosen="item.id">
-            <img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" /><span v-else class="blank" aria-hidden="true" />
-            <span class="name"><span class="number" aria-hidden="true">{{ index + 1 }}</span><strong translate="no">{{ titleOf(item) }}</strong><span v-if="index === 0" class="badge">En tête</span></span>
-            <span class="moves">
-              <button type="button" class="earlier" :disabled="index === 0" :aria-label="`Plus tôt « ${titleOf(item)} »`" @click="shift(item.id, -1)">Plus tôt</button>
-              <button type="button" class="later" :disabled="index === chosen.length - 1" :aria-label="`Plus tard « ${titleOf(item)} »`" @click="shift(item.id, 1)">Plus tard</button>
-              <button type="button" :aria-label="`Retirer « ${titleOf(item)} »`" @click="drop(item.id)">Retirer</button>
-            </span>
-          </li>
-        </ol>
-        <p v-if="limit !== null" class="help">{{ limit }} images au plus par publication</p>
-      </template>
       <!-- For one poster, its image beside the field on a wide screen: the card is never half empty. -->
       <div v-if="poster ? chosen.length : !unread" class="describe">
         <figure v-if="poster" class="single"><img :src="chosen[0].thumbnail_url ?? chosen[0].download_url" width="200" height="250" alt="" /><figcaption translate="no">{{ titleOf(chosen[0]) }}</figcaption></figure>
@@ -448,6 +527,31 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
         <div v-if="captions.length" class="row"><button v-for="entry in captions" :key="entry.title" type="button" @click="takeCaption(entry)">Reprendre la légende de « {{ entry.title }} »</button></div>
         <div v-if="replacing" class="refusal" role="group" aria-labelledby="question-remplacer"><p id="question-remplacer">Remplacer la description par la légende de « {{ replacing.title }} » ?</p>
           <div class="row"><button class="secondary" @click="keep(describe(draft, replacing.text)); replacing = null">Remplacer</button><button class="secondary" @click="replacing = null">Garder la description</button></div></div>
+        <!-- The images after the description, as the post shows them on Facebook (the owner's words, 2026-11-22:
+             « description on top, and images after that »). -->
+        <template v-if="!poster">
+          <p v-for="taken in takenLines" :key="taken" class="why" role="status">{{ taken }}</p>
+          <p v-if="!chosen.length" class="help">Choisissez vos affiches plus bas, dans l’ordre de la publication.</p>
+          <ol v-else class="chosen" :class="{ sliding }">
+            <li v-for="(item, index) in chosen" :key="item.id" :data-chosen="item.id" :class="{ lifted: sliding?.id === item.id }" :style="rowStyle(index)">
+              <img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="48" height="60" alt="" /><span v-else class="blank" aria-hidden="true" />
+              <span class="name"><span class="number" aria-hidden="true">{{ placeOf(item.id) + 1 }}</span><strong translate="no">{{ titleOf(item) }}</strong><span v-if="placeOf(item.id) === 0" class="badge">En tête</span></span>
+              <!-- The row's two actions at its right end (the owner's choice, 2026-11-22): the bin, then the handle. The handle
+                   is the only part a drag starts from (a swipe elsewhere on the row scrolls the page); its arrow keys move one
+                   place. Both glyphs are drawn in the icon set's style (App.vue ICONS: 16 px, stroke 1.5, round caps). -->
+              <span class="row-end">
+                <button type="button" class="ghost icon bin" :aria-label="`Retirer « ${titleOf(item)} »`" :title="`Retirer « ${titleOf(item)} »`" @click="drop(item.id)">
+                  <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 8.5h6.6l.7-8.5M6.8 7v4M9.2 7v4" /></svg></button>
+                <button v-if="chosen.length > 1" type="button" class="ghost icon grip" :aria-label="`Déplacer ${titleOf(item)}`" aria-describedby="aide-glisser"
+                  @pointerdown="press($event, item.id)" @pointermove="dragged" @pointerup="dropped" @pointercancel="released" @lostpointercapture="released" @keydown="nudge($event, item.id)">
+                  <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 5h9M3.5 8h9M3.5 11h9" /></svg></button>
+              </span>
+            </li>
+          </ol>
+          <p v-if="chosen.length > 1" id="aide-glisser" class="help">Glissez une affiche par sa poignée pour changer l’ordre.<span class="visually-hidden"> Au clavier, les flèches haut et bas la déplacent d’une place.</span></p>
+          <p class="visually-hidden" role="status">{{ placeSaid }}</p>
+          <p v-if="limit !== null" class="help">{{ limit }} images au plus par publication</p>
+        </template>
         <div class="row"><button class="primary" :disabled="action !== 'ready' || reading || sending" :aria-describedby="why ? 'pourquoi-publier' : undefined" @click="openSheet">Publier…</button>
           <button v-if="!poster" class="secondary" :disabled="!draft.items.length && !draft.description" @click="keep(emptyDraft()); replacing = null">Vider</button></div>
         <p v-if="why" id="pourquoi-publier" class="why">{{ why }}</p>
@@ -468,7 +572,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
         <li v-for="item in grid" :key="item.id"><button type="button" class="tile" :aria-pressed="draft.items.includes(item.id)"
           :disabled="!draft.items.includes(item.id) && (full || item.last?.status === 'unknown')" @click="keep(toggle(draft, item.id, limit))">
           <img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="150" height="188" alt="" loading="lazy" /><span v-else class="blank" aria-hidden="true" />
-          <span v-if="draft.items.includes(item.id)" class="number" aria-hidden="true">{{ draft.items.indexOf(item.id) + 1 }}</span>
+          <span v-if="draft.items.includes(item.id)" class="number" aria-hidden="true">{{ placeOf(item.id) + 1 }}</span>
           <strong translate="no">{{ titleOf(item) }}</strong>
           <span v-if="item.last?.status === 'unknown'" class="mark">Résultat inconnu : répondez plus bas</span>
           <span v-else-if="item.published_at" class="mark">Publiée le {{ day(item.published_at) }}</span>
@@ -506,14 +610,14 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 
     <div v-if="sheet" v-modal class="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="titre-publier-sur" @keydown.esc="sending || closeSheet()" @keydown.tab="keepTab"><div class="confirm">
       <h2 id="titre-publier-sur">Publier sur <span translate="no">{{ sheet.page.name }}</span> ?</h2>
+      <p class="label">Description</p>
+      <p class="sent-text">{{ sheet.description || 'Sans description.' }}</p>
       <ol class="strip" aria-label="Les images, dans l’ordre de la publication">
         <li v-for="(item, index) in sheet.items" :key="item.creation_id"><a :href="item.file" target="_blank" rel="noopener">
           <img :key="item.tries" :src="item.thumb" width="88" height="110" :alt="`Image ${index + 1} : ${item.title}`" @load="item.shot = 'loaded'" @error="item.shot = 'failed'" /></a>
           <span class="number" aria-hidden="true">{{ index + 1 }}</span></li>
       </ol>
       <template v-if="sheet.items.some(item => item.shot === 'failed')"><p class="why" role="alert">Une image n’a pas pu être affichée : elle doit être vue avant d’être publiée.</p><button class="secondary" @click="retryShots">Réessayer</button></template>
-      <p class="label">Description</p>
-      <p class="sent-text">{{ sheet.description || 'Sans description.' }}</p>
       <p v-if="sheet.already" class="why">{{ sheet.already }}</p>
       <p v-if="sheet.line" class="why" role="alert">{{ sheet.line }}</p>
       <p v-else-if="sheetWhy" class="why">{{ sheetWhy }}</p>
@@ -546,8 +650,20 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 .chosen li, .posts li { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 6px 14px; align-items: start; padding: 12px 0 }
 .chosen li + li, .posts li + li { border-top: 1px solid var(--line) }
 .chosen :is(img, .blank), .posts :is(img, .blank) { width: 48px; height: 60px; object-fit: contain; border-radius: 4px; grid-row: span 4 }
+/* A chosen poster: its picture, its name, then its two actions at the row's right end (the bin, then the handle). */
+.chosen li { position: relative; background: var(--surface); grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center }
+.chosen li > :is(img, .blank) { grid-column: 1; grid-row: 1 }
+.chosen .name { grid-column: 2; grid-row: 1 }
+.chosen .row-end { grid-column: 3; grid-row: 1; align-self: center; display: flex; align-items: center; gap: 2px }  /* not « .actions »: style.css gives that one a top margin */
+.chosen .name { align-self: center }
+.chosen .row-end .i { color: var(--muted) }
+.chosen .grip { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab }
+/* While a poster is dragged: it is lifted over the others (what floats has --lift) and follows the pointer; the others
+   make room in 150 ms (at once under reduced motion, style.css), and the drop is instant. */
+.chosen.sliding .grip { cursor: grabbing }
+.chosen.sliding li:not(.lifted) { transition: transform .15s ease-out }
+.chosen li.lifted { z-index: 1; border-radius: var(--field); box-shadow: var(--lift) }
 .chosen .name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0 }
-.chosen .moves { display: flex; flex-wrap: wrap; gap: 8px }
 .describe, .fields { display: grid; gap: 12px; min-width: 0 }
 .fields > :is(p, label) { margin: 0 }
 .group:has(.single) .describe { grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start }

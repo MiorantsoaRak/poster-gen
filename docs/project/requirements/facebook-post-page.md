@@ -26,7 +26,8 @@
 - [ ] The page offers the shop's posters that can go in a post: those whose current version is confirmed in the « Publication » format (4:5). The image shown for each is its confirmed file, the one « Télécharger » gives.
 - [ ] A poster that cannot go in a post is not silently missing: the page says how many are left out and why (confirmed in another format; changed since its confirmation; never confirmed), and what to do for each reason.
 - [ ] The owner chooses one poster or several. A poster is in a post once.
-- [ ] The order of the post is the order he chose, shown with numbers, and he can move a poster earlier or later and take one out before publishing. The first is named as the one that leads the post.
+- [ ] The order of the post is the order he chose, shown with numbers, and he can move a poster earlier or later and take one out before publishing *(by sliding it, and by the keyboard; amended 2026-11-22, below)*. The first is named as the one that leads the post.
+- [ ] He changes the order by sliding a poster up or down in the list, with a finger or a mouse, by a handle at the row's right end; with the keyboard, the handle's arrow keys move it one place. A poster is taken out by a bin icon beside the handle. *(Added 2026-11-22 on the owner's words: "Add drag options to the pictures order so we can order it by sliding it up or down"; then "Put the indicator at the right end of the element, and replace retirer with a trash icon, and remove the two other buttons (plus tot ou plus tard). the action buttons are on the right end". Told to him once: without « Plus tôt » / « Plus tard » there is no way to reorder by a single tap for whoever cannot drag (WCAG 2.5.7); the keyboard still can.)*
 - [ ] A poster already published on this Page, alone or in a post, is marked with its date. It can be chosen again, knowingly.
 
 ## R-FB-POST-003 — No limit of the app; a limit per shop for later

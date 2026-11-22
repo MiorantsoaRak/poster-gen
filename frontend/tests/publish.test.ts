@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { ApiError } from '../src/api'
 import {
-  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe as described, emptyDraft, faultLine, keptForSending, leftOutLines,
+  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe as described, dropIndex, moveTo, placeLine, reorder, SLACK, emptyDraft, faultLine, keptForSending, leftOutLines,
   limitLine, move, postLine, publishAction, readDraft, readStored, refusalOf, remove, requestOf, seenOf, takenOut, toggle, whyNot,
   without, type Candidate, type Draft, type Post,
 } from '../src/publish'
@@ -44,6 +44,32 @@ it('adds at the end, takes out, moves earlier and later, and makes another draft
   expect(resolved.stamp).not.toBe(current.stamp)
   const untouched = { ...current, post: d }
   expect(without(untouched, new Set([a, c]))).toBe(untouched)
+})
+
+it('slides a dragged row past the neighbours whose middles it crosses, and drops it as one edit only if the order changed', () => {
+  const middles = [100, 200, 300, 400]  // four rows of 100 px, their middles in page pixels
+  expect(dropIndex(middles, 0, 100)).toBe(0)
+  expect(dropIndex(middles, 0, 100 + SLACK)).toBe(0)  // inside the slack: stays
+  expect(dropIndex(middles, 1, 200 - SLACK)).toBe(1)
+  expect(dropIndex(middles, 0, 199)).toBe(0)  // not yet past the next middle
+  expect(dropIndex(middles, 0, 201)).toBe(1)  // down past one
+  expect(dropIndex(middles, 0, 305)).toBe(2)  // down past two
+  expect(dropIndex(middles, 3, 150)).toBe(1)  // up past two
+  expect(dropIndex(middles, 2, 199)).toBe(1)  // up past one
+  expect(dropIndex(middles, 1, -500)).toBe(0)  // the ends hold
+  expect(dropIndex(middles, 1, 5000)).toBe(3)
+  expect(dropIndex([100], 0, 400)).toBe(0)
+  expect(reorder(['x', 'y', 'z'], 2, 0)).toEqual(['z', 'x', 'y'])
+  expect(reorder(['x', 'y', 'z'], 0, 2)).toEqual(['y', 'z', 'x'])
+  const list = ['x', 'y']
+  expect(reorder(list, 1, 1)).toEqual(list)
+  expect(reorder(list, 1, 1)).not.toBe(list)  // a copy
+  const current = draft({ items: [a, b, c], post: d })
+  const dropped = moveTo(current, 2, 0)
+  expect(dropped).toMatchObject({ items: [c, a, b], post: null })
+  expect(dropped.stamp).not.toBe(current.stamp)  // one edit: a new stamp
+  for (const [from, to] of [[1, 1], [0, 3], [-1, 0]]) expect(moveTo(current, from, to)).toBe(current)  // no edit
+  expect(placeLine('Casque Sony', 1, 3)).toBe('Casque Sony : place 1 sur 3.')
 })
 
 it('stops adding at the shop’s limit, and says the limit by what the draft holds', () => {

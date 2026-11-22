@@ -48,14 +48,34 @@ export function toggle(draft: Draft, id: string, limit: number | null) {
   if (draft.items.includes(id)) return remove(draft, id)
   return atLimit(draft, limit) ? draft : edited(draft, { items: [...draft.items, id] })
 }
-/** « Plus tôt » (-1) or « Plus tard » (1): the poster swaps with its neighbour; at an end nothing changes. */
-export function move(draft: Draft, id: string, by: -1 | 1) {
-  const at = draft.items.indexOf(id), to = at + by
-  if (at < 0 || to < 0 || to >= draft.items.length) return draft
-  const items = [...draft.items];
-  [items[at], items[to]] = [items[to], items[at]]
-  return edited(draft, { items })
+/** The list with its item at `from` put at `to`, the others closing up; a copy. */
+export function reorder<T>(items: T[], from: number, to: number): T[] {
+  const moved = [...items]
+  moved.splice(to, 0, ...moved.splice(from, 1))
+  return moved
 }
+/** A poster put at another place: one edit (a new stamp); at the same place, or out of range, the very same draft. */
+export function moveTo(draft: Draft, from: number, to: number) {
+  const last = draft.items.length - 1
+  if (from === to || from < 0 || to < 0 || from > last || to > last) return draft
+  return edited(draft, { items: reorder(draft.items, from, to) })
+}
+/** The handle's arrow keys: one place earlier (-1) or later (1); at an end nothing changes. */
+export const move = (draft: Draft, id: string, by: -1 | 1) => { const at = draft.items.indexOf(id); return at < 0 ? draft : moveTo(draft, at, at + by) }
+/** A drag starts only past this many pixels: a tap, or a finger that trembles, moves nothing. */
+export const SLACK = 6
+/** Sliding (D-FB-POST-005): the place a dragged row belongs at, from the rows' middles as laid out when the drag began
+ *  (in page pixels, in their order), the dragged row's place then (`from`) and its middle now. It passes a neighbour
+ *  when its middle crosses that neighbour's middle; within the slack it stays. */
+export function dropIndex(middles: number[], from: number, middle: number) {
+  if (Math.abs(middle - middles[from]) <= SLACK) return from
+  let to = from
+  while (to > 0 && middle < middles[to - 1]) to--
+  while (to < middles.length - 1 && middle > middles[to + 1]) to++
+  return to
+}
+/** What the assistive technology hears after a poster moved by its handle. */
+export const placeLine = (title: string, place: number, total: number) => `${title} : place ${place} sur ${total}.`
 export const describe = (draft: Draft, description: string) => edited(draft, { description })
 /** The posters resolved at the opening that can no longer go are taken out. A draft that lost one is no longer the
  *  request its stamp was sent with (the server would answer that key `idempotency_reused`): a new stamp, no post. */

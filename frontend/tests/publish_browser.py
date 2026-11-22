@@ -159,21 +159,164 @@ def walk(browser, data, product):
     expect(mine.get_by_text("Choisissez au moins une affiche.")).to_be_visible()
     expect(mine.get_by_text("2 000 caractères au plus. Les retours à la ligne et les émojis sont gardés. Les caractères de contrôle sont refusés, sauf les retours à la ligne et les tabulations.")).to_be_visible()
 
-    # Three chosen, then reordered with the buttons: the numbers follow, and the first leads.
+    # Three chosen, then reordered with the handles' arrow keys: the numbers follow, and the first leads. The row's two
+    # actions are at its right end: the bin, then the handle; no other button on it.
+    handle = lambda title: mine.get_by_role("button", name=f"Déplacer {title}", exact=True)  # noqa: E731
     for title in (title_a, title_b, title_c):
         tile(title).click()
     expect(mine.locator("ol.chosen > li")).to_have_count(3)
-    mine.get_by_role("button", name=f"Plus tôt « {title_c} »").click()
-    expect(mine.get_by_role("button", name=f"Plus tôt « {title_c} »")).to_be_focused()
-    mine.get_by_role("button", name=f"Plus tard « {title_a} »").click()
-    order = [title_c, title_a, title_b]
-    for number, title in enumerate(order, 1):
+    for title in (title_a, title_b, title_c):
+        expect(row(title).get_by_role("button")).to_have_count(2)
+        bin_box, grip_box, row_box = (row(title).get_by_role("button", name=f"Retirer « {title} »").bounding_box(),
+                                      handle(title).bounding_box(), row(title).bounding_box())
+        assert bin_box["x"] < grip_box["x"] and grip_box["x"] + grip_box["width"] >= row_box["x"] + row_box["width"] - 2, (bin_box, grip_box, row_box)
+    handle(title_c).focus()
+    page.keyboard.press("ArrowUp")
+    expect(handle(title_c)).to_be_focused()
+    handle(title_a).focus()
+    page.keyboard.press("ArrowDown")
+    for number, title in enumerate([title_c, title_a, title_b], 1):
         expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
         expect(tile(title).locator(".number")).to_have_text(str(number))
     expect(row(title_c)).to_contain_text("En tête")
     expect(row(title_a)).not_to_contain_text("En tête")
-    expect(mine.get_by_role("button", name=f"Plus tôt « {title_c} »")).to_be_disabled()
-    expect(mine.get_by_role("button", name=f"Plus tard « {title_b} »")).to_be_disabled()
+    # Sliding (T-FB-014): each poster has its handle. Dragged by it with the mouse, the third goes to the first place; the
+    # numbers and « En tête » follow during the drag; the drop is the draft's order.
+    expect(mine.locator("#aide-glisser")).to_contain_text("Glissez une affiche par sa poignée pour changer l’ordre.")
+    expect(handle(title_b)).to_have_css("touch-action", "none")
+    expect(row(title_b).locator(".name")).not_to_have_css("touch-action", "none")
+    smoke.check_contrast(page, "the draft with its handles, 1366")
+    mine.locator("ol.chosen").screenshot(path=str(OUT / "list-1366.png"))
+    stamp = draft_of(page)["stamp"]
+    handle(title_b).click()  # a tap moves nothing
+    assert draft_of(page)["stamp"] == stamp
+    row(title_c).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")  # away from the edges
+    box, top = handle(title_b).bounding_box(), row(title_c).bounding_box()["y"]
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for step in range(1, 11):
+        page.mouse.move(x, y + (top + 5 - y) * step / 10)
+    expect(mine.locator("ol.chosen")).to_have_class(re.compile(r"\bsliding\b"))
+    expect(row(title_b).locator(".number")).to_have_text("1")
+    expect(row(title_b)).to_contain_text("En tête")
+    expect(row(title_c).locator(".number")).to_have_text("2")
+    expect(tile(title_b).locator(".number")).to_have_text("1")  # the grid's numbers are the list's, during the drag too
+    expect(tile(title_c).locator(".number")).to_have_text("2")
+    assert draft_of(page)["items"] == [c, a, b]  # nothing stored before the drop
+    page.wait_for_timeout(400)  # the others have made room
+    boxes = [box for box in (mine.locator("ol.chosen > li").nth(i).bounding_box() for i in range(3))]
+    # The two others have made room under the dragged one's new place, one row apart; it follows the pointer above them.
+    assert abs(boxes[1]["y"] - boxes[0]["y"] - boxes[0]["height"]) <= 1 and boxes[2]["y"] < boxes[0]["y"], boxes
+    page.screenshot(path=str(OUT / "mid-drag-1366.png"))
+    page.mouse.up()
+    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
+    for number, title in enumerate([title_b, title_c, title_a], 1):
+        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
+        expect(mine.locator("ol.chosen > li").nth(number - 1).locator(".number")).to_have_text(str(number))
+    expect(row(title_b)).to_contain_text("En tête")
+    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] != stamp
+    # A drag ended by Escape leaves the order as it was, and stores nothing.
+    stamp = draft_of(page)["stamp"]
+    box = handle(title_c).bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for step in range(1, 8):
+        page.mouse.move(x, y + 25 * step)
+    expect(row(title_c).locator(".number")).to_have_text("3")
+    page.keyboard.press("Escape")
+    page.mouse.up()
+    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
+    expect(row(title_c).locator(".number")).to_have_text("2")
+    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] == stamp
+    # With the handle focused, the up arrow moves the poster one place; the focus stays on its handle, and the place is said.
+    handle(title_a).focus()
+    page.keyboard.press("ArrowUp")
+    expect(handle(title_a)).to_be_focused()
+    expect(mine.locator("p.visually-hidden[role=status]")).to_have_text(f"{title_a} : place 2 sur 3.")
+    order = [title_b, title_a, title_c]
+    for number, title in enumerate(order, 1):
+        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
+    sliding = re.compile(r"\bsliding\b")
+
+    def hold_drag(title, to_top_of=None, by=0, steps=10):
+        """The mouse down on that poster's handle and moved, to just under the top of another row or by `by` pixels; held."""
+        # Aimed only once the page has stopped moving under the pointer (a sheet that closes gives the focus back, which
+        # may scroll after the test's own scroll): two reads in a row on the same point, and that point on this handle.
+        aim, steady = None, 0
+        for _ in range(100):
+            box = handle(title).bounding_box()
+            point = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            on = handle(title).evaluate("(e, [x, y]) => e.contains(document.elementFromPoint(x, y))", list(point))
+            steady = steady + 1 if on and point == aim else 0
+            aim = point
+            if steady >= 2:
+                break
+            page.wait_for_timeout(50)
+        assert steady >= 2, ("the handle never held still under the pointer", title, aim)
+        x, y = aim
+        end = row(to_top_of).bounding_box()["y"] + 5 if to_top_of else y + by
+        page.mouse.move(x, y)
+        page.mouse.down()
+        for step in range(1, steps + 1):
+            page.mouse.move(x, y + (end - y) * step / steps)
+        expect(mine.locator("ol.chosen")).to_have_class(sliding)
+        expect(row(title)).to_have_class(re.compile(r"\blifted\b"))  # this poster's, not a neighbour's
+
+    # The sheet opened by the keyboard (Tab, Enter) while a drag is held: the drag is put back, never committed; the sheet
+    # shows the order as stored; the release changes nothing (the first post below sends that order).
+    row(title_b).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")
+    stamp = draft_of(page)["stamp"]
+    hold_drag(title_c, to_top_of=title_b)
+    expect(row(title_c).locator(".number")).to_have_text("1")
+    expect(tile(title_c).locator(".number")).to_have_text("1")
+    for _ in range(20):
+        if publish.evaluate("e => e === document.activeElement"):
+            break
+        page.keyboard.press("Tab")
+    expect(publish).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(sheet.get_by_role("img")).to_have_count(3)
+    for number, title in enumerate(order, 1):
+        expect(sheet.get_by_role("img").nth(number - 1)).to_have_attribute("alt", f"Image {number} : {title}")
+    expect(mine.locator("ol.chosen")).not_to_have_class(sliding)
+    page.mouse.up()
+    sheet.get_by_role("button", name="Annuler").click()
+    expect(sheet).to_have_count(0)
+    assert draft_of(page)["items"] == [b, a, c] and draft_of(page)["stamp"] == stamp, draft_of(page)
+    expect(row(title_c).locator(".number")).to_have_text("3")
+    # The dragged poster taken out of the draft during the drag (« Retirer », by the keyboard): the drag ends, no row
+    # stays moved, and a new drag works.
+    row(title_b).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")
+    hold_drag(title_c, by=-60, steps=6)
+    mine.get_by_role("button", name=f"Retirer « {title_c} »").focus()
+    page.keyboard.press("Enter")
+    expect(mine.locator("ol.chosen > li")).to_have_count(2)
+    expect(mine.locator("ol.chosen")).not_to_have_class(sliding)
+    expect(mine.locator("ol.chosen > li[style*=transform]")).to_have_count(0)
+    page.mouse.up()
+    tile(title_c).click()  # back at the end
+    assert draft_of(page)["items"] == [b, a, c]
+    row(title_b).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")
+    hold_drag(title_a, to_top_of=title_b)
+    page.mouse.up()
+    expect(mine.locator("ol.chosen > li").nth(0)).to_contain_text(title_a)
+    assert draft_of(page)["items"] == [a, b, c]
+    # Every move is said, by the handle's arrows: the same words again are spoken again.
+    status = mine.locator("p.visually-hidden[role=status]")
+    status.evaluate("""e => { window.spoken = []
+      new MutationObserver(() => { if (e.textContent) window.spoken.push(e.textContent) }).observe(e, { childList: true, characterData: true, subtree: true }) }""")
+    handle(title_a).focus()
+    page.keyboard.press("ArrowDown")
+    expect(status).to_have_text(f"{title_a} : place 2 sur 3.")
+    page.keyboard.press("ArrowUp")
+    expect(status).to_have_text(f"{title_a} : place 1 sur 3.")
+    handle(title_a).focus()
+    page.keyboard.press("ArrowDown")
+    until(page, lambda: len(page.evaluate("window.spoken")) == 3)
+    assert page.evaluate("window.spoken") == [f"{title_a} : place {n} sur 3." for n in (2, 1, 2)], page.evaluate("window.spoken")
+    assert draft_of(page)["items"] == [b, a, c]
     # A refused character is said as it is typed; then the first poster's caption is taken as the description.
     field.fill("Essai\u0007")
     expect(mine.locator("#etat-description")).to_have_text("La description contient un caractère de contrôle refusé.")
@@ -183,7 +326,7 @@ def walk(browser, data, product):
     expect(field).to_have_value("Casque Bose QC\n450 000 Ar 😀")
     expect(mine.locator("#compte-description")).to_have_text("27 / 2 000")
     stored = draft_of(page)
-    assert stored["items"] == [c, a, b] and stored["description"] == "Casque Bose QC\n450 000 Ar 😀" and stored["post"] is None, stored
+    assert stored["items"] == [b, a, c] and stored["description"] == "Casque Bose QC\n450 000 Ar 😀" and stored["post"] is None, stored
     # Kept on this device: a reload brings the draft back as it was.
     page.reload()
     expect(heading).to_be_visible()
@@ -238,7 +381,7 @@ def walk(browser, data, product):
     confirmations = {poster: page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}").json()["confirmation"]["id"] for poster in (a, b, c)}
     # The draft's stamp is the key; the posters in the order chosen.
     assert sent[-1] == (stamp, {"page_id": "100000000000001", "description": "Casque Bose QC\n450 000 Ar 😀",
-                                "items": [{"creation_id": poster, "confirmation_id": confirmations[poster], "seen": None} for poster in (c, a, b)]}), sent[-1]
+                                "items": [{"creation_id": poster, "confirmation_id": confirmations[poster], "seen": None} for poster in (b, a, c)]}), sent[-1]
     # Published from that very draft: the draft is forgotten; the posters are marked.
     until(page, lambda: draft_of(page) is None)
     expect(mine.get_by_text("Choisissez vos affiches plus bas, dans l’ordre de la publication.")).to_be_visible()
@@ -633,6 +776,71 @@ def walk(browser, data, product):
     context.close()
 
 
+def walk_touch(browser):
+    """Sliding with a finger (T-FB-014) on a 360 px phone: touches sent through Chromium's own input (CDP
+    Input.dispatchTouchEvent), so the page receives pointer events of type touch and the browser applies touch-action.
+    A drag on the handle moves the poster; a swipe on the row outside it scrolls the page and moves nothing."""
+    context = browser.new_context(viewport={"width": 360, "height": 640}, has_touch=True, is_mobile=True, color_scheme="light")
+    page = context.new_page()
+    page.set_default_timeout(15000)
+    errors, kinds = [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_atelier(page)
+    sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+    page.evaluate("() => { location.hash = 'publier' }")
+    mine = page.get_by_role("region", name="Votre publication", exact=True)
+    grid = page.get_by_role("region", name="Affiches confirmées", exact=True)
+    expect(grid.locator(".tile")).to_have_count(2)  # the two posters still confirmed as they are
+    for tile in grid.locator(".tile").all():
+        tile.tap()
+    rows = mine.locator("ol.chosen > li")
+    expect(rows).to_have_count(2)
+    first, second = rows.nth(0).locator("strong").inner_text(), rows.nth(1).locator("strong").inner_text()
+    page.evaluate("() => addEventListener('pointerdown', event => { window.kinds = [...(window.kinds ?? []), event.pointerType] }, true)")
+    chosen = draft_of(page)["items"]
+    cdp = context.new_cdp_session(page)
+
+    def touch(kind, x=0, y=0):
+        cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [] if kind == "touchEnd" else [{"x": x, "y": y}]})
+
+    def drag(start, end, steps=10):
+        touch("touchStart", *start)
+        for step in range(1, steps + 1):
+            touch("touchMove", start[0] + (end[0] - start[0]) * step / steps, start[1] + (end[1] - start[1]) * step / steps)
+            page.wait_for_timeout(16)
+        touch("touchEnd")
+
+    handle = mine.get_by_role("button", name=f"Déplacer {first}", exact=True)
+    handle.scroll_into_view_if_needed()
+    box, below = handle.bounding_box(), rows.nth(1).bounding_box()
+    centre = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    drag(centre, (centre[0], below["y"] + below["height"] - 10))
+    expect(rows.nth(0)).to_contain_text(second)
+    expect(rows.nth(1)).to_contain_text(first)
+    expect(rows.nth(0)).to_contain_text("En tête")
+    assert page.evaluate("window.kinds") == ["touch"], page.evaluate("window.kinds")
+    assert draft_of(page)["items"] == chosen[::-1], (chosen, draft_of(page))
+    moved = draft_of(page)
+    # A swipe up on the row, outside the handle: the page scrolls, the order stays.
+    page.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
+    mine.scroll_into_view_if_needed()
+    before = page.evaluate("scrollY")
+    name = rows.nth(1).locator(".name").bounding_box()
+    start = (name["x"] + 20, name["y"] + name["height"] / 2)
+    drag(start, (start[0], start[1] - 250), steps=12)
+    page.wait_for_timeout(300)
+    after = page.evaluate("scrollY")
+    assert after > before + 50, (before, after)
+    assert draft_of(page) == moved, (draft_of(page), moved)
+    expect(rows.nth(0)).to_contain_text(second)
+    assert page.evaluate(smoke.NO_SIDEWAYS), "sideways scroll at 360 px"
+    rows.nth(0).scroll_into_view_if_needed()
+    smoke.check_contrast(page, "the draft with its handles, 360")
+    mine.screenshot(path=str(OUT / "list-360.png"))
+    assert not errors, errors
+    context.close()
+
+
 def run():
     OUT.mkdir(parents=True, exist_ok=True)
     assert (smoke.ROOT / "frontend/dist/index.html").is_file(), "build first: corepack npm@10 run build"
@@ -655,6 +863,7 @@ def run():
                         smoke.stop(*server)
                         server = smoke.serve(Path(data), facebook_provider="stub")
                         walk(browser, data, product)
+                        walk_touch(browser)
                     finally:
                         browser.close()
             finally:

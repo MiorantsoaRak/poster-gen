@@ -1,0 +1,16 @@
+# Code review r2 — T-FB-014: drag to reorder the draft's posters
+
+Reviewer: Codex, read-only, 2026-11-22. Verdict: REJECT, on one new P1 only (round 1's four findings all CLOSED).
+
+**The new P1 is dismissed by the lead, with evidence.** It says a drop during the retry of a lost answer (`checking`) changes the stored order while the earlier order is sent. That is the design's rule for ANY edit during that time, not a defect of the drag: « Plus tôt », « Plus tard », « Retirer » and the description are open then too, by design (an edit made while a post is out is kept). The retry re-sends the frozen request only while the draft keeps the stamp it was sent with (`ShopPublish.vue`, the timer in `send`: `if (followedPost().stamp === stamp) void send(body, stamp, true); else { checking.value = false; void readPosts() }`); an edit makes a new stamp, so the retry stops and the list says what became of the earlier request, which is followed as any post in the list. The earlier post's answer cannot clear the edited draft (the published-clear rule compares the stamp sent with the live one). A new « Publier » of the edited draft meets the server's rules (a post in flight; then `seen`, and the sheet's « Publier à nouveau »). Blocking the drag alone would make it differ from the buttons for no gain.
+
+1. **CLOSED — P1, drop behind the publish sheet.** `openSheet()` settles the drag before freezing the items. Releasing the pointer afterward has no active drag to commit. [ShopPublish.vue:268](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:268)
+2. **CLOSED — P1, detached handle.** Document-level cancellation checks the pointer ID. A changed poster list or unmount also calls `settle()`, which removes the listeners, cancels the frame and clears the row transforms. [ShopPublish.vue:433](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:433)
+3. **CLOSED — P1, repeated move announcement.** Buttons, arrows and changed drops all call `said()`. It clears the status before restoring the message on the next Vue tick. [ShopPublish.vue:452](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:452)
+4. **CLOSED — P2, conflicting numbers.** The chosen rows and grid badges both use `placeOf(item.id) + 1` during the preview. [ShopPublish.vue:541](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:541) · [ShopPublish.vue:585](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:585)
+
+**New P1 — A drop can change the stored order during a publish retry.** After a lost response, the sheet closes and `sending` becomes false. The timer retries the frozen request body while `checking` is true. Both drag guards check only `sending`, so a user can drop a new order while the earlier order is being sent. Add `checking.value` to both `press()` and `dropped()`. [Retry path](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:311) · [Press guard](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:391) · [Drop guard](/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia/frontend/src/ShopPublish.vue:446)
+
+Read-only source review. Tests and device behavior were not independently verified.
+
+**REJECT**
