@@ -1,5 +1,5 @@
-"""The Graph client (D-FB-PUBLISH-001 to 003): the proof, the answers' table, each call's shape, the stand-in and the
-mode of a data folder. Facebook is httpx2.MockTransport: nothing leaves the machine."""
+"""The Graph client (D-FB-PUBLISH-001, 002, D-FB-POST-002): the proof, the answers' tables, each call's shape, the
+stand-in and the mode of a data folder. Facebook is httpx2.MockTransport: nothing leaves the machine."""
 import asyncio
 import hashlib
 import hmac
@@ -46,11 +46,6 @@ def graph(answer):
     return MetaGraph(APP, SecretStr(SECRET), transport=httpx2.MockTransport(handle)), requests
 
 
-def publish(answer, caption="Promo du jour"):
-    client, requests = graph(answer)
-    return asyncio.run(client.publish_photo(PAGE, PAGE_TOKEN, PNG, caption)), requests
-
-
 def fields(request) -> dict:
     """A multipart body's text fields, by name (the file apart)."""
     boundary = request.headers["content-type"].split("boundary=", 1)[1].encode()
@@ -76,106 +71,6 @@ def error(code):
     return {"error": {"code": code, "message": "ignored", "fbtrace_id": "T1"}}
 
 
-# The table of D-FB-PUBLISH-003 §4, row by row in its reading order.
-TABLE = [
-    (answer(503, error(190)), Outcome("unknown")),  # a 5xx, whatever its body: even a 190
-    (answer(500, error(4)), Outcome("unknown")),
-    (answer(502, b"<html>Bad gateway</html>"), Outcome("unknown")),
-    (httpx2.ReadTimeout("no answer"), Outcome("unknown")),
-    (httpx2.WriteTimeout("sent in part"), Outcome("unknown")),
-    (httpx2.ConnectTimeout("no answer"), Outcome("unknown")),
-    (httpx2.ConnectError("no answer"), Outcome("unknown")),
-    (httpx2.RemoteProtocolError("a cut connection"), Outcome("unknown")),
-    (httpx2.ReadError("a cut connection"), Outcome("unknown")),
-    (answer(503, DEEP), Outcome("unknown")),  # nesting too deep: nothing raised, even on the 5xx's logging path
-    (answer(200, b"{not json"), Outcome("unknown")),  # an answer that cannot be read
-    (answer(200, b"\xff\xfe"), Outcome("unknown")),
-    (answer(200, f'{{"post_id": "{PAGE}_77", "views": NaN}}'.encode()), Outcome("unknown")),  # not JSON
-    (answer(200, f'{{"post_id": "{PAGE}_77", "rate": -Infinity}}'.encode()), Outcome("unknown")),
-    (answer(200, f'{{"post_id": "2000000002_77", "post_id": "{PAGE}_77"}}'.encode()), Outcome("unknown")),  # which?
-    (answer(200, DEEP), Outcome("unknown")),
-    (answer(400, b"<html>"), Outcome("unknown")),
-    (answer(400, DEEP), Outcome("unknown")),
-    (answer(400, b'{"error": {"code": 506, "rate": NaN}}'), Outcome("unknown")),
-    (answer(400, b'{"error": {"code": 1, "code": 506}}'), Outcome("unknown")),
-    (answer(200, {"id": "77", "post_id": f"{PAGE}_77"}),
-     Outcome("published", f"{PAGE}_77", f"https://www.facebook.com/{PAGE}_77")),
-    (answer(200, {"id": "77"}), Outcome("unknown")),  # the proof's unpublished photo: its id alone
-    (answer(200, {"post_id": "2000000002_77"}), Outcome("unknown")),  # another Page's post
-    (answer(200, {"post_id": f"{PAGE}0_77"}), Outcome("unknown")),
-    (answer(200, {"post_id": f"{PAGE}_"}), Outcome("unknown")),
-    (answer(200, {"post_id": f"{PAGE}_7a"}), Outcome("unknown")),
-    (answer(200, {"post_id": f"{PAGE}_77_1"}), Outcome("unknown")),
-    (answer(200, {"post_id": 77}), Outcome("unknown")),
-    (answer(200, [f"{PAGE}_77"]), Outcome("unknown")),
-    (answer(200, error(190)), Outcome("unknown")),  # a 200 is read before any error
-    # Past the two 200 rows, only a 4xx with Graph's error is a refusal: any other status is unknown, whatever its body.
-    (answer(201, {"id": "77", "post_id": f"{PAGE}_77"}), Outcome("unknown")),
-    (answer(202, error(190)), Outcome("unknown")),
-    (answer(307, error(506)), Outcome("unknown")),
-    (answer(102, error(4)), Outcome("unknown")),
-    (answer(400, error(190)), Outcome("failed", error_code="190", reconnect=True)),
-    (answer(401, LEAKY), Outcome("failed", error_code="190", reconnect=True)),
-    *((answer(400, error(code)), Outcome("failed", error_code=str(code))) for code in (4, 17, 32, 613, 80001, 368)),
-    *((answer(403, error(code)), Outcome("failed", error_code=str(code)))
-      for code in (10, 200, 230, 299, 100, 324, 506)),
-    # A code that is not one of the module's own is not kept: the answer is unknown, and nothing of it is stored.
-    *((answer(400, error(code)), Outcome("unknown")) for code in (1, 2, 9, 199, 300, 2500, 0, -190, 1234567, 10 ** 30)),
-    (answer(400, {"error": {"code": "190"}}), Outcome("unknown")),  # no readable code
-    (answer(400, {"error": {"code": True}}), Outcome("unknown")),
-    (answer(400, {"error": "190"}), Outcome("unknown")),
-    (answer(400, {"message": "no error object"}), Outcome("unknown")),
-    (httpx2.Response(302, headers={"Location": "https://elsewhere.example/"}), Outcome("unknown")),  # not followed
-]
-
-
-@pytest.mark.parametrize("facebook, outcome", TABLE)
-def test_each_answer_is_settled_as_the_table_says(facebook, outcome):
-    settled, requests = publish(facebook)
-    assert settled == outcome and len(requests) == 1  # one send, never a second
-    if not isinstance(facebook, Exception):
-        assert classify(facebook, PAGE) == outcome
-    assert classify(None, PAGE) == Outcome("unknown")
-
-
-def test_the_photo_is_one_multipart_post_of_the_file_with_the_proof(caplog):
-    settled, [request] = publish(answer(200, {"id": "77", "post_id": f"{PAGE}_77"}), caption="Ligne 1\nLigne 2")
-    assert settled.status == "published"
-    assert (request.method, str(request.url)) == ("POST", f"https://graph.facebook.com/v27.0/{PAGE}/photos")
-    assert request.extensions["timeout"] == {"connect": 60, "read": 60, "write": 60, "pool": 60}
-    assert fields(request) == {"access_token": PAGE_TOKEN, "appsecret_proof": appsecret_proof(PAGE_TOKEN, SECRET),
-                               "caption": "Ligne 1\nLigne 2"}
-    assert (b'name="source"; filename="affiche.png"\r\nContent-Type: image/png\r\n\r\n' + PNG + b"\r\n"
-            in request.content)  # the confirmed file itself, byte for byte
-    assert "authorization" not in request.headers
-    assert not any(value in str(request.url) for value in SENSITIVE)
-    _, [request] = publish(answer(200, {"post_id": f"{PAGE}_78"}), caption="")
-    assert "caption" not in fields(request)  # an empty caption is not sent
-
-
-@pytest.mark.parametrize("page_id", ["", "12a", "../me", "1/feed", None])
-def test_a_page_id_that_is_not_digits_sends_nothing(page_id):
-    client, requests = graph(answer(200, {"post_id": "1_1"}))
-    for stand_in in (client, StubGraph()):  # a definite failure, raised from no frame that holds the token
-        assert asyncio.run(stand_in.publish_photo(page_id, PAGE_TOKEN, PNG, "")) == Outcome("failed", error_code="not_sent")
-    assert requests == []
-
-
-@pytest.mark.parametrize("token", ["", "with space in a long token", "a-long-token-with\ud800-a-surrogate", None, "t" * 19,
-                                   "7" * 24])  # digits only: not a credential's shape, so an id can never be one
-def test_a_page_token_of_the_wrong_shape_sends_nothing_and_raises_nothing(token):
-    client, requests = graph(answer(200, {"post_id": f"{PAGE}_1"}))
-    assert asyncio.run(client.publish_photo(PAGE, token, PNG, "")) == Outcome("failed", error_code="not_sent")
-    assert requests == []
-
-
-def test_a_page_id_too_long_for_an_address_sends_nothing_and_raises_nothing():
-    client, requests = graph(answer(200, {"post_id": "1_1"}))
-    assert asyncio.run(client.publish_photo("9" * 65536, PAGE_TOKEN, PNG, "")) == Outcome("failed", error_code="not_sent")
-    assert asyncio.run(client.publish_photo("9" * 33, PAGE_TOKEN, PNG, "")) == Outcome("failed", error_code="not_sent")
-    assert requests == []
-
-
 # An answer in which every field gives a credential back, as text and as numbers: the module says only its own words.
 def hostile(*credentials):
     text = " ".join(credentials)
@@ -183,58 +78,24 @@ def hostile(*credentials):
                       "error_user_title": text, text: text, "error_data": [text, {"x": text}]}, "post_id": text, text: 1}
 
 
-OWN_WORDS = re.compile(r"facebook (code|long_lived|pages|photo): [a-z0-9 ]+(without a post id of this Page)?")
+OWN_WORDS = re.compile(r"facebook (code|long_lived|pages): [a-z0-9 ]+")
 said = lambda caplog: [record.getMessage() for record in caplog.records if record.name == "affiche.posters.facebook"]
-
-
-def test_the_photo_says_only_its_own_words_whatever_the_answer_gives_back(caplog):
-    caplog.set_level(logging.DEBUG)
-    proof = appsecret_proof(PAGE_TOKEN, SECRET)
-    for status in (200, 400, 401, 500, 302):
-        outcome, _requests = publish(answer(status, hostile(PAGE_TOKEN, proof, SECRET)))
-        assert outcome in (Outcome("unknown"), Outcome("failed", error_code="190", reconnect=True))
-        assert not any(secret in repr(outcome) for secret in (PAGE_TOKEN, proof, SECRET))
-    assert said(caplog) and all(OWN_WORDS.fullmatch(line) for line in said(caplog)), said(caplog)
-    assert not any(secret in caplog.text for secret in (PAGE_TOKEN, proof, SECRET, str(10 ** 40)))
-
-
-def test_a_post_id_that_is_a_credential_whole_is_unknown_and_makes_no_link():
-    token = f"{PAGE}_{'7' * 20}"  # a credential's shape (its underscore is not a digit) that is also a post id's
-    client, _requests = graph(answer(200, {"post_id": token}))
-    assert asyncio.run(client.publish_photo(PAGE, token, PNG, "")) == Outcome("unknown")
-
-
-@pytest.mark.parametrize("png, caption", [(None, ""), ("text", ""), (PNG, None), (PNG, 5)])
-def test_a_file_or_caption_of_the_wrong_type_sends_nothing_and_raises_nothing(png, caption):
-    client, requests = graph(answer(200, {"post_id": f"{PAGE}_1"}))
-    assert asyncio.run(client.publish_photo(PAGE, PAGE_TOKEN, png, caption)) == Outcome("failed", error_code="not_sent")
-    assert requests == []
-
-
-def test_nothing_the_client_raises_leaves_the_module():
-    """A `Location` the client cannot join, or any other error of its own: unknown for the photo, a failure for a call."""
-    far = httpx2.Response(302, headers={"Location": "/" + "a" * 70000})
-    assert publish(far)[0] == Outcome("unknown")
-    assert publish(RuntimeError(PAGE_TOKEN))[0] == Outcome("unknown")
-    for call in CALLS.values():
-        for facebook in (far, RuntimeError(SECRET)):
-            client, _requests = graph(facebook)
-            assert asyncio.run(call(client)) in (GraphFailure("network"), GraphFailure("http"))
-
-
-def test_an_answer_that_is_not_utf8_is_unknown_even_with_a_matching_post_id():
-    body = b'{"post_id": "' + f"{PAGE}_1".encode() + b'", "x": "\xed\xa0\x80"}'  # a lone surrogate's bytes
-    outcome, _requests = publish(httpx2.Response(200, content=body))
-    assert outcome == Outcome("unknown")
-
-
-def test_a_caption_that_cannot_be_encoded_sends_nothing_and_raises_nothing():
-    outcome, requests = publish(answer(200, {"post_id": f"{PAGE}_1"}), caption="Promo \ud800")
-    assert outcome == Outcome("failed", error_code="caption") and not requests
 
 
 def form(request) -> dict:
     return {name: values[0] for name, values in parse_qs(request.content.decode(), strict_parsing=True).items()}
+
+
+def test_nothing_the_client_raises_leaves_the_module():
+    """A `Location` the client cannot join, or any other error of its own: unknown for a post's two calls, a failure for
+    a connection call."""
+    far = httpx2.Response(302, headers={"Location": "/" + "a" * 70000})
+    for facebook in (far, RuntimeError(PAGE_TOKEN)):
+        assert upload(facebook)[0] == Upload("unknown") and create(facebook)[0] == Outcome("unknown")
+    for call in CALLS.values():
+        for facebook in (far, RuntimeError(SECRET)):
+            client, _requests = graph(facebook)
+            assert asyncio.run(call(client)) in (GraphFailure("network"), GraphFailure("http"))
 
 
 def test_the_code_exchange_posts_a_form_and_puts_nothing_in_the_address():
@@ -380,12 +241,13 @@ def test_every_client_ignores_the_environments_proxy(monkeypatch):
     """trust_env=False, read from the client's options: a MockTransport would bypass a proxy, so no request can show it."""
     options, real = [], httpx2.AsyncClient
     monkeypatch.setattr(httpx2, "AsyncClient", lambda **kwargs: options.append(kwargs) or real(**kwargs))
-    client, _ = graph(answer(200, {"access_token": "t" * 20, "data": [], "post_id": f"{PAGE}_1"}))
-    for call in (*CALLS.values(), lambda client: client.publish_photo(PAGE, PAGE_TOKEN, PNG, "")):
+    client, _ = graph(answer(200, {"access_token": "t" * 20, "data": [], "id": "1"}))
+    for call in (*CALLS.values(), lambda client: client.upload_photo(PAGE, PAGE_TOKEN, PNG),
+                 lambda client: client.create_post(PAGE, PAGE_TOKEN, "", ["1"])):
         asyncio.run(call(client))
-    assert len(options) == 4 and all(kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
+    assert len(options) == 5 and all(kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
                                      for kwargs in options)
-    assert [kwargs["timeout"] for kwargs in options] == [20, 20, 20, 60]
+    assert [kwargs["timeout"] for kwargs in options] == [20, 20, 20, 60, 60]
 
 
 @pytest.mark.parametrize("call, body", [
@@ -411,39 +273,12 @@ def test_a_malformed_success_is_a_failure_not_a_guess(call, body, caplog):
     assert not any(value in caplog.text for value in SENSITIVE)
 
 
-def test_the_photo_logs_codes_never_the_message_or_a_token(caplog):
-    caplog.set_level(logging.DEBUG)
-    for facebook in (answer(401, LEAKY), answer(503, LEAKY), httpx2.ReadTimeout(PAGE_TOKEN), answer(200, b"x")):
-        publish(facebook, caption=CODE)
-    assert said(caplog) == ["facebook photo: 4xx 190", "facebook photo: 5xx", "facebook photo: timeout",
-                            "facebook photo: 200 without a post id of this Page"]  # its own words, and no other
-    assert not any(value in caplog.text for value in SENSITIVE) and "OAuthException" not in caplog.text
-
-
-def test_the_stand_in_has_two_pages_and_publishes_with_its_pages_post_id():
+def test_the_stand_in_has_two_pages():
     stub = StubGraph()
     assert asyncio.run(stub.exchange_code(CODE, REDIRECT)) and asyncio.run(stub.long_lived("t"))
     pages = asyncio.run(stub.pages("t"))
     assert len(pages) == 2 and len({page.id for page in pages}) == 2 and pages == asyncio.run(stub.pages("t"))
     assert all(page.id.isdigit() and page.name and page.token for page in pages)
-    first, second = (asyncio.run(stub.publish_photo(pages[0].id, pages[0].token, PNG, "")) for _ in range(2))
-    assert first.status == "published" and first.post_id != second.post_id
-    assert first == classify(httpx2.Response(200, json={"post_id": first.post_id}), pages[0].id)  # the real shape
-
-
-@pytest.mark.parametrize("caption, outcome", [
-    ("Promo [stub:unknown] du jour", Outcome("unknown")),
-    ("[stub:refused]", Outcome("failed", error_code="506")),
-    ("Avant\n[stub:reconnect]", Outcome("failed", error_code="190", reconnect=True)),
-])
-def test_the_stand_in_answers_unknown_or_refused_when_its_caption_holds_a_marker(caption, outcome):
-    """For the browser smoke, which cannot reach the real answers: the stand-in only, the real client is not changed."""
-    page = StubGraph.PAGES[0]
-    assert asyncio.run(StubGraph().publish_photo(page.id, page.token, PNG, caption)) == outcome
-    for near in ("[stub:Unknown]", "stub:unknown", "[stub: refused]"):  # only the exact marker
-        assert asyncio.run(StubGraph().publish_photo(page.id, page.token, PNG, near)).status == "published"
-    marked, requests = publish(httpx2.Response(200, json={"post_id": f"{PAGE}_1"}), caption)
-    assert marked.status == "published" and len(requests) == 1  # the real client sends it as any caption
 
 
 def test_the_client_follows_the_setting(env):
@@ -456,9 +291,9 @@ def test_the_client_follows_the_setting(env):
     env.setenv("FACEBOOK_APP_ID", APP)
     env.setenv("FACEBOOK_APP_SECRET", SECRET)
     requests = []
-    transport = httpx2.MockTransport(lambda request: requests.append(request) or answer(200, {"post_id": f"{PAGE}_1"}))
+    transport = httpx2.MockTransport(lambda request: requests.append(request) or answer(200, {"id": "1"}))
     real = make_graph(load_settings(env_file=None), transport)
-    assert isinstance(real, MetaGraph) and asyncio.run(real.publish_photo(PAGE, PAGE_TOKEN, PNG, "")).status == "published"
+    assert isinstance(real, MetaGraph) and asyncio.run(real.upload_photo(PAGE, PAGE_TOKEN, PNG)).status == "uploaded"
     assert fields(requests[0])["appsecret_proof"] == appsecret_proof(PAGE_TOKEN, SECRET)
 
 
@@ -505,16 +340,21 @@ NOT_200 = [
     (httpx2.Response(302, headers={"Location": "https://elsewhere.example/"}), ("unknown", None, False)),
     (answer(201, {"id": "77"}), ("unknown", None, False)),
     (answer(202, error(190)), ("unknown", None, False)),
+    (answer(307, error(506)), ("unknown", None, False)),
+    (answer(102, error(4)), ("unknown", None, False)),
     (answer(400, error(190)), ("failed", "190", True)),
     (answer(401, LEAKY), ("failed", "190", True)),
     *((answer(400, error(code)), ("failed", str(code), False)) for code in (4, 17, 32, 613, 80001, 368)),
     *((answer(403, error(code)), ("failed", str(code), False)) for code in (10, 200, 230, 299, 100, 324, 506)),
-    *((answer(400, error(code)), ("unknown", None, False)) for code in (1, 2, 199, 300, 2500, 0, -190, 10 ** 30)),
+    *((answer(400, error(code)), ("unknown", None, False)) for code in (1, 2, 9, 199, 300, 2500, 0, -190, 10 ** 30)),
     (answer(400, {"error": {"code": "190"}}), ("unknown", None, False)),
     (answer(400, {"error": {"code": True}}), ("unknown", None, False)),
     (answer(400, b"<html>"), ("unknown", None, False)),
     (answer(400, DEEP), ("unknown", None, False)),
     (answer(400, b'{"error": {"code": 1, "code": 506}}'), ("unknown", None, False)),
+    (answer(400, b'{"error": {"code": 506, "rate": NaN}}'), ("unknown", None, False)),
+    (answer(400, {"error": "190"}), ("unknown", None, False)),
+    (answer(400, {"message": "no error object"}), ("unknown", None, False)),
 ]
 UPLOADS = [
     (answer(200, {"id": "123"}), Upload("uploaded", "123")),  # the proof's answer, whole
@@ -565,8 +405,9 @@ def test_an_upload_is_one_multipart_post_of_the_file_unpublished_with_the_proof(
 
 
 @pytest.mark.parametrize("page_id, token, png", [
-    ("", PAGE_TOKEN, PNG), ("12a", PAGE_TOKEN, PNG), ("../me", PAGE_TOKEN, PNG), (None, PAGE_TOKEN, PNG),
-    ("9" * 33, PAGE_TOKEN, PNG), (PAGE, "", PNG), (PAGE, None, PNG), (PAGE, "7" * 24, PNG), (PAGE, "t" * 19, PNG),
+    ("", PAGE_TOKEN, PNG), ("12a", PAGE_TOKEN, PNG), ("../me", PAGE_TOKEN, PNG), ("1/feed", PAGE_TOKEN, PNG),
+    (None, PAGE_TOKEN, PNG), ("9" * 33, PAGE_TOKEN, PNG), ("9" * 65536, PAGE_TOKEN, PNG), (PAGE, "", PNG),
+    (PAGE, "with space in a long token", PNG), (PAGE, None, PNG), (PAGE, "7" * 24, PNG), (PAGE, "t" * 19, PNG),
     (PAGE, "a-long-token-with\ud800-a-surrogate", PNG), (PAGE, PAGE_TOKEN, None), (PAGE, PAGE_TOKEN, "text")])
 def test_an_upload_with_an_argument_of_the_wrong_shape_sends_nothing_and_raises_nothing(page_id, token, png):
     client, requests = graph(answer(200, {"id": "1"}))
@@ -588,7 +429,12 @@ POSTS = [
     (answer(200, [f"{PAGE}_77"]), Outcome("unknown")),
     (answer(200, f'{{"id": "2000000002_77", "id": "{PAGE}_77"}}'.encode()), Outcome("unknown")),  # which one?
     (answer(200, b"{not json"), Outcome("unknown")),
-    (answer(200, error(190)), Outcome("unknown")),
+    (answer(200, b"\xff\xfe"), Outcome("unknown")),
+    (answer(200, b'{"id": "' + f"{PAGE}_1".encode() + b'", "x": "\xed\xa0\x80"}'), Outcome("unknown")),  # not UTF-8
+    (answer(200, f'{{"id": "{PAGE}_77", "views": NaN}}'.encode()), Outcome("unknown")),  # not JSON
+    (answer(200, f'{{"id": "{PAGE}_77", "rate": -Infinity}}'.encode()), Outcome("unknown")),
+    (answer(200, DEEP), Outcome("unknown")),
+    (answer(200, error(190)), Outcome("unknown")),  # a 200 is read before any error
     *((facebook, Outcome(status, error_code=code, reconnect=reconnect)) for facebook, (status, code, reconnect) in NOT_200),
 ]
 
@@ -598,7 +444,8 @@ def test_each_answer_to_a_post_is_settled_as_the_design_says(facebook, outcome):
     settled, requests = create(facebook)
     assert settled == outcome and len(requests) == 1  # one send, never a second
     if not isinstance(facebook, Exception):
-        assert classify(facebook, PAGE, post=True) == outcome
+        assert classify(facebook, PAGE) == outcome
+    assert classify(None, PAGE) == Outcome("unknown")
 
 
 def test_the_post_is_one_form_that_attaches_the_photos_in_their_order_with_the_proof():
@@ -682,12 +529,6 @@ def test_an_answer_that_trickles_past_the_deadline_is_unknown_and_the_call_retur
     assert time.monotonic() - begun < 5
     assert said(caplog) == ["facebook upload: deadline", "facebook post: deadline"]
 
-    async def slow(_request):  # past this deadline, inside the photo's own timeouts
-        await asyncio.sleep(0.2)
-        return answer(200, {"id": "77", "post_id": f"{PAGE}_77"})
-
-    assert publish(slow)[0].status == "published"  # the single photo's send keeps its own timing
-
 
 def test_the_stand_in_uploads_with_photo_ids_and_posts_with_its_pages_post_id():
     stub, page = StubGraph(), StubGraph.PAGES[0]
@@ -696,7 +537,7 @@ def test_the_stand_in_uploads_with_photo_ids_and_posts_with_its_pages_post_id():
     assert len({done.photo_id for done in uploads}) == 50  # one id per call
     first, second = (asyncio.run(stub.create_post(page.id, page.token, "", ["1", "2"])) for _ in range(2))
     assert first.status == "published" and POST_ID.fullmatch(first.post_id) and first.post_id != second.post_id
-    assert first == classify(httpx2.Response(200, json={"id": first.post_id}), page.id, post=True)  # the real shape
+    assert first == classify(httpx2.Response(200, json={"id": first.post_id}), page.id)  # the real shape
     # Its arguments are checked as the real client's, the markers' keywords included: nothing raises with a token in its frame.
     for wrong in ({"page_token": "short"}, {"page_token": None}, {"png": "text"}, {"hint": None}, {"position": "2"},
                   {"position": True}, {"position": -1}):

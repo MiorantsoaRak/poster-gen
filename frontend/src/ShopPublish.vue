@@ -13,8 +13,8 @@ import {
 // « Publier sur Facebook » (D-FB-POST-005): `#publier`, the draft of a post of one or several posters, or with `poster`
 // (`#publier-<id>`) the page for that poster alone, whose description is its caption. What it keeps on the device is the
 // draft (`post-draft`), whose stamp is the request's key, and for one poster its caption: nothing else.
-const props = defineProps<{ poster: string | null; terms: Terms | null }>()
-const emit = defineEmits<{ terms: []; poster: [id: string] }>()
+const props = defineProps<{ poster: string | null; terms: Terms | null; handed?: { poster: string; text: string } | null }>()
+const emit = defineEmits<{ terms: []; poster: [id: string]; handed: [] }>()
 const TIMEOUT = 20_000, DRAFT = 'post-draft', POSTS = '/api/facebook/posts'
 const UNKEPT = 'Cet appareil n’a pas pu garder votre publication : rien n’a été envoyé. Libérez de la place ou quittez la navigation privée, puis réessayez.'
 const UNREAD = 'Votre publication gardée sur cet appareil n’a pas pu être lue.'
@@ -136,11 +136,13 @@ const left = computed(() => leftOutLines(leftOut.value))
 
 // ── the description: the draft's, or the one poster's caption (« Partager »'s own key, its rules) ───────────────
 const caption = ref(''), captionLine = ref('')
+let carried: { poster: string; text: string } | null = null  // the caption this page holds for its poster (begin)
 const description = computed(() => props.poster ? caption.value : draft.value.description)
 function typeDescription(text: string) {
   if (!props.poster) { keep(describe(draft.value, text)); return }
   if (!holding()) return
   caption.value = text
+  if (props.poster) carried = { poster: props.poster, text }
   single.value = { stamp: crypto.randomUUID(), post: null }  // another description is another request
   const fault = captionFault(text)
   if (fault === 'bad_character' || fault === 'too_long') return  // not kept, as in « Partager »: the fault's line says why
@@ -477,9 +479,17 @@ defineExpose({ modal })
 function begin() {
   clearTimeout(pollTimer); clearTimeout(checkTimer); settle(); placeSaid.value = ''
   sheet.value = null; absent.value = null; replacing.value = null; checking.value = false; checkFailures = 0; pollFailures = 0
-  line.value = ''; postsLine.value = ''; draftLine.value = ''; unreadLine.value = ''; takenLines.value = []; stale.value = false
+  line.value = ''; postsLine.value = ''; draftLine.value = ''; unreadLine.value = ''; takenLines.value = []
+  // What this tab read before it lost the page may be old (another tab may have published meanwhile): « Publier… »
+  // stays off until the candidates are read again, as after a refusal (third code review of T-FB-013).
+  stale.value = true
   single.value = { stamp: crypto.randomUUID(), post: null }; alone.value = null; remarked = new Set(); sought = new Set()
-  if (props.poster) { try { caption.value = readCaption(shopStorage.getItem(shopKey('caption.' + props.poster))); captionLine.value = '' } catch { captionLine.value = CAPTION_UNKEPT } }
+  // From the final panel: the caption its field shows, given once on this navigation (a failed or refused write there
+  // left storage behind it); the description's rules judge it here. What this page showed for this poster since (handed
+  // or typed) is kept when the page is taken back from another tab; a direct address reads storage.
+  if (props.poster && props.handed?.poster === props.poster) { carried = { poster: props.poster, text: props.handed.text }; emit('handed') }
+  if (props.poster && carried?.poster === props.poster) { caption.value = carried.text; captionLine.value = '' }
+  else if (props.poster) { try { caption.value = readCaption(shopStorage.getItem(shopKey('caption.' + props.poster))); captionLine.value = '' } catch { captionLine.value = CAPTION_UNKEPT } }
   readKept()
   const own = props.poster || unread.value ? null : draft.value.post
   void Promise.all([readCandidates(), readPosts(), own && readOwnPost(own)])
@@ -570,11 +580,11 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
       <p v-if="!grid.length" class="help">Aucune affiche confirmée au format Publication pour le moment.</p>
       <ul v-else class="tiles">
         <li v-for="item in grid" :key="item.id"><button type="button" class="tile" :aria-pressed="draft.items.includes(item.id)"
-          :disabled="!draft.items.includes(item.id) && (full || item.last?.status === 'unknown')" @click="keep(toggle(draft, item.id, limit))">
+          :disabled="!draft.items.includes(item.id) && (full || item.pending)" @click="keep(toggle(draft, item.id, limit))">
           <img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="150" height="188" alt="" loading="lazy" /><span v-else class="blank" aria-hidden="true" />
           <span v-if="draft.items.includes(item.id)" class="number" aria-hidden="true">{{ placeOf(item.id) + 1 }}</span>
           <strong translate="no">{{ titleOf(item) }}</strong>
-          <span v-if="item.last?.status === 'unknown'" class="mark">Résultat inconnu : répondez plus bas</span>
+          <span v-if="item.pending" class="mark">Résultat inconnu : répondez plus bas</span>
           <span v-else-if="item.published_at" class="mark">Publiée le {{ day(item.published_at) }}</span>
         </button></li>
       </ul>

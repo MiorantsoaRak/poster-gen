@@ -597,9 +597,9 @@ says it); the Meta app published.
 **While it runs:**
 - When Facebook's answer is lost, the publication is « unknown »: the owner opens his Page and says whether the poster
   is there. The application never looks on the Page and never sends again by itself.
-- A restart (a release, `docker restart`, a restore) turns each publication still in progress into « unknown », and
-  the owner settles it the same way. A send that hangs while the server runs keeps that one poster and Page at
-  « Publication en cours… » until a restart.
+- A restart (a release, `docker restart`, a restore) settles each post still in progress: one whose images were still
+  being sent becomes « failed » (nothing was published), one whose last call was on its way becomes « unknown », and
+  the owner says whether it is on his Page.
 - A restore: `FACEBOOK_PROVIDER` is `off` until `after-restore --apply` has run ("Restore", "Facebook after a
   restore").
 
@@ -726,30 +726,40 @@ copied back from the database that the restore replaced, which the command only 
   since the backup again from your payment records. A kept database from before migration 0014 has nothing to copy.
 
 **Facebook after a restore** (the same command, its lines that start with `facebook:`; design:
-`docs/project/designs/facebook-publishing.md`, "A restore of the database"). The restored copy is older than what
+`docs/project/designs/facebook-post-page.md`, D-FB-POST-006). A publication is a **post** of one or several posters. The restored copy is older than what
 Facebook shows: a poster published since would look unpublished, and a Page disconnected since would be connected
 again.
 
 - **Every Page connection goes**, and every attempt to connect: each shop connects its Page again in « Mon compte ».
   The report names the shops whose Page was connected. Tell each of their owners, for example: « Doka Studio a été
   restauré. Pour publier sur Facebook, connectez de nouveau votre Page dans « Mon compte ». »
-- **A publication that the backup lacks** is copied back with all its columns, in the order it was written. A
-  publication whose poster or shop is not here (made after the backup) is named and skipped: the restore removed that
-  poster.
-- **A publication that both databases hold** takes the kept result (published or failed, with its post, its link, its
-  code and the owner's word) only while it is in progress or unknown here. Nothing else is overwritten.
+- **A post that the backup lacks** is copied back whole, with its posters in their order, in the order it was
+  written, even when one of its posters is not here (made after the backup): the post keeps its line and its count.
+  Only a post whose shop is not here is named and skipped.
+- **A post that both databases hold:** the kept database is the later one, so its result wins (published or failed,
+  with its link, its code and the owner's word). When the kept one may have reached Facebook (its last call was on
+  its way, or its outcome is unknown), the post becomes « unknown » here, whatever this copy says: the owner says
+  whether it is on his Page. A kept post whose images were still being sent had published nothing: it stays so, and
+  the start makes it « failed ».
+- **The largest number of images per post** (`post-limit`) is not copied; the report says when the two databases
+  differ. Set it again by hand if needed.
 - **The mode** (`facebook_mode`: `stub` or `meta`) is copied when this database has none. If the two databases have
   different modes, the command copies nothing, the credit lines included, and says why. That can only happen if
   `stub` ran on the box: stop, and decide with Claude.
-- A kept database from before migration 0018 has no publication to bring. The connections still go.
+- A kept database from before migration 0018 has no publication to bring. The connections still go. A kept database
+  from before migration 0020 holds publications of one poster: each is read as a post of one image.
 - **No kept database, or one that cannot be read:** run the command on the restored database itself,
-  `after-restore /data/affiche.db --apply`. It copies nothing and deletes the connections. Then tell each owner who
+  `after-restore /data/affiche.db --apply`. It copies nothing, deletes the connections, and turns every post that was
+  being sent at the time of the backup into « unknown » (nothing can tell whether it reached Facebook since). Then tell each owner who
   publishes on Facebook to look at his Page before he publishes: a poster published after the time of the backup can
   be on it, and the application does not show it. For example: « Doka Studio a été restauré. Avant de publier sur
   Facebook, ouvrez votre Page : une affiche publiée après le <date> peut déjà y être, même si Doka Studio ne
   l’affiche pas. Puis connectez de nouveau votre Page dans « Mon compte ». »
-- At its start, the service turns each publication that was still in progress into « unknown »: the owner opens his
-  Page and says whether the poster is there (« Elle est sur ma Page » or « Elle n’y est pas »).
+- At its start, the service settles each post still in progress: one whose images were still being sent becomes
+  « failed » (« Rien n’a été publié »: its last call, the only one that publishes, never left); one whose last call
+  was on its way becomes « unknown »: the owner opens his Page and says whether the post is there (« Elle est sur ma
+  Page » or « Elle n’y est pas »). Images sent for a post that was not published stay with Facebook, unseen on the
+  Page; deleting a post on Facebook deletes its images.
 
 Never mount `/data` read-only for any of this: a database in write-ahead mode cannot be opened on a read-only
 volume. After a restore, **the ledger has lost the spend made since that backup**, and a generation that was

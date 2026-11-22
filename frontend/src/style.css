@@ -590,8 +590,6 @@ button.version.new small { font-size: 12px; font-weight: 500 }
 .confirm { width: min(100%, 440px); background: var(--glass-strong); border: 1px solid var(--line); border-radius: 28px; padding: 24px; display: grid; gap: 10px; box-shadow: var(--lift) }  /* its sheet already blurs the page behind */
 .confirm p { margin: 0; color: var(--muted) }
 .confirm .cost { color: var(--text); font-weight: 700 }
-/* « Publier sur ma Page »: the confirmed file itself, whole, kept short enough for the caption and the buttons below it. */
-.confirm .publish-shot { justify-self: center; width: auto; max-width: 100%; height: auto; max-height: min(36vh, 320px); border-radius: 5px; box-shadow: var(--poster-shadow) }
 .confirm label { margin-bottom: 0 }
 /* The conditions of use: over the panels and the messages, under a confirmation (the sign-out's keeps the front). Their
    long text starts at its top and scrolls: centred, a phone could not scroll to its first lines. */

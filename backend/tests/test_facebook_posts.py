@@ -1,9 +1,10 @@
 """A Facebook post of one or several posters through the routes (D-FB-POST-003): the candidates, the admission and its
 refusals, the uploads and the last call, the post that no task holds, start and shutdown, the owner's word. Facebook is
 httpx2.MockTransport (`meta`) or the stand-in (`stub`): nothing leaves the machine. The confirmed posters are written
-straight into the database, as test_facebook_publish does."""
+straight into the database, as the smokes do: their rows and their PNG, without a render."""
 import asyncio
 import hashlib
+import io
 import logging
 import threading
 import time
@@ -14,6 +15,7 @@ from uuid import uuid4
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import SecretStr
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError
@@ -21,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 from affiche import assets
 from affiche.api import MESSAGES, create_app
 from affiche.db import utc_now, write_tx
-from affiche.posters import auth, facebook, facebook_posts, facebook_publish
+from affiche.posters import auth, facebook, facebook_posts
 from affiche.posters.facebook_posts import PostRequest
 from affiche.posters.store import Refused
 from test_api import HEADERS, ORIGIN, create_draft, credentials, login, password_hash, second_shop  # noqa: F401
@@ -29,8 +31,9 @@ from test_config import env  # noqa: F401
 from test_db import credited, unaccepted
 from test_facebook import fields, form
 from test_facebook_api import APP, SECRET, settings_for
-from test_facebook_publish import EARLIER, OTHER_TOKEN, PAGE, TOKEN, confirm, connected, page_state, png, refused, run
 
+PAGE, TOKEN, OTHER_TOKEN = "111", "page-token-of-the-page-111", "page-token-reconnected-111"
+EARLIER = "2026-11-20T08:00:00.000000+00:00"
 PHOTO = "7770000"  # every photo id the mock makes starts so: none may reach an answer or a log line
 SENSITIVE = (SECRET, TOKEN, OTHER_TOKEN, PHOTO)
 NAME = "Original Phone Mada"
@@ -39,6 +42,54 @@ AUTO = object()
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def run(client, sql, **values):
+    with write_tx(client.app.state.engine) as conn:
+        return conn.execute(text(sql), values)
+
+
+def connected(client, page=PAGE, name="Original Phone Mada", token=TOKEN, at=EARLIER, shop=1):
+    run(client, "INSERT OR REPLACE INTO facebook_pages VALUES (:shop,:page,:name,:token,'connected',:at)",
+        shop=shop, page=page, name=name, token=token, at=at)
+
+
+def png(colour="red") -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", (12, 15), colour).save(out, "PNG")
+    return out.getvalue()
+
+
+def confirm(client, creation, data=None) -> tuple[str, bytes]:
+    """A confirmation of the poster at its current revision, with its PNG stored: the rows a render and a confirmation
+    leave. Returns its id and its bytes."""
+    data = data or png()
+    sha = assets.put(Path(client.app.state.engine.url.database).parent, data, "png")
+    with write_tx(client.app.state.engine) as conn:
+        revision, input_id = conn.execute(text(
+            "SELECT c.current_revision, json_extract(v.document_json,'$.input_id') FROM creations c JOIN creation_versions v"
+            " ON v.creation_id=c.id AND v.revision=c.current_revision WHERE c.id=:id"), {"id": creation}).one()
+        shop = conn.execute(text("SELECT shop_id FROM creations WHERE id=:id"), {"id": creation}).scalar()
+        job, render, confirmation, now = str(uuid4()), str(uuid4()), str(uuid4()), utc_now()
+        conn.execute(text("INSERT INTO poster_jobs (id,shop_id,creation_id,origin_revision,input_id,kind,input_json,input_hash,"
+                          "status,result_ref,created_at,finished_at) VALUES (:job,:shop,:id,:rev,:input,'render','{}','h',"
+                          "'succeeded',:render,:now,:now)"),
+                     {"job": job, "shop": shop, "id": creation, "rev": revision, "input": input_id, "render": render, "now": now})
+        conn.execute(text("INSERT INTO poster_renders VALUES (:render,:id,:rev,:job,'feed',:hash,'b','f','{}',:sha,12,15,"
+                          ":bytes,'[]',:now)"), {"render": render, "id": creation, "rev": revision, "job": job,
+                                                 "hash": str(uuid4()), "sha": sha, "bytes": len(data), "now": now})
+        conn.execute(text("INSERT INTO confirmations VALUES (:confirmation,:id,:rev,:rev,'feed','h',:render,:sha,'{}',:now)"),
+                     {"confirmation": confirmation, "id": creation, "rev": revision, "render": render, "sha": sha, "now": now})
+    return confirmation, data
+
+
+def refused(answer, code, status=409):
+    assert (answer.status_code, answer.json()["error"]["code"]) == (status, code), answer.text
+
+
+def page_state(client, shop=1):
+    with client.app.state.engine.connect() as conn:
+        return conn.execute(text("SELECT state FROM facebook_pages WHERE shop_id=:shop"), {"shop": shop}).scalar()
 
 
 class Graph:
@@ -399,6 +450,19 @@ def test_seen_must_be_the_latest_post_with_its_status_and_the_owners_answer_make
     refused(send(client, made, seen=old), "facebook_stale")
     assert posted(client, made, seen=[mark | {"status": "failed"} for mark in old])["status"] == "published"
     assert len(graph.of("feed")) == 4
+
+
+def test_the_clock_stepping_back_does_not_hide_a_post_from_a_page_that_saw_the_one_before(client, graph):
+    """Moved from the single poster's tests: a page saw post A. Post B, written after it, carries a time before A's: a
+    page that saw A is still refused, and the candidate's `last` is B (the order is the rowid's, not the clock's)."""
+    made = posters(client, 1)
+    connected(client)
+    a = posted(client, made)
+    b = posted(client, made, seen={"id": a["id"], "status": "published"})
+    run(client, "UPDATE facebook_posts SET sent_at='2020-01-01T00:00:00.000000+00:00' WHERE id=:id", id=b["id"])
+    refused(send(client, made, seen={"id": a["id"], "status": "published"}), "facebook_stale")
+    [candidate] = client.get("/api/facebook/posts/candidates", params={"ids": made[0][0]}).json()["items"]
+    assert candidate["last"] == {"id": b["id"], "status": "published"} and len(graph.of("feed")) == 2
 
 
 def test_the_same_key_twice_makes_one_post_whatever_the_moment(client, graph):
@@ -811,36 +875,6 @@ def test_shutdown_stops_a_post_uploading_and_lets_a_last_call_on_its_way_finish(
     assert len(graph.of("photos")) == 2 and len(graph.of("feed")) == 1  # B's image was not tried again
 
 
-def test_at_shutdown_a_post_stops_while_the_single_posters_drain_still_waits(env, tmp_path, password_hash, graph,
-                                                                              monkeypatch):
-    """Both drains together: the posts' closing flag is set while the single poster's drain still waits for a send of
-    its own, so a post uploading meanwhile stops at its next check instead of going on to its last call."""
-    settings, seen = settings_for(env, tmp_path, password_hash, "meta"), []
-
-    async def held():  # the single poster's drain, waiting until the post has ended (2 s at most)
-        for _ in range(200):
-            if rows(client)[0]["status"] not in ("uploading", "posting"):
-                break
-            await asyncio.sleep(0.01)
-        seen.append((rows(client)[0]["status"], rows(client)[0]["error_code"]))
-
-    monkeypatch.setattr(facebook_publish, "drain", held)
-    with TestClient(create_app(settings, prepare=credited), base_url=ORIGIN, headers=HEADERS) as client:
-        login(client)
-        made = posters(client, 2)
-        connected(client)
-
-        def during(request):  # the first image is on its way when the service stops
-            while not facebook_posts.CLOSING.is_set():
-                time.sleep(0.01)
-
-        graph.during = during
-        assert send(client, made).status_code == 202
-        while not graph.of("photos"):
-            time.sleep(0.01)
-    assert seen == [("failed", "not_sent")] and len(graph.of("photos")) == 1 and graph.of("feed") == []
-
-
 def test_the_owners_two_answers_close_an_unknown_post_and_replay(client, graph, monkeypatch):
     made = posters(client, 2)
     connected(client)
@@ -893,7 +927,8 @@ def test_the_candidates_their_pages_their_marks_and_the_posters_left_out(client,
     poster = client.get(f"/api/creations/{creation}").json()["document"]["offer"]
     assert rest["items"][0] == {"id": creation, "name": "JBL", "title": poster["title"], "price_ar": poster["price_ar"],
                                 "confirmation_id": confirmation, "thumbnail_url": f"/api/thumbnails/{sha(data)}?v=1",
-                                "download_url": f"/api/confirmations/{confirmation}/download", "last": None, "published_at": None}
+                                "download_url": f"/api/confirmations/{confirmation}/download", "last": None, "published_at": None,
+                                "pending": False}
     assert client.get(rest["items"][0]["thumbnail_url"]).status_code == 200
     assert client.get(rest["items"][0]["download_url"]).content == data
     # With ids: each a candidate or its reason, in the order asked, whatever page it is on.
@@ -910,20 +945,37 @@ def test_the_candidates_their_pages_their_marks_and_the_posters_left_out(client,
     published = posted(client, made[:2])
     graph.answers["feed"] = [httpx2.Response(502)]
     lost = posted(client, made[1:])
-    marks = {item["id"]: (item["last"], item["published_at"]) for item in client.get("/api/facebook/posts/candidates").json()["items"]}
-    assert marks == {made[0][0]: ({"id": published["id"], "status": "published"}, published["sent_at"]),
-                     made[1][0]: ({"id": lost["id"], "status": "unknown"}, published["sent_at"]),
-                     made[2][0]: ({"id": lost["id"], "status": "unknown"}, None)}
+    marks = {item["id"]: (item["last"], item["published_at"], item["pending"])
+             for item in client.get("/api/facebook/posts/candidates").json()["items"]}
+    assert marks == {made[0][0]: ({"id": published["id"], "status": "published"}, published["sent_at"], False),
+                     made[1][0]: ({"id": lost["id"], "status": "unknown"}, published["sent_at"], True),
+                     made[2][0]: ({"id": lost["id"], "status": "unknown"}, None, True)}
     assert client.get("/api/facebook/posts/candidates").json()["page"] == {"id": PAGE, "name": NAME, "state": "connected"}
     run(client, "UPDATE facebook_pages SET state='reconnect'")  # the same Page, to reconnect: no marks, its state said
     reconnect = client.get("/api/facebook/posts/candidates").json()
     assert reconnect["page"] == {"id": PAGE, "name": NAME, "state": "reconnect"}
-    assert all(item["last"] is item["published_at"] is None for item in reconnect["items"])
+    assert all(item["last"] is item["published_at"] is None and not item["pending"] for item in reconnect["items"])
     run(client, "DELETE FROM facebook_pages")
     none = client.get("/api/facebook/posts/candidates").json()
     assert none["page"] is None and all(item["last"] is item["published_at"] is None for item in none["items"])
     connected(client, page="333", name="Boutique Deux", at=utc_now())  # another Page: nothing posted there
     assert all(item["last"] is item["published_at"] is None for item in client.get("/api/facebook/posts/candidates").json()["items"])
+
+
+def test_an_older_unknown_post_beside_a_later_settled_one_holds_its_poster(client, graph):
+    """After a restore (D-FB-POST-006), an older post can be unknown while a later post of the same poster is settled:
+    `last` says settled, `pending` says what the admission refuses, with the admission's own rule."""
+    made = posters(client, 1)
+    connected(client)
+    older = a_post(client, "published", made)
+    later = posted(client, made)
+    run(client, "UPDATE facebook_posts SET status='unknown' WHERE id=:id", id=older)  # brought back unknown by a restore
+    [candidate] = client.get("/api/facebook/posts/candidates", params={"ids": made[0][0]}).json()["items"]
+    assert candidate["last"] == {"id": later["id"], "status": "published"} and candidate["pending"] is True
+    refused(send(client, made, seen=candidate["last"]), "facebook_pending")
+    assert len(graph.of("feed")) == 1
+    [listed] = client.get("/api/facebook/posts/candidates").json()["items"]
+    assert listed["pending"] is True
 
 
 def test_the_list_newest_first_by_page_and_by_poster(client, graph):

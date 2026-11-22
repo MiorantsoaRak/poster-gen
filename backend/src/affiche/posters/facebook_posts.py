@@ -1,9 +1,10 @@
 """A Facebook post of one or several confirmed posters (D-FB-POST-003): N images uploaded unpublished, one at a time,
 then one call that publishes them. Everything before that last call can fail, stop or be tried again without anything
-public; only the last call can leave an unknown outcome. It keeps the proven parts of facebook_publish.py: the key and
-its `payload_sha` in the table's own column (never store.mutate, which would hold the write lock during the calls),
-`_live` inside the write, the 30 s rule on the monotonic clock, the settling write tried again with the outcome in hand,
-the task shielded from the client's going. Its rules look at facebook_posts only (the single poster's table is ignored).
+public; only the last call can leave an unknown outcome. The one way to publish on a Page (ADR-129): a poster alone is a
+post of one image. It keeps the proven parts of the single poster's module it replaced: the key and its `payload_sha` in
+the table's own column (never store.mutate, which would hold the write lock during the calls), `_live` inside the
+write, the 30 s rule on the monotonic clock, the settling write tried again with the outcome in hand, the task shielded
+from the client's going.
 
 One task owns a post from its admission to its settlement, registered under (shop, key) before the admission: a post
 'uploading' or 'posting' that no task of this process holds is settled as at a start (§7). Nothing uploaded is deleted
@@ -14,6 +15,7 @@ import functools
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from typing import Annotated, Literal
@@ -28,11 +30,14 @@ from affiche.db import utc_now, write_tx
 from . import exports, store, terms
 from .facebook import LIMIT_CODES, RECONNECT_CODE, REFUSED_CODES, Outcome, Upload, check_mode
 from .facebook_connect import _live
-from .facebook_publish import MAX_BYTES, caption_fault
 from .models import Id, Model, canonical
 from .store import Refused, check_key
 
 log = logging.getLogger(__name__)
+MAX_BYTES = 10_000_000  # Meta's 10 MB for a photo, read as the smaller of its two meanings
+CAPTION_MAX = 2000  # code points, as « Partager » counts them (share.ts captionFault)
+# A control character other than line feed and tab (C0 with NUL, DEL, C1), as share.ts; a lone surrogate is no text.
+FORBIDDEN = re.compile(r"[\x00-\x08\x0B-\x1F\x7F-\x9F\ud800-\udfff]")
 SEND_WINDOW_S = 30.0  # from the commit of 'posting' to the last call, on the monotonic clock (§6)
 SETTLE_RETRIES, SETTLE_PAUSE_S = 3, 1.0
 PERMISSION_CODES = frozenset({10, *range(200, 300)})
@@ -86,6 +91,11 @@ class OutcomeRequest(Model):
 AT_IMAGE = {"poster_changed": "post_poster_changed", "export_missing": "post_export_missing", "no_answer": "post_no_answer",
             "published": "post_photo_public", "unexpected": "post_unexpected"}
 PLAIN = ("not_sent", "stopped", "page_changed", "limit_lowered", "not_published")
+
+
+def caption_fault(caption: str) -> bool:
+    """The rules of « Partager » (D-SHARE-003): a forbidden character, then more than 2 000 code points."""
+    return FORBIDDEN.search(caption) is not None or len(caption) > CAPTION_MAX
 
 
 def said(row, done: int, count: int, messages: dict) -> str:
@@ -194,17 +204,27 @@ def _last(conn, shop: int, page: str, creation: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _pending(conn, shop: int, page: str, creation: str) -> bool:
+    """A post `unknown` on this Page holds this poster, whichever: the admission refuses it (§3.7, facebook_pending). Not
+    only the latest: a restore can bring back an older post as unknown beside a later settled one (D-FB-POST-006)."""
+    return conn.execute(text(f"SELECT 1 {HOLDS} AND p.status='unknown' LIMIT 1"),
+                        {"shop": shop, "page": page, "creation": creation}).first() is not None
+
+
 def _offered(conn, shop: int, page: str | None, row) -> dict:
     offer = json.loads(row["document_json"])["offer"]
     last = published = None
+    pending = False
     if page is not None:
         mine = {"shop": shop, "page": page, "creation": row["id"]}
         last = _last(conn, shop, page, row["id"])
+        pending = _pending(conn, shop, page, row["id"])
         published = conn.execute(text(f"SELECT p.sent_at {HOLDS} AND p.status='published' ORDER BY p.rowid DESC LIMIT 1"),
                                  mine).scalar()
     return {"id": row["id"], "name": row["name"], "title": offer["title"], "price_ar": offer["price_ar"],
             "confirmation_id": row["confirmation_id"], "thumbnail_url": _thumbnail(row["png_sha256"]),
-            "download_url": f"/api/confirmations/{row['confirmation_id']}/download", "last": last, "published_at": published}
+            "download_url": f"/api/confirmations/{row['confirmation_id']}/download", "last": last, "published_at": published,
+            "pending": pending}
 
 
 def candidates(engine, shop: int, limit: int, cursor: tuple[str, str], ids: str | None) -> dict:
@@ -358,8 +378,7 @@ def _admit(engine, graph, shop: int, token: str, key: str, request: PostRequest,
         if _in_flight(conn, shop):
             raise Refused("facebook_running", 409)
         mine = {"shop": shop, "page": page["page_id"]}
-        if any(conn.execute(text(f"SELECT 1 {HOLDS} AND p.status='unknown'"), mine | {"creation": poster}).first()
-               for poster in posters):
+        if any(_pending(conn, shop, page["page_id"], poster) for poster in posters):
             raise Refused("facebook_pending", 409)
         for item in request.items:  # 8. what the page showed is still true
             if _last(conn, shop, page["page_id"], item.creation_id) != (item.seen.model_dump() if item.seen else None):

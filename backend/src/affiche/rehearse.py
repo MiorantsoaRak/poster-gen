@@ -5,7 +5,8 @@
 The file is only read: SQLite's online backup copies it into a temporary folder, and the copy is migrated, then
 deleted. On the copy, before and after: each data table's row count and SHA-256 of its rows, the three ledgers'
 sums, foreign_key_check and integrity_check. A table that a pending migration rebuilds or widens is hashed over the
-columns it had before (the migration's PRESERVED); what the migration changes on purpose is checked apart (its
+columns it had before (the migration's PRESERVED); a table it drops (its DROPS) must be empty before it, or nothing is
+rehearsed; what the migration changes on purpose is checked apart (its
 ADDED, less the checks a later pending one names in its SUPERSEDES), and so is the schema version. On every rehearsal, pending
 migrations or not, the migrated copy must still hold the GUARDS. Prints REHEARSAL OK, or REHEARSAL FAILED and every
 difference; exits 0, 1, or 2 for a wrong command line. Reads no settings and no .env.
@@ -101,7 +102,10 @@ GUARDS = {  # (type, name): the CREATE statement as its migration (0013, 0014, 0
   BEGIN SELECT RAISE(ABORT, 'a shop stays the same shop: its id never changes and it never takes another shop''s identifier'); END""",
 }
 # A column's text inside its table's statement: ALTER TABLE ADD COLUMN writes it there, and a rebuild must keep it.
-GUARDED_COLUMNS = {"poster_jobs": "takes_credit INTEGER NOT NULL DEFAULT 0 CHECK (takes_credit IN (0, 1))"}
+# Tables whose rows the application orders by rowid, whatever their primary key: a reorder that keeps every column is a
+# difference (a post's order among posts is its rowid, D-FB-POST-001).
+ROWID_ORDER = {"facebook_posts"}
+GUARDED_COLUMNS = {"poster_jobs":"takes_credit INTEGER NOT NULL DEFAULT 0 CHECK (takes_credit IN (0, 1))"}
 
 
 def _quoted(name: str) -> str:
@@ -123,7 +127,8 @@ def snapshot(db: sqlite3.Connection, projections: dict[str, tuple[str, ...]]) ->
                                " AND name<>'alembic_version' ORDER BY name").fetchall():
         info = db.execute("SELECT name, pk FROM pragma_table_info(?)", (table,)).fetchall()
         columns = projections.get(table) or tuple(name for name, _pk in info)
-        order = [name for _pk, name in sorted((pk, name) for name, pk in info if pk)] or ["rowid"]
+        order = (["rowid"] if table in ROWID_ORDER else
+                 [name for _pk, name in sorted((pk, name) for name, pk in info if pk)] or ["rowid"])
         digest, count = hashlib.sha256(), 0
         for row in db.execute(f"SELECT {', '.join(map(_quoted, columns))} FROM {_quoted(table)}"
                               f" ORDER BY {', '.join(map(_quoted, order))}"):
@@ -196,6 +201,13 @@ def rehearse(source: Path) -> tuple[list[str], list[str]]:
             for table, columns in module.PRESERVED.items():
                 projections.setdefault(table, tuple(columns))
         before = _open(copy, lambda db: snapshot(db, projections))
+        # A table a pending migration drops (its DROPS) must be empty before it: a released database never holds rows
+        # there, and rows that would go are never rehearsed away.
+        dropped = {table: module.revision for module in pending for table in getattr(module, "DROPS", ())}
+        held = [f"{table}: {before['tables'][table][0]} rows before migration {revision}, which drops it"
+                for table, revision in dropped.items() if before["tables"].get(table, (0, None))[0]]
+        if held:
+            return report, held
         engine = make_engine(Path(folder))
         try:
             migrate(engine)
@@ -217,7 +229,10 @@ def rehearse(source: Path) -> tuple[list[str], list[str]]:
                                                                 for side in (before, after))
         over = f"  (over {', '.join(projections[table])})" if table in projections else ""
         report.append(f"{table:<22} {rows_before!s:>11} {rows_after!s:>10}  {hash_before} | {hash_after}{over}")
-        if table not in after["tables"]:
+        if table in dropped:  # empty before (above)
+            if table in after["tables"]:
+                differences.append(f"{table}: still there after migration {dropped[table]}, which drops it")
+        elif table not in after["tables"]:
             differences.append(f"{table}: missing after the migration")
         elif table in before["tables"] and (rows_before, hash_before) != (rows_after, hash_after):
             differences.append(f"{table}: {rows_before} -> {rows_after} rows, "

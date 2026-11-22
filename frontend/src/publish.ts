@@ -7,10 +7,12 @@ import { captionFault } from './share'
 export type PostStatus = 'uploading' | 'posting' | 'published' | 'failed' | 'unknown'
 export type Reason = 'other_format' | 'changed' | 'unconfirmed' | 'gone'
 export interface Seen { id: string; status: PostStatus }
-/** GET /api/facebook/posts/candidates: a poster that can go in a post, with the latest post that holds it on the Page. */
+/** GET /api/facebook/posts/candidates: a poster that can go in a post, with the latest post that holds it on the Page
+ *  (`last`, what `seen` sends) and `pending`: a post of it on the Page is unknown, whichever (the admission refuses it;
+ *  after a restore it need not be the latest). */
 export interface Candidate {
   id: string; name: string; title: string; price_ar: number; confirmation_id: string; thumbnail_url: string | null
-  download_url: string; last: Seen | null; published_at: string | null
+  download_url: string; last: Seen | null; published_at: string | null; pending: boolean
 }
 /** With `ids`, a poster that cannot go, and why. */
 export interface LeftOut { id: string; reason: Reason }
@@ -153,7 +155,7 @@ export const codePoints = (text: string) => [...text].length
  *  (`accepted` false; null while unread: the server decides); a request whose answer is awaited; a post in flight (one of
  *  the list's, or the latest post of a chosen poster: a reload of the page for one poster during its uploads knows it
  *  with no key of its own); the posters' marks not read again since a post settled; nothing chosen; more than the shop's
- *  limit; a poster whose latest post is unknown; the description refused; else the confirmation. */
+ *  limit; a poster held by an unknown post (`pending`); the description refused; else the confirmation. */
 export function publishAction(state: { page: Page; accepted: boolean | null; checking: boolean; running: boolean; stale: boolean; chosen: Candidate[]; limit: number | null; description: string }): Action {
   if (!state.page || state.page.state !== 'connected') return 'account'
   if (state.accepted === false) return 'terms'
@@ -162,7 +164,7 @@ export function publishAction(state: { page: Page; accepted: boolean | null; che
   if (state.stale) return 'stale'
   if (!state.chosen.length) return 'empty'
   if (state.limit !== null && state.chosen.length > state.limit) return 'over'
-  if (state.chosen.some(item => item.last?.status === 'unknown')) return 'pending'
+  if (state.chosen.some(item => item.pending)) return 'pending'
   return descriptionFault(state.description) ? 'description' : 'ready'
 }
 export const LOST = 'La réponse n’est pas arrivée. Je vérifie…'

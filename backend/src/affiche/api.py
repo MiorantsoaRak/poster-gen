@@ -1,5 +1,4 @@
 """Authenticated HTTP boundary for the pilot. Run with python -m affiche.api."""
-import asyncio
 import hashlib
 import io
 import ipaddress
@@ -32,8 +31,8 @@ from starlette.staticfiles import StaticFiles
 from affiche import admin, assets
 from affiche.config import ENV_FILE, Settings, load_settings
 from affiche.db import utc_now
-from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_posts, facebook_publish, jobs,
-                             looks, reads, rendering, store, terms, typography, visuals)
+from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_posts, jobs, looks, reads,
+                             rendering, store, terms, typography, visuals)
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.runtime import start
@@ -168,7 +167,7 @@ MESSAGES = {
         "facebook_failed": "La connexion à Facebook n’a pas abouti. Réessayez.",
         "facebook_cancelled": "Connexion annulée.",
         "facebook_dialog_failed": "La connexion n’a pas abouti.",
-        # Publishing on it (D-FB-PUBLISH-003): the refusals of the admission and of the owner's word, written nothing.
+        # Publishing on it (D-FB-POST-003): the refusals of the admission and of the owner's word, written nothing.
         "facebook_too_large": "Ce fichier dépasse 10 Mo, la limite de Facebook. Téléchargez-le, puis publiez-le depuis Facebook.",
         "facebook_not_connected": "Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».",
         "facebook_reconnect": "Reconnectez votre Page dans « Mon compte ».",
@@ -177,16 +176,6 @@ MESSAGES = {
         "facebook_running": "La publication est en cours. Patientez quelques secondes.",
         "facebook_settled": "Cette publication a déjà son résultat. Rechargez la page.",
         "caption_invalid": "La légende dépasse 2 000 caractères ou contient un caractère invisible non accepté. Corrigez-la, puis publiez.",
-        # A publication's line (facebook_publish.said): the answers' table of D-FB-PUBLISH-003 §4 and §5. {} is filled there.
-        "publication_sending": "Publication en cours…",
-        "publication_published": "Publié sur {}.",
-        "publication_confirmed": "Présence confirmée par vous",
-        "publication_unknown": "Je ne sais pas si l’affiche est publiée. Ouvrez votre Page et dites-le-moi.",
-        "publication_reconnect": "Reconnectez votre Page.",
-        "publication_limited": "Facebook limite les publications pour le moment. Réessayez plus tard.",
-        "publication_refused": "Facebook a refusé la publication (code {}).",
-        "publication_not_sent": "La publication n’est pas partie. Réessayez.",
-        "publication_not_published": "Vous avez dit qu’elle n’est pas sur votre Page.",
         # A post of one or several posters (D-FB-POST-003): the admission's own refusal ({} is the shop's limit), then a
         # post's line (facebook_posts.said), the design's table of sentences; {n}, {count}, {code}, {said} are filled there.
         "facebook_too_many": "Votre boutique peut mettre {} images au plus dans une publication.",
@@ -618,17 +607,15 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             jobs.recover(runtime.engine, settings.data_dir)  # the service's sweep finalises the spooled jobs it leaves running
             reads.recover(runtime.engine)
             facebook_connect.recover(runtime.engine)
-            facebook_publish.recover(runtime.engine)  # whatever the provider now: a `sending` row's handler is gone
-            facebook_posts.recover(runtime.engine)  # and a post in flight's task
+            facebook_posts.recover(runtime.engine)  # whatever the provider now: a post in flight's task is gone
             service = PosterService(runtime.engine, settings)
             app.state.poster_service = service
             service.start()
             yield
         finally:
             try:
-                # Before the lock goes: no send outlives its process's hold on the data. Together, so that a post still
-                # uploading stops at its next check while a publication's send finishes.
-                await asyncio.gather(facebook_publish.drain(), facebook_posts.drain())
+                # Before the lock goes: no send outlives its process's hold on the data.
+                await facebook_posts.drain()
                 if service is not None:
                     await service.close()
             finally:
@@ -744,25 +731,9 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             facebook.make_graph(settings)
             return facebook_connect.disconnect(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE))
 
-        # Publishing a confirmed poster on it (D-FB-PUBLISH-003): the key in the table's own column, not store.mutate,
-        # so that no lock is held during the call. The owner's word on an unknown outcome makes no call: store.mutate.
-        @protected.get("/api/creations/{id}/publications")
-        def publications(id: Id, request: Request):
-            with app.state.engine.connect() as conn:
-                return facebook_publish.listed(conn, request.state.shop, id, MESSAGES)
-
-        @protected.post("/api/creations/{id}/publications", status_code=201)
-        async def publish(id: Id, body: facebook_publish.PublishRequest, request: Request, key: Key):
-            return await facebook_publish.publish(app.state.engine, settings, facebook.make_graph(settings), request.state.shop,
-                                                  request.cookies.get(auth.COOKIE), key, id, body, MESSAGES)
-
-        @protected.post("/api/creations/{id}/publications/{pid}/outcome")
-        def publication_outcome(id: Id, pid: Id, body: facebook_publish.OutcomeRequest, request: Request, key: Key):
-            return result_response(facebook_publish.outcome(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
-                                                            key, id, pid, body, MESSAGES))
-
-        # A post of one or several posters (D-FB-POST-003), beside the single poster's publication above until it goes:
-        # the key in the post's own column, as above; the owner's word through store.mutate. Candidates before {id}.
+        # Publishing on it: a post of one or several posters (D-FB-POST-003), the one way (ADR-129). The key in the post's
+        # own column, not store.mutate, so that no lock is held during the calls; the owner's word on an unknown outcome
+        # makes no call: store.mutate. Candidates before {id}.
         @protected.get("/api/facebook/posts/candidates")
         def post_candidates(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
                             before: Annotated[str | None, Query(max_length=100)] = None,

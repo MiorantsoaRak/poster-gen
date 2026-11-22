@@ -10,7 +10,7 @@ const [a, b, c, d] = Array.from({ length: 4 }, () => crypto.randomUUID())
 const page = { id: '100000000000001', name: 'Page d’essai 1', state: 'connected' as const }
 const candidate = (id: string, change: Partial<Candidate> = {}): Candidate => ({
   id, name: 'Casque', title: `Affiche ${id.slice(0, 4)}`, price_ar: 450000, confirmation_id: crypto.randomUUID(),
-  thumbnail_url: '/api/thumbnails/x?v=1', download_url: '/api/confirmations/x/download', last: null, published_at: null, ...change })
+  thumbnail_url: '/api/thumbnails/x?v=1', download_url: '/api/confirmations/x/download', last: null, published_at: null, pending: false, ...change })
 const post = (status: Post['status'], change: Partial<Post> = {}): Post => ({
   id: crypto.randomUUID(), status, page_id: page.id, page_name: page.name, sent_at: '2026-11-21T08:00:00+00:00',
   settled_at: null, count: 3, done: 0, failed_position: null, link: null, error_code: null, said_by_owner: false,
@@ -196,7 +196,11 @@ it('says what « Publier… » does in each state, in order', () => {
   expect(publishAction({ ...ready, chosen: [] })).toBe('empty')
   expect(publishAction({ ...ready, limit: 1 })).toBe('over')
   expect(publishAction({ ...ready, limit: 2 })).toBe('ready')
-  expect(publishAction({ ...ready, chosen: [candidate(a, { last: { id: c, status: 'unknown' } })] })).toBe('pending')
+  expect(publishAction({ ...ready, chosen: [candidate(a, { last: { id: c, status: 'unknown' }, pending: true })] })).toBe('pending')
+  // After a restore: an older post unknown while the latest is settled. `pending` holds it, whatever `last` says.
+  expect(publishAction({ ...ready, chosen: [candidate(a), candidate(b, { last: { id: c, status: 'published' }, pending: true })] }))
+    .toBe('pending')
+  expect(whyNot('pending', null, '')).toBe('Une de ces affiches attend votre réponse sur une publication au résultat inconnu : répondez plus bas.')
   expect(publishAction({ ...ready, chosen: [candidate(a, { last: { id: c, status: 'failed' } })] })).toBe('ready')
   expect(publishAction({ ...ready, description: 'a\u0007b' })).toBe('description')
   expect(publishAction({ ...ready, description: '😀'.repeat(2001) })).toBe('description')

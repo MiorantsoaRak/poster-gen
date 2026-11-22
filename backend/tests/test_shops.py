@@ -8,19 +8,20 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from affiche import backup, runtime, shops
 from affiche.api import create_app
 from affiche.config import load_settings
 from affiche.db import make_engine, utc_now, write_tx
-from affiche.posters import auth, credits, jobs
+from affiche.posters import auth, credits, facebook_posts, jobs
 from affiche.posters.auth import PASSWORDS, identifier_key
 from test_api import (HEADERS, IDENTIFIER, ORIGIN, PASSWORD, Counting, at_0012, client, credentials, failures, login,  # noqa: F401
                       password_hash, second_shop, settings, stored_password)
 from test_config import TODAY, env  # noqa: F401
 from test_credits import T, job
-from test_db import engine, migrate_to  # noqa: F401
+from test_db import T as DB_T, engine, item as db_item, migrate_to, pilot_0012, post as db_post, publication  # noqa: F401
 
 HASH = PASSWORDS.hash(os.urandom(12).hex())
 NEW = os.urandom(12).hex()  # 24 characters
@@ -898,7 +899,7 @@ def test_a_kept_database_missing_unreadable_or_older_than_0014_gives_nothing_to_
     older = tmp_path / "old" / "affiche.db"
     assert command("after-restore", str(older), "--apply") == (
         0, f"the kept database {older} is older than migration 0014: no credit was ever granted there; nothing to copy\n"
-           "facebook: the kept database is older than migration 0018: no publication to bring\n", "")
+           "facebook: the kept database is older than migration 0018: no post to bring\n", "")
     assert live.read_bytes() == unchanged
 
 
@@ -1023,12 +1024,14 @@ def test_a_repayment_is_here_only_by_its_job_whatever_took_its_reference(command
     assert "1 skipped" in done(command, "after-restore", str(kept), "--apply")  # made is here by its job, under any name
 
 
-# --- The restore's Facebook steps (facebook-publishing.md, Failure modes, « A restore of the database ») ---------------
+# --- The restore's Facebook steps (facebook-post-page.md, D-FB-POST-006) ---------------------------------------------
 
-PUBLICATIONS = ("SELECT p.identifier, f.id, f.creation_id, f.confirmation_id, f.page_id, f.page_name, f.caption, f.key,"
-                " f.payload_sha, f.status, f.sent_at, f.settled_at, f.post_id, f.link, f.error_code, f.said_by_owner"
-                " FROM facebook_publications f JOIN shop_profile p ON p.id = f.shop_id ORDER BY f.rowid")
+POSTS = ("SELECT p.identifier, f.id, f.page_id, f.page_name, f.description, f.key, f.payload_sha, f.status, f.stop_asked,"
+         " f.sent_at, f.settled_at, f.post_id, f.link, f.error_code, f.failed_position, f.said_by_owner"
+         " FROM facebook_posts f JOIN shop_profile p ON p.id = f.shop_id ORDER BY f.rowid")
+ITEMS = "SELECT post_id, position, creation_id, confirmation_id, png_sha256, photo_id FROM facebook_post_items ORDER BY rowid"
 LATER = "2026-11-18T09:00:00.000000+00:00"
+STATUS, SETTLED = 7, 10  # in a row of POSTS
 
 
 def facebook(out):
@@ -1040,19 +1043,24 @@ def poster(conn, id, shop=1):
 
 
 def settle(conn, id, status, owner=0):
-    """As the route settles a row (facebook_publish._settled), the start (recover) or the owner's word (owner)."""
+    """As the task settles a post (facebook_posts._settled), the start (free) or the owner's word (owner)."""
     post = "100_123" if status == "published" and not owner else None
     link = "https://www.facebook.com/100" if owner else post and f"https://www.facebook.com/{post}"
-    conn.exec_driver_sql("UPDATE facebook_publications SET status=?, post_id=?, link=?, error_code=?, said_by_owner=?,"
-                         " settled_at=? WHERE id=?", (status, post, link, "506" if status == "failed" else None, owner,
-                                                       None if status == "sending" else LATER, id))
+    failed = status == "failed"
+    conn.exec_driver_sql("UPDATE facebook_posts SET status=?, post_id=?, link=?, error_code=?, failed_position=?,"
+                         " said_by_owner=?, settled_at=? WHERE id=?",
+                         (status, post, link, "506" if failed else None, 1 if failed else None, owner,
+                          None if status in ("uploading", "posting") else LATER, id))
 
 
-def publication(conn, id, status, poster="p1", shop=1):
-    """A row as the route admits it, then settled."""
-    conn.exec_driver_sql("INSERT INTO facebook_publications (id, shop_id, creation_id, confirmation_id, page_id, page_name,"
-                         " caption, key, payload_sha, status, sent_at) VALUES (?, ?, ?, 'k1', '100', 'Ma Page', 'Promo !',"
-                         " ?, 'sha', 'sending', ?)", (id, shop, poster, f"key-{id}", T))
+def a_post(conn, id, status, posters=("p1",), shop=1):
+    """A post as the route admits it, with its images, then settled."""
+    conn.exec_driver_sql("INSERT INTO facebook_posts (id, shop_id, page_id, page_name, description, key, payload_sha,"
+                         " status, sent_at) VALUES (?, ?, '100', 'Ma Page', 'Promo !', ?, 'sha', 'uploading', ?)",
+                         (id, shop, f"key-{id}", T))
+    for n, creation in enumerate(posters):
+        conn.exec_driver_sql("INSERT INTO facebook_post_items (post_id, position, creation_id, confirmation_id, png_sha256,"
+                             " photo_id) VALUES (?, ?, ?, 'k1', 'h1', ?)", (id, n, creation, f"77{n}"))
     settle(conn, id, status)
 
 
@@ -1070,66 +1078,149 @@ def facebook_state(engine):
                 conn.exec_driver_sql("SELECT value FROM meta WHERE key='facebook_mode'").scalar())
 
 
-def test_after_a_restore_the_connections_go_and_the_publications_take_what_the_kept_database_knows(
-        command, engine, tmp_path):
-    """A row the backup lacks is copied whole; a row both hold takes the kept settlement only while it is sending or
-    unknown here; one settled in both, or here only, stays as it is; a row of a poster or a shop made after the backup
-    is said and skipped. The report writes nothing; a second run changes nothing."""
+def made_unknown(row, at):
+    return (*row[:STATUS], "unknown", *row[STATUS + 1:SETTLED], at, *row[SETTLED + 1:])
+
+
+def test_after_a_restore_the_connections_go_and_the_posts_take_what_the_kept_database_knows(command, engine, tmp_path):
+    """A post the backup lacks is copied whole with its images, whatever posters are here; one of a shop made after the
+    backup is said and skipped. A post both hold: the kept database is the later one, so its row wins, a kept `uploading`
+    included (its last call never left), except that a kept `posting` or `unknown` makes the post unknown, whatever this
+    one says. The limit is not copied, and said. The
+    report writes nothing; a second run changes nothing."""
     second_shop(engine)
     with write_tx(engine) as conn:
         poster(conn, "p1")
         poster(conn, "p2")
-        publication(conn, "sent", "sending")  # its answer came after the backup
-        publication(conn, "lost", "unknown")  # the owner said « Elle n’y est pas » after the backup
-        publication(conn, "said", "unknown")  # … and « Elle est sur ma Page »
-        publication(conn, "open", "unknown", poster="p2")  # unknown in both
-        publication(conn, "both", "published")  # settled in both
-        publication(conn, "mine", "failed")  # settled here only
+        a_post(conn, "sent", "posting")  # its answer came after the backup
+        a_post(conn, "lost", "unknown")  # the owner said « Elle n’y est pas » after the backup
+        a_post(conn, "said", "unknown")  # … and « Elle est sur ma Page »
+        a_post(conn, "early", "uploading")  # the kept service stopped it before its last call
+        a_post(conn, "flying", "uploading", posters=("p2",))  # its last call left after the backup
+        a_post(conn, "waited", "posting", posters=("p2",))  # the kept service restarted during its last call
+        a_post(conn, "open", "unknown", posters=("p2",))  # unknown in both
+        a_post(conn, "both", "published")  # published here, failed in the later copy
+        a_post(conn, "mine", "failed")  # failed here, unknown in the later copy
+        a_post(conn, "won", "failed")  # failed here, published in the later copy
+        a_post(conn, "redo", "failed")  # failed here, uploading in the later copy
+        a_post(conn, "slow", "uploading", posters=("p1", "p2"))  # uploading in both: left to the start, which fails it
         conn.exec_driver_sql("INSERT INTO meta VALUES ('facebook_mode', 'meta')")
         connected(conn)
         connected(conn, shop=2, attempt=True)
     copy = backed_up(tmp_path)
     done(command, "create", "Chez Rado", "--welcome", "0")  # shop 3
-    with write_tx(engine) as conn:
+    done(command, "post-limit", "originalphone", "3")
+    with write_tx(engine) as conn:  # no route does « both », « mine » and « won »: two histories, after a restore
         settle(conn, "sent", "published")
         settle(conn, "lost", "failed")
         settle(conn, "said", "published", owner=1)
-        settle(conn, "both", "failed")  # no route does these two: the test's way to tell the settlements apart
+        settle(conn, "early", "failed")
+        settle(conn, "flying", "posting")
+        settle(conn, "waited", "unknown")
+        settle(conn, "both", "failed")
         settle(conn, "mine", "unknown")
+        settle(conn, "won", "published")
+        settle(conn, "redo", "uploading")
         poster(conn, "p3")
         poster(conn, "p4", shop=3)
-        publication(conn, "new", "published")
-        publication(conn, "gone", "published", poster="p3")
-        publication(conn, "rado", "unknown", poster="p4", shop=3)
+        a_post(conn, "new", "published", posters=("p2", "p1"))
+        a_post(conn, "gone", "published", posters=("p3",))  # its poster is not here: copied all the same
+        a_post(conn, "rado", "unknown", posters=("p4",), shop=3)
         conn.exec_driver_sql("DELETE FROM facebook_pages WHERE shop_id=1")  # « Déconnecter » after the backup
     kept = put_back(engine, tmp_path, copy)
     live, unchanged = tmp_path / "affiche.db", (tmp_path / "affiche.db").read_bytes()
-    restored = {row[1]: row for row in read(live, PUBLICATIONS)}
+    restored, items = {row[1]: row for row in read(live, POSTS)}, read(live, ITEMS)
+    gone = "facebook: skipped post rado (chezrado, posters p4): its shop is not here (made after the backup)"
+    limit = ("facebook: not copied: the limit of images per post of originalphone, 3 in the kept database and none here; "
+             "set it again with post-limit if the kept one is right")
+    left = "its last call may have left"
     report = [
-        "facebook: the kept database holds 9 publications: 3 here already, 1 to copy, 3 to settle, 2 skipped",
-        "facebook: {settle}: publication sent (originalphone, poster p1), sending here, published in the kept database",
-        "facebook: {settle}: publication lost (originalphone, poster p1), unknown here, failed in the kept database",
-        "facebook: {settle}: publication said (originalphone, poster p1), unknown here, published in the kept database",
-        f"facebook: {{copy}}: publication new (originalphone, poster p1), published on the Page 'Ma Page', sent {T}",
-        "facebook: skipped publication gone (originalphone, poster p3): its poster is not here (made after the backup)",
-        "facebook: skipped publication rado (chezrado, poster p4): its shop is not here (made after the backup)",
+        "facebook: the kept database holds 15 posts: 2 here already, 2 to copy, 7 to take from it, 3 to make unknown, 1 skipped",
+        "facebook: {settle} the kept row: post sent (originalphone, posters p1), posting here, published in the kept database",
+        "facebook: {settle} the kept row: post lost (originalphone, posters p1), unknown here, failed in the kept database",
+        "facebook: {settle} the kept row: post said (originalphone, posters p1), unknown here, published in the kept database",
+        "facebook: {settle} the kept row: post early (originalphone, posters p1), uploading here, failed in the kept database",
+        f"facebook: {{unknown}}: post flying (originalphone, posters p2), uploading here, posting in the kept database: {left}",
+        f"facebook: {{unknown}}: post waited (originalphone, posters p2), posting here, unknown in the kept database: {left}",
+        "facebook: {settle} the kept row: post both (originalphone, posters p1), published here, failed in the kept database",
+        f"facebook: {{unknown}}: post mine (originalphone, posters p1), failed here, unknown in the kept database: {left}",
+        "facebook: {settle} the kept row: post won (originalphone, posters p1), failed here, published in the kept database",
+        "facebook: {settle} the kept row: post redo (originalphone, posters p1), failed here, uploading in the kept database",
+        f"facebook: {{copy}}: post new (originalphone, posters p2, p1), published on the Page 'Ma Page', sent {T}",
+        f"facebook: {{copy}}: post gone (originalphone, posters p3), published on the Page 'Ma Page', sent {T}",
+        gone, limit,
         "facebook: {delete}: the Page of 2 shops (boutiquedeux, originalphone) and 1 attempts to connect; each shop "
         "connects its Page again"]
     assert facebook(done(command, "after-restore", str(kept))) == [
-        line.format(settle="to settle", copy="to copy", delete="to delete") for line in report] + [
-        "facebook: report only, nothing written: run again with --apply"]
+        line.format(settle="to take", unknown="to make unknown", copy="to copy", delete="to delete") for line in report
+    ] + ["facebook: report only, nothing written: run again with --apply"]
     assert live.read_bytes() == unchanged
     assert facebook(done(command, "after-restore", str(kept), "--apply")) == [
-        line.format(settle="settled", copy="copied", delete="deleted") for line in report]
-    # Every column of the kept rows, in the kept order, but the two settled here, and the two whose poster is gone.
-    assert read(live, PUBLICATIONS) == [restored[row[1]] if row[1] in ("both", "mine") else row
-                                        for row in read(kept, PUBLICATIONS) if row[1] not in ("gone", "rado")]
+        line.format(settle="took", unknown="made unknown", copy="copied", delete="deleted") for line in report]
+    after = read(live, POSTS)
+    at = {row[1]: row[SETTLED] for row in after}
+    assert at["flying"]  # made unknown now: the kept post has no settlement time
+    # Every column of the kept posts in the kept order (the kept row wins: « won » is published with its post and link,
+    # « both » failed, « redo » uploading), but the one unknown in both and the one uploading in both, the three made
+    # unknown, and the one whose shop is gone. The copied
+    # ones bring their images; the limit stays as it was here.
+    unknown = ("flying", "waited", "mine")
+    assert after == [restored[row[1]] if row[1] in ("open", "slow") else made_unknown(restored[row[1]], at[row[1]])
+                     if row[1] in unknown else row for row in read(kept, POSTS) if row[1] != "rado"]
+    assert at["waited"] == at["mine"] == LATER
+    assert {row[1]: row[STATUS:STATUS + 1] + row[SETTLED + 1:SETTLED + 3] for row in after
+            if row[1] in ("won", "both", "redo", "slow")} == {
+        "won": ("published", "100_123", "https://www.facebook.com/100_123"), "both": ("failed", None, None),
+        "redo": ("uploading", None, None), "slow": ("uploading", None, None)}  # the start fails these two: not_sent
+    # Unknown, the post holds its poster on its Page: the admission's own rule refuses it (facebook_pending).
+    with engine.connect() as conn:
+        assert facebook_posts._pending(conn, 1, "100", "p1")
+    assert read(live, ITEMS) == items + [row for row in read(kept, ITEMS) if row[0] in ("new", "gone")]
+    assert read(live, "SELECT post_image_limit FROM shop_profile WHERE id=1") == [(None,)]
     assert facebook_state(engine) == (0, 0, "meta")
-    after = read(live, PUBLICATIONS)
     assert facebook(done(command, "after-restore", str(kept), "--apply")) == [
-        "facebook: the kept database holds 9 publications: 7 here already, 0 to copy, 0 to settle, 2 skipped",
-        report[5], report[6]]
-    assert read(live, PUBLICATIONS) == after
+        "facebook: the kept database holds 15 posts: 14 here already, 0 to copy, 0 to take from it, 0 to make unknown, "
+        "1 skipped", gone, limit]
+    assert read(live, POSTS) == after
+
+
+@pytest.mark.parametrize("revision", ["0018", "0019"])
+def test_a_kept_database_older_than_0020_brings_its_publications_as_posts_of_one_image(
+        command, engine, tmp_path, monkeypatch, revision):
+    """Read as migration 0020 converts them: the caption as the description, `sending` as `posting`, one image at
+    position 0 with its confirmation's hash, or none when the confirmation is not there; after the posts of 0019."""
+    old = make_engine(tmp_path / "old")
+    pilot_0012(tmp_path / "old", monkeypatch)  # shop 1 originalphone, poster c1 confirmed as cf1 (its hash: 'png')
+    migrate_to(old, revision, monkeypatch)
+    with write_tx(old) as conn:
+        if revision == "0019":
+            conn.exec_driver_sql(db_post("native", 1, "key-native", "published"))
+            conn.exec_driver_sql(db_item("native", 0))
+        conn.exec_driver_sql(publication("pub-sending", 1, "key-1", "sending"))
+        conn.exec_driver_sql(publication("pub-gone", 1, "key-2", "published").replace("'cf1'", "'gone'"))
+        conn.exec_driver_sql("UPDATE facebook_publications SET caption='Promo !', post_id='111_9' WHERE id='pub-gone'")
+    old.dispose()
+    with write_tx(engine) as conn:  # here, the first one is still uploading: the kept one may have made its last call
+        conn.exec_driver_sql("INSERT INTO facebook_posts (id, shop_id, page_id, page_name, description, key, payload_sha,"
+                             f" status, sent_at) VALUES ('pub-sending', 1, '111', 'Page', '', 'key-1', 's', 'uploading', '{DB_T}')")
+        conn.exec_driver_sql("INSERT INTO facebook_post_items (post_id, position, creation_id, confirmation_id)"
+                             " VALUES ('pub-sending', 0, 'c1', 'cf1')")
+    native = revision == "0019"
+    out = facebook(done(command, "after-restore", str(tmp_path / "old" / "affiche.db"), "--apply"))
+    assert out == [
+        f"facebook: the kept database holds {2 + native} posts: 0 here already, {1 + native} to copy, 0 to take from it, 1 to "
+        "make unknown, 0 skipped",
+        *[f"facebook: copied: post native (originalphone, posters c1), published on the Page 'Page', sent {DB_T}"] * native,
+        "facebook: made unknown: post pub-sending (originalphone, posters c1), uploading here, posting in the kept "
+        "database: its last call may have left",
+        f"facebook: copied: post pub-gone (originalphone, posters c1), published on the Page 'Page', sent {DB_T}"]
+    live = tmp_path / "affiche.db"
+    rows = {row[1]: row for row in read(live, POSTS)}
+    assert rows["pub-sending"][STATUS] == "unknown"
+    assert rows["pub-gone"] == ("originalphone", "pub-gone", "111", "Page", "Promo !", "key-2", "s", "published", 0, DB_T,
+                                None, "111_9", None, None, None, 0)
+    assert [row for row in read(live, ITEMS) if row[0] != "pub-sending"] == [
+        *[("native", 0, "c1", "cf1", "h", None)] * native, ("pub-gone", 0, "c1", "gone", None, None)]
 
 
 def test_the_facebook_mode_is_carried_when_this_database_has_none(command, engine, tmp_path):
@@ -1148,7 +1239,7 @@ def test_the_facebook_mode_is_carried_when_this_database_has_none(command, engin
 
 
 def test_two_facebook_modes_block_the_whole_copy(command, engine, tmp_path):
-    """The stand-in's publications never sit beside real ones: nothing is written, the credit lines neither."""
+    """The stand-in's posts never sit beside real ones: nothing is written, the credit lines neither."""
     with write_tx(engine) as conn:
         conn.exec_driver_sql("INSERT INTO meta VALUES ('facebook_mode', 'stub')")
         connected(conn)
@@ -1175,7 +1266,7 @@ def test_a_kept_database_older_than_0018_brings_nothing_and_the_connections_stil
     old.dispose()
     with write_tx(engine) as conn:
         connected(conn, attempt=True)
-    gone = ["facebook: the kept database is older than migration 0018: no publication to bring",
+    gone = ["facebook: the kept database is older than migration 0018: no post to bring",
             "facebook: {}: the Page of 1 shops (originalphone) and 1 attempts to connect; each shop connects its Page again"]
     older = str(tmp_path / "old" / "affiche.db")
     assert facebook(done(command, "after-restore", older)) == [
@@ -1189,13 +1280,27 @@ def test_without_a_kept_database_the_restored_one_as_its_own_only_deletes_the_co
     """deploy/README.md, Restore: the kept database is lost; the connections of the copy must still go."""
     with write_tx(engine) as conn:
         poster(conn, "p1")
-        publication(conn, "open", "unknown")
+        a_post(conn, "open", "unknown")
+        a_post(conn, "flying", "uploading")  # may have been published since the backup: no copy says
+        a_post(conn, "posted", "posting")
         conn.exec_driver_sql("INSERT INTO meta VALUES ('facebook_mode', 'meta')")
         connected(conn, attempt=True)
     live = tmp_path / "affiche.db"
-    before = read(live, PUBLICATIONS)
-    assert facebook(done(command, "after-restore", str(live), "--apply")) == [
-        "facebook: the kept database holds 1 publications: 1 here already, 0 to copy, 0 to settle, 0 skipped",
-        "facebook: deleted: the Page of 1 shops (originalphone) and 1 attempts to connect; each shop connects its Page "
-        "again"]
-    assert read(live, PUBLICATIONS) == before and facebook_state(engine) == (0, 0, "meta")
+    before, items = read(live, POSTS), read(live, ITEMS)
+    lost = "here, no other copy says how it ended (the kept database is this one): its last call may have left"
+    assert facebook(done(command, "after-restore", str(live))) == [
+        "facebook: the kept database holds 3 posts: 1 here already, 0 to copy, 0 to take from it, 2 to make unknown, 0 skipped",
+        f"facebook: to make unknown: post flying (originalphone, posters p1), uploading {lost}",
+        f"facebook: to make unknown: post posted (originalphone, posters p1), posting {lost}",
+        "facebook: to delete: the Page of 1 shops (originalphone) and 1 attempts to connect; each shop connects its Page "
+        "again", "facebook: report only, nothing written: run again with --apply"]
+    assert read(live, POSTS) == before
+    assert facebook(done(command, "after-restore", str(live), "--apply"))[1:3] == [
+        f"facebook: made unknown: post flying (originalphone, posters p1), uploading {lost}",
+        f"facebook: made unknown: post posted (originalphone, posters p1), posting {lost}"]
+    after = read(live, POSTS)
+    assert [row[STATUS] for row in after] == ["unknown"] * 3 and all(row[SETTLED] for row in after)
+    assert [row[:STATUS] + row[STATUS + 1:SETTLED] + row[SETTLED + 1:] for row in after] == [
+        row[:STATUS] + row[STATUS + 1:SETTLED] + row[SETTLED + 1:] for row in before]
+    assert read(live, ITEMS) == items and facebook_state(engine) == (0, 0, "meta")
+

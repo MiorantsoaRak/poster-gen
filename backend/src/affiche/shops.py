@@ -27,6 +27,7 @@ the database is at this code's head. It takes no lock, so it runs beside the API
 stderr, nothing written), 2 usage.
 """
 import argparse
+import os
 import secrets
 import shlex
 import sqlite3
@@ -216,20 +217,46 @@ KEPT_IMAGES = ("SELECT j.id, p.identifier FROM poster_jobs j JOIN shop_profile p
                " WHERE j.takes_credit = 1 AND j.status = 'succeeded'")
 LOSS = ("nothing to copy: the restore's loss policy applies (the grants and corrections made since the backup are "
         "gone); redo them from your payment records")
-# Migration 0018's columns but shop_id, which is mapped by the shop's identifier; in the kept written order (rowid): the
-# poster's list and its sheet's `seen` read that order (facebook_publish.listed).
-PUBLICATION = ("id", "creation_id", "confirmation_id", "page_id", "page_name", "caption", "key", "payload_sha", "status",
-               "sent_at", "settled_at", "post_id", "link", "error_code", "said_by_owner")
-SETTLEMENT = ("status", "post_id", "link", "error_code", "said_by_owner", "settled_at")
-KEPT_PUBLICATIONS = (f"SELECT p.identifier, {', '.join(f'f.{column}' for column in PUBLICATION)} FROM facebook_publications"
-                     " f JOIN shop_profile p ON p.id = f.shop_id ORDER BY f.rowid")
+# Migration 0019's columns of a post but shop_id, which is mapped by the shop's identifier, and of its images; in the
+# kept written order (rowid): the lists and a candidate's `last` read that order (facebook_posts).
+POST = ("id", "page_id", "page_name", "description", "key", "payload_sha", "status", "stop_asked", "sent_at", "settled_at",
+        "post_id", "link", "error_code", "failed_position", "said_by_owner")
+ITEM = ("position", "creation_id", "confirmation_id", "png_sha256", "photo_id")
+SETTLEMENT = ("status", "post_id", "link", "error_code", "failed_position", "said_by_owner", "settled_at")
+IN_FLIGHT = ("uploading", "posting")
+KEPT_POSTS = (f"SELECT p.identifier, {', '.join(f'f.{column}' for column in POST)} FROM facebook_posts f"
+              " JOIN shop_profile p ON p.id = f.shop_id ORDER BY f.rowid")
+KEPT_ITEMS = f"SELECT post_id, {', '.join(ITEM)} FROM facebook_post_items ORDER BY post_id, position"
+# A kept database older than 0020 still holds 0018's publications: each read as a post of one image, as 0020 converts it,
+# after the posts (0020 appends them).
+KEPT_PUBLICATIONS = (
+    "SELECT p.identifier, f.id, f.page_id, f.page_name, f.caption AS description, f.key, f.payload_sha,"
+    " CASE f.status WHEN 'sending' THEN 'posting' ELSE f.status END AS status, 0 AS stop_asked, f.sent_at, f.settled_at,"
+    " f.post_id, f.link, f.error_code, NULL AS failed_position, f.said_by_owner, 0 AS position, f.creation_id,"
+    " f.confirmation_id, k.png_sha256, NULL AS photo_id FROM facebook_publications f JOIN shop_profile p ON p.id = f.shop_id"
+    " LEFT JOIN confirmations k ON k.id = f.confirmation_id ORDER BY f.rowid")
+
+
+def _kept_posts(db: sqlite3.Connection, tables: set[str]) -> list[dict]:
+    """The kept posts in their written order, each with its images (`items`) and its shop's identifier."""
+    posts = []
+    if "facebook_posts" in tables:
+        items = {}
+        for row in db.execute(KEPT_ITEMS):
+            items.setdefault(row["post_id"], []).append({column: row[column] for column in ITEM})
+        posts = [dict(row) | {"items": items.get(row["id"], [])} for row in db.execute(KEPT_POSTS)]
+    if "facebook_publications" in tables:
+        posts += [{column: row[column] for column in ("identifier", *POST)} | {"items": [{column: row[column] for column in ITEM}]}
+                  for row in db.execute(KEPT_PUBLICATIONS)]
+    return posts
 
 
 def _kept(kept: Path):
     """Of the database a restore replaced: (names by identifier, lines, counted images), None when it is older than
-    0014 (no line was ever granted there); and (its publications, its facebook_mode), None when it is older than 0018.
-    Read through a read-only connection of its own: never written, and its -wal never checkpointed into it. No ATTACH:
-    SQLite refuses one inside the copy's transaction."""
+    0014 (no line was ever granted there); and (its posts, its facebook_mode, its limits of images per post by
+    identifier or None before 0019), None when it is older than 0018. Read through a read-only connection of its own:
+    never written, and its -wal never checkpointed into it. No ATTACH: SQLite refuses one inside the copy's
+    transaction."""
     try:
         if not kept.is_file():
             raise ValueError(f"no kept database at {kept}: {LOSS}")
@@ -240,10 +267,12 @@ def _kept(kept: Path):
             credit = ((dict(db.execute("SELECT identifier, name FROM shop_profile").fetchall()),
                        db.execute(KEPT_LINES).fetchall(), db.execute(KEPT_IMAGES).fetchall())
                       if "credit_grants" in tables else None)
-            if "facebook_publications" not in tables:
+            if not tables & {"facebook_publications", "facebook_posts"}:
                 return credit, None
             mode = db.execute("SELECT value FROM meta WHERE key='facebook_mode'").fetchone()
-            return credit, (db.execute(KEPT_PUBLICATIONS).fetchall(), mode and mode[0])
+            limits = (dict(db.execute("SELECT identifier, post_image_limit FROM shop_profile").fetchall())
+                      if "facebook_posts" in tables else None)
+            return credit, (_kept_posts(db, tables), mode and mode[0], limits)
         finally:
             db.close()
     except (sqlite3.Error, OSError) as error:
@@ -276,7 +305,7 @@ def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[st
     transaction rolls back whatever was written."""
     credit, facebook = _kept(kept)
     here, there = conn.execute(text("SELECT value FROM meta WHERE key='facebook_mode'")).scalar(), facebook and facebook[1]
-    # One mode per database (D-FB-PUBLISH-001): a publication of the stand-in never sits beside real ones.
+    # One mode per database (D-FB-PUBLISH-001): a post of the stand-in never sits beside real ones.
     held = (f"facebook_mode is {here!r} here and {there!r} in the kept database: the stand-in's publications and real "
             "ones never mix (deploy/README.md, Restore)") if here and there and here != there else None
     report, missing = (([f"the kept database {kept} is older than migration 0014: no credit was ever granted there; "
@@ -284,59 +313,91 @@ def after_restore(conn: Connection, kept: Path, *, apply: bool) -> tuple[list[st
                        else _credits(conn, kept, credit, apply=apply, conflict=held))
     blocked = [f"{', '.join(missing)} missing here; create each with the command above, then run after-restore again"
                ] * bool(missing) + [held] * bool(held)
-    return report + _facebook(conn, facebook, here, held, apply=apply, blocked=bool(blocked)), blocked
+    try:  # the runbook's way when the kept database is lost: the restored one given as its own (deploy/README.md)
+        same = os.path.samefile(kept, conn.engine.url.database or "")
+    except OSError:
+        same = False
+    return report + _facebook(conn, facebook, here, held, apply=apply, blocked=bool(blocked), same=same), blocked
 
 
-def _facebook(conn: Connection, read, here: str | None, held: str | None, *, apply: bool, blocked: bool) -> list[str]:
-    """The design's « A restore of the database » (facebook-publishing.md): this copy's connections are older than
-    Facebook's truth, so every Page and every attempt to connect goes, and each shop connects again. Its publications are
-    brought to what the kept database knows: a row it lacks is copied whole, a row both hold takes the kept settlement
-    only while it is sending or unknown here, and nothing else is overwritten; a row whose shop or poster is not here
-    (made after the backup, gone with it) is said and skipped. The mode is carried when this database has none. read:
-    (the kept rows, the kept mode), None when the kept database is older than 0018. Written only with apply and nothing
+def _facebook(conn: Connection, read, here: str | None, held: str | None, *, apply: bool, blocked: bool,
+              same: bool = False) -> list[str]:
+    """D-FB-POST-006 (« A restore of the database »): this copy's connections are older than Facebook's truth, so every
+    Page and every attempt to connect goes, and each shop connects again. Its posts are brought to what the kept database
+    knows: a post it lacks is copied whole with its images, whatever posters are here (an image holds no foreign key);
+    only a post whose shop is not here (made after the backup, gone with it) is said and skipped. A post both hold: the
+    kept database is the later one, so its row wins (its status, post, link, code, image, owner's word and time), except
+    that a kept row `posting` or `unknown` makes the post unknown, whatever this one says (a kept `uploading` wins like a
+    settled row: its last call never left). `same`: the kept database is this very file (it was lost): every post
+    `uploading` or `posting` here becomes unknown, since the backup's may have gone on to publish; the report says why. The limits of images per post are not copied: the
+    report names those that differ. The mode is carried when this database has none. read: (the kept posts,
+    the kept mode, the kept limits), None when the kept database is older than 0018. Written only with apply and nothing
     blocked, in the caller's transaction; the report says it all either way."""
-    rows, there = read or ([], None)
+    posts, there, limits = read or ([], None, None)
     write = apply and not blocked
     shops = dict(conn.execute(text("SELECT identifier, id FROM shop_profile")).all())
-    posters = set(conn.execute(text("SELECT shop_id, id FROM creations")).all())
-    statuses = dict(conn.execute(text("SELECT id, status FROM facebook_publications")).all())
+    settlements = {row[0]: tuple(row[1:]) for row in conn.execute(text(
+        f"SELECT id, {', '.join(SETTLEMENT)} FROM facebook_posts")).all()}
+    statuses = {id: settlement[0] for id, settlement in settlements.items()}
     pages = conn.execute(text("SELECT p.identifier FROM facebook_pages f JOIN shop_profile p ON p.id = f.shop_id"
                               " ORDER BY 1")).scalars().all()
     attempts = conn.execute(text("SELECT count(*) FROM facebook_connects")).scalar()
     report, count = [], Counter()
-    for row in rows:
-        what, mine = f"publication {row['id']} ({row['identifier']}, poster {row['creation_id']})", statuses.get(row["id"])
-        shop = shops.get(row["identifier"])
-        if mine is None and (shop is None or (shop, row["creation_id"]) not in posters):
+    for post in posts:
+        posters = ", ".join(item["creation_id"] for item in post["items"])
+        what, mine = f"post {post['id']} ({post['identifier']}, posters {posters})", statuses.get(post["id"])
+        shop, kept = shops.get(post["identifier"]), post["status"]
+        if mine is None and shop is None:
             count["skipped"] += 1
-            report.append(f"facebook: skipped {what}: its {'shop' if shop is None else 'poster'} is not here (made after "
-                          "the backup)")
+            report.append(f"facebook: skipped {what}: its shop is not here (made after the backup)")
         elif mine is None:
             if write:
                 try:
-                    conn.execute(text(f"INSERT INTO facebook_publications (shop_id, {', '.join(PUBLICATION)}) VALUES "
-                                      f"(:shop, {', '.join(':' + column for column in PUBLICATION)})"),
-                                 {column: row[column] for column in PUBLICATION} | {"shop": shop})
+                    conn.execute(text(f"INSERT INTO facebook_posts (shop_id, {', '.join(POST)}) VALUES "
+                                      f"(:shop, {', '.join(':' + column for column in POST)})"),
+                                 {column: post[column] for column in POST} | {"shop": shop})
+                    for item in post["items"]:
+                        conn.execute(text(f"INSERT INTO facebook_post_items (post_id, {', '.join(ITEM)}) VALUES "
+                                          f"(:post, {', '.join(':' + column for column in ITEM)})"), item | {"post": post["id"]})
                 except IntegrityError as error:
                     raise ValueError(f"facebook: {what} is refused here ({error.orig}): nothing copied") from None
             count["copy"] += 1
-            report.append(f"facebook: {'copied' if write else 'to copy'}: {what}, {row['status']} on the Page "
-                          f"{row['page_name']!r}, sent {row['sent_at']}")
-        elif mine in ("sending", "unknown") and row["status"] in ("published", "failed"):
+            report.append(f"facebook: {'copied' if write else 'to copy'}: {what}, {kept} on the Page "
+                          f"{post['page_name']!r}, sent {post['sent_at']}")
+        elif same and mine in IN_FLIGHT or kept in ("posting", "unknown") and mine != "unknown":
+            # The later copy does not know the end, its last call may have left: neither may this one claim it.
+            # Compared with itself (no kept database), a post in flight in the backup may have gone on to publish since.
             if write:
-                conn.execute(text(f"UPDATE facebook_publications SET {', '.join(f'{c}=:{c}' for c in SETTLEMENT)}"
-                                  " WHERE id=:id AND status IN ('sending','unknown')"),
-                             {column: row[column] for column in ("id", *SETTLEMENT)})
+                conn.execute(text("UPDATE facebook_posts SET status='unknown', settled_at=:at WHERE id=:id"),
+                             {"id": post["id"], "at": post["settled_at"] or utc_now()})
+            count["unknown"] += 1
+            why = "no other copy says how it ended (the kept database is this one)" if same else f"{kept} in the kept database"
+            report.append(f"facebook: {'made unknown' if write else 'to make unknown'}: {what}, {mine} here, {why}: its "
+                          "last call may have left")
+        elif kept not in ("posting", "unknown") and settlements[post["id"]] != tuple(post[column] for column in SETTLEMENT):
+            # The kept copy is the later one: its row wins, whatever this one says. A kept `uploading` never made its
+            # last call (`posting` is committed before it): the start fails it, not_sent.
+            if write:
+                conn.execute(text(f"UPDATE facebook_posts SET {', '.join(f'{c}=:{c}' for c in SETTLEMENT)} WHERE id=:id"),
+                             {column: post[column] for column in ("id", *SETTLEMENT)})
             count["settle"] += 1
-            report.append(f"facebook: {'settled' if write else 'to settle'}: {what}, {mine} here, {row['status']} in "
-                          "the kept database")
+            report.append(f"facebook: {'took' if write else 'to take'} the kept row: {what}, {mine} here, {kept} in the "
+                          "kept database")
         else:
             count["here"] += 1
-    if rows:
-        report.insert(0, f"facebook: the kept database holds {len(rows)} publications: {count['here']} here already, "
-                         f"{count['copy']} to copy, {count['settle']} to settle, {count['skipped']} skipped")
+    if posts:
+        report.insert(0, f"facebook: the kept database holds {len(posts)} posts: {count['here']} here already, "
+                         f"{count['copy']} to copy, {count['settle']} to take from it, {count['unknown']} to make unknown, "
+                         f"{count['skipped']} skipped")
     if read is None:
-        report.insert(0, "facebook: the kept database is older than migration 0018: no publication to bring")
+        report.insert(0, "facebook: the kept database is older than migration 0018: no post to bring")
+    limits_here = dict(conn.execute(text("SELECT identifier, post_image_limit FROM shop_profile")).all())
+    for identifier, limit in sorted((limits or {}).items()):
+        if identifier in limits_here and limits_here[identifier] != limit:
+            ours = limits_here[identifier]
+            report.append(f"facebook: not copied: the limit of images per post of {identifier}, "
+                          f"{'none' if limit is None else limit} in the kept database and "
+                          f"{'none' if ours is None else ours} here; set it again with post-limit if the kept one is right")
     if pages or attempts:
         if write:
             conn.execute(text("DELETE FROM facebook_pages"))
@@ -352,7 +413,7 @@ def _facebook(conn: Connection, read, here: str | None, held: str | None, *, app
             conn.execute(text("INSERT INTO meta VALUES ('facebook_mode', :mode)"), {"mode": there})
         count["carry"] += 1
         report.append(f"facebook: {'carried' if write else 'to carry'}: facebook_mode {there!r} from the kept database")
-    if not apply and count["copy"] + count["settle"] + count["delete"] + count["carry"]:
+    if not apply and count["copy"] + count["settle"] + count["unknown"] + count["delete"] + count["carry"]:
         report.append("facebook: report only, nothing written" + ("" if blocked else ": run again with --apply"))
     return report
 
@@ -756,8 +817,8 @@ def build_parser() -> argparse.ArgumentParser:
     limit.add_argument("limit", nargs="?", type=_limit, default=SHOW, metavar="N | none",
                        help="a whole number from 1; none: no limit (the default)")
     limit.set_defaults(handler=_post_limit)
-    restore = commands.add_parser("after-restore", help="after a restore: the credit lines and Facebook publications of "
-                                                        "the database it replaced that this one lacks, and this one's "
+    restore = commands.add_parser("after-restore", help="after a restore: the credit lines and Facebook posts of the "
+                                                        "database it replaced that this one lacks, and this one's "
                                                         "Facebook Page connections, which go; --apply does it")
     restore.add_argument("kept", type=Path, help="the database the restore replaced: "
                                                  "/data/affiche.db.before-restore-<time>, opened read-only")

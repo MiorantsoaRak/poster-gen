@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { facebookCard, lineOf, publishAction, publishedOn, seenOf, type Publication } from '../src/facebook'
+import { facebookCard, panelLine, postsAddress } from '../src/facebook'
+import type { Post } from '../src/publish'
 
 const page = { id: '100000000000001', name: 'Page d’essai 1', state: 'connected' as const }
 const choice = [{ id: '100000000000001', name: 'Page d’essai 1' }, { id: '100000000000002', name: 'Page d’essai 2' }]
@@ -14,37 +15,24 @@ it('gives the card the form of what the server says, a waiting choice first', ()
   expect(facebookCard({ page: null, choice: null, last_error: { code: 'facebook_failed', message_fr: 'x' } })).toBe('connect')
 })
 
-const item = (status: Publication['status'], change: Partial<Publication> = {}): Publication => ({
+const post = (status: Post['status'], change: Partial<Post> = {}): Post => ({
   id: crypto.randomUUID(), status, page_id: page.id, page_name: page.name, sent_at: '2026-11-21T08:00:00.000000+00:00',
-  settled_at: null, link: null, error_code: null, said_by_owner: false, message_fr: `ligne ${status}`, ...change })
-const elsewhere = (status: Publication['status']) => item(status, { page_id: '100000000000002', page_name: 'Page d’essai 2' })
+  settled_at: null, count: 1, done: 1, failed_position: null, link: null, error_code: null, said_by_owner: false,
+  stop_asked: false, message_fr: `ligne ${status}`, items: [], ...change })
 
-it('leads to « Mon compte » without a connected Page, offers nothing while an outcome waits on this Page, else the sheet', () => {
-  expect(publishAction(null, [])).toBe('account')
-  expect(publishAction({ ...page, state: 'reconnect' }, [item('published')])).toBe('account')
-  expect(publishAction(page, [])).toBe('sheet')
-  expect(publishAction(page, [item('published'), item('failed')])).toBe('sheet')
-  expect(publishAction(page, [item('published'), item('sending')])).toBe('wait')
-  expect(publishAction(page, [item('unknown')])).toBe('wait')
-  expect(publishAction(page, [elsewhere('unknown'), elsewhere('sending')])).toBe('sheet')  // another Page's wait is not this one's
+it('says on the final panel whether the poster went alone, the state, Facebook’s link, and an unknown one to answer', () => {
+  const link = 'https://www.facebook.com/100000000000001_42'
+  expect(panelLine(post('published', { link }))).toEqual({ alone: 'seule', state: 'ligne published', link, answer: false })
+  expect(panelLine(post('published', { link, count: 3 })).alone).toBe('dans une publication de 3 images')
+  // The owner's word links to the Page, not to a post: no « Voir la publication ».
+  expect(panelLine(post('published', { link: 'https://www.facebook.com/100000000000001', said_by_owner: true })).link).toBeNull()
+  expect(panelLine(post('published', { link: 'https://evil.example/x' })).link).toBeNull()
+  expect(panelLine(post('unknown'))).toEqual({ alone: 'seule', state: 'ligne unknown', link: null, answer: true })
+  for (const status of ['uploading', 'posting', 'failed'] as const)
+    expect(panelLine(post(status, { link }))).toEqual({ alone: 'seule', state: `ligne ${status}`, link: null, answer: false })
 })
 
-it('sends as seen the last publication on this Page, and says the last one that is on it', () => {
-  const [newest, published, older] = [item('failed'), item('published', { said_by_owner: true }), item('published')]
-  expect(seenOf(page, [])).toBeNull()
-  expect(seenOf(page, [elsewhere('published')])).toBeNull()
-  expect(seenOf(page, [elsewhere('failed'), newest, published, older])).toBe(newest.id)
-  expect(publishedOn(page, [elsewhere('published'), newest])).toBeNull()
-  expect(publishedOn(page, [elsewhere('published'), newest, published, older])).toBe(published)
-})
-
-it('shows each line with its link and asks the owner only for an unknown outcome', () => {
-  const post = 'https://www.facebook.com/100000000000001_42'
-  expect(lineOf(item('published', { link: post }))).toEqual({ state: 'ligne published', link: { href: post, label: 'Voir la publication' }, ask: false })
-  expect(lineOf(item('published', { link: 'https://www.facebook.com/100000000000001', said_by_owner: true })).link)
-    .toEqual({ href: 'https://www.facebook.com/100000000000001', label: 'Ouvrir la Page' })
-  expect(lineOf(item('unknown'))).toEqual({ state: 'ligne unknown', link: { href: 'https://www.facebook.com/100000000000001', label: 'Ouvrir ma Page' }, ask: true })
-  for (const status of ['sending', 'failed'] as const) expect(lineOf(item(status, { link: post }))).toEqual({ state: `ligne ${status}`, link: null, ask: false })
-  expect(lineOf(item('published', { link: 'https://evil.example/x' })).link).toBeNull()
-  expect(lineOf(item('published', { link: null })).link).toBeNull()
+it('reads the posts of a poster a page at a time, the next one after the last post shown', () => {
+  expect(postsAddress('c1', null)).toBe('/api/facebook/posts?creation=c1')
+  expect(postsAddress('c1', 'p 20')).toBe('/api/facebook/posts?creation=c1&before=p%2020')
 })

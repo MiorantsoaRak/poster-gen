@@ -182,14 +182,10 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
                     "acknowledged_warning_ids": [w["id"] for w in render_row["warnings"]]}
     confirmed = send(a, "POST", f"/api/creations/{cid}/confirmations", confirm_body, 3)
     assert confirmed.status_code == 201, confirmed.text
-    # A's Page, and a publication of its confirmed poster whose outcome is unknown (the stand-in's marker).
+    # A's Page, and a post of its confirmed poster whose outcome is unknown (D-FB-POST-003, the stand-in's marker): its
+    # task runs on, the stand-in answers at once.
     with write_tx(engine) as conn:
         conn.execute(text(PAGE_ROW), {"shop": 1, "now": "2026-11-21T08:00:00.000000+00:00", **vars(StubGraph.PAGES[0])})
-    publication = send(a, "POST", f"/api/creations/{cid}/publications", {
-        "confirmation_id": confirmed.json()["confirmation_id"], "page_id": StubGraph.PAGES[0].id, "caption": "[stub:unknown]",
-        "seen": None})
-    assert publication.status_code == 201 and publication.json()["status"] == "unknown", publication.text
-    # And a post of it whose outcome is unknown (D-FB-POST-003): its task runs on, the stand-in answers at once.
     post_a = send(a, "POST", "/api/facebook/posts", {"page_id": StubGraph.PAGES[0].id, "description": "[stub:unknown]", "items": [
         {"creation_id": cid, "confirmation_id": confirmed.json()["confirmation_id"], "seen": None}]})
     assert post_a.status_code == 202, post_a.text
@@ -207,8 +203,7 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
               "look": look_a, "proposal": proposal_a, "effect": effect_a, "render": render_a,
               "confirmation": confirmed.json()["confirmation_id"], "original": original_a, "scene": scene_sha_a,
               "style": style_a, "logo": logo_a, "texture": texture_a, "png": render_row["png_sha256"],
-              "state": state_a, "page": StubGraph.PAGES[0].id, "publication": publication.json()["id"],
-              "post": post_a.json()["id"]}
+              "state": state_a, "page": StubGraph.PAGES[0].id, "post": post_a.json()["id"]}
     # The same places, filled with ids of the same kinds that exist nowhere.
     nowhere = {name: secrets.token_hex(32) if len(value) == 64 else str(uuid4()) for name, value in theirs.items()}
     nowhere["page"] = "9" * len(theirs["page"])  # a Page's id is digits
@@ -241,7 +236,7 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             ("/api/visuals/{id}", "visual"), ("/api/looks/{id}", "look"), ("/api/text-proposals/{id}", "proposal"),
             ("/api/text-effects/{id}", "effect"), ("/api/product-inputs/{id}", "input"), ("/api/renders/{id}", "render"),
             ("/api/renders/{id}/preview", "render"), ("/api/confirmations/{id}/download", "confirmation"),
-            ("/api/creations/{id}/publications", "creation"), ("/api/facebook/posts/{id}", "post"))),
+            ("/api/facebook/posts/{id}", "post"))),
         ("GET", "/api/facebook/posts", lambda x: (f"/api/facebook/posts?creation={x['creation']}", None, None)),
         *(reading("/api/assets/{sha}", name, query) for name in ("original", "scene", "style", "logo", "texture", "png")
           for query in ("", "?prepared=true", "?prepared=true&display=true&v=1")),
@@ -276,10 +271,6 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         ("POST", "/api/text-proposals/{id}/reject", lambda x: (f"/api/text-proposals/{x['proposal']}/reject", None, None)),
         ("POST", "/api/text-effects/{id}/apply", lambda x: (f"/api/text-effects/{x['effect']}/apply", None, rev)),
         ("POST", "/api/text-effects/{id}/reject", lambda x: (f"/api/text-effects/{x['effect']}/reject", None, None)),
-        ("POST", "/api/creations/{id}/publications", lambda x: (f"/api/creations/{x['creation']}/publications", {
-            "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
-        ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
-            f"/api/creations/{x['creation']}/publications/{x['publication']}/outcome", {"present": True}, None)),
         ("POST", "/api/facebook/posts/{id}/stop", lambda x: (f"/api/facebook/posts/{x['post']}/stop", None, None)),
         ("POST", "/api/facebook/posts/{id}/outcome", lambda x: (f"/api/facebook/posts/{x['post']}/outcome", {"present": True}, None)),
         # A's objects named in the body of B's own requests.
@@ -314,11 +305,6 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
         ("POST", "/api/creations/{id}/scenes", lambda x: (f"/api/creations/{bid}/scenes", {
             "plan_id": plan_b, "acknowledged_warnings": ["low_resolution"], "keep_adjustments_of": x["visual"]}, 1)),
         ("POST", "/api/reads", lambda x: ("/api/reads", read_body | {"creation_id": bid, "visual_id": x["visual"]}, None)),
-        # A's confirmed file published on B's own poster, and A's publication answered from B's poster.
-        ("POST", "/api/creations/{id}/publications", lambda x: (f"/api/creations/{bid}/publications", {
-            "confirmation_id": x["confirmation"], "page_id": x["page"], "caption": "", "seen": None}, None)),
-        ("POST", "/api/creations/{id}/publications/{pid}/outcome", lambda x: (
-            f"/api/creations/{bid}/publications/{x['publication']}/outcome", {"present": False}, None)),
         # A's poster, confirmation and post in a post of B's.
         ("POST", "/api/facebook/posts", lambda x: ("/api/facebook/posts", {"page_id": x["page"], "description": "", "items": [
             {"creation_id": x["creation"], "confirmation_id": x["confirmation"], "seen": {"id": x["post"], "status": "unknown"}}]},
@@ -493,10 +479,6 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     assert b.get("/api/facebook").json()["page"] is None and b.delete("/api/facebook/page").is_success
     assert a.get("/api/facebook").json()["page"]["id"] == theirs["page"]
     done.append(a.delete("/api/facebook/page"))
-    # A's publication was not touched by B's tries: still unknown, its owner says it is on the Page.
-    done += [a.get(f"/api/creations/{cid}/publications"),
-             send(a, "POST", f"/api/creations/{cid}/publications/{theirs['publication']}/outcome", {"present": True})]
-    assert b.get(f"/api/creations/{bid}/publications").json() == {"page": None, "items": []}
     # A's post too: still unknown after B's tries; read, stopped (it is settled: answered as it is), then answered.
     done += [a.get("/api/facebook/posts/candidates"), a.get(f"/api/facebook/posts?creation={cid}"),
              a.get(f"/api/facebook/posts/{theirs['post']}"), send(a, "POST", f"/api/facebook/posts/{theirs['post']}/stop")]

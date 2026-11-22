@@ -1,6 +1,6 @@
-"""The Graph API client of the Facebook publishing (D-FB-PUBLISH-001 to 003, D-FB-POST-002): the connection's three
-calls, the photo's send, and a post's two calls (an image uploaded unpublished, then the post that publishes them), to
-Meta (`meta`) or to a local stand-in (`stub`). No database here but the mode guard: the routes admit, store and settle.
+"""The Graph API client of the Facebook publishing (D-FB-PUBLISH-001, 002, D-FB-POST-002): the connection's three
+calls and a post's two calls (an image uploaded unpublished, then the post that publishes them), to Meta (`meta`) or to
+a local stand-in (`stub`). No database here but the mode guard: the routes admit, store and settle.
 
 Nothing is retried here: a send without an answer is the owner's to judge (D-FB-PUBLISH-003 §5), and an upload tried
 again is its caller's decision (D-FB-POST-003 §4). The module logs, returns and stores only its own words and its own
@@ -82,7 +82,7 @@ class Page:
 
 @dataclass(frozen=True)
 class Outcome:
-    """A send's settlement, as facebook_publications and facebook_posts keep it. error_code: one of KNOWN_CODES, or this
+    """A post's settlement, as facebook_posts keeps it. error_code: one of KNOWN_CODES, or this
     module's `not_sent` and `caption`. reconnect: the Page becomes 'reconnect' (the route checks that its row is still
     the one that gave the token)."""
     status: Literal["published", "failed", "unknown"]
@@ -162,21 +162,20 @@ def _not_200(what: str, status: str, payload: object) -> Outcome:
     return Outcome("failed", error_code=str(code), reconnect=code == RECONNECT_CODE)
 
 
-def classify(response: httpx2.Response | None, page_id: str, sent: tuple[str, ...] = (), *, post: bool = False) -> Outcome:
-    """The answers' table of D-FB-PUBLISH-003 §4, read in its order. None: no answer, or a cut connection. `sent`: the
-    credentials of the call, which a post id must not hold. `post`: a post's answer, whose id is in `id`; a photo's is
-    in `post_id` (D-FB-POST-002). The field and the log line's word are chosen here, never given by a caller."""
-    field, what = ("id", "post") if post is True else ("post_id", "photo")
+def classify(response: httpx2.Response | None, page_id: str, sent: tuple[str, ...] = ()) -> Outcome:
+    """A post's answer (D-FB-POST-002), read in the order of D-FB-PUBLISH-003 §4's table. None: no answer, or a cut
+    connection. `sent`: the credentials of the call, which a post id must not hold. The post's id is in `id` (the proofs
+    of 2026-11-21), not in `post_id`, which a single photo's answer has."""
     if response is None:
         return Outcome("unknown")
     status, payload = _status(response), _json(response)
     if status != "200":
-        return _not_200(what, status, payload)
-    post_id = payload.get(field) if isinstance(payload, dict) else None
+        return _not_200("post", status, payload)
+    post_id = payload.get("id") if isinstance(payload, dict) else None
     # The gate takes the value that is kept, whole: an id with its underscore could be a credential's shape.
     if _kept(post_id, POST_ID, sent) and post_id.partition("_")[0] == page_id:
         return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
-    _said(what, status, "without a post id of this Page")  # unreadable, or the unpublished photo's `id` alone
+    _said("post", status, "without a post id of this Page")  # unreadable, or not a post of this Page
     return Outcome("unknown")
 
 
@@ -291,31 +290,6 @@ class MetaGraph:
             pages.append(Page(id, name, token))
         return pages
 
-    async def publish_photo(self, page_id: str, page_token: str, png: bytes, caption: str) -> Outcome:
-        """D-FB-PUBLISH-003 §3: one multipart POST of the file itself, never retried, settled by `classify`. An empty
-        caption is not sent."""
-        # Checked before the proof or the request is built: an argument of the wrong shape would raise from a frame that
-        # holds the token. Nothing was sent, so the failure is definite. (The route's own rules refuse these first.)
-        if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
-                or not isinstance(png, bytes) or not isinstance(caption, str)):
-            return Outcome("failed", error_code="not_sent")
-        try:
-            caption.encode("utf-8")
-        except UnicodeEncodeError:  # a lone surrogate
-            return Outcome("failed", error_code="caption")
-        proof = self._proof(page_token)
-        form = {"access_token": page_token, "appsecret_proof": proof} | ({"caption": caption} if caption else {})
-        try:
-            response = await self._request("POST", f"{GRAPH}/{page_id}/photos", PHOTO_TIMEOUT_S, data=form,
-                                           files={"source": ("affiche.png", png, "image/png")})
-        except httpx2.TimeoutException:  # sent or not, nobody can say
-            _said("photo", "timeout")
-            response = None
-        except Exception:  # noqa: BLE001 — as in `_call`: nothing the client raises leaves with this frame's token
-            _said("photo", "network")
-            response = None
-        return classify(response, page_id, (page_token, proof, self._secret.get_secret_value()))
-
     async def _send(self, what: str, url: str, **request) -> httpx2.Response | None:
         """A call of a post: one POST under CALL_DEADLINE_S, never retried. None: sent or not, nobody can say."""
         try:
@@ -334,7 +308,8 @@ class MetaGraph:
         """D-FB-POST-002: one image of a post, a multipart POST of the file itself with `published=false`: Facebook
         makes a photo that shows nothing on the Page. `hint` and `position` are the stand-in's (its markers): ignored
         here, so that a caller calls both alike."""
-        # Checked before the proof or the request is built, as publish_photo's.
+        # Checked before the proof or the request is built: an argument of the wrong shape would raise from a frame that
+        # holds the token. Nothing was sent, so the failure is definite. (The route's own rules refuse these first.)
         if (not isinstance(page_id, str) or not DIGITS.fullmatch(page_id) or not credential(page_token)
                 or not isinstance(png, bytes)):
             return Upload("failed", error_code="not_sent")
@@ -361,14 +336,13 @@ class MetaGraph:
                  for n, photo in enumerate(photo_ids)}
         form = ({"message": message} if message else {}) | media | {"access_token": page_token, "appsecret_proof": proof}
         response = await self._send("post", f"{GRAPH}/{page_id}/feed", data=form)
-        return classify(response, page_id, (page_token, proof, self._secret.get_secret_value()), post=True)
+        return classify(response, page_id, (page_token, proof, self._secret.get_secret_value()))
 
 
 class StubGraph:
     """FACEBOOK_PROVIDER=stub, for tests, smokes and the dev server: the same calls, no network. Two Pages, so that a
-    smoke chooses one; every photo is published, with a new post id of its Page's shape, unless its caption holds one of
-    MARKERS: then the answer a smoke needs to see, unknown or refused. A post is read the same way on its message; its
-    uploads read the same message (`hint`): `[stub:image:N]` refuses the Nth image (N from 1), `[stub:slow]` makes each
+    smoke chooses one; every post is published, with a new post id of its Page's shape, unless its message holds one of
+    MARKERS: then the answer a smoke needs to see, unknown or refused. Its uploads read the same message (`hint`): `[stub:image:N]` refuses the Nth image (N from 1), `[stub:slow]` makes each
     upload take a second, for the smoke's « Arrêter l’envoi »."""
     mode = "stub"
     PAGES = (Page("100000000000001", "Page d’essai 1", "stub-page-token-000000001"),
@@ -384,14 +358,6 @@ class StubGraph:
 
     async def pages(self, user_token: str) -> list[Page] | GraphFailure:
         return list(self.PAGES)
-
-    async def publish_photo(self, page_id: str, page_token: str, png: bytes, caption: str) -> Outcome:
-        if not isinstance(page_id, str) or not DIGITS.fullmatch(page_id):
-            return Outcome("failed", error_code="not_sent")
-        if marked := next((answer for marker, answer in self.MARKERS.items() if marker in caption), None):
-            return marked
-        post_id = f"{page_id}_{uuid4().int % 10 ** 15}"
-        return Outcome("published", post_id, f"https://www.facebook.com/{post_id}")
 
     async def upload_photo(self, page_id: str, page_token: str, png: bytes, *, hint: str = "",
                            position: int = 0) -> Upload:
