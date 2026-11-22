@@ -4,7 +4,7 @@
 // on the control that opened it.
 import { nextTick, ref } from 'vue'
 
-export interface Question { title: string; text: string; action: string }
+export interface Question { title: string; text: string; action: string; context?: string }
 const dialog = ref<HTMLDialogElement>(), cancel = ref<HTMLButtonElement>(), question = ref<Question>({ title: '', text: '', action: '' })
 let answer: ((yes: boolean) => void) | undefined, opener: Element | null = null
 
@@ -37,9 +37,10 @@ defineExpose({ ask, dismiss })
 </script>
 
 <template>
-  <dialog ref="dialog" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-text" @cancel="finish(false)" @close="closed">
+  <dialog ref="dialog" role="alertdialog" aria-labelledby="confirm-title" :aria-describedby="question.context ? 'confirm-text confirm-context' : 'confirm-text'" @cancel="finish(false)" @close="closed">
     <h2 id="confirm-title">{{ question.title }}</h2>
     <p id="confirm-text">{{ question.text }}</p>
+    <small v-if="question.context" id="confirm-context">{{ question.context }}</small>
     <div class="actions">
       <button ref="cancel" type="button" @click="finish(false)">Cancel</button>
       <button type="button" class="primary" @click="finish(true)">{{ question.action }}</button>

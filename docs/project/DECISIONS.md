@@ -1198,3 +1198,33 @@ The owner authorized closing T-SHOP-DASH-006 after fixing the round-three histor
 **Also decided there:** nothing uploaded is deleted by the app (a photo left behind is not shown on the Page); the owner can stop a post while its images are being sent; the draft is kept until its post is published; the request and its key are kept on the device before they leave, and a device that cannot keep them sends nothing.
 
 **What it costs.** T-FB-003's backend and its sheet are rewritten before they ever ran for a shop; publishing one poster goes through two calls to Facebook in place of one (an upload that shows nothing, then the post). To prove before the backend task: that a post of one photo made this way reads as a photo post.
+
+## 2026-11-22 · Product UX review scope
+
+Use release 05a12ee and its browser captures for the simplification review. Keep the Signal identity and treat a faster path through fidelity review, exact-file confirmation and public-post consent as a presentation change. Recommendations and onboarding requirements are proposals pending owner approval.
+
+## 2026-11-22 · First-poster guide and publishing recovery design
+
+The owner said « continue » after the two requirements were presented for approval. Proceed with design. Use in-context reading help and an optional empty-state invitation; retain the open work surface underneath. Review the repair and confirmed-output flow with an isolated responsive mockup before implementation.
+
+2026-11-22 · The owner’s « next » after the design-approval handoff advances both designs to implementation. Start with the read-only exclusions contract.
+
+2026-11-22 · A repaired batch addition carries the poster ID and the confirmed download URL for one navigation. The locked composer compares both with its fresh candidate before appending, so a newer confirmation cannot silently replace the file the seller chose.
+
+2026-11-22 · Keep the fidelity dialog open while its final-file request runs. Closing it abandons that navigation. A completed server render remains reusable. The explicit review checks the selected visual, shop, revision and format. Opening a saved poster normally retains its primary-format confirmation preference.
+
+2026-11-22 · Preparation opens on Style and leaves Textes and Boutique directly accessible on the same draft. The offer summary uses the saved product input for its source photos and variant, so a reopened draft shows the same offer as a new one. Generation still uses the existing credit and photo-quality confirmation.
+
+2026-11-22 · Keep an unfinished title in the editor field, like an invalid price, so the shop can correct it while other valid edits still save. Replay an already submitted chat request using its recorded format and key even if the current product cannot be read. A fresh generation waits for the source product.
+
+2026-11-22 · Accueil’s review action and the library’s confirmed-file action use separate read-only opening paths. A waiting alternative and a current confirmed PNG can coexist, so the existing protected listing exposes its current-file flag independently of the displayed review state. Older list responses retain the confirmed-state fallback.
+
+2026-11-22 · The first-poster guide opens a native modal on the existing shop route and keeps its step in page memory. A drawer launch returns focus to the menu toggle. Contextual entries on the guided editor and Facebook composer open the corresponding instruction without moving or saving the underlying work.
+
+2026-11-22 · The console lists unresolved money requests first, tagged with the saved operation, shop and reference. Inspecting the row opens the existing shop recovery controls. Reads and layout changes use the existing request and financial confirmation rules.
+
+2026-11-22 · In release verification the owner identified entering the product or choosing a format as the first difficult point. Keep Publication as the existing default, explain its destinations before generation, and keep optional shop identity available on demand. This changes presentation under D-JOURNEY-002/007. The price, photo attestation, generation charge and final checks retain their existing rules.
+
+2026-11-22 · Owner approved a single review of the current finished PNG. Opening its private preview carries no approval. Download or preparation of a Facebook post accepts the shown product and file together. Public posting retains its own confirmation.
+
+2026-11-23 · Following the owner’s successful trial and feedback on the hidden confirmation, expose the existing exact-file confirmation as an optional library-only action. Name confirmation on the download and Facebook shortcuts. Keep all actions on the same reviewed PNG and keep public send in the composer.

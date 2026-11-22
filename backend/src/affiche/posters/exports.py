@@ -14,6 +14,7 @@ from .models import Document, Format, Id, Model, Sha, TextLayer, canonical, form
 
 class RenderRequest(Model):
     format: Format = "feed"
+    review_visual_id: Id | None = None
 
 
 class ConfirmRequest(Model):
@@ -21,20 +22,24 @@ class ConfirmRequest(Model):
     png_sha256: Sha
     checks: dict[Literal["framing", "content", "identity", "readability"], bool]
     acknowledged_warning_ids: list[str] = Field(default_factory=list, max_length=200)
+    review_visual_id: Id | None = None
+    fidelity_checks: visuals.FidelityChecks | None = None
 
 
-def snapshot(conn, settings, shop, id, revision, format, build):
+def snapshot(conn, settings, shop, id, revision, format, build, review_visual_id=None):
     _, document, _ = visuals._snapshot(conn, shop, id, revision, format, settings.formats_enabled)
-    return effective_snapshot(conn, settings, shop, document, format, build)
+    return effective_snapshot(conn, settings, shop, document, format, build, review_visual_id)
 
 
-def effective_snapshot(conn, settings, shop, document, format, build):
+def effective_snapshot(conn, settings, shop, document, format, build, review_visual_id=None):
     store._references(conn, settings.data_dir, shop, document)
     layout = document.formats[format]
     if layout.scene.visual_id is None:
         raise store.Refused("scene_unapproved", 409)
     visual, image = visuals.read_visual_bytes(conn, settings.data_dir, shop, layout.scene.visual_id, document.input_id)
-    if visual["status"] != "approved":
+    if review_visual_id and visual["id"] != review_visual_id:
+        raise store.Refused("preview_stale", 409)
+    if visual["status"] != "approved" and not (review_visual_id and visual["status"] == "pending_review"):
         raise store.Refused("scene_unapproved", 409)
     # Words the image model drew cannot be edited: they must still say what the poster says, and a hidden
     # layer must be replaced by them. Showing the layer again never excuses stale words in the image.
@@ -91,9 +96,11 @@ def effective_snapshot(conn, settings, shop, document, format, build):
 def request_render(engine, settings, shop, key, id, revision, request):
     def apply(conn):
         build = rendering.bundle()
-        value = snapshot(conn, settings, shop, id, revision, request.format, build)
+        value = snapshot(conn, settings, shop, id, revision, request.format, build, request.review_visual_id)
         # The queue snapshot contains hashes; prepare resolves bytes again before the local render.
         payload = {name: value[name] for name in ("format", "format_hash", "asset_manifest", "renderer_build_hash", "font_manifest_hash")}
+        if request.review_visual_id:
+            payload["review_visual_id"] = request.review_visual_id
         digest = store._sha(canonical(payload))
         previous = conn.execute(text("SELECT id,result_ref FROM poster_jobs WHERE creation_id=:id AND origin_revision=:revision "
                                      "AND kind='render' AND input_hash=:hash AND status IN ('queued','running','succeeded') ORDER BY created_at DESC LIMIT 1"),
@@ -101,7 +108,7 @@ def request_render(engine, settings, shop, key, id, revision, request):
         if previous:
             return 202, {"job_id": previous["id"], "status_url": f"/api/jobs/{previous['id']}"}
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "render", payload)
-    return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/renders", request.model_dump(), apply, revision=revision)
+    return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/renders", request.model_dump(exclude_none=True), apply, revision=revision)
 
 
 def prepare(conn, settings, job):
@@ -111,7 +118,8 @@ def prepare(conn, settings, job):
     original = store.get_creation(conn, job["shop_id"], job["creation_id"], job["origin_revision"])
     if current["status"] != "active":
         raise store.Refused("creation_abandoned", 409)
-    value = effective_snapshot(conn, settings, job["shop_id"], Document.model_validate(original["document"]), payload["format"], build)
+    value = effective_snapshot(conn, settings, job["shop_id"], Document.model_validate(original["document"]), payload["format"], build,
+                               payload.get("review_visual_id"))
     for name in ("format_hash", "asset_manifest", "renderer_build_hash", "font_manifest_hash"):
         if value[name] != payload[name]:
             raise store.Refused("render_inputs_changed", 409)
@@ -177,7 +185,11 @@ def confirm(engine, settings, shop, key, id, revision, request):
             raise store.Refused("not_found", 404)
         if set(request.checks) != {"framing", "content", "identity", "readability"} or not all(request.checks.values()):
             raise store.Refused("confirmation_incomplete")
-        value = snapshot(conn, settings, shop, id, revision, row["format"], rendering.bundle())
+        if (request.review_visual_id is None) != (request.fidelity_checks is None):
+            raise store.Refused("fidelity_incomplete")
+        if request.review_visual_id and row["source_revision"] != revision:
+            raise store.Refused("preview_stale", 409)
+        value = snapshot(conn, settings, shop, id, revision, row["format"], rendering.bundle(), request.review_visual_id)
         if value["format_hash"] != row["format_hash"] or request.png_sha256 != row["png_sha256"]:
             raise store.Refused("preview_stale", 409)
         warnings = {warning["id"] for warning in json.loads(row["warnings_json"])}
@@ -190,14 +202,16 @@ def confirm(engine, settings, shop, key, id, revision, request):
         # not this revision's (D-SHARE-001). The current one needs its own preview.
         if existing and existing["confirmed_revision"] < revision:
             raise store.Refused("preview_stale", 409)
+        if request.review_visual_id:
+            visuals.record_decision(conn, shop, request.review_visual_id, "approve", request.fidelity_checks, [], None)
         confirmation = existing["id"] if existing else str(uuid4())
         if not existing:
             conn.execute(text("INSERT INTO confirmations VALUES (:id,:creation,:source,:revision,:format,:hash,:render,:png,:checks,:now)"),
                          {"id": confirmation, "creation": id, "source": row["source_revision"], "revision": revision,
                           "format": row["format"], "hash": row["format_hash"], "render": row["id"], "png": row["png_sha256"],
-                          "checks": canonical(request.model_dump()), "now": utc_now()})
+                          "checks": canonical(request.model_dump(exclude_none=True)), "now": utc_now()})
         return 201, {"confirmation_id": confirmation, "download_url": f"/api/confirmations/{confirmation}/download"}
-    return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/confirmations", request.model_dump(), apply, revision=revision)
+    return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/confirmations", request.model_dump(exclude_none=True), apply, revision=revision)
 
 
 def download(conn, settings, shop, id):

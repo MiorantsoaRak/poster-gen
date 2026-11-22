@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Overview · Doka Studio operator mockup</title>
+<link rel="icon" href="../doka-console/assets/favicon.svg">
+<link rel="stylesheet" href="../doka-console/doka.css">
+<script>document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'</script>
+<style>
+body{padding:0}
+.layout{min-height:100vh;display:grid;grid-template-columns:220px minmax(0,1fr)}
+aside{background:var(--side-bg);border-right:1px solid var(--line);padding:30px 18px}
+.brandmark{display:block;width:130px;height:auto}
+.reverse,:root[data-theme=dark] .normal{display:none}
+:root[data-theme=dark] .reverse{display:block}
+nav{display:grid;gap:4px;margin-top:36px}
+nav a{min-height:44px;display:flex;align-items:center;padding:0 16px;border-radius:12px;text-decoration:none;color:var(--muted);font-weight:650}
+nav a:hover,nav a:focus-visible{background:var(--active)}
+main{max-width:1160px;width:100%;padding:32px clamp(20px,4vw,76px) 60px;margin:auto}
+.context{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:16px;border-bottom:1px solid var(--line);color:var(--muted)}
+h1{margin:26px 0 20px;font-size:38px;line-height:1.15;letter-spacing:-.03em}
+h2{font-size:19px}
+.alert{padding:24px;border:1px solid var(--edge);background:var(--surface);border-radius:18px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.alert h3{font-size:21px;line-height:1.25;color:var(--text);margin:10px 0 4px}
+.alert p,.shop p{color:var(--muted)}
+.alert .btn{flex:none}
+.block{margin-top:24px}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:16px;background:var(--surface);margin:12px 0 0;overflow:hidden}
+.metrics div{padding:16px 18px;min-width:0}
+.metrics div+div{border-inline-start:1px solid var(--line)}
+dt{font-size:13px;color:var(--muted)}
+dd{margin:4px 0 0;font-size:24px;line-height:1.15;font-weight:750;letter-spacing:-.02em}
+.columns{display:grid;grid-template-columns:1.2fr 1fr;gap:18px}
+.panel{padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.panel h2{margin-bottom:10px}
+.shop,.line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0}
+.shop,.line+.line{border-top:1px solid var(--line)}
+.line span{color:var(--muted)}
+.panel small{display:block}
+details{border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:0 20px;margin-top:16px}
+summary{cursor:pointer;font-weight:700;padding:14px 0;min-height:48px}
+details h3{font-size:16px;margin:12px 0}
+details p{max-width:70ch}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px}
+td,th{padding:10px 4px;border-top:1px solid var(--line);text-align:left}th{font-size:13px;color:var(--muted)}td:last-child,th:last-child{text-align:right}
+footer{margin-top:24px;color:var(--faint);font-size:13px}
+@media(max-width:960px){.layout{display:block}aside{padding:12px 20px;display:flex;justify-content:space-between;gap:12px;align-items:center;border:0;border-bottom:1px solid var(--line)}.brandmark{width:82px}nav{display:flex;flex-wrap:wrap;gap:0;margin:0}nav a{padding:0 8px;font-size:13px}main{padding:16px 20px 40px}.metrics{grid-template-columns:1fr 1fr}.metrics div:nth-child(3){border-inline-start:0}.metrics div:nth-child(n+3){border-top:1px solid var(--line)}}
+@media(max-width:600px){aside{flex-wrap:wrap;padding:8px 14px}nav a{padding:0 6px}main{padding:12px 14px 32px}.columns{grid-template-columns:1fr;gap:12px}.alert{display:grid;padding:16px;gap:14px}.alert .btn{justify-self:start}h1{font-size:32px;margin:18px 0 14px}.block{margin-top:20px}.metrics div{padding:13px}.panel{padding:14px 16px}.context{font-size:14px;padding-bottom:8px}.shop{align-items:flex-start}table{font-size:13px}}
+</style>
+<body>
+<div class="layout">
+<aside>
+  <a href="#overview" aria-label="Doka Studio overview"><img class="brandmark normal" src="../doka-console/assets/doka-horizontal-charcoal.svg" alt=""><img class="brandmark reverse" src="../doka-console/assets/doka-horizontal-paper.svg" alt=""></a>
+  <nav aria-label="Overview sections"><a href="#overview">Overview</a><a href="#shops">Shops</a><a href="#payments">Payments</a><a href="#service">Service</a></nav>
+</aside>
+<main id="overview">
+  <header class="context"><span>Operator console</span><button id="theme" type="button">Dark theme</button></header>
+  <h1>Overview</h1>
+  <section class="alert" aria-labelledby="exception"><div><span class="badge warn">Needs review</span><h2 id="exception" style="margin-top:8px">Grant awaiting confirmation</h2><p>Original Phone Mada · 12 credits · MV-0482</p><p>The request may already be in the ledger.</p></div><a id="inspect" class="btn primary" href="#ledger">Inspect request →</a></section>
+  <section class="block" aria-labelledby="activity"><h2 id="activity">Activity</h2><dl class="metrics"><div><dt>Active shops</dt><dd>2</dd></div><div><dt>Credits outstanding</dt><dd>32</dd></div><div><dt>Received in November (UTC)</dt><dd>40,000 Ar</dd></div><div><dt>Provider spend</dt><dd>$7.42</dd><small>of $100</small></div></dl></section>
+  <div class="columns block">
+    <section class="panel" id="shops"><h2>Shops</h2><div class="shop"><div><b>Original Phone Mada</b><small>originalphone</small></div><span>20 credits</span></div><div class="shop"><div><b>Boutique Tana</b><small>boutiquetana</small></div><span>12 credits</span></div></section>
+    <section class="panel" id="service"><h2>Service</h2><div class="line"><span>New AI requests</span><strong>Running</strong></div><div class="line"><span>Last backup</span><strong>2 hours ago</strong></div><div class="line"><span>Failed jobs in 24 hours</span><strong>0</strong></div></section>
+  </div>
+  <details id="ledger"><summary>Original Phone Mada · Shop ledger</summary><h3>Request MV-0482</h3><p>12 credits · 24,000 Ar · MVola. The original request is still awaiting a definite answer. Check the reference and the amount before resolving it.</p><table><caption class="vh">Recent recorded transactions for Original Phone Mada</caption><thead><tr><th>Date (UTC)</th><th>Reference</th><th>Credits</th></tr></thead><tbody><tr><td>20 Nov 2026</td><td>MV-0457</td><td>+20</td></tr></tbody></table></details>
+  <details id="payments"><summary>Payments this month</summary><table><caption class="vh">Recorded November payments</caption><thead><tr><th>Shop</th><th>Reference</th><th>Received</th></tr></thead><tbody><tr><td>Original Phone Mada</td><td>MV-0457</td><td>40,000 Ar</td></tr></tbody></table></details>
+  <footer>Design preview · Sample shop and ledger data</footer>
+</main>
+</div>
+<script>
+const root = document.documentElement;
+const theme = document.querySelector('#theme');
+function updateThemeLabel() { theme.textContent = root.dataset.theme === 'dark' ? 'Light theme' : 'Dark theme'; }
+updateThemeLabel();
+theme.addEventListener('click', () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  updateThemeLabel();
+});
+function revealTarget() {
+  const target = document.getElementById(location.hash.slice(1));
+  if (target instanceof HTMLDetailsElement) {
+    target.open = true;
+    target.querySelector('summary').focus();
+  }
+}
+document.querySelector('#inspect').addEventListener('click', () => { document.querySelector('#ledger').open = true; });
+window.addEventListener('hashchange', revealTarget);
+revealTarget();
+</script>
+</body>
+</html>

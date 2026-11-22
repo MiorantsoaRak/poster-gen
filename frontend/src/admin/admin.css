@@ -261,7 +261,7 @@ details.card[open] { padding-bottom: 16px }
 .kpi .value small { display: inline; font-size: 14px; font-weight: 500 }
 .meter { height: 6px; margin-top: 4px; border-radius: 999px; background: var(--raised); overflow: hidden }
 .meter i { display: block; height: 100%; border-radius: inherit; background: var(--text) }
-/* « Needs you », the full width under the figures: its heading and its sentences on one slim line; its lines in as many
+/* « Needs you », the full width before the figures: its heading and its sentences on one slim line; its lines in as many
    columns as the width holds, each a 44 px link on a hairline. */
 .needs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px }
 .needs h2, .needs p { margin: 0 }
@@ -274,6 +274,8 @@ details.card[open] { padding-bottom: 16px }
 .head h2 { margin: 0 }
 .head a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted) }
 .needs a { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; text-decoration: none }
+.needs .review-request strong { color: var(--warn) }
+@media (hover: hover) { .needs a:hover strong { text-decoration: underline } }
 /* The lists as dense as the table beside them. */
 :is(.needs, .paid) :is(strong, p) { font-size: 14px }
 :is(.needs, .paid) small { font-size: 13px }

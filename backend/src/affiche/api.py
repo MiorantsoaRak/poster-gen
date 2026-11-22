@@ -740,6 +740,11 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
                             ids: Annotated[str | None, Query(max_length=8000)] = None):
             return facebook_posts.candidates(app.state.engine, request.state.shop, limit, creation_cursor(before), ids)
 
+        @protected.get("/api/facebook/posts/excluded")
+        def excluded_posters(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20,
+                            before: Annotated[str | None, Query(max_length=100)] = None):
+            return facebook_posts.excluded(app.state.engine, request.state.shop, limit, creation_cursor(before))
+
         @protected.get("/api/facebook/posts")
         def facebook_posts_list(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 20, before: Id | None = None,
                                 creation: Id | None = None):
@@ -1066,7 +1071,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             total = conn.execute(text("SELECT COUNT(*) FROM creations WHERE shop_id=:shop AND status=:status"),
                                  {"shop": request.state.shop, "status": status}).scalar_one()
         items = [{"id": r["id"], "revision": r["current_revision"], "status": r["status"], "created_at": r["created_at"],
-                  "name": r["name"], "variant": r["variant"],
+                  "name": r["name"], "variant": r["variant"], "has_current_file": bool(r["confirmed"]),
                   # The one state that asks the owner to act comes first; "confirmed" means the file is this revision.
                   "state": "to_review" if r["to_review"] else
                            "confirmed" if r["confirmed"] else "approved" if r["scene_status"] == "approved" else "draft",

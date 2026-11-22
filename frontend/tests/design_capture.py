@@ -13,7 +13,7 @@ Writes to outputs/design-capture/<label>/ (git-ignored; label defaults to « now
       impeccable detect --json outputs/design-capture/<label>/html
       node <design-taste>/scripts/inspect.mjs outputs/design-capture/<label>/html/<file>.html --app --widths 1440,390
 A snapshot has no API behind it: its images are missing, and a font loaded by an absolute path is reported as absent.
-Not a test: it asserts only what it needs to reach each screen. One run at a time with the smokes (ports 5173 and 8000).
+The capture checks for horizontal overflow. Set SMOKE_WEB_PORT and SMOKE_API_PORT to unused ports to run beside a smoke.
 """
 import os
 import re
@@ -78,8 +78,14 @@ def seed(browser, data):
         page.goto(smoke.ORIGIN + "/#accueil")
         made.append(sb.made_in_chat(page, photo, message))
         if number < 2:
-            page.get_by_role("button", name="Tout est conforme, confirmer").click()
+            page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
             expect(page.get_by_role("heading", name=sb.READY)).to_be_visible()
+    page.goto(smoke.ORIGIN + "/#compte")
+    facebook = page.get_by_role("region", name="Page Facebook", exact=True)
+    facebook.get_by_role("button", name="Connecter ma Page Facebook").click()
+    facebook.get_by_role("radio", name="Page d’essai 1").check()
+    facebook.get_by_role("button", name="Connecter cette Page").click()
+    expect(facebook).to_contain_text("Page connectée")
     page.context.close()
     return made
 
@@ -98,6 +104,7 @@ def shoot(browser, name, url, sign_in=None, after=None):
             if after:
                 after(page)
             time.sleep(.6)  # the last transition
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), (name, width, scheme)
             # The ambient glow is fixed to the window: a full-page picture would cut it at one window's height, a line a
             # scrolling reader never sees. For the picture only, it spans the page; removed before the snapshot.
             glow = page.add_style_tag(content="html::before { position: absolute !important; bottom: auto !important;"
@@ -144,12 +151,42 @@ def operator_in(page):
     page.wait_for_load_state("networkidle")
 
 
+def open_guide(page):
+    menu = page.get_by_role("button", name="Ouvrir le menu")
+    if menu.is_visible():
+        menu.click()
+    page.get_by_role("button", name="Aide", exact=True).click()
+    expect(page.get_by_role("dialog", name="Ma première affiche")).to_be_visible()
+
+
+def prepare_batch(page):
+    page.get_by_label("Description de la publication").fill("Deux offres de la boutique")
+    tiles = page.locator(".tile")
+    expect(tiles).to_have_count(2)
+    for tile in tiles.all():
+        tile.click()
+    expect(page.locator("ol.chosen > li")).to_have_count(2)
+
+
+def preview_batch(page):
+    prepare_batch(page)
+    page.get_by_role("button", name="Publier…", exact=True).click()
+    expect(page.get_by_role("dialog", name=re.compile("^Publier sur "))).to_be_visible()
+
+
+def show_editor(page):
+    panel = page.locator(".final-preview")
+    if panel.is_visible():
+        panel.get_by_role("button", name="Fermer", exact=True).click()
+    expect(page.get_by_role("button", name="Aide pour cette affiche")).to_be_visible()
+
+
 def run():
     for folder in (OUT, OUT / "html", OUT / "sheets"):
         folder.mkdir(parents=True, exist_ok=True)
     assert (smoke.ROOT / "frontend/dist/admin/index.html").is_file(), "build first: corepack npm@10 run build"
     with tempfile.TemporaryDirectory(prefix="affiche-design-") as data:
-        server = smoke.serve(data)
+        server = smoke.serve(data, facebook_provider="stub")
         with (OUT / "preview.log").open("w") as log:
             vite = subprocess.Popen(["node", str(smoke.ROOT / "frontend/node_modules/vite/bin/vite.js"), "preview", "--host", "127.0.0.1",
                                      "--port", str(smoke.WEB_PORT), "--strictPort"], cwd=smoke.ROOT / "frontend", stdout=log, stderr=log)
@@ -160,6 +197,13 @@ def run():
                         made = seed(browser, data)
                         pilot, origin = shop_in(smoke.IDENTIFIER, smoke.PASSWORD), smoke.ORIGIN
                         shoot(browser, "client-signin", origin + "/")
+                        shoot(browser, "client-privacy", origin + "/donnees.html")
+                        shoot(browser, "client-guide", origin + "/#accueil", sign_in=pilot, after=open_guide)
+                        shoot(browser, "client-publishing", origin + "/#publier", sign_in=pilot, after=prepare_batch)
+                        shoot(browser, "client-post-confirmation", origin + "/#publier", sign_in=pilot, after=preview_batch)
+                        shoot(browser, "client-editor", origin + f"/#{made[2]}", sign_in=pilot, after=show_editor)
+                        shoot(browser, "client-message", origin + "/#message", sign_in=pilot,
+                              after=lambda page: expect(page.get_by_label("Votre message")).to_be_visible())
                         for name, path in [("client-home", "/#accueil"), ("client-posters", "/#affiches"), ("client-credits", "/#credits"),
                                            ("client-account", "/#compte"), ("client-styles", "/#styles"), ("client-chat-new", "/#creer"),
                                            ("client-steps", "/#etapes"), ("client-final-panel", f"/#message-{made[0]}"),

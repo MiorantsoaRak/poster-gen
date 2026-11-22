@@ -272,19 +272,17 @@ PAINT_JS = r"""e => { const style = getComputedStyle(e)
 RESTING = ".sign-in, .intake, .empty, .look-card, .rows, .card, .group, .comparison figure, .shot, .facts, .job-state, .rail"
 RESTING_JS = r"""([selectors, surface, line]) => [...document.querySelectorAll(selectors)].filter(e => e.checkVisibility()).flatMap(e => {
   const style = getComputedStyle(e), faults = []
-  if (style.backgroundColor !== surface) faults.push(`fill ${style.backgroundColor}`)
+  const flat = matchMedia('(max-width: 720px)').matches && e.matches('.inspecting .shot, .inspecting .file-facts')
+  if (style.backgroundColor !== (flat ? 'rgba(0, 0, 0, 0)' : surface)) faults.push(`fill ${style.backgroundColor}`)
   for (const side of ['Top', 'Right', 'Bottom', 'Left'])
-    if (style[`border${side}Style`] !== 'solid' || !(parseFloat(style[`border${side}Width`]) > 0) || style[`border${side}Color`] !== line)
+    if (flat ? style[`border${side}Width`] !== '0px' :
+        style[`border${side}Style`] !== 'solid' || !(parseFloat(style[`border${side}Width`]) > 0) || style[`border${side}Color`] !== line)
       faults.push(`border-${side.toLowerCase()} ${style[`border${side}Width`]} ${style[`border${side}Style`]} ${style[`border${side}Color`]}`)
   for (const [part, look] of [['itself', style], ['::before', getComputedStyle(e, '::before')], ['::after', getComputedStyle(e, '::after')]])
     for (const property of ['backdropFilter', 'boxShadow']) if (look[property] !== 'none') faults.push(`${part} ${property} ${look[property]}`)
   return faults.length ? [`<${e.tagName.toLowerCase()} class="${e.className}"> ${faults.join('; ')}`] : []
 })"""
 SHOWN_JS = "selector => [...document.querySelectorAll(selector)].some(e => e.checkVisibility())"
-# Where a tap at a control's centre lands, and whether the control is wholly inside the visible viewport.
-REACH_JS = r"""e => { const b = e.getBoundingClientRect(), v = visualViewport
-  return { inside: b.left >= v.offsetLeft - .5 && b.top >= v.offsetTop - .5 && b.right <= v.offsetLeft + v.width + .5 && b.bottom <= v.offsetTop + v.height + .5,
-    hit: e.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)), box: [b.x, b.y, b.width, b.height].map(Math.round) } }"""
 # The controls keep their place while a poster is made (T-WAIT-DEFORM, user report 2026-11-14): the rail's size and its
 # place in its column, each row of the open tab inside the rail, the poster's size and the bottom bar's size. On one
 # column the waiting block sits above the controls (D-POSTER-EDITOR-006): there the rail's place down the column is left out.
@@ -387,8 +385,9 @@ def go(page, name, tap=False):
     pattern = re.compile("^" + re.escape(name) + r"(?: -?\d+)?$")
     press = (lambda control: control.tap()) if tap else (lambda control: control.click())
     bar = page.locator("nav.phone-bar")
-    if bar.is_visible() and bar.get_by_role("link", name=pattern).count():
-        return press(bar.get_by_role("link", name=pattern))
+    phone_link = bar.get_by_role("link", name="Créer", exact=True) if name == "Nouvelle affiche" else bar.get_by_role("link", name=pattern)
+    if bar.is_visible() and phone_link.count():
+        return press(phone_link)
     # The phone's chat has « Nouvelle affiche » in its top bar; the phone's step editor has no top bar, and its own bar
     # holds « Se déconnecter ».
     for there in (page.locator(".app-header").get_by_role("link", name=pattern), page.locator(".bar").get_by_role("button", name=pattern)):
@@ -529,31 +528,6 @@ def check_resting(page, where, *required):
     both_themes(page, check)
 
 
-def check_reach(page, panel, where, *controls):
-    """A panel taller than the screen, scrolled from its top to its end: each of its decisions stays where it was on the
-    screen (fixed to it, not in the panel's flow), wholly inside the visible viewport, and is what a tap at its centre
-    reaches (rule 1 of D-REDESIGN-001); and at the end nothing of the panel is left under the decisions' bar. The panel
-    goes back to its top."""
-    box = page.locator(panel)
-    assert box.evaluate("e => e.scrollHeight > e.clientHeight"), f"{where}: the panel is not long enough to scroll"
-    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
-    starts = [control.evaluate(REACH_JS)["box"] for control in controls]
-    box.evaluate("e => e.scrollTo({ top: e.scrollHeight, behavior: 'instant' })")
-    assert box.evaluate("e => e.scrollTop > 0 && Math.ceil(e.scrollTop + e.clientHeight) >= e.scrollHeight"), f"{where}: the panel did not scroll to its end"
-    for control, start in zip(controls, starts):
-        reach = control.evaluate(REACH_JS)
-        assert reach["inside"] and reach["hit"] and same_boxes(start, reach["box"]), f"{where}: « {control.inner_text().strip()} » from {start} to {reach}"
-    # The bar is fixed, so it takes no room in the panel: what comes last (a point to check, the form of a refusal)
-    # must end above it. Measured on everything shown in the panel that is neither the bar nor a box holding it.
-    under = box.evaluate("""e => {
-      const bar = e.querySelector('.actions'), top = bar.getBoundingClientRect().top
-      const parts = [...e.querySelectorAll('*')].filter(n => !bar.contains(n) && !n.contains(bar) && n.checkVisibility() && n.getBoundingClientRect().height)
-      return [parts.length, Math.max(...parts.map(n => n.getBoundingClientRect().bottom)), top]
-    }""")
-    assert under[0] > 3 and under[1] <= under[2] + 0.5, f"{where}: the panel's content ends at {under[1]}, under its decisions' bar (top {under[2]})"
-    box.evaluate("e => e.scrollTo({ top: 0, behavior: 'instant' })")
-
-
 def bar_colour(page):
     # The browser's bar colour in use: the theme-color meta whose media matches the device now.
     return page.evaluate("[...document.querySelectorAll('meta[name=theme-color]')].find(meta => !meta.media || matchMedia(meta.media).matches).content.toLowerCase()")
@@ -587,17 +561,15 @@ def walk_look(browser, session, scheme, errors):
     device.get_by_label("Prix en ariary", exact=True).fill("190 000")
     device.get_by_label("Les photos correspondent").check()
     device.get_by_role("button", name="Préparer mon affiche").tap()
-    proceed = device.get_by_role("button", name="Continuer", exact=True)
+    expect(device.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
     marks = set()
-    for number, step in ((2, "textes"), (3, "boutique"), (4, "style")):
-        expect(device.locator(".step-count")).to_have_text(f"Étape {number} sur 4")
+    for step in ("textes", "boutique", "style"):
+        device.get_by_role("tab", name=step.capitalize(), exact=True).tap()
         device.wait_for_function(NO_SIDEWAYS)
         check_one_blur(device, f"step {step} at 360 px, {theme}")
         marks |= check_contrast(device, f"step {step} at 360 px, {theme}", placeholders=("input[name=brand]", "input[name=subtitle]") if step == "textes" else ())
         check_targets(device, f"step {step} at 360 px, {theme}")
         shot(device, f"look-360-{theme}-etape-{step}.png", full_page=False)
-        if step != "style":
-            proceed.tap()
     # Changes that act at once are switches; what acts on the next version stays a checkbox under its heading.
     device.get_by_role("tab", name="Boutique", exact=True).tap()
     expect(device.locator("label.switch")).to_have_count(3)
@@ -606,11 +578,12 @@ def walk_look(browser, session, scheme, errors):
     device.get_by_role("tab", name="Style", exact=True).tap()
     device.get_by_role("button", name="Générer l’affiche").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
-    expect(device.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+    expect(device.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
     check_one_blur(device, f"review at 360 px, {theme}")
     check_contrast(device, f"review at 360 px, {theme}")
     shot(device, f"look-360-{theme}-verifier.png", full_page=False)
-    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    download_review(device)
+    device.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(device.get_by_role("tab")).to_have_count(4)
     device.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
     for name in ("Textes", "Boutique", "Style", "Réglages"):
@@ -705,20 +678,23 @@ def walk_wait(browser, session, errors):
     device.get_by_label("Prix en ariary", exact=True).fill("90 000")
     device.get_by_label("Les photos correspondent").check()
     device.get_by_role("button", name="Préparer mon affiche").tap()
-    proceed = device.get_by_role("button", name="Continuer", exact=True)
-    proceed.tap()
-    proceed.tap()
     block, pill, badge = device.locator(".wait"), device.locator(".frame .gen-pill"), device.locator(".frame .badge")
     words, elapsed = block.locator("[role=status]"), block.locator(".wait-time")
     cancel = device.get_by_role("button", name="Annuler la demande")
-    review = device.get_by_role("heading", name="Vérifier la fidélité du produit")
-    # The first generation, asked from far down the last step: the page goes back to the top, where the draft stays as the
-    # thumbnail of the steps (« Aperçu ») with the state pill in front, and the waiting block under it.
+    review = device.get_by_role("heading", name="Vérifier votre affiche")
+    # The draft opens asynchronously. Its original offer is replaced by the waiting status when a scene is requested.
+    offer = device.get_by_role("region", name="Offre à générer")
+    generate = device.get_by_role("button", name="Générer l’affiche")
+    expect(offer).to_be_visible()
+    expect(generate).to_be_enabled()
+    poster = device.url.split("#")[1]
+    endpoint = f"{ORIGIN}/api/creations/{poster}"
+    first_draft = device.request.get(endpoint).json()
     device.evaluate("scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
-    still = device.evaluate(STILL_JS)
-    device.get_by_role("button", name="Générer l’affiche").tap()
+    generate.tap()
     device.get_by_role("button", name="Lancer la génération").tap()
     expect(words).to_contain_text("Votre demande est en attente.")
+    expect(offer).to_have_count(0)
     # The polls are background requests: once the request that started the job has its answer, the top progress line
     # never shows for them (D-POSTER-EDITOR-007).
     expect(device.locator(".load-line")).to_have_count(0)
@@ -729,11 +705,33 @@ def walk_wait(browser, session, errors):
     expect(block.locator("li[aria-current=step]")).to_contain_text("Demande enregistrée")
     expect(cancel).to_be_visible()
     device.wait_for_function("scrollY === 0")
-    check_still(device, still, "while the first generation is queued at 360 px")
     expect(block).to_be_in_viewport()
     check_resting(device, "waiting at 360 px", ".job-state")
     assert topmost(pill) and topmost(badge)
     expect(device.locator(".frame[aria-busy=true]")).to_have_count(1)
+    still = device.evaluate(STILL_JS)
+    # The server stub may already have finished. Reopen the same first draft at the queued point in time
+    # represented by our held poll, including its matching version list, document and job-list response.
+    jobs = device.request.get(endpoint + "/jobs").json()
+    pending = next(item for item in jobs["items"] if item["kind"] == "scene")
+    pending.update(status="queued", started_at=None, finished_at=None, result_ref=None, error_code=None)
+    resumed = context.new_page()
+    resumed.route(endpoint, lambda route: route.fulfill(json=first_draft))
+    resumed.route(endpoint + "/visuals", lambda route: route.fulfill(json={"items": []}))
+    resumed.route(endpoint + "/jobs", lambda route: route.fulfill(json=jobs))
+    resumed.goto(f"{ORIGIN}/#{poster}")
+    expect(resumed.locator(".wait [role=status]")).to_contain_text("Votre demande est en attente.")
+    expect(resumed.locator(".wait")).to_be_in_viewport()
+    expect(resumed.locator(".frame .gen-pill")).to_have_text("En attente")
+    expect(resumed.locator(".frame .badge")).to_have_text("Aperçu")
+    assert topmost(resumed.locator(".frame .gen-pill")) and topmost(resumed.locator(".frame .badge"))
+    resumed.get_by_role("button", name="Voir l’affiche", exact=True).tap()
+    preview = resumed.get_by_role("dialog", name="Affiche")
+    expect(preview.locator(".poster-canvas canvas").first).to_be_in_viewport()
+    preview.get_by_role("button", name="Revenir aux réglages").tap()
+    expect(resumed.get_by_role("button", name="Annuler la demande")).to_be_visible()
+    resumed.close()
+    assert len(scenes) == 1, scenes
     # Screen readers hear the state when it changes, not the time every second.
     assert elapsed.evaluate("e => !e.closest('[role=status], [role=alert], [aria-live]')")
     held["status"] = "running"
@@ -787,7 +785,8 @@ def walk_wait(browser, session, errors):
     expect(review).to_be_visible(timeout=30000)
     expect(block).to_have_count(0)
     expect(device.locator(".frame[aria-busy=true]")).to_have_count(0)
-    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    download_review(device)
+    device.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(device.get_by_role("tab")).to_have_count(4)
     # A new version once one exists: the version shown is said to be kept, the pills are in front in both themes.
     device.get_by_role("button", name=re.compile(r"^Versions ")).tap()
@@ -811,7 +810,6 @@ def walk_wait(browser, session, errors):
         waiting_checks(device, "new version at 360 px", theme, scheme)
         check_targets(device, f"new version at 360 px, {theme}")
         shot(device, f"wait-360-{theme}.png", full_page=False)
-    poster = device.url.split("#")[1]
     # After 100 s of creation a sentence says it is long, still running, and useless to start again. The fake clock is
     # installed only now, so that it governs nothing else in this walk.
     waiting_checks(device, "new version at 360 px", "sombre", "dark")
@@ -821,8 +819,10 @@ def walk_wait(browser, session, errors):
     expect(words).to_contain_text("C’est plus long que d’habitude. La demande est toujours en cours : inutile de la relancer.")
     device.screenshot(path=str(OUTPUT / "wait-360-sombre-longue.png"))
     held["status"] = None
-    expect(review).to_be_visible(timeout=30000)
-    device.get_by_role("button", name="Tout est conforme, approuver").tap()
+    alternative = device.get_by_role("dialog", name="Vérifier la fidélité du produit")
+    expect(alternative).to_be_visible(timeout=30000)
+    alternative.get_by_role("button", name="Tout est conforme, approuver").tap()
+    device.get_by_role("dialog", name="Fidélité approuvée").get_by_role("button", name="Fermer").tap()
     expect(block).to_have_count(0)
     check_still(device, still, "after a new version at 360 px")
     assert len(scenes) == 2, scenes
@@ -834,6 +834,7 @@ def walk_wait(browser, session, errors):
     screen.set_default_timeout(10000)
     screen.on("pageerror", lambda error: errors.append(str(error)))
     screen.goto(f"{ORIGIN}/#{poster}")
+    screen.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
     still = screen.evaluate(STILL_JS)
     held["status"] = "queued"
@@ -861,7 +862,7 @@ def walk_wait(browser, session, errors):
     # A refusal of the poll does not change by asking again: on a session that ended the editor stops following and the
     # sign-in takes the screen, the shop's content hidden (D-MULTI-SHOP-007 rule 3); it never polls again nor starts
     # another generation.
-    screen.locator(".review-panel").get_by_role("button", name="Fermer").click()
+    screen.get_by_role("dialog", name="Vérifier la fidélité du produit").get_by_role("button", name="Fermer").click()
     check_still(screen, still, "after a new version at 1366 px")
     # « Annuler la demande »: the cancellation's answer says the credit is back, which is said, and the balance is read
     # again (T-BALANCE-006 review r1). The scheduler claims a queued job within a second, so a real one cannot be cancelled
@@ -977,11 +978,12 @@ def walk_tap(browser, session, errors):
     count = rows.count()
     # « Dupliquer » (the user's report): its POST held.
     page.route("**/api/creations/*/copies", lambda route: held.append(route))
+    rows.first.get_by_role("button", name=re.compile("^Actions pour")).tap()
     duplicate = rows.first.get_by_role("button", name=re.compile("^Dupliquer"))
     check_working(page, duplicate, held, posts, "« Dupliquer »", "tap-360-sombre-dupliquer.png", rows.first, page.locator(".rows"))
     page.unroute("**/api/creations/*/copies")
     assert sum(url.endswith("/copies") for url in posts) == 1, posts
-    expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+    expect(page.locator(".poster-title")).to_be_visible()
     # Leaving the editor asks for the gallery's active page. Hold that read to check the link's busy state.
     page.set_viewport_size({"width": 1366, "height": 768})
     listing = "**/api/creations?limit=50&status=active"
@@ -995,7 +997,8 @@ def walk_tap(browser, session, errors):
     page.route(re.compile(r"/api/creations/[0-9a-f-]{36}$"), lambda route: held.append(route) if route.request.method == "GET" else route.continue_())
     check_working(page, opened, held, posts, "a row of « Mes affiches »", "tap-360-sombre-ouvrir.png", page.locator(".rows"))
     page.unroute(re.compile(r"/api/creations/[0-9a-f-]{36}$"))
-    expect(page.locator(".poster-canvas canvas").first).to_be_visible()
+    expect(page.locator(".poster-title")).to_be_visible()
+    return_to_work(page)
     shot(page, "tap-360-sombre-ouverte.png", full_page=False)
     # The press: scale .97 at once on a button, a link, a tab; a row of the list takes a colour step instead; nothing on a
     # disabled button; with reduced motion a change of opacity, not of size.
@@ -1019,7 +1022,7 @@ def walk_tap(browser, session, errors):
         if where == "list":
             page.locator(".back-link").tap()
             expect(rows).to_have_count(count + 1)
-        for selector in ((tab,) if where == "editor" else (".phone-bar a:not([aria-current])", ".row-actions button")):
+        for selector in ((tab,) if where == "editor" else (".phone-bar a:not([aria-current])", ".row-options")):
             assert pressed_look(page, cdp, selector)[0] == scaled, selector
             resting = page.eval_on_selector(selector, "e => getComputedStyle(e).backgroundColor")
             reduced = pressed_look(page, cdp, selector, reduced=True)
@@ -1047,7 +1050,7 @@ def walk_words(browser, session, errors):
     page.on("request", lambda request: scenes.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
     brand, subtitle = page.get_by_label("Marque (facultative)"), page.get_by_label("Sous-titre (facultatif)")
     words = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
-    review = page.get_by_role("heading", name="Vérifier la fidélité du produit")
+    review = page.get_by_role("heading", name="Vérifier votre affiche")
 
     def make(name, price):
         expect(page.get_by_label("Photos du produit")).to_be_enabled()  # the way to « Créer » is over (perform drops a busy tap)
@@ -1058,14 +1061,14 @@ def walk_words(browser, session, errors):
         page.get_by_label("Les photos correspondent").check()
         page.get_by_role("button", name="Préparer mon affiche").click()
         expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
+        page.get_by_role("tab", name="Textes", exact=True).click()
 
     def generate():
-        page.get_by_role("button", name="Continuer", exact=True).click()
-        page.get_by_role("button", name="Continuer", exact=True).click()
         page.get_by_role("button", name="Générer l’affiche").click()
         page.get_by_role("button", name="Lancer la génération").click()
         expect(review).to_be_visible(timeout=30000)
-        page.get_by_role("button", name="Tout est conforme, approuver").click()
+        download_review(page)
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
         expect(page.get_by_role("tab")).to_have_count(4)
 
     kept = "id => JSON.parse(localStorage.getItem('affiche.shop1.words.' + id))"
@@ -1085,6 +1088,7 @@ def walk_words(browser, session, errors):
     assert not re.search("120|034|phone-noir", json.dumps(entry | {"at": 0})), entry
     page.reload()
     expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
+    page.get_by_role("tab", name="Textes", exact=True).click()
     expect(brand).to_have_value("MarqueAlpha")
     expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
@@ -1112,12 +1116,14 @@ def walk_words(browser, session, errors):
     assert not re.search("Alpha|ALPHA|Casque", json.dumps(sent)), sent
     # A reopened poster brings back the words its version was made with.
     page.goto(f"{ORIGIN}/#{poster_a}")
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
     expect(brand).to_have_value("MarqueAlpha")
     expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
     # The same after a reload, from the version alone: nothing of A is in the browser's storage.
     page.reload()
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
     expect(brand).to_have_value("MarqueAlpha")
     expect(subtitle).to_have_value("SOUS-TITRE ALPHA")
@@ -1136,6 +1142,37 @@ def check_shape(locator, ratio, where):
     width, height = locator.evaluate(BOX_JS)
     assert height and abs(width / height - ratio) / ratio < .02, f"{where}: {width} x {height}, not {ratio:.4f}"
     return width, height
+
+
+def return_to_work(page):
+    # A cold open can resume a previous file; switching views in this tab can keep the editor open.
+    page.wait_for_load_state("networkidle")
+    panel = page.locator(".final-preview")
+    if panel.is_visible():
+        panel.get_by_role("button", name="Fermer").tap()
+
+
+def check_file_actions(panel, *actions):
+    """On a short phone the seller can scroll from the image to every output and focus it."""
+    for action in actions:
+        action.scroll_into_view_if_needed()
+        expect(action).to_be_in_viewport(ratio=1)
+        assert topmost(action), action.inner_text()
+        action.focus()
+        expect(action).to_be_focused()
+    panel.evaluate("el => el.scrollTo({top: 0, behavior: 'instant'})")
+
+
+def download_review(page):
+    """One decision downloads the exact visible PNG. The confirmed file can be reopened."""
+    panel = page.locator(".final-preview")
+    image = panel.locator(".shot img")
+    expect(image).to_be_visible(timeout=30000)
+    rendered = page.request.get(image.evaluate("el => el.src"), fail_on_status_code=True).body()
+    with page.expect_download() as download:
+        panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
+    assert download.value.path().read_bytes() == rendered
+    expect(panel.get_by_role("heading", name="Affiche confirmée")).to_be_visible()
 
 
 def walk_formats(browser, errors):
@@ -1166,6 +1203,7 @@ def walk_formats(browser, errors):
         raise AssertionError("condition not reached")
 
     formats = page.get_by_role("radiogroup", name="Format")
+    page_format_hint = page.locator("#aide-format")
     radio = lambda name: formats.get_by_role("radio", name=name, exact=True)
     question = page.locator(".format-ask")
     sizes = {"feed": (1080, 1350), "square": (1080, 1080), "story": (1080, 1920)}
@@ -1184,13 +1222,11 @@ def walk_formats(browser, errors):
         page.get_by_label("Les photos correspondent").check()
         page.get_by_role("button", name="Préparer mon affiche").click()
         expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
-        expect(formats).to_have_count(0)  # not in « Textes »
-        for _ in range(2):
-            page.get_by_role("button", name="Continuer", exact=True).click()
-        expect(page.locator(".step-count")).to_have_text("Étape 4 sur 4")
+        expect(page.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
         # A new poster starts in Publication; the three formats are offered.
         expect(formats.get_by_role("radio")).to_have_count(3)
         expect(radio("Publication 4:5")).to_be_checked()
+        expect(page_format_hint).to_contain_text("Gardez Publication pour télécharger le PNG ou publier directement sur votre Page Facebook.")
         assert saved()["primary_format"] == "feed"
 
     def choose(name, value):
@@ -1199,6 +1235,7 @@ def walk_formats(browser, errors):
         layouts = saved()["formats"]
         assert list(layouts) == [value] and layouts[value]["scene"]["visual_id"] is None, layouts
         expect(page.locator(".bar .format")).to_contain_text(f"{name.split()[0]} · {sizes[value][0]} × {sizes[value][1]}")
+        expect(page.get_by_role("region", name="Offre à générer")).to_contain_text(name.split()[0])
 
     def running(route):
         response = route.fetch()
@@ -1207,24 +1244,26 @@ def walk_formats(browser, errors):
             body.update(status="running", result_ref=None, error_code=None, finished_at=None)
         route.fulfill(response=response, json=body)
 
-    def generate():
+    def generate(check_file=False):
         page.get_by_role("button", name="Générer l’affiche").click()
         page.get_by_role("button", name="Lancer la génération").click()
-        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
-        page.get_by_role("button", name="Tout est conforme, approuver").click()
+        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
+        if check_file:
+            return
+        download_review(page)
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
         expect(page.get_by_role("tab")).to_have_count(4)
 
     def confirm(value):
         size = sizes[value]
-        page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
-        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
+        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=40000)
         expect(page.locator(".final-preview .facts")).to_contain_text(f"{size[0]} × {size[1]} px")
         preview = page.locator(".final-preview .shot img")
         page.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=preview.element_handle())
         assert preview.evaluate("e => [e.naturalWidth, e.naturalHeight]") == list(size)
         check_shape(preview, size[0] / size[1], f"final preview of {value} at 1366 px")
-        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
-        link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+        page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
+        link = page.get_by_role("link", name="Télécharger le PNG")
         expect(link).to_be_visible()
         png = page.request.get(ORIGIN + link.get_attribute("href")).body()
         assert Image.open(io.BytesIO(png)).size == size, Image.open(io.BytesIO(png)).size
@@ -1242,7 +1281,14 @@ def walk_formats(browser, errors):
         make(title)
         choose(name, value)
         expect(locked_sentence).to_have_count(0)
-        generate()
+        generate(check_file=True)
+        if value == "square":
+            unchanged = get(f"/api/creations/{here()}")
+            page.get_by_role("button", name="Corriger l’affiche").click()
+            assert get(f"/api/creations/{here()}") == unchanged and unchanged["confirmation"] is None
+            assert get(f"/api/creations/{here()}/visuals")["items"][0]["status"] == "pending_review"
+            page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+        confirm(value)
         # The version has the format's own scene size.
         assert [visual["size"] for visual in get(f"/api/creations/{here()}/visuals")["items"]] == [scene_sizes[value]]
         # A version fixes the format: the group says why and offers the other formats as new posters.
@@ -1253,7 +1299,6 @@ def walk_formats(browser, errors):
         expect(locked_sentence).to_be_visible()
         others = [label for key, label in (("feed", "Publication"), ("square", "Carré"), ("story", "Story")) if key != value]
         expect(page.get_by_role("button", name=re.compile("^Refaire en "))).to_have_text([f"Refaire en {label}" for label in others])
-        confirm(value)
         posters[value] = here()
 
     # Once a scene of this size is on its way, undo stops before the format step (v2 point 8). On a poster of its own, left
@@ -1271,8 +1316,11 @@ def walk_formats(browser, errors):
     assert undone, "nothing to undo"
     expect(page.locator(".bar .format")).to_contain_text("Carré · 1080 × 1080")
     expect(radio("Carré 1:1")).to_be_checked()
+    expect(page_format_hint).to_contain_text("Carré permet de télécharger votre affiche en PNG.")
     page.unroute("**/api/jobs/*", running)
-    expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+    # Undo left the returned scene unselected. Inspecting it must not silently apply it.
+    alternative = page.get_by_role("dialog", name="Vérifier la fidélité du produit")
+    expect(alternative.get_by_role("button", name="Choisir cette version")).to_be_visible(timeout=30000)
     page.reload()
     expect(page.get_by_role("heading", name="Essai annuler", exact=True)).to_be_visible()
     assert saved()["primary_format"] == "square"
@@ -1319,6 +1367,7 @@ def walk_formats(browser, errors):
     expect(question).to_have_count(0)
     until(lambda: saved()["primary_format"] == "story")
     expect(radio("Story 9:16")).to_be_checked()
+    expect(page_format_hint).to_contain_text("Story permet de télécharger votre affiche en PNG.")
     expect(page.locator(".bar .format")).to_contain_text("Story · 1080 × 1920")
     # A style saved from that model is picked: it is Story already, nothing to ask.
     page.get_by_label("Nom du style").fill("Modèle Story")
@@ -1354,6 +1403,8 @@ def walk_formats(browser, errors):
     page.unroute(f"**/api/creations/{poster}", refuse)
     page.locator(".message.error").get_by_role("button", name="Fermer").click()
     assert saved()["primary_format"] == "feed"
+    expect(page.locator(".bar .meta [role=status]")).to_have_text("Enregistré")
+    expect(page.get_by_role("button", name="Générer l’affiche")).to_be_enabled()
     tab("Style")
     generate()
     # With a version: a model of another shape is only said to differ; the poster keeps its format.
@@ -1363,7 +1414,8 @@ def walk_formats(browser, errors):
     expect(question.get_by_role("status")).to_have_text("Ce modèle est au format Story. Cette affiche garde son format : il se choisit avant la première version.")
     expect(question.get_by_role("button")).to_have_text(["Fermer"])
     expect(locked_sentence).to_be_visible()
-    assert formats.get_attribute("aria-describedby") == locked_sentence.get_attribute("id") == "format-lock"
+    expect(formats).to_have_attribute("aria-describedby", "aide-format format-lock")
+    expect(locked_sentence).to_have_attribute("id", "format-lock")
     question.scroll_into_view_if_needed()
     shot(page, "format-question-locked-1366-clair.png", full_page=False)
     question.get_by_role("button", name="Fermer").click()
@@ -1393,6 +1445,7 @@ def walk_formats(browser, errors):
     assert next(layer for layer in get(f"/api/creations/{poster}")["document"]["formats"]["feed"]["layers"] if layer["role"] == "title")["visible"] is False
     page.locator(".message.error").get_by_role("button", name="Fermer").click()
     page.goto(f"{ORIGIN}/#{poster}")
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(page.get_by_role("tab")).to_have_count(4)
     tab("Style")
     page.get_by_role("button", name="Refaire en Story", exact=True).click()
@@ -1405,7 +1458,7 @@ def walk_formats(browser, errors):
     assert get(f"/api/creations/{here()}/visuals")["items"] == []
     product = get(f"/api/product-inputs/{remade['input_id']}")
     assert (product["name"], product["photo_assets"]) == (get(f"/api/product-inputs/{source_input}")["name"], get(f"/api/product-inputs/{source_input}")["photo_assets"])
-    expect(page.locator(".step-count")).to_have_text("Étape 4 sur 4")
+    expect(page.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
     expect(radio("Story 9:16")).to_be_checked()
     expect(radio("Story 9:16")).to_be_enabled()
     expect(radio("Story 9:16")).to_be_focused()
@@ -1419,7 +1472,7 @@ def walk_formats(browser, errors):
 
     # Shapes (T-FMT-006): each poster in its own shape at 360 × 740 (touch) and 1366 × 768, light and dark: the confirmed
     # file (shown on opening), the poster, the versions strip and its « Nouvelle version » tile, the locked « Style » tab,
-    # on a phone the large view; the library's thumbnails; a Story poster in the steps, whose thumbnail stays 130 px high.
+    # on a phone the large view; the library's thumbnails; a draft Story on the preparation screen.
     ratios, titles = {"story": 1080 / 1920, "square": 1.0}, {"story": "Enceinte Story", "square": "Enceinte Carré"}
     for width, height in ((360, 740), (1366, 768)):
         phone = width == 360
@@ -1435,7 +1488,7 @@ def walk_formats(browser, errors):
                 screen.goto(f"{ORIGIN}/#{posters[value]}")
                 screen.wait_for_function(f"document.documentElement.dataset.theme === '{theme}'")
                 final = screen.locator(".final-preview")
-                expect(final.get_by_role("heading", name="Votre affiche est prête")).to_be_visible()
+                expect(final.get_by_role("heading", name="Affiche confirmée")).to_be_visible()
                 image = final.locator(".shot img")
                 screen.wait_for_function("e => e.complete && e.naturalWidth > 0", arg=image.element_handle())
                 assert check_shape(image, ratio, f"final preview, {where}")[1] <= height * .7 + 1
@@ -1498,22 +1551,24 @@ def walk_formats(browser, errors):
                 assert [round(side) for side in picture.evaluate(BOX_JS)] == [64, 80]
             check_contrast(screen, f"Mes affiches at {width} px, {theme}")
             shot(screen, f"format-mes-affiches-{width}-{theme}.png", full_page=False)
-            # A Story poster in the steps: on one column its thumbnail is at most 130 px high and the first field stays high.
+            # A draft Story retains its ratio in the editor and in the mobile full-screen preview.
             screen.goto(f"{ORIGIN}/#{posters['remade']}")
-            expect(screen.locator(".step-count")).to_have_text("Étape 2 sur 4")
+            expect(screen.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
             canvas = screen.locator(".poster-canvas canvas").first
-            expect(canvas).to_be_visible()
-            box = check_shape(canvas, ratios["story"], f"steps, story at {width} px, {theme}")
             if phone:
-                assert box[1] <= 130.5, box
-                assert screen.get_by_label("Titre", exact=True).bounding_box()["y"] < 444
+                expect(screen.get_by_role("button", name="Générer l’affiche")).to_be_in_viewport()
+                screen.get_by_role("button", name="Voir l’affiche", exact=True).tap()
+                sheet = screen.get_by_role("dialog", name="Affiche")
+                expect(sheet).to_be_visible()
+                screen.wait_for_function("document.querySelector('.stage.peek canvas')?.getBoundingClientRect().width > 250")
+                check_shape(canvas, ratios["story"], f"draft preview, story at {width} px, {theme}")
+                sheet.get_by_role("button", name="Revenir aux réglages").tap()
             else:
+                canvas.scroll_into_view_if_needed()
                 expect(canvas).to_be_in_viewport(ratio=1)
+                check_shape(canvas, ratios["story"], f"draft, story at {width} px, {theme}")
             check_contrast(screen, f"steps, story at {width} px, {theme}")
             shot(screen, f"format-story-{width}-{theme}-etape.png", full_page=False)
-            for _ in range(2):
-                press(screen.get_by_role("button", name="Continuer", exact=True))
-            expect(screen.locator(".step-count")).to_have_text("Étape 4 sur 4")
             expect(screen.get_by_role("radio", name="Story 9:16", exact=True)).to_be_enabled()
             screen.wait_for_function(NO_SIDEWAYS)
             check_one_blur(screen, f"Style step, story at {width} px, {theme}")
@@ -1671,12 +1726,13 @@ def walk_two_shops(browser, errors, data):
         """The page's next request: « Mes affiches » shows the list it holds, its removed posters are asked for. Its
         thumbnails are requests too: refused, they alone can sign the page out (review r2 P1-3) while the click is on its
         way, so the click is dispatched, not waited on; a page already signed out sends nothing (api.ts, gate_closed)."""
-        nav(page, "Mes affiches")
-        # The list's own read may already have met the refusal: signed out, the shop's screen has left the page (r1, 2).
-        removed, form = page.get_by_label("Afficher les affiches retirées"), page.get_by_label("Mot de passe", exact=True)
-        expect(removed.or_(form)).not_to_have_count(0)
-        if removed.count():
-            removed.dispatch_event("click")
+        form = page.get_by_label("Mot de passe", exact=True)
+        posters = page.locator("nav.phone-bar").get_by_role("link", name=re.compile(r"^Mes affiches(?: -?\d+)?$"))
+        removed = page.get_by_role("button", name="Retirées", exact=True)
+        for control in (posters, removed):
+            expect(control.or_(form)).not_to_have_count(0)
+            # A refusal can sign the shop out between locating the control and clicking it.
+            control.evaluate_all("elements => elements[0]?.click()")
 
     def come_back(page):
         """The tab hidden and shown again: the session is asked again."""
@@ -1737,6 +1793,7 @@ def walk_two_shops(browser, errors, data):
     showing(one, b_words)
     assert one.evaluate(BOUND) == "1"
     one.goto(f"{ORIGIN}/#{a_poster}")
+    one.get_by_role("tab", name="Textes", exact=True).click()
     expect(one.get_by_label("Titre", exact=True)).to_have_value(a_title)
     one.wait_for_function("id => localStorage.getItem('affiche.shop1.words.' + id) !== null", arg=a_poster)
     one.goto(f"{ORIGIN}/#message")
@@ -1778,6 +1835,7 @@ def walk_two_shops(browser, errors, data):
     held = []
     one.route(f"**/api/creations/{a_poster}", hold_first("PUT", held))
     one.goto(f"{ORIGIN}/#{a_poster}")
+    one.get_by_role("tab", name="Textes", exact=True).click()
     before = revision(a_poster)
     one.get_by_label("Titre", exact=True).fill(f"{a_title} bis")
     until(one, lambda: held)
@@ -1895,6 +1953,7 @@ def walk_two_shops(browser, errors, data):
     sign_in(four, IDENTIFIER, PASSWORD)
     showing(four, b_words)
     four.goto(f"{ORIGIN}/#{a_poster}")
+    four.get_by_role("tab", name="Textes", exact=True).click()
     title = four.get_by_label("Titre", exact=True)
     saves = []
     four.route(f"**/api/creations/{a_poster}", hold_first("PUT", saves))
@@ -1915,8 +1974,6 @@ def walk_two_shops(browser, errors, data):
     # screen; B signs in there, fresh, and nothing is sent to A's poster.
     polls, puts = [], []
     four.route("**/api/jobs/*", lambda route: polls.append(route))
-    for _ in range(2):
-        four.get_by_role("button", name="Continuer", exact=True).click()
     four.get_by_role("button", name="Générer l’affiche").click()
     four.get_by_role("button", name="Lancer la génération").click()
     until(four, lambda: polls)
@@ -1952,6 +2009,7 @@ def walk_two_shops(browser, errors, data):
     one.set_viewport_size({"width": 1366, "height": 768})  # the phone's editor has no header: its bar goes back
     conflict = poster(IDENTIFIER, PASSWORD, f"{a_title} conflit")  # a poster no job of the cases above follows
     one.goto(f"{ORIGIN}/#{conflict}")
+    one.get_by_role("tab", name="Textes", exact=True).click()
     title = one.get_by_label("Titre", exact=True)
     expect(title).to_have_value(f"{a_title} conflit")
     current = aside.request.get(f"{ORIGIN}/api/creations/{conflict}").json()
@@ -2111,9 +2169,17 @@ def walk_review_r2(browser, errors, data, only=()):
     def image_after_expiry():
         # P1-3: an image the browser fetches itself (<img>) fails once the session ended: the session is asked again.
         context, page = signed_in()
+        page.wait_for_load_state("networkidle")
+        image = "/api/assets/" + "f" * 64
+        held = []
+        page.route(ORIGIN + image, lambda route: held.append(route))
+        page.locator("main:not(.gate)").evaluate("(main, src) => main.append(Object.assign(new Image(), { src }))", image)
+        until(page, lambda: held)
         with write_tx(engine) as conn:
             shops.end_sessions(conn, 1)
-        page.evaluate("document.querySelector('main:not(.gate)').append(Object.assign(new Image(), { src: '/api/assets/' + 'f'.repeat(64) }))")
+        with page.expect_response(ORIGIN + image) as response:
+            held[0].continue_()
+        assert response.value.status == 401
         expect(page.get_by_label("Mot de passe", exact=True)).to_be_visible()
         expect(page.locator("main:not(.gate)")).to_have_count(0)  # signed out: the shop's screen leaves (D-REDESIGN-002 r1)
         context.close()
@@ -2325,7 +2391,7 @@ def walk_credits(browser, errors, data, app):
     page.get_by_label("Mot de passe", exact=True).fill(password)
     page.get_by_role("button", name="Ouvrir l’atelier").click()
     dialog, cost, thread = page.get_by_role("dialog"), page.locator(".confirm .cost"), page.get_by_role("log")
-    review = page.get_by_role("heading", name="Vérifier la fidélité du produit")
+    review = page.get_by_role("heading", name="Vérifier votre affiche")
     balance = lambda: page.request.get(f"{ORIGIN}/api/balance").json()  # noqa: E731
     jobs = lambda kind: [job for job in page.request.get(f"{ORIGIN}/api/creations/{poster}/jobs").json()["items"] if job["kind"] == kind]  # noqa: E731
 
@@ -2347,8 +2413,12 @@ def walk_credits(browser, errors, data, app):
         expect(dialog).to_contain_text("Ajuster la scène ?")
 
     def approve():
-        expect(review).to_be_visible(timeout=30000)
-        page.get_by_role("button", name="Tout est conforme, approuver").tap()
+        alternative = page.get_by_role("dialog", name="Vérifier la fidélité du produit")
+        expect(review.or_(alternative)).to_be_visible(timeout=30000)
+        if alternative.is_visible():
+            alternative.get_by_role("button", name="Choisir cette version").tap()
+        download_review(page)
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
         expect(review).to_have_count(0)
 
     def say(text):
@@ -2372,9 +2442,8 @@ def walk_credits(browser, errors, data, app):
     page.get_by_label("Prix en ariary", exact=True).fill("150 000")
     page.get_by_label("Les photos correspondent").check()
     page.get_by_role("button", name="Préparer mon affiche").tap()
+    page.get_by_role("tab", name="Textes", exact=True).tap()
     page.get_by_label("Dessiner aussi le prix dans l’image").uncheck()
-    page.get_by_role("button", name="Continuer", exact=True).tap()
-    page.get_by_role("button", name="Continuer", exact=True).tap()
     page.get_by_role("button", name="Générer l’affiche").tap()
     expect(cost).to_have_text("1 crédit · il vous en reste 5")
     looks("the first poster's dialog", "5")
@@ -2406,6 +2475,7 @@ def walk_credits(browser, errors, data, app):
     # A free change by message (the price is not drawn) is read, then the operator pauses the service. Its button stays,
     # although a new image is stopped (ChatView.vue buttonOf: `!free(item)`); the price is changed and no image is asked.
     page.goto(f"{ORIGIN}/#message-{poster}")
+    return_to_work(page)
     card = say("prix 160 000 Ar")
     expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
     with write_tx(engine) as conn:
@@ -2413,6 +2483,7 @@ def walk_credits(browser, errors, data, app):
     before = len(sent)
     with page.expect_response("**/api/balance"):
         page.reload()  # the pause is read with the page
+    return_to_work(page)
     page.wait_for_timeout(500)  # the read balance is applied: a card it stops loses its button by now
     card = thread.locator(".bubble.bot").last
     expect(card.get_by_role("button")).to_have_text(["Changer", "Annuler"])
@@ -2422,6 +2493,7 @@ def walk_credits(browser, errors, data, app):
     priced(160000)
     # Paused, the editor's dialog says so before the tap, without the purchase text, and offers « Fermer » only.
     page.goto(f"{ORIGIN}/#{poster}")
+    return_to_work(page)
     adjust()
     expect(cost).to_have_text(MESSAGES["budget_exhausted"])
     expect(dialog).not_to_contain_text(purchase)
@@ -2438,6 +2510,7 @@ def walk_credits(browser, errors, data, app):
     with write_tx(engine) as conn:
         credits.correct(conn, shop, -2, ref="smoke-two", note="the last credit", actor="tests")
     page.reload()  # the operator's correction is read with the page, as after any return to it
+    return_to_work(page)
     adjust()
     expect(cost).to_have_text(f"1 crédit · il vous en reste 1. Bientôt à court : {purchase}")
 
@@ -2473,6 +2546,7 @@ def walk_credits(browser, errors, data, app):
         credits.correct(conn, shop, 1, ref="smoke-three", note="one more", actor="tests")
     page.goto(f"{ORIGIN}/#message-{poster}")
     page.reload()
+    return_to_work(page)
     card = say("fond plus sombre")
     expect(card).to_contain_text(f"1 crédit · il vous en reste 1. Bientôt à court : {purchase}")
     context.route("**/refinements", lambda route: route.abort())
@@ -2511,6 +2585,7 @@ def walk_credits(browser, errors, data, app):
     refines = len(jobs("refine"))
     page.reload()
     context.unroute("**/refinements")
+    return_to_work(page)
     resume = thread.get_by_role("button", name="Reprendre")
     expect(resume).to_be_visible()
     expect(resume.locator("xpath=../..")).to_contain_text(once)
@@ -2536,8 +2611,10 @@ def walk_credits(browser, errors, data, app):
     thread.get_by_role("button", name="Vérifier", exact=True).tap()
     approve()
 
+    # Resume the same poster in the editor after checking and downloading in Message.
+    page.get_by_role("button", name="Pas à pas", exact=True).tap()
+    page.wait_for_url(f"{ORIGIN}/#{poster}")
     # The editor at zero: the dialog says how to buy, offers « Fermer » only, and nothing leaves.
-    page.goto(f"{ORIGIN}/#{poster}")
     adjust()
     expect(cost).to_have_text(zero)
     expect(dialog.get_by_role("button")).to_have_text(["Fermer"])
@@ -2555,9 +2632,9 @@ def walk_credits(browser, errors, data, app):
         raise AssertionError("the edit at zero was not saved")
     # And so is downloading.
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).tap()
-    expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
-    page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).tap()
-    link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+    expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=40000)
+    page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).tap()
+    link = page.get_by_role("link", name="Télécharger le PNG")
     expect(link).to_be_visible()
     downloaded = page.request.get(ORIGIN + link.get_attribute("href"))
     assert downloaded.status == 200 and downloaded.headers["content-type"] == "image/png", downloaded.status
@@ -2731,6 +2808,9 @@ def run():
                         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
                         page.get_by_label("Les photos correspondent").check()
                         # A logo is saved in the profile but left off this poster; it is ticked after the scene, further down.
+                        identity = page.locator(".intake details")
+                        assert not identity.evaluate("node => node.open")
+                        identity.locator("summary").press("Enter")
                         Image.new("RGBA", (256, 256), (20, 120, 220, 255)).save(OUTPUT / "logo.png")
                         page.locator("details input[type=file]").set_input_files(OUTPUT / "logo.png")
                         expect(page.get_by_alt_text("Logo de la boutique")).to_be_visible()
@@ -2741,6 +2821,8 @@ def run():
                         page.get_by_label("Contact", exact=True).first.fill("038 93 028 00 / 034 93 028 00")
                         page.get_by_role("checkbox", name="Nom de la boutique", exact=True).check()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
+                        admissions = []
+                        page.on("request", lambda req: admissions.append(req.url) if req.method == "POST" and req.url.endswith(("/plans", "/scenes")) else None)
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i", exact=True)).to_be_visible()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
@@ -2757,31 +2839,40 @@ def run():
                         until(lambda: footer("contact").get("icon") == "phone")
                         compact = footer("contact")
                         assert (compact["font_size"], compact["weight"], compact["height"], compact["align"]) == (32, 700, 48, "center"), compact
-                        # A new poster is walked one step at a time (R-POSTER-EDITOR-004): « Textes », « Boutique », « Style ».
-                        # Each step shows its own controls only; the main action waits on the last one.
                         def tab(name):
                             return page.get_by_role("tab", name=name, exact=True)
                         def open_group(name):
                             tab(name).click()
                             expect(tab(name)).to_have_attribute("aria-selected", "true")
-                        step_count = page.locator(".step-count")
-                        proceed = page.get_by_role("button", name="Continuer", exact=True)
                         generate = page.get_by_role("button", name="Générer l’affiche")
-                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        offer = page.get_by_role("region", name="Offre à générer")
+                        expect(tab("Style")).to_have_attribute("aria-selected", "true")
                         expect(page.get_by_role("tab")).to_have_count(3)
-                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
-                        expect(tab("Boutique")).to_be_disabled()
-                        expect(tab("Style")).to_be_disabled()
-                        expect(generate).to_have_count(0)
-                        expect(page.get_by_role("button", name="Retour", exact=True)).to_have_count(0)
+                        expect(tab("Textes")).to_be_enabled()
+                        expect(tab("Boutique")).to_be_enabled()
+                        expect(page.get_by_label("Titre", exact=True)).to_have_count(0)
                         expect(page.get_by_label("Position du contact")).to_have_count(0)
-                        expect(page.locator(".look-grid")).to_have_count(0)
-                        # The coach line and the reasons under blocked buttons tell a new owner what to do.
-                        expect(page.locator(".coach")).to_contain_text("choisissez un style")
-                        # Several versions are possible and announced before the first one exists.
+                        expect(offer).to_contain_text("Soundcore R50i")
+                        expect(offer).to_contain_text("Noir · écouteurs et boîtier")
+                        expect(offer).to_contain_text(re.compile(r"90\s000\s*Ar", re.IGNORECASE))
+                        expect(offer.locator("img")).to_have_count(1)
+                        page.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=offer.locator("img").element_handle())
+                        expect(offer).to_contain_text("Original Phone Mada")
+                        expect(offer).to_contain_text("038 93 028 00")
+                        expect(offer).to_contain_text("Publication")
+                        expect(offer).to_contain_text("Studio clair")
                         expect(page.get_by_role("heading", name="Versions 0 sur 12")).to_be_visible()
                         expect(page.get_by_text("Vous choisirez celle à exporter.", exact=False)).to_be_visible()
-                        assert page.get_by_text("S’inspirer d’une affiche").count() == 0 and page.get_by_label("Préparation").count() == 0
+                        expect(page.get_by_role("button", name="Continuer", exact=True)).to_have_count(0)
+                        expect(generate).to_be_enabled()
+                        # The offer is ready on arrival. Opening and cancelling the cost confirmation creates no plan or scene.
+                        generate.click()
+                        cost = page.get_by_role("dialog")
+                        expect(cost.get_by_role("button", name="Lancer la génération", exact=True)).to_be_enabled()
+                        expect(cost).to_contain_text("1 crédit")
+                        cost.get_by_role("button", name="Annuler").click()
+                        assert not admissions, admissions
+                        open_group("Textes")
                         check_contrast(page, "step Textes")
                         check_resting(page, "step editor at 1440 px", ".rail")
                         shot(page, "step-textes.png")
@@ -2791,7 +2882,9 @@ def run():
                         expect(plain_brand).to_have_count(0)
                         page.get_by_label("Marque (facultative)").fill("JBL")
                         expect(plain_brand).to_be_visible()
+                        expect(offer).to_contain_text("JBL")
                         page.get_by_label("Marque (facultative)").fill("")
+                        expect(offer).not_to_contain_text("JBL")
                         # The accent is chosen among the title's own words and a few colours, never typed; the colour
                         # sits with the word it colours.
                         chips = page.get_by_role("group", name="Mot du titre en couleur").get_by_role("button")
@@ -2801,13 +2894,15 @@ def run():
                         chips.first.click()
                         expect(chips.first).to_have_attribute("aria-pressed", "true")
                         page.get_by_role("button", name="Rouge", exact=True).click()
-                        proceed.click()
-                        expect(step_count).to_have_text("Étape 3 sur 4")
-                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
-                        expect(page.get_by_role("button", name="Retour", exact=True)).to_be_visible()
-                        expect(generate).to_have_count(0)
+                        open_group("Boutique")
+                        expect(generate).to_be_enabled()
                         expect(page.get_by_label("Titre", exact=True)).to_have_count(0)
                         assert page.get_by_label("Dessiner aussi le nom de la boutique et le contact dans l’image").count() == 0
+                        shop_name = page.get_by_role("checkbox", name="Nom de la boutique", exact=True)
+                        shop_name.uncheck()
+                        expect(offer).not_to_contain_text("Original Phone Mada")
+                        shop_name.check()
+                        expect(offer).to_contain_text("Original Phone Mada")
                         page.get_by_label("Position du contact").select_option("right")
                         until(lambda: footer("contact")["align"] == "right")
                         assert json.loads(page.evaluate("localStorage.getItem('affiche.shop1.style')"))["contact_align"] == "right"
@@ -2817,15 +2912,13 @@ def run():
                         expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
                         check_contrast(page, "step Boutique")
                         shot(page, "step-boutique.png")
-                        proceed.click()
-                        expect(step_count).to_have_text("Étape 4 sur 4")
-                        expect(tab("Style")).to_have_attribute("aria-selected", "true")
-                        expect(proceed).to_have_count(0)
+                        open_group("Style")
                         expect(generate).to_be_enabled()
                         expect(page.get_by_label("Position du contact")).to_have_count(0)
                         # One format enabled (the pilot's default, FORMATS_ENABLED=feed): no format is offered, nothing asked.
                         expect(page.get_by_role("radiogroup", name="Format")).to_have_count(0)
                         expect(page.locator(".bar .format")).to_contain_text("Publication · 1080 × 1350")
+                        expect(page.locator("#aide-format")).to_have_text("Publication permet de télécharger votre affiche en PNG.")
                         check_contrast(page, "step Style")
                         shot(page, "step-style.png")
                         # A poster the shop likes becomes a saved look beside the built-in ones (stub brief, no spend).
@@ -2878,7 +2971,7 @@ def run():
                         proposal = page.get_by_text("Ce style propose sa couleur d’accent ; la vôtre est conservée.", exact=False)
                         expect(proposal).to_be_visible()
                         tab("Textes").click()
-                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
                         expect(page.get_by_role("button", name="Rouge", exact=True)).to_have_attribute("aria-pressed", "true")
                         tab("Style").click()
                         page.get_by_role("button", name="Utiliser la couleur du style").click()
@@ -2910,14 +3003,14 @@ def run():
                         page.route("**/api/creations/*/scenes", refuse_contact)
                         generate.click()
                         page.get_by_role("button", name="Lancer la génération").click()
-                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
                         expect(page.locator(".panel .refusal")).to_contain_text("Le contact est trop long")
                         shot(page, "refus.png")
                         expect(page.locator(".message.error")).to_have_count(0)
                         page.unroute("**/api/creations/*/scenes", refuse_contact)
-                        # A visited step is reopened from the indicator, and what was chosen there is still chosen.
+                        # Reopening a detail keeps its previous choices.
                         tab("Textes").click()
-                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        expect(tab("Textes")).to_have_attribute("aria-selected", "true")
                         expect(chips.first).to_have_attribute("aria-pressed", "true")
                         expect(page.get_by_role("button", name="Rouge", exact=True)).to_have_attribute("aria-pressed", "true")
                         page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
@@ -2936,20 +3029,21 @@ def run():
                         expect(page.get_by_role("alert")).to_contain_text("Connexion interrompue")
                         page.get_by_role("button", name="Générer l’affiche").click()
                         page.get_by_role("button", name="Lancer la génération").click()
-                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
                         # One agreement covers the listed points (ADR-051): a summary to read, no boxes to tick.
-                        expect(page.locator(".review-checks .points li")).to_have_count(6)
-                        expect(page.locator(".review-panel input[type=checkbox]")).to_have_count(0)
+                        expect(page.locator(".file-originals img")).to_be_visible()
+                        expect(page.locator(".final-preview .shot img")).to_be_visible()
+                        expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
                         page.screenshot(path=str(OUTPUT / "review.png"))
-                        check_resting(page, "review at 1440 px", ".comparison figure", ".group")
+                        check_resting(page, "review at 1440 px", ".shot", ".facts")
                         page.get_by_role("button", name="Signaler un problème").click()
                         expect(page.get_by_role("button", name="Refuser cette version")).to_be_disabled()
-                        page.get_by_role("button", name="Tout est conforme, approuver").click()
-                        expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        download_review(page)
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["confirmation"]
                         # With a version, the same groups are tabs beside the poster, plus « Réglages »; no step is left.
                         expect(page.get_by_role("tab")).to_have_count(4)
-                        expect(step_count).to_have_count(0)
-                        expect(proceed).to_have_count(0)
+                        expect(offer).to_have_count(0)
                         expect(tab("Réglages")).to_be_enabled()
                         expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_visible()
                         # The arrow keys move between the tabs.
@@ -3005,13 +3099,14 @@ def run():
                         expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
                         page.reload()
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value("90\u202f000")
                         saved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
                         assert saved["document"]["formats"]["feed"]["scene"] == scene_before
                         visual = page.request.get(f"{ORIGIN}/api/visuals/{scene_before['visual_id']}").json()
                         # The editor no longer sends a separate style-reference image (the API still accepts one).
                         assert visual["style_reference_asset"] is None and len(visual["original_urls"]) == 1
-                        expect(page.locator(".coach")).to_contain_text("Dernière étape")
+                        expect(page.locator(".coach")).to_contain_text("Vérifiez le produit et le prix")
                         # The chosen version is named, and another one is one confirmed tap away.
                         expect(page.get_by_role("heading", name="Versions 1 sur 12")).to_be_visible()
                         expect(page.get_by_text("Choisie pour l’export", exact=True)).to_be_visible()
@@ -3134,7 +3229,7 @@ def run():
                         assert price_layer["fill"] == "#FFFFFF"
                         price_layer.update(font_id="montserrat-black-italic", weight=900,
                                            price_badge={"fill": "#22262E", "border_start": "#009FE3", "border_end": "#1853BD"})
-                        assert styled["document"] == expected_styled
+                        assert styled["document"] == expected_styled, (styled["document"], expected_styled)
                         runs = page.evaluate("""async doc => {
                             const { textRuns } = await import('/src/canvas.ts');
                             return textRuns(doc, doc.formats.feed.layers.find(layer => layer.role === 'price'));
@@ -3157,31 +3252,34 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"] == expected_styled
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
-                        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
-                        preview_url = page.locator(".final-preview img").get_attribute("src")
+                        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=40000)
+                        preview_url = page.locator(".final-preview .shot img").get_attribute("src")
                         preview_bytes = page.request.get(ORIGIN + preview_url).body()
-                        expect(page.locator(".final-preview .points li")).not_to_have_count(0)
+                        expect(page.locator(".final-preview")).to_contain_text(re.compile("vérifiez le prix", re.IGNORECASE))
                         expect(page.locator(".final-preview input[type=checkbox]")).to_have_count(0)
-                        expect(page.locator(".final-preview img")).to_be_visible()
+                        expect(page.locator(".final-preview .shot img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "final-mobile.png"))
                         check_contrast(page, "final screen at phone width")
-                        confirm_final = page.locator(".final-preview").get_by_role("button", name="Tout est conforme, confirmer", exact=True)
+                        confirm_final = page.locator(".final-preview").get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)
                         expect(confirm_final).to_be_enabled()
                         check_primary(page, "final panel", confirm_final)
-                        check_resting(page, "final panel", ".shot", ".facts", ".group")
+                        check_resting(page, "final panel", ".shot", ".facts")
                         page.set_viewport_size({"width": 360, "height": 640})
-                        check_reach(page, ".final-preview", "final panel at 360 × 640", confirm_final)
+                        check_file_actions(page.locator(".final-preview"), confirm_final)
                         page.set_viewport_size({"width": 1440, "height": 1050})
                         page.screenshot(path=str(OUTPUT / "final.png"))
                         page.set_viewport_size({"width": 390, "height": 844})
                         # A refusal while this panel is open is written above it, not in the groups that are inert behind it.
+                        failed_downloads = []
+                        page.once("download", lambda event: failed_downloads.append(event))
                         page.route("**/api/creations/*/confirmations", lambda route: route.fulfill(status=409, content_type="application/json", body='{"error":{"code":"price_stale","message_fr":"Le prix dessiné dans l’image ne correspond plus au prix de l’affiche.","retryable":false}}'))
-                        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
+                        page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
                         expect(page.locator(".message.error")).to_contain_text("ne correspond plus au prix")
                         expect(page.locator(".message.error")).to_be_in_viewport()
+                        assert not failed_downloads
                         page.unroute("**/api/creations/*/confirmations")
-                        page.get_by_role("button", name="Tout est conforme, confirmer", exact=True).click()
-                        link = page.get_by_role("link", name="Télécharger le PNG confirmé")
+                        download_review(page)
+                        link = page.get_by_role("link", name="Télécharger le PNG")
                         expect(link).to_be_visible()
                         downloaded = page.request.get(ORIGIN + link.get_attribute("href"))
                         assert downloaded.status == 200 and downloaded.body() == preview_bytes
@@ -3196,7 +3294,7 @@ def run():
                         expect(link).to_be_visible()
                         # A confirmed poster offers no second confirmation; the server's
                         # preview_stale refusal is covered in backend/tests/test_exports.py.
-                        expect(page.get_by_role("button", name="Tout est conforme, confirmer", exact=True)).to_have_count(0)
+                        expect(page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)).to_have_count(0)
                         expect(page.locator(".final-preview .points")).to_have_count(0)
                         assert page.request.get(ORIGIN + link.get_attribute("href")).body() == preview_bytes
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
@@ -3215,12 +3313,13 @@ def run():
                         expect(thumbnail).to_be_visible()
                         check_contrast(page, "Mes affiches")
                         check_resting(page, "Mes affiches", ".rows")
-                        # At 360 px the list's title row wraps instead of squeezing its subtitle to one word per line under the checkbox.
+                        # At 360 px both library filters and the creation action stay in reach.
                         page.set_viewport_size({"width": 360, "height": 740})
                         heading = page.get_by_role("heading", name="Mes affiches", exact=True).bounding_box()
-                        removed = page.locator("label.check", has_text="Afficher les affiches retirées").bounding_box()
+                        removed = page.get_by_role("button", name="Retirées", exact=True).bounding_box()
                         assert heading["y"] + heading["height"] <= removed["y"] + 1, (heading, removed)
-                        assert page.locator(".gallery .titlerow .meta").bounding_box()["width"] > 300
+                        expect(page.locator(".library-heading").get_by_role("button", name="Nouvelle affiche")).to_be_in_viewport()
+                        assert page.evaluate(NO_SIDEWAYS)
                         shot(page, "mes-affiches-360.png", full_page=False)
                         page.set_viewport_size({"width": 1440, "height": 1000})
                         page.get_by_role("button", name="Passer au thème clair").click()
@@ -3236,11 +3335,27 @@ def run():
                         before = rows.count()
                         expect(page.locator(".library-item .badge").first).to_have_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
                         expect(page.locator("aside.side .nav a", has_text="Mes affiches")).to_contain_text(str(before))
-                        rows.first.get_by_role("button", name=re.compile("^Dupliquer")).click()
+                        options = rows.first.get_by_role("button", name=re.compile("^Actions pour"))
+                        duplicate = rows.first.get_by_role("button", name=re.compile("^Dupliquer"))
+                        expect(duplicate).to_have_count(0)
+                        options.focus()
+                        page.keyboard.press("Enter")
+                        page.keyboard.press("Tab")
+                        expect(duplicate).to_be_focused()
+                        page.keyboard.press("Escape")
+                        expect(options).to_be_focused()
+                        expect(options).to_have_attribute("aria-expanded", "false")
+                        options.click()
+                        duplicate.click()
                         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
                         copy_id = page.url.split("#")[1]
                         go(page, "Mes affiches")
                         expect(rows).to_have_count(before + 1)
+                        options.click()
+                        rows.first.get_by_role("button", name=re.compile("^Retirer")).click()
+                        page.get_by_role("dialog").get_by_role("button", name="Annuler", exact=True).click()
+                        expect(options).to_be_focused()
+                        options.click()
                         rows.first.get_by_role("button", name=re.compile("^Retirer")).click()
                         expect(page.get_by_role("dialog")).to_contain_text("Rien n’est effacé")
                         page.get_by_role("dialog").get_by_role("button", name="Retirer de la liste").click()
@@ -3248,11 +3363,13 @@ def run():
                         # A removed poster is not opened by its address: the list of removed posters is shown instead.
                         page.goto(f"{ORIGIN}/#{copy_id}")
                         expect(page.get_by_text("Cette affiche a été retirée de la liste.", exact=False)).to_be_visible()
-                        expect(page.get_by_label("Afficher les affiches retirées")).to_be_checked()
+                        expect(page.get_by_role("button", name="Retirées", exact=True)).to_have_attribute("aria-pressed", "true")
                         expect(rows).to_have_count(1)
+                        options.click()
+                        expect(rows.first.get_by_role("button", name=re.compile("^Dupliquer"))).to_be_visible()
                         rows.first.get_by_role("button", name=re.compile("^Remettre")).click()
                         expect(rows).to_have_count(0)
-                        page.get_by_label("Afficher les affiches retirées").uncheck()
+                        page.get_by_role("button", name="Actives", exact=True).click()
                         expect(rows).to_have_count(before + 1)
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         # The logo as a round seal (ADR-057): a new poster with the logo and the contact, no shop name.
@@ -3264,6 +3381,7 @@ def run():
                         page.get_by_label("Variante confirmée").fill("Noir")
                         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
                         page.get_by_label("Les photos correspondent").check()
+                        page.locator(".intake details > summary").click()
                         expect(page.get_by_role("checkbox", name="Logo", exact=True)).not_to_be_checked()
                         page.get_by_role("checkbox", name="Logo", exact=True).check()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
@@ -3271,17 +3389,16 @@ def run():
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Soundcore R50i sceau", exact=True)).to_be_visible()
                         # The seal is an explicit choice; new posters keep the original rectangular logo by default.
-                        # On a phone (360 px) a step fits the width, « Continuer » stays at the bottom of the screen, and
-                        # the poster opens in front of the step and gives the step back as it was.
-                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        # The main generation action stays reachable on a phone while each optional section remains editable.
+                        expect(tab("Style")).to_have_attribute("aria-selected", "true")
                         page.set_viewport_size({"width": 360, "height": 740})
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
-                        expect(proceed).to_be_in_viewport()
-                        expect(page.get_by_label("Titre", exact=True)).to_be_in_viewport()
+                        expect(generate).to_be_in_viewport()
+                        open_group("Textes")
+                        expect(page.get_by_label("Titre", exact=True)).to_be_visible()
                         check_contrast(page, "step Textes at phone width")
                         shot(page, "step-textes-mobile.png", full_page=False)
-                        proceed.click()
-                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        open_group("Boutique")
                         seal_option = page.get_by_label("Logo en sceau rond dans l’image")
                         expect(seal_option).not_to_be_checked()
                         seal_option.check()
@@ -3296,9 +3413,9 @@ def run():
                         page.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().width > 250")
                         check_contrast(page, "poster opened over a step")
                         shot(page, "step-affiche-mobile.png", full_page=False)
-                        sheet.get_by_role("button", name="Revenir à l’étape").click()
+                        sheet.get_by_role("button", name="Revenir aux réglages").click()
                         expect(page.get_by_role("dialog")).to_have_count(0)
-                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
                         expect(seal_option).to_be_checked()
                         # From the poster sheet, taking the contact off and following the link back: the sheet closes and the
                         # « Boutique » step shows the unticked box (the link used to change the group behind the sheet only).
@@ -3307,7 +3424,7 @@ def run():
                         sheet.get_by_role("button", name="Retirer de l’affiche").click()
                         sheet.get_by_role("button", name="Le remettre depuis « Boutique »").click()
                         expect(page.get_by_role("dialog")).to_have_count(0)
-                        expect(step_count).to_have_text("Étape 3 sur 4")
+                        expect(tab("Boutique")).to_have_attribute("aria-selected", "true")
                         expect(page.get_by_role("checkbox", name="Contact", exact=True)).not_to_be_checked()
                         page.get_by_role("checkbox", name="Contact", exact=True).check()
                         expect(seal_option).to_be_checked()
@@ -3315,8 +3432,7 @@ def run():
                         check_contrast(page, "step Boutique at phone width, light theme")
                         shot(page, "step-boutique-mobile-clair.png", full_page=False)
                         toggle_theme(page, "Passer au thème sombre", hidden=True)
-                        proceed.click()
-                        expect(step_count).to_have_text("Étape 4 sur 4")
+                        open_group("Style")
                         expect(generate).to_be_in_viewport()
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         shot(page, "step-style-mobile.png", full_page=False)
@@ -3325,19 +3441,19 @@ def run():
                         page.on("request", lambda request: sent.append(request.post_data_json) if request.method == "POST" and request.url.endswith("/scenes") else None)
                         generate.click()
                         page.get_by_role("button", name="Lancer la génération").click()
-                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
                         assert sent[-1]["headline"]["logo_seal"] is True and sent[-1]["headline"]["signature_align"] == "right", sent[-1]
-                        expect(page.get_by_text("Un disque blanc vide est prévu pour le logo", exact=False)).to_be_visible()
-                        # The review is two screens tall on a phone: its decision stays at the bottom of the screen, without scrolling.
-                        approve = page.get_by_role("button", name="Tout est conforme, approuver")
-                        expect(approve).to_be_in_viewport()
-                        expect(page.get_by_role("button", name="Signaler un problème")).to_be_in_viewport()
+                        expect(page.get_by_text("Le logo doit recouvrir tout son disque", exact=False)).to_be_visible()
+                        # The rendered image and its actions share one scrollable panel on a short phone.
+                        approve = page.locator(".final-preview").get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)
+                        expect(page.locator(".final-preview .shot img")).to_be_visible()
                         shot(page, "review-mobile.png", full_page=False)
                         page.set_viewport_size({"width": 360, "height": 640})
-                        check_reach(page, ".review-panel", "review at 360 × 640", approve, page.get_by_role("button", name="Signaler un problème"))
+                        check_file_actions(page.locator(".final-preview"), approve, page.get_by_role("button", name="Signaler un problème"))
                         page.set_viewport_size({"width": 360, "height": 740})
-                        approve.click()
-                        expect(page.get_by_text("Fidélité du produit approuvée.", exact=False)).to_be_visible()
+                        download_review(page)
+                        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                        assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["confirmation"]
                         page.set_viewport_size({"width": 1440, "height": 1000})
                         sealed = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]
                         disc = page.request.get(f"{ORIGIN}/api/visuals/{sealed['formats']['feed']['scene']['visual_id']}").json()["logo_disc"]
@@ -3360,6 +3476,7 @@ def run():
                         open_group("Boutique")
                         expect(seal_option).to_be_disabled()
                         page.get_by_role("checkbox", name="Logo", exact=True).uncheck()
+                        until(lambda: not footer("logo")["visible"])
                         expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_be_visible()
                         expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
                         # The reason beside the blocked action opens the group that holds the fix.
@@ -3370,9 +3487,9 @@ def run():
                         until(lambda: footer("logo")["visible"] and abs(footer("logo")["x"] - seal["x"]) < .1)
                         expect(page.get_by_text("L’image contient un disque prévu pour le logo", exact=False)).to_have_count(0)
                         page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
-                        expect(page.get_by_role("heading", name="Dernière vérification avant le téléchargement")).to_be_visible(timeout=40000)
-                        expect(page.get_by_text("Le logo recouvre bien son disque", exact=True)).to_be_visible()
-                        expect(page.locator(".final-preview img")).to_be_visible()
+                        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=40000)
+                        expect(page.get_by_text("Le logo doit recouvrir tout son disque.", exact=True)).to_be_visible()
+                        expect(page.locator(".final-preview .shot img")).to_be_visible()
                         page.screenshot(path=str(OUTPUT / "seal-final.png"))
                         page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                         # Selecting a historical disc scene repairs even a plain logo moved away from it.
@@ -3447,25 +3564,35 @@ def run():
                         page.get_by_role("button", name="Préparer mon affiche").click()
                         expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
                         assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"]["offer"]["price_ar"] == 10000
-                        # A title the image model cannot draw is said at the field, then beside the main button on the last step,
-                        # before the paid step, with the reason; from there the reason opens the step that holds the title.
+                        # Either invalid field blocks generation from another tab; its repair link focuses the actual input.
+                        open_group("Textes")
+                        admissions_before = len(admissions)
+                        price = page.get_by_label("Prix en ariary", exact=True)
+                        price.fill("prix inconnu")
+                        expect(price).to_have_attribute("aria-invalid", "true")
+                        open_group("Style")
+                        expect(generate).to_be_disabled()
+                        repair = page.locator(".step-nav .why").get_by_role("button", name="Ouvrir « Textes »")
+                        repair.click()
+                        expect(price).to_be_focused()
+                        price.fill("10 000")
                         page.get_by_label("Titre", exact=True).fill('Petite photo 32"')
-                        expect(page.get_by_text("contient un guillemet droit", exact=False)).to_be_visible()
-                        proceed.click()
-                        proceed.click()
-                        expect(page.get_by_role("button", name="Générer l’affiche")).to_be_disabled()
+                        expect(page.locator("#erreur-titre")).to_contain_text("contient un guillemet droit")
+                        open_group("Style")
+                        expect(generate).to_be_disabled()
                         expect(page.locator(".step-nav .why")).to_contain_text("contient un guillemet droit")
                         check_contrast(page, "blocked main action")
                         shot(page, "bloque.png")
-                        page.locator(".step-nav .why").get_by_role("button", name="Ouvrir « Textes »").click()
-                        expect(step_count).to_have_text("Étape 2 sur 4")
+                        repair.click()
                         expect(tab("Textes")).to_have_attribute("aria-selected", "true")
+                        expect(page.get_by_label("Titre", exact=True)).to_be_focused()
                         page.get_by_label("Titre", exact=True).fill("Petite photo")
                         expect(page.get_by_text("contient un guillemet droit", exact=False)).to_have_count(0)
                         tab("Style").click()
                         expect(page.get_by_role("button", name="Générer l’affiche")).to_be_enabled()
                         expect(page.locator(".step-nav .why")).to_have_count(0)
                         expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
+                        assert len(admissions) == admissions_before
                         agree = page.get_by_role("dialog").get_by_label("J’accepte une qualité réduite", exact=False)
                         page.get_by_role("button", name="Générer l’affiche").click()
                         expect(agree).to_be_visible()
@@ -3481,13 +3608,23 @@ def run():
                         page.keyboard.press("Escape")
                         # After a reload the editor no longer knows the photo is small: the server refuses, and the same dialog
                         # comes back with the agreement. No generation starts without it.
+                        source_read = "**/api/product-inputs/*"
+                        page.route(source_read, lambda route: route.fulfill(status=503, json={"error": {"code": "unavailable"}}))
                         page.reload()
                         expect(page.get_by_role("heading", name="Petite photo", exact=True)).to_be_visible()
+                        expect(offer).to_contain_text("Les photos et la variante sont indisponibles.")
+                        expect(offer).to_contain_text("Petite photo")
+                        expect(offer).to_contain_text(re.compile(r"10\s000\s*Ar", re.IGNORECASE))
+                        expect(generate).to_be_disabled()
+                        page.unroute(source_read)
+                        offer.get_by_role("button", name="Recharger le produit").click()
+                        expect(offer).to_contain_text("Gris")
+                        expect(offer.locator("img").first).to_be_visible()
+                        page.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=offer.locator("img").first.element_handle())
+                        expect(generate).to_be_enabled()
+                        assert len(admissions) == admissions_before
                         before = len(sent)
-                        # A poster without a version reopens on its first step; the walk is the same.
-                        expect(step_count).to_have_text("Étape 2 sur 4")
-                        proceed.click()
-                        proceed.click()
+                        expect(tab("Style")).to_have_attribute("aria-selected", "true")
                         page.get_by_role("button", name="Générer l’affiche").click()
                         expect(agree).to_have_count(0)
                         page.get_by_role("button", name="Lancer la génération").click()
@@ -3496,7 +3633,7 @@ def run():
                         assert sent[before]["acknowledged_warnings"] == [], sent[before]
                         agree.check()
                         page.get_by_role("button", name="Lancer la génération").click()
-                        expect(page.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
+                        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
                         assert sent[-1]["acknowledged_warnings"] == ["low_resolution"], sent[-1]
                         # The phone-first editor (R-POSTER-EDITOR-007, D-POSTER-EDITOR-005 part A) on a low-end Android
                         # phone: 360 × 740 with a touch pointer, same session.
@@ -3548,46 +3685,33 @@ def run():
                         top_bar = mobile.locator(".titlerow.bar")
                         assert top_bar.bounding_box()["y"] == 0 and 50 <= top_bar.bounding_box()["height"] <= 64, top_bar.bounding_box()
                         assert back.bounding_box()["height"] >= 44
-                        # On arrival in « Textes » the first field starts in the upper 60 % of the screen.
-                        expect(mobile.locator(".step-count")).to_have_text("Étape 2 sur 4")
-                        first_field = mobile.get_by_label("Titre", exact=True).bounding_box()
-                        assert first_field["y"] < 444, first_field
+                        expect(mobile.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
+                        expect(mobile.get_by_role("region", name="Offre à générer")).to_contain_text("Soundcore R50i téléphone")
+                        expect(mobile.get_by_role("button", name="Générer l’affiche")).to_be_in_viewport()
                         mobile.wait_for_function(no_sideways)
-                        check_contrast(mobile, "step Textes at 360 px with a touch pointer")
-                        shot(mobile, "phone-step-textes.png", full_page=False)
-                        # The draft is a preview: its « Aperçu » pill is in front of everything at its centre.
-                        pill = mobile.locator(".frame .badge")
-                        expect(pill).to_have_text("Aperçu")
-                        assert topmost(pill)
+                        check_contrast(mobile, "preparation at 360 px with a touch pointer")
+                        shot(mobile, "phone-preparation.png", full_page=False)
                         mobile.evaluate("scrollTo({ top: 400, behavior: 'instant' })")
                         assert top_bar.bounding_box()["y"] == 0
                         mobile.evaluate("scrollTo({ top: 0, behavior: 'instant' })")
-                        # A tap on the thumbnail opens the poster large instead of selecting an element.
-                        mobile.locator(".frame").tap()
+                        mobile.get_by_role("button", name="Voir l’affiche", exact=True).tap()
                         sheet = mobile.get_by_role("dialog", name="Affiche")
                         expect(sheet).to_be_visible()
-                        sheet.get_by_role("button", name="Revenir à l’étape").tap()
+                        expect(sheet.locator(".poster-canvas canvas").first).to_be_in_viewport()
+                        expect(sheet.locator(".frame .badge")).to_have_text("Aperçu")
+                        expect(sheet.locator(".frame .badge")).to_be_hidden()
+                        sheet.get_by_role("button", name="Revenir aux réglages").tap()
                         expect(mobile.get_by_role("dialog")).to_have_count(0)
-                        proceed_phone = mobile.get_by_role("button", name="Continuer", exact=True)
-                        proceed_phone.tap()
-                        proceed_phone.tap()
                         mobile.get_by_role("button", name="Générer l’affiche").tap()
                         mobile.get_by_role("button", name="Lancer la génération").tap()
-                        expect(mobile.get_by_role("heading", name="Vérifier la fidélité du produit")).to_be_visible(timeout=30000)
-                        # The review shows one image at a time, at full width, « La version » first.
-                        version_image = mobile.get_by_alt_text("Version générée à vérifier")
-                        photo_image = mobile.get_by_alt_text("Photo originale 1 à comparer")
-                        expect(version_image).to_be_visible()
-                        expect(photo_image).to_be_hidden()
-                        expect(mobile.get_by_role("button", name="La version", exact=True)).to_have_attribute("aria-pressed", "true")
-                        assert version_image.bounding_box()["width"] >= 300
-                        check_contrast(mobile, "review at 360 px, the version")
+                        expect(mobile.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
+                        preview = mobile.locator(".final-preview")
+                        expect(preview.locator(".shot img")).to_be_visible()
+                        expect(preview.get_by_alt_text("Photo originale 1 à comparer")).to_be_visible()
+                        check_contrast(mobile, "single review at 360 px")
                         shot(mobile, "phone-review.png", full_page=False)
-                        mobile.get_by_role("button", name="Votre photo", exact=True).tap()
-                        expect(photo_image).to_be_visible()
-                        expect(version_image).to_be_hidden()
-                        expect(mobile.get_by_role("button", name="Tout est conforme, approuver")).to_be_in_viewport()
-                        mobile.get_by_role("button", name="Tout est conforme, approuver").tap()
+                        download_review(mobile)
+                        preview.get_by_role("button", name="Fermer").tap()
                         expect(mobile.get_by_role("tab")).to_have_count(4)
                         # Once a version exists the real image stays on screen, compact (at least 140 px here), while the controls
                         # scroll under it; its state badge is in front; the versions are a row of small thumbnails under
@@ -3686,6 +3810,7 @@ def run():
                         for address, name in ((f"#{light_poster}", "editeur"), ("#etapes", "creer")):
                             screen.goto(f"{ORIGIN}/{address}")
                             if name == "editeur":
+                                screen.locator(".final-preview").get_by_role("button", name="Fermer").click()
                                 expect(screen.get_by_role("tab", name="Textes", exact=True)).to_have_attribute("aria-selected", "true")
                                 # The poster is drawn once its scene is loaded; the main action waits for it.
                                 expect(screen.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_enabled()
@@ -3713,6 +3838,7 @@ def run():
                         other.get_by_label("Identifiant de la boutique", exact=True).fill(IDENTIFIER)
                         other.get_by_label("Mot de passe", exact=True).fill(PASSWORD)
                         other.get_by_role("button", name="Ouvrir l’atelier").click()
+                        other.get_by_role("tab", name="Textes", exact=True).click()
                         expect(other.get_by_label("Titre", exact=True)).to_be_visible()
                         assert other.url.endswith(f"#{copy_id}"), other.url
                         other.close()
@@ -3724,7 +3850,7 @@ def run():
                         # The three formats (ADR-080) on an API of their own, fresh data: FORMATS_ENABLED=feed,square,story.
                         stop(*servers.pop())
                         with tempfile.TemporaryDirectory(prefix="affiche-formats-") as formats_data:
-                            formats_server = serve(formats_data, formats_enabled="feed,square,story")
+                            formats_server = serve(formats_data, formats_enabled="feed,square,story", facebook_provider="stub")
                             try:
                                 walk_formats(browser, errors)
                             finally:

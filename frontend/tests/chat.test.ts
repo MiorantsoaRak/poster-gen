@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { bind, open } from '../src/api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, productsOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, productsOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, picturesOfRecap, recapFormat, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 import { memory } from './fixture'
 
@@ -37,6 +37,31 @@ it('names the thread of a poster, of a new one, the unsent text and the pending 
   expect(pendingKey()).toBe('affiche.shop2.chat.pending')
   expect([threadKey('abc'), unsentKey(), pendingKey(), 'affiche.shop1.chat.abc', 'affiche.chat.abc'].map(isThread)).toEqual([true, false, false, false, false])
 })
+it('shows the current request format on an open recap and the original format on a historical recap', () => {
+  const [legacy, snapshot] = readThread(JSON.stringify({ items: [
+    item({ card: { kind: 'recap' } }),
+    item({ card: { kind: 'recap', format: 'square' }, done: true }),
+  ] })).items
+  expect(recapFormat(legacy, 'feed')).toBe('Publication 4:5')
+  expect(recapFormat(legacy, 'story')).toBe('Story 9:16')
+  expect(recapFormat(snapshot, 'story')).toBe('Carré 1:1')
+  expect(recapFormat({ ...legacy, done: true }, 'feed')).toBeUndefined()
+  const sent = { ...snapshot, spent: true, request: { path: '/scenes', revision: 1, body: { format: 'story' } } }
+  expect(recapFormat(sent, 'feed')).toBe('Story 9:16')
+  expect(recapFormat({ ...sent, request: { ...sent.request, body: { format: 'unknown' } } }, 'feed')).toBeUndefined()
+})
+
+it('restores older recap photos using the original poster and its sent inspiration', () => {
+  const current = pictures('product', 'inspiration')
+  const body = { format: 'feed', style_reference_asset: 'old-reference' }
+  const legacy = item({ creation: 'p', spent: true, request: { path: '/scenes', body, revision: 2 }, card: { kind: 'recap' } })
+  expect(picturesOfRecap(legacy, current, 'p')).toEqual([current[0], { role: 'inspiration', asset: 'old-reference' }])
+  expect(picturesOfRecap(legacy, current, 'other')).toEqual([{ role: 'inspiration', asset: 'old-reference' }])
+  const [snapshot] = readThread(JSON.stringify({ items: [{ ...item({ done: true }), card: { kind: 'recap', pictures: [{ role: 'product', asset: 'before' }, null] } }] })).items
+  expect(picturesOfRecap(snapshot, current, 'p')).toEqual([{ role: 'product', asset: 'before' }])
+  expect(picturesOfRecap(item({ card: { kind: 'recap' } }), current)).toEqual(current)
+})
+
 it('keeps the last 100 items of a thread', () => {
   const many = Array.from({ length: 130 }, (_, index) => item({ id: String(index) }))
   expect(trim(many)).toHaveLength(100)

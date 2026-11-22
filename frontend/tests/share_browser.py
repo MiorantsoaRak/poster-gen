@@ -24,7 +24,7 @@ from affiche.db import utc_now
 from terms_browser import FRAMES, open_atelier, until
 
 OUT = smoke.ROOT / "outputs" / "share-browser"
-REVIEW, FINAL, READY = "Vérifier la fidélité du produit", "Dernière vérification avant le téléchargement", "Votre affiche est prête"
+REVIEW, FINAL, READY = "Vérifier la fidélité du produit", "Vérifier votre affiche", "Affiche confirmée"
 EARLIER = "Version confirmée précédente"
 EARLIER_LEDE = "Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager."
 DRAFT, DRAFT_LEDE = "Aperçu d’une version précédente", "Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle."
@@ -61,7 +61,7 @@ def walk(browser, errors, data, product):
     poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
     address = f"{smoke.ORIGIN}/api/creations/{poster}"
     assert len(renders) == 1, renders  # nothing current yet: a file to check
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
     first = page.request.get(address).json()["confirmation"]
     assert first and first["format"] == "feed", first
@@ -72,8 +72,13 @@ def walk(browser, errors, data, product):
     # FACEBOOK_PROVIDER=off (this server's): no « Publier sur ma Page », no publications (D-FB-PUBLISH-004).
     expect(panel.get_by_role("button", name=PUBLISH)).to_have_count(0)
     expect(panel.locator(".publications")).to_have_count(0)
+    panel.get_by_text("Autres actions", exact=True).click()
+    expect(panel.get_by_text("Le prix est dessiné dans l’image. Un nouveau prix demande une nouvelle version.")).to_be_visible()
+    panel.get_by_role("button", name="Changer le prix").click()
+    page.wait_for_url(f"{smoke.ORIGIN}/#{poster}")
+    expect(page.locator("#champ-prix")).to_be_focused()
     assert len(renders) == 1, renders
-    panel.get_by_role("button", name="Fermer").click()
+    assert page.request.get(address).json()["confirmation"]["id"] == first["id"]
 
     def home():
         smoke.go(page, "Accueil")
@@ -105,7 +110,30 @@ def walk(browser, errors, data, product):
 
     # The price changed after the confirmation, no new render: from Home, the editor and the chat the confirmed file opens as
     # an earlier version, without the live price and without « Partager », its download kept and the check offered.
-    save_price(460000)
+    # A verified file stays available from the library while another visual awaits review.
+    listing = "**/api/creations?limit=50&status=active"
+    def alternate_waiting(route):
+        response = route.fetch()
+        items = response.json()
+        item = next(item for item in items["items"] if item["id"] == poster)
+        assert item["has_current_file"]
+        item["state"] = "to_review"
+        route.fulfill(response=response, json=items)
+    page.route(listing, alternate_waiting)
+    smoke.go(page, "Mes affiches")
+    file_row = page.locator(".library-row", has=page.locator(".library-item .badge", has_text="À vérifier"))
+    file_row.get_by_role("button", name=re.compile("^Ouvrir le fichier de")).click()
+    current(panel, first)
+    panel.get_by_role("button", name="Fermer").click()
+    page.unroute(listing)
+    smoke.go(page, "Mes affiches")
+    file_button = page.get_by_role("button", name=re.compile("^Ouvrir le fichier de"))
+    expect(file_button).to_be_visible()
+    saved_elsewhere(460000)
+    file_button.click()
+    expect(page.get_by_text("Cette affiche n’a plus de fichier confirmé pour sa version actuelle.")).to_be_visible()
+    expect(panel).to_have_count(0)
+    assert len(renders) == 1, renders
     for way in ("home", "editor", "chat"):
         opened(way)
         earlier(panel, first)
@@ -115,10 +143,11 @@ def walk(browser, errors, data, product):
         panel.get_by_role("button", name="Fermer").click()
     # Nothing is current: the chat's button asks for a render. The image draws the old price, so the server refuses it.
     download.click()
-    expect(error_line).to_contain_text(MESSAGES["price_stale"])
-    assert len(renders) == 2, renders
+    blocked = page.get_by_role("dialog", name="Préparation de l’aperçu")
+    expect(blocked).to_contain_text("Un texte dessiné dans l’image a changé")
+    assert len(renders) == 1, renders
     expect(panel).to_have_count(0)
-    error_line.get_by_role("button", name="Fermer").click()
+    blocked.get_by_role("button", name="Fermer").click()
 
     # The price back: the same image at a later revision. The earlier version's « Vérifier l’aperçu final » prepares the
     # current version, which is confirmed.
@@ -133,12 +162,12 @@ def walk(browser, errors, data, product):
     until(page, lambda: pngs)
     expect(panel.locator(".shot img")).not_to_have_attribute("src", f"/api/renders/{first['render_id']}/preview")
     expect(panel.locator(".facts")).not_to_contain_text("Prix")
-    expect(panel.get_by_role("button", name="Tout est conforme, confirmer")).to_be_disabled()
+    expect(panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)).to_be_disabled()
     pngs.pop().continue_()
     page.unroute(png)
-    expect(panel.locator(".facts")).to_contain_text(re.compile(r"Prix affiché\s*450\s000 Ar"))
-    assert len(renders) == 3, renders
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    expect(panel.locator(".facts")).to_contain_text(re.compile(r"Prix de l’offre\s*450\s000 Ar"))
+    assert len(renders) == 2, renders
+    page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
     confirmed = page.request.get(address).json()["confirmation"]
     assert confirmed["render_id"] not in (None, first["render_id"]), confirmed
@@ -162,7 +191,7 @@ def walk(browser, errors, data, product):
     download.click()
     current(panel, confirmed)
     panel.get_by_role("button", name="Fermer").click()
-    assert len(renders) == 3, renders
+    assert len(renders) == 2, renders
 
     # The poster read fails on the chat's button: the sentence and « Réessayer », never a render; the retry opens it.
     page.route(address, lambda route: route.abort() if route.request.method == "GET" else route.continue_())
@@ -174,7 +203,7 @@ def walk(browser, errors, data, product):
     current(panel, confirmed)
     expect(error_line).to_have_count(0)
     panel.get_by_role("button", name="Fermer").click()
-    assert len(renders) == 3, renders
+    assert len(renders) == 2, renders
 
     # The confirmation's render read fails at an opening: the same, and the newer unconfirmed render is never shown instead.
     rendered = f"{smoke.ORIGIN}/api/renders/{confirmed['render_id']}"
@@ -188,7 +217,7 @@ def walk(browser, errors, data, product):
     page.unroute(rendered)
     error_line.get_by_role("button", name="Réessayer").click()
     current(panel, confirmed)
-    assert len(renders) == 3, renders
+    assert len(renders) == 2, renders
     panel.get_by_role("button", name="Fermer").click()
 
     # The poster's jobs cannot be read at a direct opening: « Réessayer » reads the poster and its jobs again.
@@ -220,12 +249,10 @@ def walk(browser, errors, data, product):
     opened("editor")
     current(panel, confirmed)
     panel.get_by_role("button", name="Fermer").click()
-    page.route(f"{address}/renders", lambda route: route.fulfill(status=202, content_type="application/json",
-               body=json.dumps({"job_id": square_job, "status_url": f"/api/jobs/{square_job}"})))
+    # The current primary file is reused even when the newest render is square.
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
     current(panel, confirmed)
-    page.unroute(f"{address}/renders")
-    assert len(renders) == 4, renders  # answered by the page with the square file's job
+    assert len(renders) == 2, renders
     panel.get_by_role("button", name="Fermer").click()
 
     # A failed direct opening (a poster that does not exist), then a Home row whose read fails: « Réessayer » reads the
@@ -283,7 +310,7 @@ def walk(browser, errors, data, product):
     download.click()
     expect(page.locator(".message.notice")).to_contain_text(CHANGED)
     expect(panel).to_have_count(0)
-    assert len(renders) == 4, renders
+    assert len(renders) == 2, renders
     download.click()
     current(panel, elsewhere)
     expect(panel.locator(".facts")).to_contain_text(re.compile(r"460\s000 Ar"))
@@ -332,10 +359,11 @@ def walk(browser, errors, data, product):
     download.click()
     expect(page.locator(".message.notice")).to_contain_text(CHANGED)
     expect(panel).to_have_count(0)
-    assert len(renders) == 4, renders
+    assert len(renders) == 2, renders
     download.click()
-    expect(error_line).to_contain_text(MESSAGES["price_stale"])  # the image draws 450 000 Ar
-    assert len(renders) == 5 and renders[-1][1] == f'"{newest}"', renders
+    expect(blocked).to_contain_text("Un texte dessiné dans l’image a changé")
+    assert len(renders) == 2, renders
+    blocked.get_by_role("button", name="Fermer").click()
 
     # Nothing is current: an opening shows the latest render, n + 1's confirmed file, as an earlier version. Its read fails:
     # the sentence, then « Réessayer » reads the poster and its jobs again.
@@ -363,7 +391,7 @@ def walk(browser, errors, data, product):
     expect(panel).to_have_count(0)
     expect(error_line).to_have_count(0)
     page.unroute(fallback)
-    assert len(renders) == 5, renders
+    assert len(renders) == 2, renders
 
     # A render prepared and never confirmed, then another price saved: reopened, it is an earlier version, without the live
     # price, the checklist or a download, and the check is offered.
@@ -372,7 +400,7 @@ def walk(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
     download.click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
-    assert len(renders) == 6, renders
+    assert len(renders) == 3, renders
     prepared = next(item for item in page.request.get(f"{address}/jobs").json()["items"] if item["kind"] == "render")["result_ref"]
     expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{prepared}/preview")
     panel.get_by_role("button", name="Fermer").click()
@@ -384,12 +412,12 @@ def walk(browser, errors, data, product):
         expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{prepared}/preview")
         expect(panel.locator(".facts")).not_to_contain_text("Prix")
         expect(panel).not_to_contain_text(re.compile(r"\d{3}\s000"))
-        expect(panel.get_by_role("button", name="Tout est conforme, confirmer")).to_have_count(0)
-        expect(panel.get_by_role("link", name="Télécharger le PNG confirmé")).to_have_count(0)
+        expect(panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)).to_have_count(0)
+        expect(panel.get_by_role("link", name="Télécharger le PNG")).to_have_count(0)
         expect(panel.get_by_role("button", name="Vérifier l’aperçu final")).to_be_visible()
         page.screenshot(path=str(OUT / f"earlier-draft-{way}-1366.png"))
         panel.get_by_role("button", name="Fermer").click()
-    assert len(renders) == 6, renders
+    assert len(renders) == 3, renders
 
     # The undo: the price back, the same image at a later revision, and that older render confirmed there (by the route, as
     # another tab would). Reopened, the poster read names it at the saved revision: the current file, ready.
@@ -408,7 +436,7 @@ def walk(browser, errors, data, product):
         expect(panel.get_by_role("heading", name=EARLIER)).to_have_count(0)
         expect(panel.locator(".facts")).to_contain_text(re.compile(r"450\s000 Ar"))
         panel.get_by_role("button", name="Fermer").click()
-    assert len(renders) == 6, renders
+    assert len(renders) == 3, renders
 
     # A's confirmation answered after a render job B ended and replaced A in the panel: the answer belongs to A alone, and B
     # keeps its checklist, without a download. (Nothing named: two saves away and back. B is a second render of this
@@ -419,7 +447,7 @@ def walk(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
-    assert len(renders) == 7, renders
+    assert len(renders) == 4, renders
     a_render = next(item for item in page.request.get(f"{address}/jobs").json()["items"] if item["kind"] == "render")["result_ref"]
     panel.get_by_role("button", name="Fermer").click()
     b_render = str(uuid4())
@@ -447,7 +475,7 @@ def walk(browser, errors, data, product):
     expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{a_render}/preview")
     confirms = []
     page.route(f"{address}/confirmations", lambda route: confirms.append((route, route.fetch())))
-    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     until(page, lambda: confirms)
     running["on"] = False
     expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{b_render}/preview", timeout=20000)
@@ -456,29 +484,25 @@ def walk(browser, errors, data, product):
         route.fulfill(response=answer)
     page.evaluate(FRAMES)
     expect(panel.get_by_role("heading", name=FINAL)).to_be_visible()
-    expect(panel.get_by_role("button", name="Tout est conforme, confirmer")).to_be_visible()
-    expect(panel.get_by_role("link", name="Télécharger le PNG confirmé")).to_have_count(0)
+    expect(panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)).to_be_enabled()
+    expect(panel.get_by_role("link", name="Télécharger le PNG")).to_have_count(0)
     for pattern in (f"{address}/confirmations", f"{address}/jobs", f"{smoke.ORIGIN}/api/jobs/{b_job}"):
         page.unroute(pattern)
     a_confirmed = page.request.get(address).json()["confirmation"]
     assert a_confirmed["render_id"] == a_render, a_confirmed  # recorded on the server all the same
     panel.get_by_role("button", name="Fermer").click()
 
-    # A reused confirmed job of this tab's revision N whose poster read answers N + 1 with no confirmation (another tab
-    # saved): « Votre affiche est prête » never shows; the saved poster is reloaded, as the chat's button does.
+    # A private review in this tab at revision N whose poster read answers N + 1 with no confirmation (another tab
+    # saved): « Affiche confirmée » never shows; the saved poster is reloaded, as the chat's button does.
     saved_elsewhere(470000)
     page.evaluate("""() => { window.sawReady = false; new MutationObserver(() => {
-        if (document.getElementById('final-title')?.textContent.includes('Votre affiche est prête')) window.sawReady = true
+        if (document.getElementById('final-title')?.textContent.includes('Affiche confirmée')) window.sawReady = true
     }).observe(document.body, { childList: true, subtree: true, characterData: true }) }""")
-    a_job_id = next(item for item in page.request.get(f"{address}/jobs").json()["items"] if item["result_ref"] == a_render)["id"]
-    page.route(f"{address}/renders", lambda route: route.fulfill(status=202, content_type="application/json",
-               body=json.dumps({"job_id": a_job_id, "status_url": f"/api/jobs/{a_job_id}"})))
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
     expect(page.locator(".message.notice")).to_contain_text(CHANGED)
     expect(panel).to_have_count(0)
     assert page.evaluate("window.sawReady") is False
-    page.unroute(f"{address}/renders")
-    assert len(renders) == 8, renders  # answered by the page with the reused job
+    assert len(renders) == 4, renders  # the latest revision is checked before requesting a render
 
     # The poster's jobs cannot be read; its « Réessayer » reads the poster, held while the owner edits the price, then
     # released before that edit is saved: the edit stays and is saved, and the poster is read again after it.
@@ -508,9 +532,15 @@ def sign_in(page, identifier, password):
     expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
 
 
+def show_sharing(panel):
+    summary = panel.locator("summary", has_text="Partager dans une autre application")
+    expect(summary).to_be_visible()
+    if not summary.evaluate("el => el.parentElement.open"):
+        summary.click()
+
+
 def made_in_chat(page, product, message):
-    """A poster made in the chat from Home and approved; its card's « Télécharger ou partager » opens the file to check.
-    Returns the poster's id."""
+    """Generate a poster in Message and open the private review of its selected scene."""
     page.get_by_role("link", name="Créer une affiche").click()
     page.locator(".composer input[type=file]").set_input_files([product])
     expect(page.locator(".tray .pic")).to_have_count(1)
@@ -520,14 +550,12 @@ def made_in_chat(page, product, message):
     page.get_by_role("log").get_by_role("button", name="Créer l’affiche").click()
     page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
     page.get_by_role("button", name="Vérifier", exact=True).click(timeout=30000)
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
-    page.get_by_role("button", name="Tout est conforme, approuver").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
-    expect(page.get_by_role("button", name=BUTTON, exact=True)).to_have_count(1)
-    expect(page.get_by_role("button", name="Télécharger", exact=True)).to_have_count(0)
-    page.get_by_role("button", name=BUTTON, exact=True).click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
-    return page.url.split("#message-")[1]
+    poster = page.url.split("#message-")[1]
+    address = f"{smoke.ORIGIN}/api/creations/{poster}"
+    assert page.request.get(address).json()["confirmation"] is None
+    assert page.request.get(address + "/visuals").json()["items"][0]["status"] == "pending_review"
+    return poster
 
 
 # The clipboard, stubbed in every page of a context (the real one needs a permission and is shared by the whole machine):
@@ -588,11 +616,13 @@ def captions(browser, errors, data, product):
         parts(at)[0].get_by_role("button", name="Fermer").click()
         at.get_by_role("button", name=BUTTON, exact=True).click()
         expect(at.get_by_role("heading", name=READY)).to_be_visible()
+        show_sharing(at.locator(".final-preview"))
 
     # No field on the file to check; confirmed in place, the field appears, empty: nothing kept for this poster yet.
     expect(field).to_have_count(0)
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
+    show_sharing(page.locator(".final-preview"))
     expect(field).to_have_value("")
     expect(copy).to_be_disabled()
     expect(panel.get_by_text(HELP, exact=True)).to_be_visible()
@@ -611,6 +641,7 @@ def captions(browser, errors, data, product):
     assert stored() == edited
     page.reload()
     expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(page.locator(".final-preview"))
     expect(field).to_have_value(edited)
     # 2 001: the sentence, the text kept in the field, the stored value unchanged; nothing to copy.
     field.press("Control+End")
@@ -652,6 +683,7 @@ def captions(browser, errors, data, product):
     expect(copy).to_be_enabled()
     page.reload()  # the stub back
     expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(page.locator(".final-preview"))
 
     # Clearing: a refused removal says so and keeps the entry; a later clear removes it.
     page.evaluate(REFUSE, "removeItem")
@@ -724,6 +756,7 @@ def captions(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
     opened_from_home(poster)  # the editor's opening shows the confirmation and follows the running job
     expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(page.locator(".final-preview"))
     expect(field).to_have_value(multi)
     page.evaluate(REFUSE, "setItem")
     field.fill("Gardé pendant le rendu")
@@ -731,8 +764,9 @@ def captions(browser, errors, data, product):
     running["on"] = False
     expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{later_render}/preview", timeout=20000)
     expect(field).to_have_count(0)
-    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
+    show_sharing(page.locator(".final-preview"))
     expect(field).to_have_value("Gardé pendant le rendu")
     expect(status).to_have_text(TAB_ONLY)
     assert stored() == multi
@@ -743,6 +777,7 @@ def captions(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
     opened_from_home(f"message-{poster}")
     expect(page.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(page.locator(".final-preview"))
     expect(field).to_have_value(multi)
     expect(status).to_have_text("")
 
@@ -750,6 +785,7 @@ def captions(browser, errors, data, product):
     second = tab()
     second.goto(f"{smoke.ORIGIN}/#message-{poster}")
     expect(second.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(second.locator(".final-preview"))
     second_field = parts(second)[1]
     expect(second_field).to_have_value(multi)
     second_field.fill("Texte du second onglet")
@@ -762,6 +798,7 @@ def captions(browser, errors, data, product):
     assert stored() == multi + " !"
     second.reload()  # this tab's chat holds no card: its address opens the panel again
     expect(second.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(second.locator(".final-preview"))
     expect(second_field).to_have_value(multi + " !")
     second.close()
     assert stored(name=other) == "Légende d’une autre affiche"
@@ -795,8 +832,9 @@ def captions(browser, errors, data, product):
     assert page.evaluate("() => !document.body.innerText.includes('Galaxy A15')")
     page.close()  # it still holds the device's chat
     theirs = made_in_chat(other_shop, product, "Casque Sony noir, 300 000 Ar")
-    other_shop.get_by_role("button", name="Tout est conforme, confirmer").click()
+    other_shop.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(other_shop.get_by_role("heading", name=READY)).to_be_visible()
+    show_sharing(other_shop.locator(".final-preview"))
     their_field, their_key = parts(other_shop)[1], f"affiche.shop{shop_b}.caption.{theirs}"
     expect(their_field).to_have_value("")
     other_shop.evaluate("key => localStorage.setItem(key, 'Légende de la boutique A')", f"affiche.shop1.caption.{theirs}")
@@ -819,6 +857,7 @@ def captions(browser, errors, data, product):
     sign_in(other_shop, smoke.IDENTIFIER, smoke.PASSWORD)
     other_shop.goto(f"{smoke.ORIGIN}/#message-{poster}")
     expect(other_shop.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(other_shop.locator(".final-preview"))
     expect(parts(other_shop)[1]).to_have_value(multi + " !")
     sign_out(other_shop)
     assert keys("affiche.shop1.") == []
@@ -918,7 +957,7 @@ def sharing(browser, errors, data, product):
     copy = panel.get_by_role("button", name="Copier la légende", exact=True)
     share = panel.get_by_role("button", name="Partager", exact=True)
     preparing = panel.get_by_role("button", name=PREPARING, exact=True)
-    download = panel.get_by_role("link", name="Télécharger le PNG confirmé")
+    download = panel.get_by_role("link", name="Télécharger le PNG")
     status, copied = panel.locator("#partage-etat"), panel.locator("#copie-legende")
     value = lambda name: page.evaluate(f"() => window.{name}")
     tap = lambda: page.evaluate(TAP)
@@ -937,6 +976,7 @@ def sharing(browser, errors, data, product):
         expect(panel).to_be_visible(timeout=20000)
         if loaded:
             expect(panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+        show_sharing(panel)
         if ready:
             expect(share).to_be_enabled()
 
@@ -953,11 +993,12 @@ def sharing(browser, errors, data, product):
     for absent in (share, preparing, status):
         expect(absent).to_have_count(0)
     assert value("toBlobs") == 0
-    # Confirmed in place, no reload: prepared from the image already loaded, « Partager » the main button, the download second.
-    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    # Confirmed in place, no reload: prepared from the image already loaded, the confirmed PNG stays the primary action.
+    panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
+    show_sharing(panel)
     expect(share).to_be_enabled()
-    expect(share).to_have_class(re.compile(r"\bprimary\b"))
-    expect(download).to_have_class(re.compile(r"\bsecondary\b"))
+    expect(share).to_have_class(re.compile(r"\bsecondary\b"))
+    expect(download).not_to_have_class(re.compile(r"\bsecondary\b"))
     assert value("toBlobs") == 1 and page.evaluate(RELEASED)
     address = f"{smoke.ORIGIN}/api/creations/{poster}"
     confirmation = page.request.get(address).json()["confirmation"]
@@ -967,7 +1008,8 @@ def sharing(browser, errors, data, product):
     panel.get_by_role("button", name="Fermer").click()
     home()
     second = made_in_chat(page, product, "Casque Sony noir, 300 000 Ar")
-    panel.get_by_role("button", name="Tout est conforme, confirmer").click()
+    panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
+    show_sharing(panel)
     expect(share).to_be_enabled()
     second_confirmation = page.request.get(f"{smoke.ORIGIN}/api/creations/{second}").json()["confirmation"]
 
@@ -1230,8 +1272,8 @@ def sharing(browser, errors, data, product):
         assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
         assert panel.evaluate("e => e.scrollWidth <= e.clientWidth"), "the panel scrolls sideways"
         page.screenshot(path=str(OUT / f"share-360-{scheme}.png"))
-    # « Partager » is the main action, charcoal on yellow; the file beside it is the second one, outlined (D-REDESIGN-001).
-    smoke.check_primary(page, "share, 360 px", share, panel.get_by_role("link", name="Télécharger le PNG confirmé"))
+    # With Facebook disabled the confirmed PNG takes the primary action.
+    smoke.check_primary(page, "share, 360 px", download, share)
     page.emulate_media(color_scheme="light")
     expect(field).to_have_value(caption)
     field.focus()
@@ -1252,13 +1294,14 @@ def sharing(browser, errors, data, product):
     other.goto(f"{smoke.ORIGIN}/#message-{poster}")
     other_panel = other.locator(".final-preview")
     expect(other_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(other_panel)
     expect(other_panel.locator("#partage-etat")).to_have_text(CANNOT)
     expect(other_panel.get_by_role("button", name="Partager", exact=True)).to_have_count(0)
     expect(other_panel.get_by_role("button", name=PREPARING, exact=True)).to_have_count(0)
-    expect(other_panel.get_by_role("link", name="Télécharger le PNG confirmé")).not_to_have_class(re.compile(r"\bsecondary\b"))
+    expect(other_panel.get_by_role("link", name="Télécharger le PNG")).not_to_have_class(re.compile(r"\bsecondary\b"))
     assert other.evaluate("() => window.toBlobs") == 0
     smoke.check_contrast(other, "cannot share")
-    smoke.check_primary(other, "cannot share", other_panel.get_by_role("link", name="Télécharger le PNG confirmé"))  # the main action there
+    smoke.check_primary(other, "cannot share", other_panel.get_by_role("link", name="Télécharger le PNG"))  # the main action there
     other.screenshot(path=str(OUT / "share-cannot-1366.png"))
     other.close()
 
@@ -1298,7 +1341,7 @@ def sharing(browser, errors, data, product):
     open_atelier(elsewhere_page)
     sign_in(elsewhere_page, "boutiquetrois", password_c)
     their_poster = made_in_chat(elsewhere_page, product, "Casque JBL noir, 200 000 Ar")
-    elsewhere_page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    elsewhere_page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(elsewhere_page.get_by_role("heading", name=READY)).to_be_visible()
     device.close()
     tap()
@@ -1312,6 +1355,7 @@ def sharing(browser, errors, data, product):
     theirs.evaluate("hash => { location.hash = hash }", their_poster)
     their_panel = theirs.locator(".final-preview")
     expect(their_panel.get_by_role("heading", name=READY)).to_be_visible(timeout=20000)
+    show_sharing(their_panel)
     expect(their_panel.get_by_role("button", name="Partager", exact=True)).to_be_enabled()
     page.evaluate("window.heldShares.pop().ko('NotAllowedError')")
     page.evaluate(FRAMES)
@@ -1365,8 +1409,12 @@ def publishing(browser, errors, data, product):
     open_atelier(page)
     sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
     poster = made_in_chat(page, product, "Casque Bose QC noir, 450 000 Ar")
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
-    expect(page.get_by_role("heading", name=READY)).to_be_visible()
+    page.set_viewport_size({"width": 360, "height": 640})
+    preview_url = panel.locator(".shot img").evaluate("img => img.src")
+    panel.get_by_role("button", name="Confirmer et préparer la publication", exact=True).click()
+    page.wait_for_url(f"**/#publier-{poster}")
+    expect(heading).to_be_visible()
+    assert not sent, "preparing the confirmed file must not publish"
     address = f"{smoke.ORIGIN}/api/creations/{poster}"
     title = page.request.get(address).json()["document"]["offer"]["title"]
 
@@ -1384,10 +1432,34 @@ def publishing(browser, errors, data, product):
         page.wait_for_url(re.compile(rf"#publier-{poster}$"))
         expect(heading).to_be_visible()
 
+    confirmed = page.request.get(address).json()["confirmation"]
+    assert preview_url.endswith(f"/api/renders/{confirmed['render_id']}/preview")
+    reopen()
+    # Reopening the confirmed file on a small phone keeps focus in the panel with both output actions in view.
+    expect(panel.get_by_role("heading", name=READY)).to_be_visible()
+    page.wait_for_function("document.querySelector('.final-preview')?.contains(document.activeElement)")
+    download = panel.get_by_role("link", name="Télécharger le PNG", exact=True)
+    expect(button).to_be_in_viewport()
+    expect(download).to_be_in_viewport()
+    shot = panel.locator(".shot img")
+    for control in (button, download):
+        box = control.bounding_box()
+        assert box["y"] + box["height"] <= shot.bounding_box()["y"], (box, shot.bounding_box())
+    expect(panel.get_by_role("button", name="Copier la légende")).to_have_count(0)
+    expect(panel.locator('details[open]')).to_have_count(0)
+    page.screenshot(path=str(OUT / "ready-actions-360.png"))
+    with page.expect_download() as received:
+        download.click()
+    png = received.value.path().read_bytes()
+    assert png.startswith(b"\x89PNG\r\n\x1a\n") and png == page.request.get(shot.evaluate("el => el.src")).body()
+    assert not sent
+    page.set_viewport_size({"width": 1366, "height": 768})
+
     # No post yet, and no sheet of the panel's own: the button opens the page for this poster, which says that no Page is
     # connected and leads to « Mon compte », where the stand-in's dialog connects one.
     expect(lines).to_have_count(0)
     expect(panel.get_by_text(other)).to_have_count(0)
+    show_sharing(panel)
     panel.get_by_label("Légende de la publication").fill("Casque Bose QC, 450 000 Ar")
     alone()
     expect(page.get_by_text("Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».", exact=True)).to_be_visible()
@@ -1410,6 +1482,7 @@ def publishing(browser, errors, data, product):
         if (name === key) throw new DOMException('Plein pour l’essai.', 'QuotaExceededError')
         return real.call(this, name, value) } }""", key)
     typed = "Casque Bose QC, prix 450 000 Ar"
+    show_sharing(panel)
     panel.get_by_label("Légende de la publication").fill(typed)
     assert page.evaluate("key => localStorage.getItem(key)", key) == "Casque Bose QC, 450 000 Ar"
     alone()
@@ -1434,6 +1507,7 @@ def publishing(browser, errors, data, product):
     assert sent == [{"page_id": "100000000000001", "description": typed,
                      "items": [{"creation_id": poster, "confirmation_id": confirmation, "seen": None}]}], sent
     reopen()
+    panel.locator("summary", has_text="Autres actions").click()
     expect(lines).to_have_count(1)
     expect(lines.first).to_contain_text("Publié sur Page d’essai 1.")
     expect(lines.first.locator("small")).to_contain_text("Page d’essai 1 · seule")
@@ -1459,6 +1533,7 @@ def publishing(browser, errors, data, product):
     posts.first.get_by_role("button", name="Elle est sur ma Page").click()
     expect(posts.first).to_contain_text("Présence confirmée par vous")
     reopen()
+    panel.locator("summary", has_text="Autres actions").click()
     expect(lines.first).to_contain_text("Présence confirmée par vous")
     expect(lines.first.get_by_role("link")).to_have_count(0)  # the owner's word gives the Page, not a post
     expect(lines.last.get_by_role("link", name="Voir la publication")).to_be_visible()
@@ -1466,6 +1541,7 @@ def publishing(browser, errors, data, product):
     reopen()  # read again at each opening, never by a timer
     expect(lines).to_have_count(2)
     assert panel.evaluate("el => el.scrollWidth <= el.clientWidth"), "the panel scrolls sideways at 360 px"
+    panel.locator("summary", has_text="Autres actions").click()
     lines.last.scroll_into_view_if_needed()
     page.screenshot(path=str(OUT / "publish-lines-360.png"))
     page.set_viewport_size({"width": 1366, "height": 768})
@@ -1508,6 +1584,7 @@ def publishing(browser, errors, data, product):
     page.evaluate("hash => { location.hash = hash }", poster)
     expect(page.get_by_role("heading", name=EARLIER)).to_be_visible(timeout=20000)
     expect(lines).to_have_count(20)
+    panel.locator("summary", has_text="Autres actions").click()
     panel.get_by_role("button", name="Voir plus").click()
     expect(lines).to_have_count(22)
     expect(lines.last).to_contain_text("Publié sur Page d’essai 1.")  # the first post, oldest, last
@@ -1525,8 +1602,8 @@ def current(panel, confirmation):
     """The panel holds that confirmation's own render, ready: the heading, its image, its download, no checklist."""
     expect(panel.get_by_role("heading", name=READY)).to_be_visible()
     expect(panel.locator(".shot img")).to_have_attribute("src", f"/api/renders/{confirmation['render_id']}/preview")
-    expect(panel.get_by_role("link", name="Télécharger le PNG confirmé")).to_have_attribute("href", confirmation["download_url"])
-    expect(panel.get_by_role("button", name="Tout est conforme, confirmer")).to_have_count(0)
+    expect(panel.get_by_role("link", name="Télécharger le PNG")).to_have_attribute("href", confirmation["download_url"])
+    expect(panel.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True)).to_have_count(0)
 
 
 def earlier(panel, confirmation):
@@ -1540,7 +1617,7 @@ def earlier(panel, confirmation):
     expect(panel.get_by_role("button", name="Partager")).to_have_count(0)
     expect(panel.get_by_role("button", name="Préparation de l’image…")).to_have_count(0)
     expect(panel.locator("#partage-etat")).to_have_count(0)
-    expect(panel.get_by_role("link", name="Télécharger le PNG confirmé")).to_have_attribute("href", confirmation["download_url"])
+    expect(panel.get_by_role("link", name="Télécharger le PNG")).to_have_attribute("href", confirmation["download_url"])
     expect(panel.get_by_role("button", name="Vérifier l’aperçu final")).to_be_visible()
 
 

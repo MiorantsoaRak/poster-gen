@@ -57,12 +57,43 @@ def run():
                     page.get_by_label('Nom du produit', exact=True).fill('Bose QuietComfort')
                     page.get_by_label('Prix en ariary', exact=True).fill('1 150 000')
                     page.get_by_label('Les photos correspondent').check()
+                    page.locator('.intake details > summary').click()
                     for name in ('Logo', 'Contact', 'Nom de la boutique'):
                         expect(page.get_by_role('checkbox', name=name, exact=True)).not_to_be_checked()
                     page.get_by_role('button', name='Préparer mon affiche').click()
+                    page.get_by_role('tab', name='Textes', exact=True).click()
+                    # An unfinished title can stay on screen while a different, valid field saves.
+                    # Neither navigation path can abandon it or send it to the server.
+                    title = page.get_by_label('Titre', exact=True)
+                    price = page.get_by_label('Prix en ariary', exact=True)
+                    poster_url = page.url
+                    endpoint = f"{smoke.ORIGIN}/api/creations/{poster_url.split('#')[1]}"
+                    title.fill('   ')
+                    with page.expect_response(lambda response: response.url == endpoint and response.request.method == 'PUT') as saved_price:
+                        price.fill('1 151 000')
+                    assert saved_price.value.ok
+                    persisted = page.request.get(endpoint).json()['document']['offer']
+                    assert (persisted['title'], persisted['price_ar']) == ('Bose QuietComfort', 1151000), persisted
+                    page.get_by_role('tab', name='Style', exact=True).click()
+                    expect(page.get_by_role('button', name='Générer l’affiche')).to_be_disabled()
+                    page.locator('.step-nav').get_by_role('button', name='Ouvrir « Textes »').click()
+                    expect(title).to_be_focused()
+                    switch = page.get_by_role('group', name='Façon de créer')
+                    for leave in (switch.get_by_role('button', name='Message'), page.locator('aside.side .nav a', has_text='Mes affiches')):
+                        leave.click()
+                        expect(title).to_be_focused()
+                        expect(title).to_have_value('   ')
+                        expect(page).to_have_url(poster_url)
+                    title.fill('Bose QuietComfort')
+                    price.fill('1 150 000')
+                    switch.get_by_role('button', name='Message').click()
+                    expect(page.get_by_role('log')).to_be_visible()
+                    switch.get_by_role('button', name='Pas à pas').click()
+                    expect(page).to_have_url(poster_url)
+                    page.get_by_role('tab', name='Textes', exact=True).click()
                     page.get_by_label('Marque (facultative)', exact=True).fill('Bose')
                     expect(page.get_by_text('déjà dans le titre', exact=False)).to_be_visible()
-                    page.get_by_role('button', name='Continuer', exact=True).click()
+                    page.get_by_role('tab', name='Boutique', exact=True).click()
                     page.get_by_text('Ajouter les informations manquantes', exact=True).click()
                     page.get_by_role('textbox', name='Nom de la boutique', exact=True).fill('Boutique test')
                     page.get_by_role('textbox', name='Contact', exact=True).fill('034 00 000 00')
@@ -70,13 +101,14 @@ def run():
                     # The form is a copy: the shop's profile (its name in the sidebar's account row) changes only on « Ajouter ».
                     shop_name = page.locator('aside.side a.account .label')
                     expect(shop_name).to_have_text('Votre boutique')
-                    draft_url = smoke.ORIGIN + '/api/creations/' + page.url.split('#')[1]
-                    before_import = page.request.get(draft_url).json()['document']
+                    expect(page.locator('.bar .meta [role=status]')).to_have_text('Enregistré')
+                    before_import = page.request.get(endpoint).json()['document']
                     page.route('**/api/shop-profile', lambda route: route.fulfill(status=409, content_type='application/json', body='{"error":{"code":"revision_conflict","message_fr":"Profil modifié ailleurs","retryable":false}}') if route.request.method == 'PUT' else route.continue_())
                     page.get_by_role('button', name='Ajouter à cette affiche', exact=True).click()
                     expect(page.get_by_role('alert')).to_contain_text('Profil modifié ailleurs')
                     expect(shop_name).to_have_text('Votre boutique')
-                    assert page.request.get(draft_url).json()['document'] == before_import
+                    after_refusal = page.request.get(endpoint).json()['document']
+                    assert after_refusal == before_import, (before_import, after_refusal)
                     page.unroute('**/api/shop-profile')
                     page.get_by_role('button', name='Ajouter à cette affiche', exact=True).click()
                     expect(page.get_by_text('Informations ajoutées.', exact=False)).to_be_visible()
@@ -85,7 +117,7 @@ def run():
                         expect(page.get_by_role('checkbox', name=name, exact=True)).not_to_be_checked()
                     page.get_by_role('checkbox', name='Logo', exact=True).check()
                     page.get_by_role('button', name='En haut à gauche', exact=True).click()
-                    page.get_by_role('button', name='Continuer', exact=True).click()
+                    page.get_by_role('tab', name='Style', exact=True).click()
                     page.get_by_role('button', name='Aux couleurs du produit', exact=True).click()
                     palette = page.get_by_role('group', name='Palette de la prochaine version')
                     expect(palette).to_contain_text('#202020')
@@ -95,8 +127,6 @@ def run():
                     url = page.url
                     expect(page.get_by_text('Enregistré', exact=True)).to_be_visible()
                     page.reload()
-                    page.get_by_role('button', name='Continuer', exact=True).click()
-                    page.get_by_role('button', name='Continuer', exact=True).click()
                     page.get_by_role('button', name='Aux couleurs du produit', exact=True).click()
                     expect(palette).to_contain_text('#CC1122')
                     # A decoder already in flight cannot overwrite a newer manual choice.
@@ -122,8 +152,9 @@ def run():
                     assert page.evaluate("localStorage.getItem('affiche.shop1.palette.' + location.hash.slice(1))") is None
                     page.get_by_role('button', name='Générer l’affiche', exact=True).click()
                     page.get_by_role('button', name='Lancer la génération', exact=True).click()
-                    expect(page.get_by_role('heading', name='Vérifier la fidélité du produit')).to_be_visible(timeout=30000)
-                    page.get_by_role('button', name='Tout est conforme, approuver').click()
+                    expect(page.get_by_role('heading', name='Vérifier votre affiche')).to_be_visible(timeout=30000)
+                    smoke.download_review(page)
+                    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                     expect(page.get_by_role('button', name='Vérifier l’aperçu final', exact=True)).to_be_enabled()
                     creation = page.request.get(smoke.ORIGIN + '/api/creations/' + url.split('#')[1]).json()
                     scene = creation['document']['formats']['feed']['scene']
@@ -167,6 +198,7 @@ def run():
                     expect(sheet).to_have_count(0)
                     assert not refinements, refinements
                     page.reload()
+                    page.locator('.final-preview').get_by_role('button', name='Fermer').click()
                     page.get_by_role('tab', name='Boutique', exact=True).click()
                     expect(page.get_by_role('button', name='En haut à gauche', exact=True)).to_have_attribute('aria-pressed', 'true')
                     for width, height in ((390, 844), (360, 740), (320, 640)):
@@ -214,10 +246,13 @@ def run():
                     response = page.request.put(endpoint, data=saved['document'], headers={'Origin': smoke.ORIGIN, 'X-Affiche-Bundle': str(smoke.BUNDLE), 'If-Match': f'"{saved["revision"]}"', 'Idempotency-Key': str(uuid4())})
                     assert response.ok, response.text()
                     page.reload()
+                    page.locator('.final-preview').get_by_role('button', name='Fermer').click()
                     page.get_by_role('button', name='Nouvelle version', exact=False).click()
                     page.get_by_role('button', name='Lancer la génération', exact=True).click()
-                    expect(page.get_by_role('heading', name='Vérifier la fidélité du produit')).to_be_visible(timeout=30000)
-                    page.get_by_role('button', name='Tout est conforme, approuver').click()
+                    page.get_by_role('dialog', name='Vérifier la fidélité du produit').get_by_role('button', name='Choisir cette version').click(timeout=30000)
+                    expect(page.get_by_role('heading', name='Vérifier votre affiche')).to_be_visible(timeout=30000)
+                    smoke.download_review(page)
+                    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
                     page.get_by_role('button', name=re.compile(r'^Choisir la version 1')).click()
                     page.get_by_role('tab', name='Boutique', exact=True).click()
                     expect(page.get_by_role('button', name='En haut à gauche', exact=True)).to_have_attribute('aria-pressed', 'true')
@@ -249,6 +284,7 @@ def run():
                         route.fulfill(response=response, json=body)
                     page.route('**/api/creations/*/visuals', missing_disc)
                     page.reload()
+                    page.locator('.final-preview').get_by_role('button', name='Fermer').click()
                     page.get_by_role('button', name=re.compile(r'^Choisir la version 2')).click()
                     expect(page.get_by_text('Enregistré', exact=True)).to_be_visible()
                     assert page.request.get(endpoint).json()['document']['include']['logo'] is False
@@ -260,6 +296,7 @@ def run():
                         if reload:
                             page.reload()
                             expect(page.get_by_label('Photos du produit')).to_be_enabled()
+                        page.locator('.intake details > summary').click()
                         for name in ('Logo', 'Contact', 'Nom de la boutique'):
                             expect(page.get_by_role('checkbox', name=name, exact=True)).not_to_be_checked()
                         expect(page.get_by_role('textbox', name='Contact', exact=True)).to_have_value('034 00 000 00')

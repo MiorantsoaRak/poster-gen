@@ -1105,12 +1105,17 @@ def test_list_states_removed_view_restore_and_stale_copy(client, settings):
     approved = current()
     preview = render(engine, settings, approved)
     exports.confirm(engine, settings, 1, str(uuid4()), poster["id"], approved["revision"], confirm_request(preview))
-    assert state() == "confirmed"
+    assert state() == "confirmed" and listed()["items"][0]["has_current_file"] is True
+    # An alternate can need a decision alongside the confirmed file of this same revision.
+    scene(engine, settings, approved, fixed(engine, settings, approved))
+    alternate = execute(engine, settings)
+    assert state() == "to_review" and listed()["items"][0]["has_current_file"] is True
+    visuals.decide(engine, 1, str(uuid4()), alternate, visuals.Decision(action="reject", note="Conserver la première version"))
     # Edited after the confirmation: the confirmed file is no longer the poster as it is now (ADR-061).
     document = Document.model_validate(approved["document"])
     document.offer.price_ar += 1000
     edited = store.save_creation(engine, settings.data_dir, 1, str(uuid4()), poster["id"], document, approved["revision"])[1]
-    assert state() == "approved"
+    assert state() == "approved" and listed()["items"][0]["has_current_file"] is False
     # A second version waits for the review without being the one the document shows.
     scene(engine, settings, edited, fixed(engine, settings, edited))
     second = execute(engine, settings)

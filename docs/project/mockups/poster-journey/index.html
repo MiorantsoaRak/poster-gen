@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Publier · Maquette Doka Studio</title>
+<link rel="icon" href="../doka-console/assets/favicon.svg">
+<link rel="stylesheet" href="journey.css">
+<script defer src="journey.js"></script>
+</head>
+<body>
+<header class="bar">
+  <picture><source media="(prefers-color-scheme:dark)" srcset="../doka-console/assets/doka-horizontal-paper.svg"><img class="logo" src="../doka-console/assets/doka-horizontal-charcoal.svg" alt="Doka Studio"></picture>
+  <span class="shop">Original Phone Mada</span>
+  <button id="help-open" class="quiet" aria-label="Aide · Ma première affiche">Ma première affiche</button>
+</header>
+<main>
+  <section id="batch" aria-labelledby="batch-title">
+    <h1 id="batch-title" tabindex="-1">Publier sur Facebook</h1>
+    <p class="subtitle">Sur la Page <strong>Original Phone Mada</strong></p>
+    <div class="columns">
+      <div class="editor">
+        <label for="description">Description de la publication</label>
+        <textarea id="description" rows="2">Nos casques en boutique. Lequel préférez-vous ?</textarea>
+        <p id="description-error" role="alert" hidden>Raccourcissez la description à 2 000 caractères.</p>
+        <h2>Affiches de la publication</h2>
+        <p class="muted">L’ordre ci-dessous sera celui de votre publication.</p>
+        <ol id="selection"></ol>
+        <h3 id="available-title">Autres affiches</h3>
+        <ul id="available"></ul>
+        <details id="prepare" open><summary>Affiches à préparer (1)</summary><ul id="pending"></ul></details>
+        <p id="feedback" class="muted" role="status"></p>
+      </div>
+      <aside class="preview" aria-label="Aperçu de la publication">
+        <div class="preview-title"><h2>Aperçu</h2><span id="total" class="muted"></span></div>
+        <div class="fb-head"><span class="avatar" aria-hidden="true">OP</span><span><strong>Original Phone Mada</strong><small>Page Facebook</small></span></div>
+        <p id="preview-caption" class="caption"></p>
+        <div id="photos" class="photos"></div>
+        <p class="muted collage-note">Facebook choisit la disposition des images.</p>
+        <button id="check-post" class="primary">Vérifier la publication</button>
+      </aside>
+    </div>
+  </section>
+  <section id="file" hidden aria-labelledby="file-title">
+    <button class="text back" id="back">Retour à ma publication</button>
+    <h1 id="file-title" tabindex="-1">Vérifier le fichier final</h1>
+    <p class="subtitle">JBL Tune 770NC lilas</p>
+    <div class="columns proof">
+      <a id="art-link" href="jbl-tune-770nc.png" target="_blank" rel="noopener" aria-label="Ouvrir le fichier JBL Tune 770NC en pleine taille"><img src="jbl-tune-770nc.png" alt="Affiche du casque JBL Tune 770NC lilas au prix de 340 000 Ar"></a>
+      <div>
+        <p id="file-state" class="state">Fichier à confirmer</p>
+        <dl><div><dt>Prix de l’offre</dt><dd>340 000 Ar</dd></div><div><dt>Format</dt><dd>Publication · 1080 × 1350</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div></dl>
+        <div id="inspect">
+          <h2>Sur cette image</h2>
+          <p>Comparez le prix à votre offre. Relisez le texte et vérifiez que le produit reste entier dans le cadre.</p>
+          <button id="confirm-file" class="primary">Tout est conforme, confirmer</button>
+        </div>
+        <div id="ready" hidden>
+          <button id="return-add" class="primary">Ajouter à ma publication</button>
+          <button id="single">Publier sur ma Page</button>
+          <a class="button" target="_blank" rel="noopener" href="jbl-tune-770nc.png" download="jbl-tune-770nc-exemple.png">Télécharger le PNG</a>
+
+        </div>
+      </div>
+    </div>
+  </section>
+  <p class="demo">Maquette interactive · Exemples d’affiches · Les envois sont simulés.</p>
+</main>
+<dialog id="help" aria-labelledby="help-title">
+  <div class="dialog-head"><h2 id="help-title">Ma première affiche</h2><form method="dialog"><button>Fermer</button></form></div>
+  <p id="guide-progress" class="muted" tabindex="-1"></p>
+  <ol class="steps">
+    <li><strong>Présentez le produit</strong><p>Joignez une photo dans « Message », puis indiquez le nom, la variante et le prix exact en ariary. Vous pouvez aussi utiliser « Pas à pas ».</p><details><summary>Si vous êtes bloqué</summary><p>Dans une nouvelle affiche, distinguez la photo du produit d’une image donnée pour son style.</p></details></li>
+    <li><strong>Relisez l’offre et le coût</strong><p>Vérifiez la photo, les textes et le style avant de générer. Choisissez « Publication » pour publier directement sur votre Page.</p><details><summary>Si vous êtes bloqué</summary><p>Si le prix est dessiné dans l’image, le changer demande une nouvelle version. Vérifiez le coût avant de continuer.</p></details></li>
+    <li><strong>Comparez la version à l’original</strong><p>Vérifiez la forme, la couleur, le prix et chaque mot. Refusez la version si un détail est faux.</p><details><summary>Si vous êtes bloqué</summary><p>Un produit intégré à la scène reste dans cette image. Signalez les détails qui diffèrent de la photo.</p></details></li>
+    <li><strong>Confirmez le fichier final</strong><p>Examinez l’image à pleine taille avant de confirmer le PNG exact qui sera utilisé.</p><details><summary>Si vous êtes bloqué</summary><p>Une version approuvée peut encore avoir un fichier à confirmer. Ouvrez cette affiche depuis « Affiches à préparer ».</p></details></li>
+    <li><strong>Choisissez la destination</strong><p>Téléchargez le PNG, ouvrez le partage du téléphone ou préparez une publication Facebook. Pour plusieurs affiches, vérifiez leur ordre et le nom de la Page avant l’envoi.</p><details><summary>Si vous êtes bloqué</summary><p>Pour reconnecter la Page, ouvrez « Mon compte ». Si le résultat d’un envoi est inconnu, vérifiez votre Page avant de répondre.</p></details></li>
+  </ol>
+  <div class="guide-actions"><button id="previous">Précédent</button><button class="primary" id="next">Suivant</button></div>
+</dialog>
+<dialog id="review-post" aria-labelledby="post-title">
+  <div class="dialog-head"><h2 id="post-title">Vérifier la publication</h2><form method="dialog"><button>Fermer</button></form></div>
+  <p>Page destinataire · <strong>Original Phone Mada</strong></p>
+  <label id="single-label" for="single-description" hidden>Description de la publication</label>
+  <textarea id="single-description" rows="2" maxlength="2000" hidden></textarea>
+  <p id="post-caption" class="caption"></p><div id="post-images" class="photos"></div>
+  <button id="send" class="primary">Simuler la publication</button>
+</dialog>
+</body>
+</html>

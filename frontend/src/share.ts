@@ -1,6 +1,6 @@
 // « Partager » (docs/project/designs/share-poster.md).
 
-/** The final panel's one rule (D-SHARE-001): a render is presented as the poster's current file (« Votre affiche est prête »,
+/** The final panel's one rule (D-SHARE-001): a render is presented as the poster's current file (« Affiche confirmée »,
  *  the live « Prix affiché », its confirmation as current) only when no edit waits to be saved or is being saved, no poster
  *  read has shown a revision ahead of the one this tab saved (another tab saved), and it was made from the saved revision,
  *  or it is the confirmation a poster read named at that same revision (the server checked its image against that

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { api, ApiError, changePassword, upload, writeProfile, type Profile, type Terms } from './api'
-import { facebookCard, type FacebookAnswer } from './facebook'
+import { computed, onMounted, ref, watch } from 'vue'
+import { api, ApiError, bound, changePassword, state, upload, writeProfile, type Profile, type Terms } from './api'
+import { clearFacebookOrigin, facebookCard, isPublishOrigin, keepFacebookOrigin, type FacebookAnswer } from './facebook'
 import { termsDate } from './generation'
 
-defineProps<{ terms: Terms | null; termsUnavailable: boolean; support: string }>()
+const props = withDefaults(defineProps<{ terms: Terms | null; termsUnavailable: boolean; support: string; publishOrigin?: string | null; interactive?: boolean }>(), { interactive: true })
 const emit = defineEmits<{ saved: [profile: Profile]; terms: []; signOut: [] }>()
 const baseline = ref<Profile>(), draft = ref<Profile>(), conflict = ref(false), uncertain = ref(false)
 const working = ref(false), profileError = ref(''), profileNotice = ref('')
@@ -86,8 +86,17 @@ async function password() {
 
 // The « Page Facebook » card (D-FB-PUBLISH-004), only when the service has the feature. A refusal answered to the return
 // page comes back once in the answer's last_error: that page keeps nothing in the browser.
-const facebookOn = ref<boolean | null>(false), facebook = ref<FacebookAnswer>(), facebookPick = ref(''), facebookBusy = ref(false), facebookError = ref('')
+const facebookOn = ref<boolean | null>(null), facebook = ref<FacebookAnswer>(), facebookPick = ref(''), facebookBusy = ref(false), facebookError = ref('')
 const facebookState = computed(() => facebook.value && facebookCard(facebook.value))
+const origin = computed(() => isPublishOrigin(props.publishOrigin) ? props.publishOrigin : null)
+const facebookHeading = ref<HTMLElement>(), manualReturn = ref(false)
+let focusedFacebook = false
+watch([origin, facebookHeading, () => props.interactive], ([from, heading, interactive]) => {
+  if (from && heading && interactive && !focusedFacebook) {
+    heading.focus()
+    focusedFacebook = document.activeElement === heading
+  }
+}, { flush: 'post' })
 function showFacebook(answer: FacebookAnswer) {
   facebook.value = answer; facebookPick.value = answer.choice?.length === 1 ? answer.choice[0].id : ''
 }
@@ -113,7 +122,20 @@ async function onFacebook(run: () => Promise<void>) {
   } finally { facebookBusy.value = false }
 }
 const connectFacebook = () => onFacebook(async () => {
-  window.location.assign((await api<{ url: string }>('/api/facebook/connect', { method: 'POST', timeout: 20_000 })).url)
+  const shop = bound.value
+  if (typeof shop !== 'number' || state.value !== 'shown') return
+  const answer = await api<{ url: string }>('/api/facebook/connect', { method: 'POST', timeout: 20_000 })
+  if (bound.value !== shop || state.value !== 'shown' || location.hash !== '#compte' || !facebookHeading.value?.isConnected) return
+  if (origin.value && !keepFacebookOrigin(shop, origin.value) && !manualReturn.value) {
+    manualReturn.value = true
+    return
+  }
+  try {
+    window.location.assign(answer.url)
+  } catch (reason) {
+    clearFacebookOrigin()
+    throw reason
+  }
 })
 const choosePage = () => onFacebook(async () => showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'POST', timeout: 20_000,
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_id: facebookPick.value }) })))
@@ -152,7 +174,7 @@ onMounted(readFacebook)
       <button v-if="conflict || (!draft && profileError)" type="button" class="secondary" :disabled="working" @click="readProfile">{{ conflict ? 'Relire le profil enregistré' : 'Réessayer la lecture' }}</button>
       <button v-else-if="draft" class="primary" :disabled="working || !dirty || !!overlaps.length">{{ uncertain ? 'Réessayer l’enregistrement' : 'Enregistrer le profil' }}</button>
     </form>
-    <section v-if="facebookOn || (facebookOn === null && facebookError)" class="facebook" aria-labelledby="titre-facebook"><h2 id="titre-facebook">Page Facebook</h2>
+    <section v-if="facebookOn || (facebookOn === null && facebookError) || (origin && facebookOn === false)" class="facebook" aria-labelledby="titre-facebook"><h2 id="titre-facebook" ref="facebookHeading" tabindex="-1">Page Facebook</h2>
       <p v-if="facebookError" role="alert" class="why">{{ facebookError }}</p>
       <template v-if="facebookState === 'choose'">
         <fieldset :disabled="facebookBusy"><legend>Page à connecter</legend>
@@ -166,13 +188,16 @@ onMounted(readFacebook)
         <template v-else><p><strong translate="no">{{ facebook.page.name }}</strong></p><p class="why">Reconnectez votre Page.</p></template>
       </template>
       <template v-if="facebookState === 'connect' || facebookState === 'reconnect'">
-        <button class="secondary" :disabled="facebookBusy" aria-describedby="aide-facebook" @click="connectFacebook">{{ facebookState === 'reconnect' ? 'Reconnecter ma Page' : 'Connecter ma Page Facebook' }}</button>
+        <p v-if="manualReturn" id="retour-manuel" role="status">Ce navigateur ne peut pas mémoriser le retour. Après Facebook, {{ origin === 'publier' ? 'ouvrez « Publier » depuis le menu.' : 'ouvrez « Mes affiches », puis l’affiche à publier.' }}</p>
+        <button class="secondary" :disabled="facebookBusy" :aria-describedby="manualReturn ? 'retour-manuel aide-facebook' : 'aide-facebook'" @click="connectFacebook">{{ manualReturn ? 'Continuer vers Facebook' : facebookState === 'reconnect' ? 'Reconnecter ma Page' : 'Connecter ma Page Facebook' }}</button>
         <small id="aide-facebook">Facebook vous demandera quelles Pages autoriser.</small>
         <small>Si Facebook refuse l’accès, votre Page doit d’abord être autorisée par Doka Studio : demandez-le à l’opérateur.</small>
         <small>Au-delà de cent Pages autorisées, seules les cent premières sont lues.</small>
       </template>
       <button v-if="facebookState === 'connected' || facebookState === 'reconnect'" class="secondary" :disabled="facebookBusy" @click="disconnectFacebook">Déconnecter</button>
-      <template v-if="!facebook"><button v-if="facebookError" class="secondary" @click="readFacebook">Réessayer la lecture</button><p v-else role="status">Lecture de la Page Facebook…</p></template>
+      <p v-if="facebookOn === false" role="status">La publication sur Facebook est indisponible.</p>
+      <template v-else-if="!facebook"><button v-if="facebookError" class="secondary" @click="readFacebook">Réessayer la lecture</button><p v-else role="status">Lecture de la Page Facebook…</p></template>
+      <a v-if="origin" :href="'#' + origin">Revenir à ma publication</a>
     </section>
     <form aria-labelledby="titre-password" @submit.prevent="password"><h2 id="titre-password">Changer le mot de passe</h2>
       <fieldset :disabled="changing"><label>Mot de passe actuel<input v-model="current" type="password" autocomplete="current-password" maxlength="1024" required /></label>
@@ -204,6 +229,7 @@ input[type=file] { max-width: 100% }
 /* The Pages to choose from (« Page Facebook »): native radios, sized as the application's checkboxes. */
 input[type=radio] { width: 22px; height: 22px; min-height: 22px; flex: none; margin: -1px 0 0; padding: 0; accent-color: var(--text); cursor: pointer }
 .facebook legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted) }
+#titre-facebook { scroll-margin-block-start: 5rem }
 .collision { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius) }
 .collision > div { display: grid; gap: 6px }
 button, a { justify-self: start }

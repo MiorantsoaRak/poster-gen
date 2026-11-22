@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { ApiError } from '../src/api'
 import {
-  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe as described, dropIndex, moveTo, placeLine, reorder, SLACK, emptyDraft, faultLine, keptForSending, leftOutLines,
+  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe as described, dropIndex, moveTo, placeLine, reorder, SLACK, emptyDraft, faultLine, keptForSending,
   limitLine, move, postLine, publishAction, readDraft, readStored, refusalOf, remove, requestOf, seenOf, takenOut, toggle, whyNot,
   without, type Candidate, type Draft, type Post,
 } from '../src/publish'
@@ -119,6 +119,9 @@ it('sends nothing when the device does not keep the draft, written and read back
   expect(keptForSending(storage('write'), live)).toBe('unkept')
   expect(keptForSending(storage('read'), live)).toBe('unkept')
   expect(keptForSending({ get: () => JSON.stringify({ ...live, stamp: d }), set: () => undefined }, live)).toBe('unkept')  // written, not kept
+  for (const change of [{ description: live.description + '…' }, { items: [...live.items].reverse() }, { post: d }]) {
+    expect(keptForSending({ get: () => JSON.stringify({ ...live, ...change }), set: () => undefined }, live)).toBe('unkept')
+  }
 })
 
 it('handles every answer about the draft’s post by its status, against the stamp it was sent with', () => {
@@ -218,14 +221,7 @@ it('says what « Publier… » does in each state, in order', () => {
   expect(codePoints('😀é\n')).toBe(3)
 })
 
-it('counts the posters left out by reason, each with its action, and names a poster taken out of the draft', () => {
-  expect(leftOutLines(null)).toBeNull()
-  expect(leftOutLines({ other_format: 0, changed: 0, unconfirmed: 0 })).toBeNull()
-  expect(leftOutLines({ other_format: 0, changed: 1, unconfirmed: 0 })).toEqual({ lead: '1 affiche n’est pas proposée :',
-    lines: [{ reason: 'changed', text: '1 modifiée depuis sa vérification : vérifiez-la à nouveau' }] })
-  expect(leftOutLines({ other_format: 2, changed: 0, unconfirmed: 3 })).toEqual({ lead: '5 affiches ne sont pas proposées :', lines: [
-    { reason: 'other_format', text: '2 confirmées dans un autre format : vérifiez-les au format Publication' },
-    { reason: 'unconfirmed', text: '3 jamais vérifiées' }] })
+it('names a poster taken out of a draft and whether its file can still be opened', () => {
   expect(takenOut(1, 'changed')).toBe('L’affiche 2 de votre publication a été retirée : elle a été modifiée depuis sa vérification.')
   expect(aloneLine('gone')).toEqual({ text: 'Cette affiche n’est plus dans vos affiches.', open: false })
   expect(aloneLine('other_format').open).toBe(true)

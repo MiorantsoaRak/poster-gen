@@ -1,5 +1,6 @@
 export type Format = 'feed' | 'square' | 'story'
 export const FORMATS: Record<Format, [number, number]> = { feed: [1080, 1350], square: [1080, 1080], story: [1080, 1920] }
+export const FORMAT_NAMES: Record<Format, [string, string]> = { feed: ['Publication', '4:5'], square: ['Carré', '1:1'], story: ['Story', '9:16'] }
 export type TextRole = 'title' | 'price' | 'shop_name' | 'contact'
 export type FontId = 'noto-sans' | 'noto-serif' | 'montserrat-black-italic'
 export interface Box { x: number; y: number; width: number; height: number }

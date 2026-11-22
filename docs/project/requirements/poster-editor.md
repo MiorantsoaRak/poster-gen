@@ -38,7 +38,7 @@ Acceptance criteria:
 
 - [ ] Manual editing and paid scene refinement are clearly distinct actions. A refinement uses the selected previous scene and the original product references, preserving that previous version while the new result is reviewed.
 - [ ] The operator can retain, reject or compare a refinement. Rejecting it does not reject or replace the approved base. Selecting another scene preserves existing text and shop choices; any resulting layout problem is shown.
-- [ ] Scene fidelity approval checks the original product; final poster confirmation separately checks visible commercial content, identity, composition and the chosen format.
+- [ ] In the current selected version, check the original product, commercial content, identity, composition and format on the exact rendered PNG. A destination action records fidelity and file approval together, as specified in [R-JOURNEY-003](saas-journey.md).
 - [ ] Confirmation freezes the selected scene, exact layer contents, shop choices, layout and format as one version. Any later visible edit creates an unconfirmed version requiring confirmation again; prior confirmed versions remain accessible.
 - [ ] Saving/rendering failure is visible and does not falsely mark the edited version as saved or confirmed. The operator can retry with their edits still available.
 

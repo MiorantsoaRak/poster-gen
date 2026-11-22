@@ -77,26 +77,49 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
   <template v-if="shown">
     <section class="card" aria-labelledby="health-title">
       <h2 id="health-title">Health</h2>
-      <p>Version <code>{{ shown.commit }}</code> · schema <code>{{ shown.migration }}</code> · started {{ when(shown.started_at) }}</p>
-      <p v-if="shown.backup">Last backup: {{ shown.backup.age_hours }} hours ago ({{ when(shown.backup.finished_at) }})<strong v-if="shown.backup.late"> · late</strong></p>
-      <p v-else>Last backup: unknown</p>
+      <p v-if="shown.backup" :class="{ note: shown.backup.late }">Last backup: {{ shown.backup.age_hours }} hours ago ({{ when(shown.backup.finished_at) }})<strong v-if="shown.backup.late"> · late</strong></p>
+      <p v-else class="note"><strong>Last backup: unknown</strong></p>
       <p>Jobs failed or interrupted in the last 24 hours: {{ shown.failed_jobs_24h }}</p>
-    </section>
-
-    <section class="card" aria-labelledby="spend-title">
-      <h2 id="spend-title">Spend</h2>
-      <p>{{ headroom(shown.headroom) }} Counted from {{ shown.spend.since }}.</p>
-      <p v-if="shown.headroom.warning"><strong>{{ CAP_WARNING }}</strong></p>
     </section>
 
     <section class="card" aria-labelledby="pause-title">
       <h2 id="pause-title">New requests to the AI</h2>
       <p v-if="shown.paused_since"><strong>Paused</strong> since {{ when(shown.paused_since) }}: no new request reaches the AI for any shop.</p>
-      <p v-else>Running: new requests reach the AI.</p>
+      <p v-else>Running: new requests reach the AI. A pause affects every shop. Requests already admitted finish.</p>
       <!-- One control whose word changes, so that the focus it gets back after the confirmation stays on it. -->
       <button :aria-disabled="busy" @click="shown.paused_since ? resume() : pause()">{{ shown.paused_since ? 'Resume' : 'Pause new requests…' }}</button>
       <p role="status">{{ at('pause', false) }}</p>
       <p class="refusal" role="alert">{{ at('pause', true) }}</p>
+    </section>
+
+    <section class="card" aria-labelledby="spend-title">
+      <h2 id="spend-title">Spend</h2>
+      <dl class="spend-figures">
+        <div><dt>Remaining cap</dt><dd>{{ dollars(shown.headroom.left, Math.floor) }}</dd></div>
+        <div><dt>Estimated cost of outstanding credits</dt><dd>{{ dollars(shown.headroom.cost, Math.ceil) }}</dd></div>
+      </dl>
+      <p v-if="shown.headroom.warning" class="note"><strong>{{ CAP_WARNING }}</strong></p>
+      <details>
+        <summary>Spend calculation</summary>
+        <p>{{ headroom(shown.headroom) }} Counted from {{ shown.spend.since }}.</p>
+      </details>
+    </section>
+
+    <section class="card" aria-labelledby="sessions-title">
+      <h2 id="sessions-title">Operator sessions</h2>
+      <details>
+        <summary>Session details ({{ shown.operator_sessions.length }})</summary>
+        <ul class="lines">
+          <li v-for="item in shown.operator_sessions" :key="item.actor + item.created_at">
+            <p><strong>{{ item.actor }}</strong><strong v-if="item.current"> · this device</strong></p>
+            <p>Signed in {{ when(item.created_at) }} · ends {{ when(item.expires_at) }}</p>
+            <p>Address {{ item.address }}</p>
+            <p>{{ item.agent ?? 'Browser unknown' }}</p>
+          </li>
+        </ul>
+      </details>
+      <button :aria-disabled="busy" @click="endAll">End all operator sessions</button>
+      <p class="refusal" role="alert">{{ at('sessions', true) }}</p>
     </section>
 
     <section class="card" aria-labelledby="text-title">
@@ -112,24 +135,19 @@ const endAll = () => act('sessions', { title: 'End all operator sessions?', text
       <p class="refusal" role="alert">{{ at('text', true) }}</p>
     </section>
 
-    <section class="card" aria-labelledby="limits-title">
-      <h2 id="limits-title">Daily limits (UTC day)</h2>
+    <details class="card">
+      <summary>Technical details</summary>
+      <p>Version <code>{{ shown.commit }}</code> · schema <code>{{ shown.migration }}</code> · started {{ when(shown.started_at) }}</p>
+      <h2>Daily limits (UTC day)</h2>
       <p>Provider spend per shop: {{ dollars(shown.limits.shop_daily_spend_micros) }} · messages read per shop: {{ shown.limits.reads_per_day }}</p>
       <small>The same for every shop. They change in the box’s secrets file (SHOP_DAILY_SPEND_USD) or in the code.</small>
-    </section>
-
-    <section class="card" aria-labelledby="sessions-title">
-      <h2 id="sessions-title">Operator sessions</h2>
-      <ul class="lines">
-        <li v-for="item in shown.operator_sessions" :key="item.actor + item.created_at">
-          <p><strong>{{ item.actor }}</strong><strong v-if="item.current"> · this device</strong></p>
-          <p>Signed in {{ when(item.created_at) }} · ends {{ when(item.expires_at) }}</p>
-          <p>Address {{ item.address }}</p>
-          <p>{{ item.agent ?? 'Browser unknown' }}</p>
-        </li>
-      </ul>
-      <button :aria-disabled="busy" @click="endAll">End all operator sessions</button>
-      <p class="refusal" role="alert">{{ at('sessions', true) }}</p>
-    </section>
+    </details>
   </template>
 </template>
+
+<style scoped>
+.spend-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: 12px; margin: 0 0 12px }
+.spend-figures dt { color: var(--muted); font-size: 14px }
+.spend-figures dd { margin: 0; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums }
+section details { border-top: 1px solid var(--line) }
+</style>

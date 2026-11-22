@@ -910,6 +910,82 @@ def test_the_owners_two_answers_close_an_unknown_post_and_replay(client, graph, 
     refused(outcome(str(uuid4()), True), "not_found", 404)
 
 
+def test_excluded_lists_only_this_shops_active_missing_files(client):
+    path = "/api/facebook/posts/excluded"
+    other = TestClient(client.app, base_url=ORIGIN, headers=HEADERS)
+    assert other.get(path).status_code == 401
+    _, password = second_shop(client.app.state.engine)
+    assert other.post("/api/session", json=credentials(password, "boutique-deux")).is_success
+    theirs = create_draft(other)["id"]
+    assert client.get(path).json() == {"items": [], "next_cursor": None}
+
+    never, archived = (create_draft(client)["id"] for _ in range(2))
+    wrong, stale, eligible = posters(client, 3)
+    also_square, _ = confirm(client, eligible[0])
+    run(client, "UPDATE confirmations SET format='square' WHERE id=:id", id=also_square)
+    run(client, "UPDATE confirmations SET format='square' WHERE id=:id", id=wrong[1])
+    changed(client, stale[0])
+    run(client, "UPDATE creations SET status='abandoned' WHERE id=:id", id=archived)
+    run(client, "UPDATE creations SET created_at='2026-01-01T00:00:00+00:00'")
+
+    # The exclusions read must leave an interrupted send for the normal post-recovery route.
+    a_post(client, "posting", [eligible])
+    before = written(client)
+    reasons = {never: "unconfirmed", wrong[0]: "other_format", stale[0]: "changed"}
+    first = client.get(path, params={"limit": 2}).json()
+    assert len(first["items"]) == 2 and first["next_cursor"]
+    last = client.get(path, params={"limit": 2, "before": first["next_cursor"]}).json()
+    assert last["next_cursor"] is None
+    items = first["items"] + last["items"]
+    assert [item["id"] for item in items] == sorted(reasons, reverse=True)
+    for item in items:
+        assert item == {"id": item["id"], "reason": reasons[item["id"]], "primary_format": "feed",
+                        "name": "JBL", "title": "JBL Flip"}
+    assert [item["id"] for item in other.get(path).json()["items"]] == [theirs]
+    refused(client.get(path, params={"before": "broken"}), "invalid_cursor", 422)
+    for limit in (0, 51):
+        assert client.get(path, params={"limit": limit}).status_code == 422
+    assert written(client) == before
+    candidates = client.get("/api/facebook/posts/candidates").json()
+    assert [(item["id"], item["confirmation_id"]) for item in candidates["items"]] == [(eligible[0], eligible[1])]
+    assert candidates["left_out"] == {reason: 1 for reason in reasons.values()}
+    resolved = client.get("/api/facebook/posts/candidates", params={"ids": ",".join(reasons)}).json()
+    assert {item["id"]: item["reason"] for item in resolved["items"]} == reasons
+
+
+def test_pending_alternative_keeps_current_feed_file_in_facebook_picker(client, graph):
+    from affiche.posters import visuals
+    from test_poster_visuals import fixed, scene, wait_job
+
+    engine = client.app.state.engine
+    service = client.app.state.poster_service
+    service.provider.delay = 0
+    creation = create_draft(client)
+
+    def generate(poster):
+        plan = fixed(engine, service.settings, poster)
+        job = scene(engine, service.settings, poster, plan)
+        return wait_job(client, job["status_url"])
+
+    first = generate(creation)
+    visuals.decide(engine, 1, str(uuid4()), first, visuals.Decision(
+        action="approve", checks={key: True for key in visuals.CHECKS | visuals.TEXT_CHECKS}))
+    current = client.get(f'/api/creations/{creation["id"]}').json()
+    confirmation, data = confirm(client, creation["id"])
+    alternative = generate(current)
+    assert alternative != first
+    assert client.get(f"/api/visuals/{alternative}").json()["status"] == "pending_review"
+    assert client.get("/api/creations").json()["items"][0]["state"] == "to_review"
+
+    assert client.get("/api/facebook/posts/excluded").json() == {"items": [], "next_cursor": None}
+    picker = client.get("/api/facebook/posts/candidates").json()
+    assert picker["left_out"] == {"other_format": 0, "changed": 0, "unconfirmed": 0}
+    [item] = picker["items"]
+    assert (item["id"], item["confirmation_id"]) == (creation["id"], confirmation)
+    assert client.get(item["download_url"]).content == data
+    assert not graph.requests
+
+
 def test_the_candidates_their_pages_their_marks_and_the_posters_left_out(client, graph):
     made = posters(client, 3)
     never, other, abandoned = (create_draft(client)["id"] for _ in range(3))
@@ -996,12 +1072,13 @@ def test_the_list_newest_first_by_page_and_by_poster(client, graph):
     refused(client.get(f"/api/facebook/posts/{uuid4()}"), "not_found", 404)
 
 
-def test_off_answers_not_found_on_the_six_routes(env, tmp_path, password_hash):
+def test_off_answers_not_found_on_the_post_routes(env, tmp_path, password_hash):
     with TestClient(create_app(settings_for(env, tmp_path, password_hash, None), prepare=credited), base_url=ORIGIN,
                     headers=HEADERS) as client:
         login(client)
         id, key = str(uuid4()), {"Idempotency-Key": str(uuid4())}
-        for answer in (client.get("/api/facebook/posts/candidates"), client.get("/api/facebook/posts"),
+        for answer in (client.get("/api/facebook/posts/candidates"), client.get("/api/facebook/posts/excluded"),
+                       client.get("/api/facebook/posts"),
                        client.post("/api/facebook/posts", json={}, headers=key), client.get(f"/api/facebook/posts/{id}"),
                        client.post(f"/api/facebook/posts/{id}/stop"),
                        client.post(f"/api/facebook/posts/{id}/outcome", json={"present": True}, headers=key)):

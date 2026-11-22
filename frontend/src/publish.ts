@@ -3,6 +3,7 @@
 // post's state is said in the server's words (message_fr), never in the page's.
 import { ApiError } from './api'
 import { captionFault } from './share'
+import type { Format } from './document'
 
 export type PostStatus = 'uploading' | 'posting' | 'published' | 'failed' | 'unknown'
 export type Reason = 'other_format' | 'changed' | 'unconfirmed' | 'gone'
@@ -16,6 +17,9 @@ export interface Candidate {
 }
 /** With `ids`, a poster that cannot go, and why. */
 export interface LeftOut { id: string; reason: Reason }
+export interface ExcludedPoster {
+  id: string; name: string; title: string; primary_format: Format; reason: Exclude<Reason, 'gone'>
+}
 export type Page = { id: string; name: string; state: 'connected' | 'reconnect' } | null
 export interface Candidates {
   page: Page; post_image_limit: number | null; items: (Candidate | LeftOut)[]; next_cursor: string | null
@@ -125,7 +129,9 @@ export const requestOf = (stamp: string, page: string, description: string, item
 export function keptForSending(storage: { get(): string | null; set(value: string): void }, live: Draft): 'kept' | 'unkept' {
   try {
     storage.set(JSON.stringify(live))
-    return readDraft(storage.get())?.stamp === live.stamp ? 'kept' : 'unkept'
+    const saved = readDraft(storage.get())
+    return saved && saved.stamp === live.stamp && saved.description === live.description && saved.post === live.post
+      && saved.items.length === live.items.length && saved.items.every((id, index) => id === live.items[index]) ? 'kept' : 'unkept'
   } catch { return 'unkept' }
 }
 /** The one handler of every answer about the draft's post (the request's answer, the polling, the list, the stop, the
@@ -204,18 +210,6 @@ export function alreadyLine(chosen: { published_at: string | null }[], day: (sta
     : dates.length === 1 ? `Une de ces affiches est déjà sur votre Page (le ${day(latest)}). Publier à nouveau ?`
       : `${dates.length} de ces affiches sont déjà sur votre Page (la dernière le ${day(latest)}). Publier à nouveau ?`
   return { line, label: 'Publier à nouveau' }
-}
-const LEFT_OUT: [Exclude<Reason, 'gone'>, string, string][] = [
-  ['other_format', 'confirmée dans un autre format : vérifiez-la au format Publication', 'confirmées dans un autre format : vérifiez-les au format Publication'],
-  ['changed', 'modifiée depuis sa vérification : vérifiez-la à nouveau', 'modifiées depuis leur vérification : vérifiez-les à nouveau'],
-  ['unconfirmed', 'jamais vérifiée', 'jamais vérifiées'],
-]
-/** Under the grid: how many posters are left out, then one line per reason with its action; null when none is. */
-export function leftOutLines(counts: Candidates['left_out'] | null) {
-  if (!counts) return null
-  const lines = LEFT_OUT.filter(([reason]) => counts[reason] > 0).map(([reason, one, many]) => ({ reason, text: `${counts[reason]} ${plural(counts[reason], one, many)}` }))
-  const total = lines.reduce((sum, line) => sum + counts[line.reason], 0)
-  return total ? { lead: total > 1 ? `${total} affiches ne sont pas proposées :` : '1 affiche n’est pas proposée :', lines } : null
 }
 const GONE: Record<Reason, string> = {
   other_format: 'elle a été vérifiée dans un autre format', changed: 'elle a été modifiée depuis sa vérification',

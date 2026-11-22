@@ -66,10 +66,10 @@ The dashboard's money routes call `credits.grant`, `credits.correct` and `credit
 | GET `/api/text-effects/{id}` | owned effect | texture URL, target/revision and status |
 | POST `/api/text-effects/{id}/apply` | If-Match | unchanged origin/style required; attach one reviewed effect |
 | POST `/api/text-effects/{id}/reject` | Idempotency-Key | terminal rejection; prior text/effect intact |
-| POST `/api/creations/{id}/renders` | If-Match; format (an enabled one) | 202 local job, duplicate exact render reuses the job; no model charge |
+| POST `/api/creations/{id}/renders` | If-Match, enabled format, optional review_visual_id of the selected scene | 202 local job, including a private preview of the named pending scene. Repeat requests reuse the job. No model charge or approval |
 | GET `/api/renders/{id}` | owned render | immutable PNG hash, preview URL/warnings, prior confirmation download if any |
 | GET `/api/renders/{id}/preview` | owned render | verified stored PNG bytes |
-| POST `/api/creations/{id}/confirmations` | If-Match; render_id, png_sha256, four checks, acknowledged_warning_ids | exact current effective layout/approved scene required; immutable confirmation |
+| POST `/api/creations/{id}/confirmations` | If-Match, render_id, png_sha256, four checks, acknowledged_warning_ids. For single review also pass review_visual_id and fidelity_checks | Checks the immutable PNG and effective layout. Single review also checks the exact revision and selected scene, then atomically approves its fidelity and confirms the file. The existing form requires an already approved scene |
 | GET `/api/confirmations/{id}/download` | owned confirmation | the same verified PNG bytes, safe attachment filename and hash ETag |
 
 Style references use the existing asset upload with `role=style`. The optional `style_reference_asset` is an owned SHA-256, never a URL. Missing, corrupt, wrong-role or cross-shop references are refused before spend and rechecked before dispatch. Image order is base (refinement only), original views, then style reference. Visual responses expose `style_reference_asset` separately from `original_urls`; job provenance retains its immutable hash. Omitting it (or passing null) preserves the previous request and replay contract.

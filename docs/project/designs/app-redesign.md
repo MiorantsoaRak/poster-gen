@@ -422,9 +422,8 @@ together, on arrival, on « Refresh » and when the tab is shown again: `GET /ap
 
 - The four figures are one card split by hairlines, a label over each value, no icon: four across over 1180 px, two
   by two from 600 px, one column under.
-- **« Needs you » is a full-width block right under the figures**, at every width (the mockup has it at the top
-  right): on a phone it is read before the eight shop cards, and the order of the DOM, of the screen and of the
-  focus is the same everywhere. Its lines flow in columns on a wide screen; empty, it is one slim line. Below it:
+- **« Needs you » is a full-width block before the figures** at every width, as amended by [D-JOURNEY-006](saas-journey.md#d-journey-006--operator-console-r-journey-006-007).
+  Keyboard and visual order agree. Its lines flow in columns on a wide screen; empty, it is one slim line. Below the figures:
   Shops then Service on the left, the month's payments on the right. A shop's row carries today's mark of an
   unanswered request, as the Shops table does.
 - « Nothing needs you » is said only when Shops and Service have both answered **in the present refresh**; while

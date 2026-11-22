@@ -3,11 +3,12 @@ import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted
 import { acceptConditions, announce, api, ApiError, ask, bind, changedElsewhere, bound, clockSkew, close, conditions, displayUrl, endSession, failed, forgetShop, IDENTITY_KEY, IDENTITY_TIMEOUT_MS, identityChange, moveLegacy, mutation, open, preparedUrl, progress, retained, seen, shopKey, shopStorage, state, support, termsAsked, thumbnailUrl, upload, verify, voidReads, writeProfile, type Profile, type Terms, type SessionAnswer } from './api'
 import { DraftSaver } from './autosave'
 import { canShareFiles, captionFault, jpegOf, linesOf, presentedAsCurrent, readCaption, shareFile, weight, type Attempt } from './share'
-import { panelLine, postsAddress } from './facebook'
+import { clearFacebookOrigin, isPublishOrigin, panelLine, postsAddress, takeFacebookOrigin } from './facebook'
 import { aloneLine, type Post } from './publish'
-import { copy, fitCrop, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
+import { copy, fitCrop, FORMAT_NAMES, FORMATS, History, nearestFormat, parsePrice, reformat, setIdentity, type Creation, type FontId, type Format, type Layer, type PosterDocument, type Visual } from './document'
 import type { LayoutIssue } from './canvas'
 import ShopHome from './ShopHome.vue'
+import FirstPosterGuide from './FirstPosterGuide.vue'
 import ShopCredits from './ShopCredits.vue'
 import ShopAccount from './ShopAccount.vue'
 import ShopPublish from './ShopPublish.vue'
@@ -57,6 +58,9 @@ const facebookCaps = sectionRead<Capabilities>('/api/capabilities')
 const publishOn = computed(() => !!(caps.value ?? facebookCaps.data.value)?.facebook)
 // `#publier-<id>`: the page for that poster alone; null for the draft of a post (`#publier`).
 const publishFor = ref<string | null>(null)
+const accountOrigin = ref<string | null>(null)
+const repairOrigin = shallowRef<{ shop: number; destination: string; poster: string } | null>(null)
+const addPoster = shallowRef<{ id: string; download_url: string } | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -67,6 +71,15 @@ const include = reactive({ logo: false, shop_name: false, contact: false })
 let pendingInput: { signature: string; id: string } | null = null
 const photos = ref<{ asset: string; warnings: string[] }[]>([])
 const creation = ref<Creation | null>(null), doc = shallowRef<PosterDocument | null>(null), selected = ref<string | null>(null)
+// Like the price field, retain incomplete input without sending it in an autosave.
+const unfinishedTitle = ref<string | null>(null)
+const enteredTitle = computed({
+  get: () => unfinishedTitle.value ?? doc.value?.offer.title ?? '',
+  set(value: string) {
+    unfinishedTitle.value = value.trim() ? null : value
+    if (unfinishedTitle.value === null) edit(document => { document.offer.title = value }, 'title')
+  },
+})
 const visuals = ref<Visual[]>([]), direction = ref('Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.'), plannerMode = ref<'fixed' | 'claude'>('fixed')
 const styleReference = ref<string | null>(null)
 // The title and exact offer price are drawn together; changes need another reviewed version.
@@ -86,6 +99,28 @@ const savedLooks = ref<SavedLook[]>([]), lookName = ref(''), lookReference = ref
 const look = ref<string>('clair')
 const palettePrefix = () => shopKey('palette.')
 const productPalette = ref<Palette | null>(null), paletteFailure = ref(''), paletteLoading = ref(false)
+interface OfferSource { name: string; variant: string; facts: string[]; photo_assets: string[] }
+const offerSource = shallowRef<OfferSource | null>(null), offerSourceError = ref('')
+let sourceRead = 0
+async function readOfferSource() {
+  const poster = creation.value, shop = bound.value, read = ++sourceRead
+  if (!poster) return null
+  offerSourceError.value = ''
+  const current = () => creation.value?.id === poster.id && bound.value === shop && read === sourceRead
+  try {
+    const source = await api<OfferSource>(`/api/product-inputs/${poster.document.input_id}`)
+    if (!current()) return null
+    offerSource.value = source
+    return source
+  } catch (reason) {
+    if (current()) offerSourceError.value = reason instanceof Error ? reason.message : 'Lecture du produit impossible.'
+    return null
+  }
+}
+async function retryOfferSource() {
+  if (productPalette.value) await readOfferSource()
+  else await loadProductPalette()
+}
 let paletteEpoch = 0, paletteRequest: AbortController | undefined
 const sceneAccent = computed(() => look.value === 'couleur' && productPalette.value ? productPalette.value[2] : headline.value.accent_colour)
 const paletteBlocked = computed(() => look.value === 'couleur' && !productPalette.value ? paletteLoading.value ? 'Les couleurs de la photo sont en cours d’analyse.' : 'Choisissez une couleur ou réessayez l’analyse de la photo.' : '')
@@ -113,7 +148,9 @@ async function loadProductPalette(reset = false) {
   paletteRequest?.abort(); const controller = paletteRequest = new AbortController()
   paletteLoading.value = true; paletteFailure.value = ''; productPalette.value = null
   try {
-    const source = await api<{ photo_assets: string[] }>(`/api/product-inputs/${poster.document.input_id}`, { signal: controller.signal })
+    const source = await readOfferSource()
+    if (epoch !== paletteEpoch) return
+    if (!source) throw new Error(offerSourceError.value || 'Lecture de la photo impossible.')
     if (!source.photo_assets[0]) throw new Error('Cette affiche n’a pas de photo à analyser.')
     const palette = await samplePhoto(preparedUrl(`/api/assets/${source.photo_assets[0]}`), controller.signal)
     if (epoch === paletteEpoch) productPalette.value = palette
@@ -122,11 +159,12 @@ async function loadProductPalette(reset = false) {
   } finally { if (epoch === paletteEpoch) paletteLoading.value = false }
 }
 watch(() => creation.value?.id, id => {
+  sourceRead++; offerSource.value = null; offerSourceError.value = ''
   paletteEpoch++; paletteRequest?.abort(); productPalette.value = null; paletteFailure.value = ''; paletteLoading.value = false
   if (!id) return
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(palettePrefix() + id) ?? 'null')?.colour
-    if (validColour(saved)) { productPalette.value = colourPalette(saved); return }
+    if (validColour(saved)) { productPalette.value = colourPalette(saved); void readOfferSource(); return }
   } catch { notice.value = 'Les couleurs mémorisées sont indisponibles : une nouvelle suggestion sera proposée.' }
   void loadProductPalette()
 })
@@ -193,7 +231,6 @@ async function chooseLookReference(event: Event) {
 // The poster's format (ADR-080): chosen in « Style », free until the first version. A model image of another shape asks
 // whether the poster takes its format (R-POSTER-FORMAT-002); it never switches alone, and a « non » is kept for this
 // poster and this model during the visit (a reload asks once more). Only the formats the server enables are offered.
-const FORMAT_NAMES: Record<Format, [string, string]> = { feed: ['Publication', '4:5'], square: ['Carré', '1:1'], story: ['Story', '9:16'] }
 const enabledFormats = computed(() => caps.value?.formats_enabled ?? ['feed'])
 const formatsShown = computed(() => (Object.keys(FORMATS) as Format[]).filter(item => enabledFormats.value.includes(item) || item === format.value))
 // A version fixes the format: its title, price and contact are drawn in an image of this size. A scene on its way too.
@@ -226,6 +263,7 @@ const formatChoice = computed({ get: () => format.value, set: chooseFormat })
 // The button pressed is gone with its poster: the focus goes to the new poster's format (free again once the action is over).
 const focusFormat = () => nextTick(() => document.querySelector<HTMLElement>('.format-choice input:checked:not(:disabled)')?.focus())
 async function remakeIn(to: Format) {
+  const repairing = activeRepair.value
   await flush()
   const source = await api<{ product_ref: string; name: string; variant: string; photo_assets: string[]; facts: string[] }>(`/api/product-inputs/${doc.value!.input_id}`)
   const input = await mutation<{ id: string }>('/api/product-inputs', { product_ref: source.product_ref, name: source.name, variant: source.variant, photo_assets: source.photo_assets, facts: source.facts })
@@ -236,9 +274,9 @@ async function remakeIn(to: Format) {
   try { made = await mutation<Creation>(`/api/creations/${copied.id}`, reformat(copied.document, to), copied.revision, undefined, 'PUT') }
   catch (reason) { failure = reason }
   // The copy exists either way: it is opened, so that a retry never makes another one. The first failure is the one said.
-  try { await adopt(made) } catch (reason) { throw failure ?? reason }
+  try { await adopt(made, undefined, chatting.value, true, undefined, repairing) } catch (reason) { throw failure ?? reason }
   // The same product: its words stay (adopt blanks them for another input). The steps were all walked once.
-  headline.value = words; visited.value = ['textes', 'boutique', 'style']; group.value = 'style'
+  headline.value = words; group.value = 'style'
   if (failure) {
     // The copy kept the source's format and the layers its scene had hidden: without a scene they are shown again.
     edit(document => { Object.assign(document, reformat(document, document.primary_format)) })
@@ -454,6 +492,8 @@ function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | '
 // One outline icon set, 16px, drawn in the text colour (ADR-050). Paths only: no icon dependency.
 const ICONS: Record<string, string> = {
   plus: 'M8 3v10M3 8h10', check: 'M3.5 8.5l3 3 6-7', close: 'M4 4l8 8M12 4l-8 8', chevron: 'M6 3.5l4.5 4.5L6 12.5',
+  more: 'M3 8h.1M8 8h.1M13 8h.1',
+  help: 'M14 8a6 6 0 1 1-12 0 6 6 0 0 1 12 0zM6.2 6.1a1.9 1.9 0 0 1 3.7.5c0 1.4-1.9 1.6-1.9 3M8 11.6h.01',
   credits: 'M2 3.5h12v9H2zM2 6.5h12M4 10h3',
   grid: 'M2.5 2.5h4.5v6h-4.5zM9 2.5h4.5v6H9zM2.5 11h4.5M9 11h4.5M2.5 13.5h3', text: 'M3 4V3h10v1M8 3v10M6 13h4',
   palette: 'M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.3-.7.9-1.4-.5-.9.1-1.8 1.1-1.8h1.2a2.3 2.3 0 0 0 2.3-2.4A5.5 5.5 0 0 0 8 2.5zM5.5 7h.01M8 5h.01M10.5 7h.01',
@@ -471,24 +511,20 @@ const ICONS: Record<string, string> = {
 }
 const Icon = (props: { n: string }) => h('svg', { class: 'i', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, [h('path', { d: ICONS[props.n] })])
 Icon.props = ['n']
-// The editor shows one group of controls at a time (R-POSTER-EDITOR-004): steps while the poster has no usable
-// version, tabs afterwards. Presentation only: nothing here is saved or put in the address.
+// Preparation opens on Style. Once a version exists, the full editor adds its adjustment tools.
 type Group = 'textes' | 'boutique' | 'style' | 'reglages'
 const GROUPS: [Group, string, string][] = [['textes', 'Textes', 'text'], ['boutique', 'Boutique', 'store'], ['style', 'Style', 'palette'], ['reglages', 'Réglages', 'sliders']]
 const groupNames = Object.fromEntries(GROUPS) as Record<Group, string>
-const PHASES = ['Préparation', 'Génération', 'Fidélité', 'Téléchargement']
+const PHASES = ['Préparation', 'Génération', 'Vérification', 'Fichier prêt']
 const IDENTITY = ['logo', 'shop_name', 'contact'] as const
-const group = ref<Group>('textes'), visited = ref<Group[]>(['textes']), panel = ref<HTMLElement>(), rail = ref<HTMLElement>()
+const group = ref<Group>('style'), panel = ref<HTMLElement>(), rail = ref<HTMLElement>()
 const stepping = computed(() => !visuals.value.some(item => item.status !== 'rejected'))
-const shownGroups = computed(() => stepping.value ? GROUPS.slice(0, 3) : GROUPS)
-const stepAt = computed(() => GROUPS.findIndex(item => item[0] === group.value))
-// A poster that already had a version went through every step.
-const reachable = (id: Group) => !stepping.value || visuals.value.length > 0 || visited.value.includes(id)
+const preparationGroups = [GROUPS[2], GROUPS[0], GROUPS[1]]
+const shownGroups = computed(() => stepping.value ? preparationGroups : GROUPS)
 function go(target: Group, focus = true) {
   peek.value = false  // the group is behind the phone's poster sheet
   group.value = target
-  if (!visited.value.includes(target)) visited.value.push(target)
-  // Opened from elsewhere (« Continuer », a reason, a refusal): the group is shown from its top and takes the focus.
+  // Opening controls from elsewhere also brings their panel into view.
   if (focus) nextTick(() => {
     panel.value?.focus({ preventScroll: true })
     const top = rail.value?.getBoundingClientRect().top ?? 0
@@ -751,6 +787,8 @@ async function route() {
   const hash = window.location.hash.slice(1), was = chatting.value
   routeRetry.value = null
   try {
+    if (hash !== 'publier') addPoster.value = null
+    if (hash !== 'compte' && view.value !== 'compte') accountOrigin.value = null
     const message = /^message(?:-([a-f0-9-]{36}))?$/.exec(hash)
     const id = message ? message[1] : /^[a-f0-9-]{36}$/.test(hash) ? hash : undefined
     const creator = !!(id || message || hash === 'creer' || hash === 'etapes')
@@ -774,6 +812,8 @@ async function route() {
     if (discardedFor === hash && was) chat.discardUnsentPhotos?.()  // left without them: never carried into the next thread
     discardedFor = null
     shownAt = position
+    // Both modes share valid pending edits. An incomplete field only exists in the editor and must be corrected there.
+    if (!was && message && chatOn.value && id && creation.value?.id === id && (unfinishedTitle.value !== null || priceError.value)) await flush()
     if (doc.value && !id) await fresh()
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     if ((creator || next === 'styles') && !creatorReady) await loadShop()
@@ -789,6 +829,7 @@ async function route() {
     if (id) {
       if (creation.value?.id !== id) { await openCreation(id, hash); if (creation.value?.id === id && window.location.hash.slice(1) === here()) arrive() }
       else if (message && !chatting.value) replaceAddress(`#${id}`)
+      else if (priceOnArrival === hash && hash === id) { priceOnArrival = null; openPriceField() }
       return
     }
     publishFor.value = publish?.[1] ?? null
@@ -801,6 +842,7 @@ async function route() {
     if (window.location.hash.slice(1) !== hash) { routeDue = true; return }
     chatting.value = was
     if (view.value === 'opening') view.value = 'accueil'
+    addPoster.value = null
     routeRetry.value = hash
     replaceAddress(`#${here()}`)
     if (view.value === 'compte') accountPosition = position
@@ -808,20 +850,46 @@ async function route() {
   }
   if (view.value === 'posters') await loadLibrary()
 }
-async function openFromList(id: string) {
+async function openFromList(id: string, repair?: () => boolean, intent?: 'review' | 'file') {
+  const shop = bound.value
   const origin = window.location.hash.slice(1)
   if (!creatorReady) await loadShop()
   if (window.location.hash.slice(1) !== origin) return
-  try { await openCreation(id, origin, preferChat.value) } catch (reason) {
+  try {
+    await openCreation(id, origin, repair ? false : preferChat.value, repair, !repair && !intent)
+    if (intent && shown.value && bound.value === shop && creation.value?.id === id && window.location.hash === '#' + here()) {
+      if (error.value) {
+        retry.value = { text: error.value, run: () => void perform(() => openFromList(id, undefined, intent)) }
+      } else if (intent === 'file') {
+        await openFinal(id, creation.value.revision, 'confirmed', { confirmation: creation.value.confirmation, latest: null })
+      } else {
+        const pending = currentVisual.value?.status === 'pending_review' ? currentVisual.value : visuals.value.find(item => item.status === 'pending_review')
+        if (pending) await inspectVisual(pending)
+        else notice.value = 'Cette affiche n’a plus de version à vérifier.'
+      }
+    }
+    if (repair && !error.value && shown.value && creation.value?.id === id && window.location.hash === '#' + id) {
+      if (format.value !== 'feed') {
+        go('style')
+        notice.value = formatFixed.value ? 'Pour publier cette affiche, refaites-la au format Publication.' : 'Choisissez le format Publication.'
+      } else if (!job.value && currentVisual.value?.status === 'pending_review') {
+        await inspectVisual(currentVisual.value)
+      } else {
+        go(staleTitle.value || stalePrice.value ? 'textes' : staleLogo.value || discUncovered.value || staleSignature.value ? 'boutique' : 'style')
+        notice.value = job.value ? 'Une tâche est en cours pour cette affiche.' : whyNoExport.value || 'Vérifiez l’aperçu final pour préparer cette affiche.'
+      }
+    }
+  } catch (reason) {
     if (origin !== 'credits') chatting.value = false
     if (reason instanceof ApiError && reason.status === 404) { home.value?.refresh(); throw new Error('Cette affiche n’est plus disponible.') }
     // « Réessayer » opens the same poster again (a Home or « Mes affiches » row: no address to go back to).
-    if (reason instanceof Error) retry.value = { text: reason.message, run: () => void perform(() => openFromList(id)) }
+    if (reason instanceof Error) retry.value = { text: reason.message, run: () => void perform(() => openFromList(id, repair, intent)) }
     throw reason
   }
 }
 // No route before the shop is loaded (review r1 P1-1): openShop routes to the address as it is by then.
 function onHash() {
+  if (guideOpen.value && location.hash !== guideAddress) dismissGuide()
   trackAddress()
   drawer.value = false  // before the route focuses anything: the destination is inert while the drawer is open
   // The question was about the entry left: the page may now be back on its own (Forward), or asks again for the new one.
@@ -829,6 +897,7 @@ function onHash() {
   photoQuestion = null
   if (!loaded.value) return
   const hash = location.hash.slice(1)
+  if (hash !== priceOnArrival) priceOnArrival = null
   if (account.value && (account.value.dirty || account.value.pending)) {
     if (position !== accountPosition) {
       if (paid.value || termsOpen.value) window.history.go(accountPosition - position)
@@ -866,7 +935,7 @@ const paidCost = computed<ReturnType<typeof credit>>(() => !paid.value?.charged 
   : paid.value.again ? { stop: false, text: ONCE } : credit(balance.value, paid.value.charged))
 const unanswered = (route: string) => retained(`/api/creations/${creation.value?.id}/${route}`)
 function askScene() {
-  if (whyNoHeadline.value) { error.value = whyNoHeadline.value; go('textes'); return }  // also for « Nouvelle version »
+  if (whyNoHeadline.value) { error.value = whyNoHeadline.value; if (mainFix.value) openMainFix(mainFix.value); return }  // also for « Nouvelle version »
   void readBalance()
   paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: '', charged: 'scene', again: unanswered('scenes'),
     text: visuals.value.length ? 'Une nouvelle image avec vos textes et réglages actuels. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
@@ -951,8 +1020,8 @@ watch(termsAsked, () => { void readBalance(); if (!termsOpen.value) void readTer
 // Tab and Shift+Tab go round inside the conditions: the page behind is inert, but the skip link and the messages are not.
 // The drawer too, whose theme switch is shown on a phone only.
 function keepTab(event: KeyboardEvent) {
-  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled)')].filter(control => control.checkVisibility())
-  const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
+  const dialog = event.currentTarget as HTMLElement, controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), summary')].filter(control => control.checkVisibility())
+  const at = document.activeElement, to = event.shiftKey ? (at === controls[0] || at === dialog || at?.matches('h2[tabindex="-1"]') ? controls.at(-1) : null) : at === controls.at(-1) ? controls[0] : null
   if (to) { event.preventDefault(); to.focus() }
 }
 const modalOpen = computed(() => !!(profilePrompt.value || paid.value || termsOpen.value || review.value || finalPreview.value || opened.value || publisher.value?.modal))
@@ -1003,39 +1072,66 @@ function askRemoveLook() {
     } }
 }
 function confirmPaid() { const action = paid.value; if (paidCost.value.stop) return; paid.value = null; if (action) perform(action.run) }
+const priceChangeHelp = computed(() => currentVisual.value?.headline?.price_ar !== undefined
+  ? 'Le prix est dessiné dans l’image. Un nouveau prix demande une nouvelle version.'
+  : 'Après avoir modifié le prix, vérifiez le nouveau fichier final.')
+let priceOnArrival: string | null = null
 function changePriceLater() {
+  if (chatting.value && creation.value) {
+    priceOnArrival = creation.value.id
+    leave(priceOnArrival) // The route asks about any photos still attached to the chat.
+  } else openPriceField()
+}
+function openPriceField() {
   finalPreview.value = null
-  notice.value = 'Modifiez le prix dans « Textes », puis créez une nouvelle version : le prix est dessiné dans l’image.'
-  group.value = 'textes'
+  go('textes', false)
+  notice.value = priceChangeHelp.value
   nextTick(() => document.getElementById('champ-prix')?.focus())
 }
-const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || currentVisual.value?.status !== 'approved' || staleHeadline.value || staleLogo.value || discUncovered.value || issues.value.some(issue => issue.blocking))
+const exportBlocked = computed(() => busy.value || !!job.value || !canvasReady.value || previewPolish.value || !currentVisual.value || currentVisual.value.status === 'rejected' || staleHeadline.value || staleLogo.value || discUncovered.value || issues.value.some(issue => issue.blocking))
 // A title or price that the image model is drawing right now must not change under it: the scene would arrive stale.
 const drawingTexts = computed(() => !!job.value && ['scene', 'refine'].includes(job.value.kind) && headline.value.on)
-const stage = computed(() => !currentVisual.value ? (job.value && ['scene', 'refine'].includes(job.value.kind) ? 1 : 0) : currentVisual.value.status === 'approved' ? 3 : 2)
+const stage = computed(() => !currentVisual.value ? (job.value && ['scene', 'refine'].includes(job.value.kind) ? 1 : 0) : observed.value?.render_id && observed.value.revision === saver?.revision && !hasDraftEdits.value ? 3 : 2)
 // The image model draws these words, and the server refuses what it cannot draw. Said here, before the paid step.
 const headlineFaults = computed(() => {
+  if (doc.value && !enteredTitle.value.trim()) return { title: 'Saisissez le titre de l’affiche.', brand: '', subtitle: '' }
   if (!headline.value.on || !doc.value) return { title: '', brand: '', subtitle: '' }
   const check = (label: string, value: string) => value.length > 60 ? `${label} dépasse 60 caractères (${value.length}) : l’IA ne peut pas le dessiner dans l’image. Raccourcissez-le.`
     : /["\r\n]/.test(value) ? `${label} contient un guillemet droit (") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».` : ''
   return { title: check('Le titre', doc.value.offer.title.trim()), brand: check('La marque', headline.value.brand.trim()), subtitle: check('Le sous-titre', headline.value.subtitle.trim()) }
 })
-const whyNoHeadline = computed(() => paletteBlocked.value || headlineFaults.value.title || headlineFaults.value.brand || headlineFaults.value.subtitle)
+const styleIssue = computed(() => paletteBlocked.value || (!direction.value.trim() ? 'Décrivez l’ambiance souhaitée ou choisissez un style.' : ''))
+const saveIssue = computed(() => saveState.value === 'conflict' ? 'Résolvez le conflit d’enregistrement avant de générer.' : saveState.value === 'failed' ? 'Enregistrez vos modifications avant de générer.' : '')
+const sourceIssue = computed(() => stepping.value && !offerSource.value ? offerSourceError.value ? 'Les photos et la variante sont indisponibles.' : 'Chargement du produit…' : '')
+const whyNoHeadline = computed(() => headlineFaults.value.title || priceError.value || headlineFaults.value.brand || headlineFaults.value.subtitle || styleIssue.value || saveIssue.value || sourceIssue.value)
+const offerWords = computed(() => headline.value.on ? [duplicateBrand.value ? '' : headline.value.brand.trim(), headline.value.subtitle.trim()].filter(Boolean) : [])
+const offerIdentity = computed(() => [doc.value?.include.logo && doc.value.brand_snapshot.logo_asset ? 'Logo' : '', profileValue('shop_name'), profileValue('contact')].filter(Boolean).join(' · '))
+const offerStyle = computed(() => savedLook.value?.name || (look.value === 'libre' ? direction.value.trim() : LOOKS.find(item => item.id === look.value)?.label) || 'Ambiance à compléter')
+function focusSaveRecovery() {
+  stageBox.value?.querySelector<HTMLElement>('.save-recovery button')?.focus()
+}
+function openMainFix(target: Group) {
+  go(target, false)
+  nextTick(() => {
+    const field = panel.value?.querySelector<HTMLElement>('[aria-invalid="true"]')
+    const target = field ?? panel.value
+    target?.focus()
+  })
+}
 const mainAction = computed(() => {
   const visual = currentVisual.value
   if (!visual || visual.status === 'rejected') return { label: 'Générer l’affiche', icon: 'spark', disabled: busy.value || !!job.value || !!whyNoHeadline.value, run: askScene }
-  if (visual.status === 'pending_review') return { label: 'Vérifier la fidélité', icon: 'check', disabled: false, run: () => { review.value = visual; resetChecks() } }
-  return { label: 'Vérifier l’aperçu final', icon: 'eye', disabled: exportBlocked.value, run: () => { perform(renderFinal) } }
+  return { label: 'Vérifier l’aperçu final', icon: 'eye', disabled: exportBlocked.value, run: () => { perform(() => inspectVisual(visual)) } }
 })
-const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.value?.status === 'approved' ? whyNoExport.value : busy.value || job.value ? whyBusy.value : whyNoHeadline.value || whyBusy.value)
+const mainWhy = computed(() => !mainAction.value.disabled ? '' : currentVisual.value && currentVisual.value.status !== 'rejected' ? whyNoExport.value : busy.value || job.value ? whyBusy.value : whyNoHeadline.value || whyBusy.value)
 // The group that holds the control which unblocks the main action: its reason opens it.
 const mainFix = computed<Group | null>(() => {
   if (!mainWhy.value || busy.value || job.value) return null
-  if (currentVisual.value?.status !== 'approved') return paletteBlocked.value ? 'style' : whyNoHeadline.value ? 'textes' : null
+  if (!currentVisual.value || currentVisual.value.status === 'rejected') return headlineFaults.value.title || priceError.value || headlineFaults.value.brand || headlineFaults.value.subtitle ? 'textes' : styleIssue.value ? 'style' : null
   return staleTitle.value || stalePrice.value ? 'textes' : staleSignature.value || discUncovered.value || staleLogo.value ? 'boutique' : null
 })
 const textChecks = computed(() => {
-  const drawn = review.value?.headline as Record<string, any> | null | undefined
+  const drawn = (review.value ?? fileVisual.value)?.headline as Record<string, any> | null | undefined
   if (!drawn) return []
   const items = [{ key: 'text_title', label: drawn.brand ? 'Marque, titre et sous-titre' : 'Titre et sous-titre', value: [drawn.brand_in_title ? null : drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
   if (drawn.price_ar !== undefined) items.push({ key: 'text_price', label: 'Prix', value: `${Number(drawn.price_ar).toLocaleString('fr-FR')}\u00a0AR` })
@@ -1055,17 +1151,15 @@ const whyNoLook = computed(() => otherJob.value ? waiting : !lookReference.value
 const whyNoDraft = computed(() => !photos.value.length ? 'Ajoutez au moins une photo du produit.' : !intake.confirmed ? 'Cochez la case « Les photos correspondent… » pour continuer.' : '')
 const whyNoExport = computed(() => otherJob.value ? waiting
   : !currentVisual.value ? 'Générez d’abord l’affiche.'
-  : currentVisual.value.status === 'pending_review' ? 'Comparez d’abord la version à votre photo et approuvez la fidélité du produit.'
   : currentVisual.value.status === 'rejected' ? 'Cette version a été refusée : choisissez une autre version ou générez-en une nouvelle.'
   : staleHeadline.value ? 'Un texte dessiné dans l’image a changé : générez une nouvelle version.'
   : staleLogo.value ? restorableLogo.value ? 'Le logo ou le cadrage a changé : rétablissez gratuitement sa position dans « Boutique », ou générez une nouvelle version.' : 'Le logo est placé en haut mais cette version n’a pas d’espace prévu pour lui : générez une nouvelle version.'
   : discUncovered.value ? 'L’image contient un disque prévu pour le logo : replacez le logo dessus (activez « Logo ») ou générez une nouvelle version.'
-  : issues.value.some(issue => issue.blocking) ? 'Corrigez d’abord les éléments signalés sous l’affiche.'
+  : !chatting.value && issues.value.some(issue => issue.blocking) ? 'Corrigez d’abord les éléments signalés sous l’affiche.'
   : previewPolish.value ? 'Appliquez ou refusez d’abord l’ajustement en cours.' : '')
 const nextStep = computed(() => job.value && ['scene', 'refine'].includes(job.value.kind) ? 'Votre affiche est en cours de création.'
-  : !currentVisual.value ? 'Vérifiez les textes, choisissez un style, puis appuyez sur « Générer l’affiche ».'
-  : currentVisual.value.status === 'pending_review' ? 'Comparez le produit à votre photo, puis approuvez sa fidélité.'
-  : currentVisual.value.status === 'approved' ? 'Dernière étape : vérifiez l’aperçu final, puis téléchargez votre affiche.'
+  : !currentVisual.value ? 'Vérifiez votre offre et son style, puis générez l’affiche.'
+  : currentVisual.value.status !== 'rejected' ? 'Vérifiez le produit et le prix sur l’affiche, puis choisissez où l’utiliser.'
   : 'Choisissez une autre version sous l’affiche, ou générez une nouvelle version.')
 const staleTitle = computed(() => { const baked = currentVisual.value?.headline?.title; return baked !== undefined ? baked !== doc.value?.offer.title : !!layout.value?.layers.some(layer => layer.role === 'title' && !layer.visible) })
 const staleSignature = computed(() => (['shop_name', 'contact'] as const).some(role => { const baked = currentVisual.value?.headline?.[role]; return baked !== undefined ? baked !== profileValue(role) : !!profileValue(role) && !!layout.value?.layers.some(layer => layer.role === role && !layer.visible) }))
@@ -1107,14 +1201,21 @@ const sources = computed(() => Object.fromEntries([
   ...Object.values(doc.value?.formats ?? {}).flatMap(layout => layout.layers.filter(layer => layer.kind !== 'text').map(layer => [(layer as any).asset, preparedUrl(`/api/assets/${(layer as any).asset}`)])),
 ]))
 const saveState = computed(() => { savingTick.value; return saver?.state ?? 'saved' })
+const hasDraftEdits = computed(() => {
+  savingTick.value
+  return !!saver?.unsaved || (!!doc.value && (unfinishedTitle.value !== null || !!priceError.value))
+})
 // The final panel's one rule (share.ts), for every way it opens: the image beside the live price and the « ready » wording
 // only for a render of the saved revision, or the confirmation a poster read named at it, with nothing waiting to be saved.
 // An edit flips it at once (savingTick). `observed`: the open poster's last read, its revision and the confirmation it named
 // (null included): a read ahead of the saver means another tab saved, and nothing is current here.
 const observed = ref<{ revision: number; render_id: string | null } | null>(null)
 const remember = (read: Creation) => { observed.value = { revision: read.revision, render_id: read.confirmation?.render_id ?? null } }
-const earlier = computed(() => { savingTick.value; return !!finalPreview.value && !presentedAsCurrent(finalPreview.value, saver?.revision ?? 0, !!saver?.unsaved, observed.value) })
-const saveLabel = computed(() => ({ saved: 'Enregistré', dirty: 'Modifications en attente', saving: 'Enregistrement…', failed: 'Échec de l’enregistrement', conflict: 'Une autre version existe' }[saveState.value]))
+const earlier = computed(() => { savingTick.value; return !!finalPreview.value && !presentedAsCurrent(finalPreview.value, saver?.revision ?? 0, hasDraftEdits.value, observed.value) })
+watch(saveState, state => {
+  if (state === 'conflict' && editing.value && stepping.value && !modalOpen.value) nextTick(focusSaveRecovery)
+})
+const saveLabel = computed(() => unfinishedTitle.value !== null ? 'Titre à compléter' : ({ saved: 'Enregistré', dirty: 'Modifications en attente', saving: 'Enregistrement…', failed: 'Échec de l’enregistrement', conflict: 'Une autre version existe' }[saveState.value]))
 const shownPrice = (value: number) => value.toLocaleString('fr-FR')
 function tidyPrice() { try { priceText.value = shownPrice(parsePrice(priceText.value)) } catch { /* the error is already beside the field */ } }
 const day = (stamp: string) => { const date = new Date(stamp); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium' }).format(date) }
@@ -1232,11 +1333,16 @@ watch(() => [creation.value?.id, !!currentVisual.value?.headline, JSON.stringify
   if (id) currentVisual.value?.headline ? forgetWords(id) : keepWords(id)
 })
 // `final`: false reloads the poster without opening its final panel (openFinal, after another tab's save).
-async function adopt(result: Creation, origin?: string, asChat = chatting.value, final = true) {
+async function adopt(result: Creation, origin?: string, asChat = chatting.value, final = true, mayLeave?: () => boolean, copyFrom?: typeof repairOrigin.value) {
   // Steps or tabs depend on the versions: for another poster they are read before the editor shows it.
   const opening = creation.value?.id !== result.id
   const known = opening ? (await api<{ items: Visual[] }>(`/api/creations/${result.id}/visuals`)).items : visuals.value
-  if (origin !== undefined && window.location.hash.slice(1) !== origin) return
+  if ((origin !== undefined && window.location.hash.slice(1) !== origin) || (mayLeave && !mayLeave())) return
+  if (mayLeave && isPublishOrigin(origin) && typeof bound.value === 'number' && shown.value) {
+    repairOrigin.value = { shop: bound.value, destination: origin, poster: result.id }
+  } else if (copyFrom && copyFrom === activeRepair.value) {
+    repairOrigin.value = { ...copyFrom, poster: result.id }
+  } else if (opening) repairOrigin.value = null
   if (opening && origin === 'credits') chat.discardUnsentPhotos?.()
   chatting.value = asChat; view.value = 'create'
   // Another product starts from blank words: the last poster's brand, subtitle and accent word would be drawn on it unseen
@@ -1246,8 +1352,8 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
     headline.value = { ...blankHeadline(), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text }
     refinement.value = ''; polish.value = ''
   }
-  if (opening) { group.value = 'textes'; visited.value = ['textes']; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false; formatAsk.value = null }
-  finalPreview.value = null; priceError.value = ''
+  if (opening) { group.value = known.some(item => item.status !== 'rejected') ? 'textes' : 'style'; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false; formatAsk.value = null }
+  finalPreview.value = null; priceError.value = ''; unfinishedTitle.value = null
   clearTimeout(pollTimer); job.value = null; review.value = null; proposal.value = null; effect.value = null; previewPolish.value = false
   saver?.dispose(); creation.value = result; remember(result); visuals.value = known; doc.value = copy(result.document); priceText.value = shownPrice(result.document.offer.price_ar)
   selected.value = result.document.formats[result.document.primary_format]!.layers.find(layer => layer.role === 'title')?.id ?? null
@@ -1262,6 +1368,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
     throw reason
   }), () => { savingTick.value++; if (saver?.error) error.value = saver.error })
+  savingTick.value++  // Replacement also changes the observed state, even when reloading the same poster.
   // A creator can finish its first poster while Credits is open. Back must return to its newly assigned address.
   const address = chatting.value ? `message-${result.id}` : result.id
   if (creditsPanel.value && origin === undefined) replaceAddress('#credits', { creditsFrom: address })
@@ -1285,7 +1392,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
     retry.value = { text: reason.message, run: () => void perform(() => reloadKeeping(result.id)) }
     return
   }
-  if (final) await openFinal(result.id, result.revision, false, { confirmation: result.confirmation ?? null, latest: latestRender(jobs.items) })
+  if (final) await openFinal(result.id, result.revision, 'resume', { confirmation: result.confirmation ?? null, latest: latestRender(jobs.items) })
   const active = jobs.items.find(item => ['queued', 'running'].includes(item.status))
   const previousProposal = jobs.items.find(item => item.kind === 'text_patch' && item.status === 'succeeded')
   if (previousProposal) proposal.value = await api(`/api/text-proposals/${previousProposal.result_ref}`)
@@ -1294,17 +1401,19 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
     effect.value = await api(`/api/text-effects/${previousEffect.result_ref}`)
     effectSources.value[`effect:${effect.value.id}`] = effect.value.image_url
   }
+  if (opening && !asChat && !active && stepping.value && !modalOpen.value && (headlineFaults.value.title || headlineFaults.value.brand || headlineFaults.value.subtitle)) openMainFix('textes')
   if (active) follow(active, true)
   else {
     const previousPlan = jobs.items.find(item => item.kind === 'plan' && item.status === 'succeeded')
     if (previousPlan) acceptPlan(await api(`/api/plans/${previousPlan.result_ref}`))
   }
 }
-async function openCreation(id: string, origin: string, asChat = chatting.value) {
+async function openCreation(id: string, origin: string, asChat = chatting.value, repair?: () => boolean, openSavedFile = !repair) {
   await flush()
   const found = await api<Creation>(`/api/creations/${id}`)
   if (window.location.hash.slice(1) !== origin) return
-  if (found.status === 'active') return adopt(found, origin, asChat)
+  if (found.status === 'active') return adopt(found, origin, asChat, openSavedFile, repair)
+  if (repair) throw new Error('Cette affiche a été retirée de la liste.')
   if (origin === 'credits') throw new Error('Cette affiche a été retirée de la liste.')
   // A removed poster refuses every save: show where it is and how to bring it back instead of an editor that cannot save.
   if (doc.value) await fresh()
@@ -1317,6 +1426,20 @@ const libraryNext = ref<string | null>(null), activeTotal = ref(0), shownTotal =
 const listKnown = ref(false), listedRemoved = ref<boolean | null>(null), listFailed = ref(false)
 const hasLibrary = computed(() => listedRemoved.value === showRemoved.value)
 const listUrl = (extra = '') => `/api/creations?limit=50&status=${showRemoved.value ? 'abandoned' : 'active'}${extra}`
+const rowActions = ref<string | null>(null)
+function filterLibrary(removed: boolean) {
+  if (busy.value || showRemoved.value === removed) return
+  showRemoved.value = removed
+  void perform(loadLibrary)
+}
+function closeRowActions(id: string) {
+  rowActions.value = null
+  document.getElementById(`actions-${id}`)?.focus()
+}
+watch([view, showRemoved], () => { rowActions.value = null })
+function focusLibraryAfterRemoval() {
+  if (view.value === 'posters' && document.activeElement === document.body) document.getElementById('titre-affiches')?.focus()
+}
 async function loadLibrary() {
   listFailed.value = false
   try {
@@ -1349,13 +1472,21 @@ const duplicate = (item: LibraryItem) => perform(async () => {
   await onRow(async () => { copied = await mutation<Creation>(`/api/creations/${item.id}/copies`, { source_revision: item.revision, reason: 'new_campaign' }) })
   if (copied) await adopt(copied)
 })
-const restore = (item: LibraryItem) => perform(() => onRow(() => mutation(`/api/creations/${item.id}/restore`, {}, item.revision, crypto.randomUUID())))
+const restore = (item: LibraryItem) => perform(async () => {
+  await onRow(() => mutation(`/api/creations/${item.id}/restore`, {}, item.revision, crypto.randomUUID()))
+  rowActions.value = null
+  await nextTick(focusLibraryAfterRemoval)
+})
 function askRemove(item: LibraryItem) {
+  closeRowActions(item.id)
   paid.value = { title: `Retirer « ${item.title} » de la liste ?`, label: 'Retirer de la liste', cost: '',
     text: 'Rien n’est effacé : l’affiche et son fichier confirmé sont conservés. Pour l’ouvrir ou la télécharger à nouveau, remettez-la dans la liste.',
-    run: () => onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) }) }
+    run: async () => {
+      await onRow(async () => { await mutation(`/api/creations/${item.id}/abandon`, {}, item.revision, crypto.randomUUID()); forgetWords(item.id); forgetPalette(item.id) })
+      await nextTick(focusLibraryAfterRemoval)
+    } }
 }
-async function fresh() { await flush(); keptLook.value = null; finalPreview.value = null; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
+async function fresh() { await flush(); review.value = null; repairOrigin.value = null; keptLook.value = null; finalPreview.value = null; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
 async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
@@ -1371,7 +1502,7 @@ async function reloadKeeping(id: string) {
     const held = saver!, revision = held.revision
     const read = await api<Creation>(`/api/creations/${id}`)
     if (creation.value?.id !== id) return
-    if (saver === held && !held.unsaved && held.revision === revision) return adopt(read)
+    if (saver === held && !hasDraftEdits.value && held.revision === revision) return adopt(read)
   }
 }
 function edit(change: (document: PosterDocument) => void, mergeKey = '') {
@@ -1406,9 +1537,16 @@ function numeric(field: 'x' | 'y' | 'width' | 'height' | 'font_size', event: Eve
   patchLayer(selected.value!, { [field]: value }, field)
 }
 function changePrice() { try { const value = checkedPrice(priceText.value); edit(document => { document.offer.price_ar = value }, 'price') } catch { /* written beside the field */ } }
-async function flush() { if (doc.value && checkedPrice(priceText.value, 'champ-prix') !== doc.value.offer.price_ar) throw new Error('Vérifiez le prix avant de continuer.'); await saver?.flush() }
-function undo() { if (doc.value) { const previous = history.undo(doc.value); if (previous) { doc.value = previous; priceText.value = shownPrice(previous.offer.price_ar); priceError.value = ''; saver!.queue(previous) } } }
-function redo() { if (doc.value) { const next = history.redo(doc.value); if (next) { doc.value = next; priceText.value = shownPrice(next.offer.price_ar); priceError.value = ''; saver!.queue(next) } } }
+async function flush() {
+  if (doc.value && !enteredTitle.value.trim()) {
+    openMainFix('textes')
+    throw new Error('Saisissez le titre de l’affiche.')
+  }
+  if (doc.value && checkedPrice(priceText.value, 'champ-prix') !== doc.value.offer.price_ar) throw new Error('Vérifiez le prix avant de continuer.')
+  await saver?.flush()
+}
+function undo() { if (unfinishedTitle.value !== null) { unfinishedTitle.value = null; return } if (doc.value) { const previous = history.undo(doc.value); if (previous) { doc.value = previous; priceText.value = shownPrice(previous.offer.price_ar); priceError.value = ''; saver!.queue(previous) } } }
+function redo() { if (doc.value) { const next = history.redo(doc.value); if (next) { unfinishedTitle.value = null; doc.value = next; priceText.value = shownPrice(next.offer.price_ar); priceError.value = ''; saver!.queue(next) } } }
 async function conflictCopy() {
   const result = await mutation<Creation>(`/api/creations/${creation.value!.id}/copies`, { source_revision: saver!.revision, reason: 'save_conflict', unsaved_document: doc.value })
   madePoster()
@@ -1525,7 +1663,10 @@ function onVisibility() {
   if (job.value && !polling) { clearTimeout(pollTimer); poll() }
 }
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
-function follow(value: Job, found = false) {
+type ReviewedRender = { format: Format; revision: number; active: () => boolean }
+let reviewedRender: ReviewedRender | undefined
+function follow(value: Job, found = false, reviewed?: ReviewedRender) {
+  reviewedRender = reviewed
   clearTimeout(pollTimer); round++; job.value = value; failures = 0; offline.value = false; decoded.value = false; runningSince.value = null; arrived = ''
   // Every 202 of an image request ends here (the editor's, the chat's, a replay): it took a credit. Read for any job,
   // which is simpler than listing the kinds, and costs one quiet read.
@@ -1565,13 +1706,21 @@ async function poll() {
         let result: any = await api(`/api/renders/${completed.result_ref}`, { quiet: true })
         // Confirmed already (a job reused): the poster read says whether it is still the poster's file. Saved elsewhere since
         // (a revision ahead): nothing is current here, and with nothing waiting to be saved the saved poster is reloaded, as
-        // the chat's button does. Another confirmation of this revision is the poster's (two formats): that one is shown.
-        const read = result.download_url ? await api<Creation>(`/api/creations/${creationId}`, { quiet: true }) : null
+        // the chat's button does. An explicit file check stays on the chosen format.
+        const checked = reviewedRender
+        const read = result.download_url || checked ? await api<Creation>(`/api/creations/${creationId}`, { quiet: true }) : null
         const ahead = !!read && read.revision > (saver?.revision ?? 0)
-        if (read?.confirmation && !ahead && read.confirmation.render_id !== result.id) result = await api(`/api/renders/${read.confirmation.render_id}`, { quiet: true })
+        if (!checked && read?.confirmation && !ahead && read.confirmation.render_id !== result.id) result = await api(`/api/renders/${read.confirmation.render_id}`, { quiet: true })
         if (stale()) return
+        if (checked && !checked.active()) { job.value = null; return }
         if (read) remember(read)
-        if (ahead && !saver?.unsaved) { await adopt(read!, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return }
+        if (ahead && !hasDraftEdits.value) { await adopt(read!, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return }
+        if (checked) {
+          if (result.format !== checked.format || result.source_revision !== checked.revision || result.creation_id !== creationId) {
+            job.value = null; error.value = 'Ce fichier ne correspond plus à l’affiche vérifiée. Réessayez.'; return
+          }
+          review.value = null
+        }
         openFinalPreview(result)
       }
       else if (completed.kind === 'text_patch' || completed.kind === 'text_texture') {
@@ -1603,14 +1752,17 @@ async function poll() {
         if (stale()) return
         if (!shown) notice.value = 'La nouvelle version est enregistrée, mais son image tarde à se charger sur cet appareil.'
         decoded.value = true; arrived = completed.result_ref ?? ''
-        if (!saver?.unsaved) {
+        if (!hasDraftEdits.value) {
           const saved = await api<Creation>(`/api/creations/${creation.value.id}`, { quiet: true })
           if (stale()) return
-          if (saved.revision !== saver?.revision && !saver?.unsaved) await adopt(saved)
+          if (saved.revision !== saver?.revision && !hasDraftEdits.value) await adopt(saved)
         }
         // No notice here: the review opens in front and a notice would cover its instructions.
         // In the chat the result card's « Vérifier » opens it.
-        if (!chatting.value) { review.value = visuals.value.find(item => item.id === completed.result_ref) ?? null; resetChecks() }
+        if (!chatting.value && made && creation.value?.id === creationId) {
+          if (job.value?.id === jobId) job.value = null
+          await inspectVisual(made)
+        }
       }
       if (job.value?.id === jobId) job.value = null
       return
@@ -1682,7 +1834,8 @@ async function decideEffect(action: 'apply' | 'reject') {
   effect.value = null; previewPolish.value = false
 }
 function openFinalPreview(value: any) {
-  finalPreview.value = { ...value, loaded: false }
+  resetChecks()
+  finalPreview.value = { ...value, loaded: false, originals: new Set<string>(), imageFailed: false, attempt: (value.attempt ?? 0) + 1 }
 }
 // Only the displayed preview's own image marks it loaded (a replaced <img> may still finish loading).
 function previewLoad(event: Event) {
@@ -1691,7 +1844,10 @@ function previewLoad(event: Event) {
 // The same check: only the displayed preview's own failure makes its File impossible to prepare.
 function previewError(event: Event) {
   error.value = 'Le fichier d’aperçu ne peut pas être chargé.'
-  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) unprepared.value = true
+  if (finalPreview.value && (event.target as HTMLImageElement).getAttribute('src') === finalPreview.value.preview_url) {
+    finalPreview.value.imageFailed = true
+    unprepared.value = true
+  }
 }
 // The caption of « Partager » (D-SHARE-003): written once per poster, kept on this device under the shop's key, with no
 // prune (another tab's fresh text is never evicted); erased with the shop's other keys at sign-out. Its field belongs to
@@ -1830,8 +1986,57 @@ watch([attempt, slow], () => {
 // in the browser. An unknown one is answered on the page (`#publier`), whose « Publications » has the owner's buttons.
 const facebookOn = computed(() => !!caps.value?.facebook && !!finalPreview.value)
 const facebookShown = computed(() => facebookOn.value && captionShown.value)
+const activeRepair = computed(() => {
+  const origin = repairOrigin.value
+  return origin && shown.value && origin.shop === bound.value && origin.poster === creation.value?.id ? origin : null
+})
+const repairedFile = computed(() => facebookShown.value && finalPreview.value?.loaded && finalPreview.value.format === 'feed' ? finalPreview.value.download_url : null)
+const fileVisual = computed(() => {
+  const target: Format | undefined = finalPreview.value?.format
+  const id = target && doc.value?.formats[target]?.scene.visual_id
+  return visuals.value.find(item => item.id === id)
+})
+const canAcceptFile = computed(() => {
+  const preview = finalPreview.value, visual = fileVisual.value
+  return !!(preview?.loaded && !preview.imageFailed && !earlier.value && visual && visual.status !== 'rejected'
+    && visual.original_urls.length && visual.original_urls.every(url => preview.originals.has(url)))
+})
+const finalFormat = computed(() => FORMAT_NAMES[finalPreview.value?.format as Format]?.[0])
+const pageFile = computed(() => facebookShown.value && finalPreview.value?.format === 'feed')
+const repairCopy = computed(() => facebookOn.value && !earlier.value && finalPreview.value.format === 'feed' && activeRepair.value && activeRepair.value.destination !== 'publier' && activeRepair.value.destination !== 'publier-' + activeRepair.value.poster)
+// After the check, a phone can be scrolled down to the warnings. Bring the confirmed file's actions back into view.
+watch(() => [finalPreview.value?.id, finalPreview.value?.download_url] as const, ([id, url], [previousId, previousUrl]) => {
+  if (id === previousId && url && !previousUrl && shown.value && !earlier.value && front.value === 'final-title') {
+    const title = document.getElementById('final-title')
+    title?.focus({ preventScroll: true })
+    title?.closest('.final-preview')?.scrollTo(0, 0)
+  }
+}, { flush: 'post' })
+async function returnToPost(useFile = false) {
+  const origin = activeRepair.value, file = repairedFile.value, address = location.hash
+  if (!origin) return
+  await flush()
+  if (activeRepair.value !== origin || location.hash !== address) return
+  if (useFile) {
+    if (!file || file !== repairedFile.value) throw new Error('Vérifiez de nouveau le fichier de cette affiche.')
+    if (origin.destination !== 'publier') { publishAlone(); return }
+    addPoster.value = { id: origin.poster, download_url: file }
+  }
+  leave(origin.destination)
+}
+function connectForPost() {
+  const from = here()
+  if (!shown.value || view.value !== 'publier' || location.hash !== '#' + from || !isPublishOrigin(from)) return
+  accountOrigin.value = from
+  leave('compte')
+}
+watch(view, (to, from) => {
+  if (from === 'compte' && to !== 'compte') { accountOrigin.value = null; clearFacebookOrigin() }
+})
 const posts = ref<Post[]>([]), postsAfter = ref<string | null>(null), facebookRead = ref<'reading' | 'read' | 'failed'>('reading')
 const postLines = computed(() => posts.value.map(post => ({ post, ...panelLine(post) })))
+const unansweredPosts = computed(() => postLines.value.filter(line => line.answer))
+const historyPosts = computed(() => postLines.value.filter(line => !line.answer))
 const moment = (stamp: string) => { const date = new Date(stamp); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(date) }
 let facebookTurn = 0
 // Newest first, a page at a time: `more` reads the page after the last one shown (« Voir plus »), every post keeps its
@@ -1863,54 +2068,100 @@ function publishAlone() {
   leave(`publier-${poster}`)
 }
 // A poster opens on its current confirmation's own render (D-SHARE-001), read-only, never with a render request. Without
-// one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's button (`ask`) asks for a
-// render. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
+// one, an opening shows its latest render (an earlier version if it is confirmed) and the chat's download button asks for a
+// render. The library’s file action only opens a current confirmation. `known`: what the opening read already; without it the poster is read again (quiet), and for an opening its jobs.
 // That read naming a saved revision other than this tab's reloads the poster and opens and asks for nothing. A failed read
 // says OPEN_FAILED, with « Réessayer » repeating the reads, never a render. An answer once another poster or saved revision
 // is open changes nothing.
 const OPEN_FAILED = 'L’affiche confirmée n’a pas pu être ouverte.'
 const CHANGED_ELSEWHERE = 'Cette affiche a été modifiée ailleurs : la version enregistrée a été rechargée. Réessayez.'
 const latestRender = (items: Job[]) => items.find(item => item.kind === 'render' && item.status === 'succeeded')?.result_ref ?? null
-async function openFinal(id: string, revision: number, ask: boolean, known?: { confirmation: Creation['confirmation']; latest: string | null }) {
-  const same = () => creation.value?.id === id && saver?.revision === revision
+async function openFinal(id: string, revision: number, mode: 'resume' | 'confirmed' | 'render', known?: { confirmation: Creation['confirmation']; latest: string | null }) {
+  const shop = bound.value, address = location.hash
+  const same = () => creation.value?.id === id && saver?.revision === revision && bound.value === shop && location.hash === address
   let found: Creation | undefined, file: any = null
   try {
     if (!known) {
       found = await api<Creation>(`/api/creations/${id}`, { quiet: true })
       if (found.revision === revision) known = { confirmation: found.confirmation ?? null,
-        latest: ask ? null : latestRender((await api<{ items: Job[] }>(`/api/creations/${id}/jobs`)).items) }
+        latest: mode === 'resume' ? latestRender((await api<{ items: Job[] }>(`/api/creations/${id}/jobs`)).items) : null }
     }
     const shown = known && (known.confirmation?.render_id ?? known.latest)
     if (shown && same()) file = await api(`/api/renders/${shown}`)
   } catch {
     if (!same()) return
     error.value = OPEN_FAILED
-    retry.value = { text: OPEN_FAILED, run: () => void perform(async () => { if (creation.value?.id === id) { await flush(); await openFinal(id, saver!.revision, ask) } }) }
+    retry.value = { text: OPEN_FAILED, run: () => void perform(async () => { if (creation.value?.id === id) { await flush(); await openFinal(id, saver!.revision, mode) } }) }
     return
   }
   if (!same()) return
   // Saved elsewhere since this tab read it: its image and price may be another revision's. Unsaved edits meet the conflict.
   if (!known) { await flush(); await adopt(found!, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return }
   if (found) remember(found)
-  if (file) openFinalPreview(file)
-  else if (ask) await renderFinal()
+  if (file && (mode !== 'render' || file.format === format.value)) openFinalPreview(file)
+  else if (mode === 'render' && currentVisual.value) await inspectVisual(currentVisual.value)
+  else if (mode === 'confirmed') notice.value = 'Cette affiche n’a plus de fichier confirmé pour sa version actuelle.'
 }
-async function renderFinal() {
+async function renderFinal(checked: ReviewedRender) {
   await flush()
-  const result: any = await mutation(`/api/creations/${creation.value!.id}/renders`, { format: format.value }, saver!.revision)
-  follow({ id: result.job_id, kind: 'render', status: 'queued', result_ref: null, error_code: null })
+  if (!checked.active()) return
+  const result = await mutation<{ job_id: string }>(`/api/creations/${creation.value!.id}/renders`, { format: format.value, review_visual_id: currentVisual.value?.id }, saver!.revision)
+  if (checked.active()) follow({ id: result.job_id, kind: 'render', status: 'queued', result_ref: null, error_code: null }, false, checked)
 }
-async function confirmFinal() {
+async function acceptFile(destination: 'library' | 'download' | 'facebook' | 'batch' | 'share') {
+  const poster = creation.value?.id, preview = finalPreview.value, visual = fileVisual.value, shop = bound.value, address = location.hash
+  const same = () => shown.value && bound.value === shop && creation.value?.id === poster && finalPreview.value === preview
+    && location.hash === address && fileVisual.value?.id === visual?.id && !earlier.value
   await flush()
-  const poster = creation.value!.id, shown = finalPreview.value
-  const result: any = await mutation(`/api/creations/${poster}/confirmations`, {
-    render_id: shown.id, png_sha256: shown.png_sha256, // One confirmation covers every listed point and warning (ADR-051); the server still requires each one.
-    checks: Object.fromEntries(Object.keys(finalPoints).map(key => [key, true])),
-    acknowledged_warning_ids: shown.warnings.map((issue: LayoutIssue) => issue.id),
-  }, saver!.revision)
+  if (!poster || !visual || !same() || !canAcceptFile.value) return
+  const revision = saver!.revision
+  let result: { download_url: string } | undefined
+  try {
+    result = await mutation(`/api/creations/${poster}/confirmations`, {
+      render_id: preview.id, png_sha256: preview.png_sha256, review_visual_id: visual.id,
+      fidelity_checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])),
+      checks: Object.fromEntries(Object.keys(finalPoints).map(key => [key, true])),
+      acknowledged_warning_ids: preview.warnings.map((issue: LayoutIssue) => issue.id),
+    }, revision)
+  } catch (reason) {
+    if (!(reason instanceof ApiError && ['revision_conflict', 'preview_stale', 'scene_unapproved', 'review_decided'].includes(reason.code))) throw reason
+  }
+  if (!same()) return
+  // A replay can return a successful confirmation from before another tab changed the offer.
+  const saved = await api<Creation>(`/api/creations/${poster}`, { quiet: true })
+  if (!same()) return
+  if (!result || saved.revision !== revision) {
+    await adopt(saved, undefined, chatting.value, false)
+    notice.value = 'Cette affiche a changé. Vérifiez la version actuelle.'
+    return
+  }
   void recent.read()
-  // Its file, on its own preview only: another one opened meanwhile (a render job ending) is not confirmed by this answer.
-  if (creation.value?.id === poster && finalPreview.value === shown) { shown.download_url = result.download_url; void prepare() }
+  remember(saved)
+  preview.download_url = result.download_url
+  visual.status = 'approved'
+  await nextTick() // Wait for the immutable download link and the saved caption to be available.
+  if (!same()) return
+  void prepare()
+  if (destination === 'download') downloadLink.value?.click()
+  else if (destination === 'batch') await returnToPost(true)
+  else if (destination === 'facebook') publishAlone()
+  else if (destination === 'library') document.getElementById('final-title')?.focus()
+  else if (shareDetails.value) { shareDetails.value.open = true; shareDetails.value.querySelector('summary')?.focus() }
+}
+const downloadLink = ref<HTMLAnchorElement | null>(null), shareDetails = ref<HTMLDetailsElement | null>(null)
+function correctFile() {
+  finalPreview.value = null
+  review.value = null
+  if (chatting.value && creation.value) leave(creation.value.id)
+}
+async function rejectFile() {
+  const visual = fileVisual.value, preview = finalPreview.value
+  if (!visual || !preview || earlier.value || visual.status !== 'pending_review' || !rejection.value.trim()) return
+  const result = await mutation<Visual>(`/api/visuals/${visual.id}/decision`, { action: 'reject', note: rejection.value })
+  if (finalPreview.value !== preview || fileVisual.value?.id !== result.id) return
+  visual.status = result.status
+  finalPreview.value = null
+  void recent.read()
 }
 // The chosen version's thumbnail works until its scene is drawn; the canvas keeps the previous one meanwhile.
 const choosing = ref<string | null>(null)
@@ -1945,10 +2196,67 @@ function chooseVisual(visual: Visual) {
 }
 // On a phone the review shows one image at a time, the version first (R-POSTER-EDITOR-007).
 const compareSide = ref<'photo' | 'version'>('version')
-function resetChecks() { rejection.value = ''; rejecting.value = false; zoomed.value = false; compareSide.value = 'version' }
+let reviewVisit = 0
+function resetChecks() { reviewVisit++; rejection.value = ''; rejecting.value = false; zoomed.value = false; compareSide.value = 'version' }
+// An old answer cannot reopen a review that was closed, even if the same poster and version were opened again.
+function sameReview() {
+  const visit = reviewVisit, poster = creation.value?.id, visual = review.value?.id, shop = bound.value
+  const target = format.value, address = location.hash
+  return () => visit === reviewVisit && shown.value && bound.value === shop && creation.value?.id === poster
+    && review.value?.id === visual && format.value === target && location.hash === address
+}
 async function decide(action: 'approve' | 'reject') {
-  await mutation(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
-  await refreshVisuals(); review.value = null
+  const still = sameReview(), poster = creation.value?.id, shop = bound.value
+  const decision = await mutation<Visual>(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
+  if (creation.value?.id !== poster || bound.value !== shop || state.value === 'out') return
+  await refreshVisuals()
+  if (!still()) return
+  review.value = action === 'approve' ? decision : null
+  if (review.value) await nextTick(() => document.getElementById('review-title')?.focus())
+}
+const reviewFileBlock = computed(() => job.value ? job.value.kind === 'render' ? 'Préparation du fichier final…' : waiting : whyNoExport.value)
+const reviewingSelected = computed(() => !!review.value && review.value.id === currentVisual.value?.id && review.value.status !== 'rejected')
+function compareVisual(visual: Visual) {
+  if (currentVisual.value?.id === visual.id && visual.status !== 'rejected') void perform(() => inspectVisual(visual))
+  else { finalPreview.value = null; review.value = visual; resetChecks() }
+}
+async function inspectVisual(visual: Visual) {
+  finalPreview.value = null
+  review.value = visual
+  resetChecks()
+  if (reviewingSelected.value && !reviewFileBlock.value) {
+    try { await checkReviewedFile() }
+    catch (reason) { if (review.value?.id === visual.id) error.value = reason instanceof Error ? reason.message : 'L’aperçu n’a pas pu être préparé.' }
+  }
+}
+async function checkReviewedFile() {
+  document.getElementById('review-title')?.focus() // The action disables during the read; Escape must stay with this dialog.
+  const still = sameReview(), visual = review.value?.id
+  await flush()
+  if (!still() || reviewFileBlock.value || currentVisual.value?.id !== visual) return
+  const poster = creation.value!.id, revision = saver!.revision, target = format.value
+  const active = () => still() && currentVisual.value?.id === visual && saver?.revision === revision && !saver.unsaved
+  const readPoster = () => api<Creation>(`/api/creations/${poster}`)
+  let saved = await readPoster()
+  if (!active()) return
+  type Render = { id: string; creation_id: string; format: Format; download_url: string | null }
+  let file: Render | null = null
+  if (saved.revision === revision && saved.confirmation?.format === target) {
+    file = await api<Render>(`/api/renders/${saved.confirmation.render_id}`)
+    if (!active()) return
+    saved = await readPoster() // A different tab may have changed the price while the file was opening.
+    if (!active()) return
+  }
+  if (saved.revision !== revision) {
+    await adopt(saved, undefined, chatting.value, false); notice.value = CHANGED_ELSEWHERE; return
+  }
+  remember(saved)
+  if (file) {
+    if (file.id !== saved.confirmation?.render_id || file.creation_id !== poster || file.format !== target || file.download_url !== saved.confirmation.download_url)
+      throw new Error('Le fichier confirmé a changé. Réessayez la vérification.')
+    review.value = null
+    openFinalPreview(file)
+  } else await renderFinal({ format: target, revision, active })
 }
 // What the chat is handed (D-TEXT-FIRST-003): this editor's own refs and functions, so the routes, guards and retries are
 // the same. A failure goes back to the card that asked instead of the general message.
@@ -1988,7 +2296,7 @@ function setWords(words: Words) {
 }
 let copyInput: { signature: string; id: string } | null = null  // kept only for a retry of this copy
 const chat: ChatAdapter = {
-  state: proxyRefs({ creation, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
+  state: proxyRefs({ creation, format, productAssets: computed(() => offerSource.value?.photo_assets), productError: offerSourceError, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
     shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
     busy, credit: computed(() => credit(balance.value, 'scene')) }),  // a recap is a scene, a change a scene or a refinement
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
@@ -2088,20 +2396,21 @@ const chat: ChatAdapter = {
     try {
       await openCreation(copied.id, at, false)
       if (creation.value?.id !== copied.id || visuals.value.length) return
-      visited.value = ['textes', 'boutique', 'style']; group.value = 'style'  // the steps were all walked once
+      group.value = 'style'
       notice.value = 'Copie de l’affiche avec la nouvelle photo, sans version : générez-la quand vous êtes prêt. L’affiche d’origine est conservée.'
     } catch (reason) { error.value = `La copie est dans Mes affiches, mais son chargement est incomplet${reason instanceof Error && reason.message ? ` (${reason.message})` : ''}.` }
   }),
   words: (visual, values, owned) => told(async () => { await pickVersion(visual, owned); await flush(); owned(); setWords(values); await flush() }),
   select: (id, owned) => told(() => pickVersion(id, owned)),  // a version that is not listed is a failure, not a success
   saved: flush,
+  reloadProduct: retryOfferSource,
   attempts: async () => (await api<{ items: Job[] }>(`/api/creations/${creation.value!.id}/jobs`, { quiet: true })).items,
   job: id => api<Job>(`/api/jobs/${id}`, { quiet: true }),
   follow: found => follow(found as Job, true),
   recount: () => void readBalance(),
-  review: visual => { review.value = visual; resetChecks() },
+  review: compareVisual,
   // « Télécharger ou partager »: the current confirmation if there is one; a file to check is rendered only without.
-  download: () => { void perform(async () => { await flush(); await openFinal(creation.value!.id, saver!.revision, true) }) },
+  download: () => { void perform(async () => { await flush(); await openFinal(creation.value!.id, saver!.revision, 'render') }) },
   conditions: () => { void readTerms() },
 }
 function zoomScene(event: Event) {
@@ -2157,6 +2466,37 @@ const posterAddress = (id: string) => '#' + (creation.value?.id === id ? here() 
 const posterCount = computed(() => listKnown.value ? activeTotal.value : recent.error.value ? undefined : recent.data.value?.total)
 // A poster made or copied without reading the list again: the list's count is old, the recent read has the new one.
 function madePoster() { listKnown.value = false; void recent.read() }
+// Help is a reading panel. Keeping the workspace mounted preserves unsent photos and the publication draft lock.
+const guideStep = ref(0), guideOpen = ref(false)
+let guideOpener: HTMLElement | null = null, guideAddress = ''
+const guideBlocked = computed(() => !shown.value || modalOpen.value || peeking.value || creditsPanel.value)
+function openGuide(event: MouseEvent, step = guideStep.value) {
+  if (guideBlocked.value || guideOpen.value) return
+  guideOpener = drawer.value ? menuButton.value ?? null : event.currentTarget as HTMLElement
+  drawer.value = false
+  guideAddress = location.hash
+  guideStep.value = step
+  guideOpen.value = true
+}
+function dismissGuide(restoreFocus = false) {
+  const opener = guideOpener, address = guideAddress
+  guideOpener = null
+  guideOpen.value = false
+  if (restoreFocus) nextTick(() => {
+    if (guideBlocked.value || guideOpen.value || location.hash !== address) return
+    const controls = [opener, menuButton.value, ...document.querySelectorAll<HTMLElement>('.guide-entry')]
+    const visible = controls.find(el => el?.isConnected && !el.closest('[inert]') && el.checkVisibility({ visibilityProperty: true }))
+    visible?.focus()
+  })
+}
+watch(guideBlocked, blocked => { if (blocked && guideOpen.value) dismissGuide() })
+watch([bound, state], ([shop, gate], [oldShop]) => {
+  if (shop !== oldShop || gate === 'out') { dismissGuide(); guideStep.value = 0 }
+})
+function focusChatComposer() {
+  if (chatting.value && shown.value && !modalOpen.value && !creditsPanel.value && !guideOpen.value)
+    document.querySelector<HTMLTextAreaElement>('.chat .composer textarea')?.focus()
+}
 function openDrawer() { drawer.value = true; nextTick(() => sideClose.value?.focus()) }
 function closeDrawer() { drawer.value = false; nextTick(() => menuButton.value?.focus()) }
 // A destination: accountLink first, then the drawer closes and the route owns the focus. Without a route (the address
@@ -2197,7 +2537,7 @@ function toggleTheme() {
 }
 // leaving: the page is replaced on purpose (a change of identity), and what it holds unsaved is the shop's no more.
 let leaving = false
-function warnUnload(event: BeforeUnloadEvent) { if (!leaving && (saver?.unsaved || account.value?.dirty || account.value?.pending)) { event.preventDefault(); event.returnValue = '' } }
+function warnUnload(event: BeforeUnloadEvent) { if (!leaving && (hasDraftEdits.value || account.value?.dirty || account.value?.pending)) { event.preventDefault(); event.returnValue = '' } }
 
 // ── the identity gate (D-MULTI-SHOP-007) ─────────────────────────────────────────────────────────────────
 // Before anything reads: what the pilot's phone kept before the shops becomes shop 1's.
@@ -2206,6 +2546,7 @@ try { moveLegacy(localStorage) } catch { /* storage refused: nothing was kept */
 // 502 to 504, or nothing): the gate says so with a retry (api.ts ask, settle), instead of a sign-in form that cannot work.
 watch(state, now => {
   if (now === 'out') {
+    repairOrigin.value = null; addPoster.value = null; accountOrigin.value = null; clearFacebookOrigin()
     departure.value = null; paid.value = null
     // Hidden first; then nothing of the shop is said, and its poster's address is not kept for whoever signs in next.
     error.value = ''; notice.value = ''; window.scrollTo({ top: 0 })
@@ -2224,6 +2565,10 @@ watch([shown, view], ([visible, page], [, previousPage]) => {
 // The first time the gate opens in this page's life: the shop's keys, its style, then its data.
 async function openShop() {
   open()
+  if (typeof bound.value === 'number') {
+    const origin = takeFacebookOrigin(bound.value)
+    accountOrigin.value = location.hash === '#compte' ? origin : null
+  }
   readStyle()
   void readTerms(true)  // apart, as the balance: after a sign-in or on a session that lasts (D-TERMS-004)
   loaded.value = true
@@ -2246,8 +2591,8 @@ async function signIn() {
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: identifier.value, password: password.value }) }))
     identifier.value = ''; password.value = ''
     announce()
-    if (answer.shop_id === bound.value && saver?.unsaved) {
-      try { await saver.flush() } catch (reason) { gateError.value = reason instanceof Error ? reason.message : 'Enregistrement impossible.'; keepEdits.value = true; return }
+    if (answer.shop_id === bound.value && hasDraftEdits.value) {
+      try { await flush() } catch (reason) { gateError.value = reason instanceof Error ? reason.message : 'Enregistrement impossible.'; keepEdits.value = true; return }
     }
     bind(answer.shop_id)
     reload()
@@ -2346,6 +2691,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div class="side-foot">
       <a href="#credits" class="credit-card" :title="balanceLabel" :aria-haspopup="view === 'create' ? 'dialog' : undefined" @click="toCredits"><Icon n="credits" /><span class="label">{{ balanceLabel }}</span><b v-if="balance" class="number" aria-hidden="true">{{ balance.available }}</b></a>
       <a href="#compte" class="account" :title="profile.name || 'Votre boutique'" :aria-current="!doc && view === 'compte' ? 'page' : undefined"><span class="avatar"><Icon n="user" /></span><span class="label" translate="no">{{ profile.name || 'Votre boutique' }}</span></a>
+      <button type="button" class="ghost guide-entry" title="Aide" aria-haspopup="dialog" @click="openGuide($event)"><Icon n="help" /><span class="label">Aide</span></button>
       <button class="ghost sign-out" type="button" title="Se déconnecter" @click="perform(askSignOut)"><Icon n="out" /><span class="label">Se déconnecter</span></button>
       <button class="ghost theme-toggle" type="button" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" /><span>{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</span></button>
     </div>
@@ -2371,14 +2717,14 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
   </main>
   <!-- Hidden during a verification (its unsaved work comes back); gone once the session is (review r1, 2). -->
   <main v-if="loaded && state !== 'out'" tabindex="-1" :hidden="!shown" :class="{ editing, chatting }" :inert="drawer">
-    <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button v-else-if="retry && retry.text === error" class="text-button" type="button" @click="retry.run()">Réessayer</button><button class="text-button" type="button" @click="error = ''">Fermer</button></div>
-    <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''">Fermer</button></div>
+    <div v-if="error" class="message error" role="alert">{{ error }} <button v-if="routeRetry" class="text-button" @click="leave(routeRetry)">Réessayer</button><button v-else-if="retry && retry.text === error" class="text-button" type="button" @click="retry.run()">Réessayer</button><button class="text-button" type="button" @click="error = ''; focusChatComposer()">Fermer</button></div>
+    <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''; focusChatComposer()">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
-    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" :publish="publishOn" @poster="id => perform(() => openFromList(id))" @terms="readConditions" />
-    <ShopPublish v-if="shown && !doc && view === 'publier'" ref="publisher" :poster="publishFor" :terms="terms" :handed="handed" :inert="modalOpen && !publisher?.modal"
-      @terms="readConditions" @poster="id => perform(() => openFromList(id))" @handed="handed = null" />
+    <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" @guide="openGuide($event)" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" :publish="publishOn" @poster="id => perform(() => openFromList(id))" @review="id => perform(() => openFromList(id, undefined, 'review'))" @terms="readConditions" />
+    <ShopPublish v-if="shown && !doc && view === 'publier'" ref="publisher" @guide="openGuide($event, 3)" :poster="publishFor" :add-poster="addPoster" @consumed="addPoster = null" @account="connectForPost" :terms="terms" :handed="handed" :inert="modalOpen && !publisher?.modal"
+      @terms="readConditions" @poster="id => perform(() => openFromList(id))" @repair="(id, mayLeave) => perform(() => openFromList(id, mayLeave))" @handed="handed = null" />
     <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="!doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
-      :support="support" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
+      :support="support" :publish-origin="accountOrigin" :interactive="shown && !modalOpen && !busy" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
     <component :is="creditsPanel ? 'dialog' : 'div'" v-if="shown && (creditsPanel || view === 'credits')" v-credits-dialog="creditsPanel && !paid && !termsOpen" class="credits-container" :aria-labelledby="creditsPanel ? 'titre-credits' : undefined" :inert="creditsPanel ? !!paid || termsOpen : modalOpen" @cancel.prevent="windowBack">
       <ShopCredits ref="creditView" :panel="creditsPanel" :funds="funds" :busy="busy" @close="windowBack" @poster="openCreditPoster" />
     </component>
@@ -2390,26 +2736,49 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     </template>
     <div v-if="!doc && view === 'create' && !chatting" class="intake-layout" :inert="termsOpen">
       <form class="intake" @submit.prevent="perform(createPoster)">
-        <h1>Votre produit.<br />Une affiche à votre image.</h1><p class="intro">Préparez vos textes et votre style, puis générez une version. Le titre et le prix font partie de l’image : les changer demande une nouvelle génération.</p>
+        <h1>Présenter le produit</h1>
+        <p class="intro">Ajoutez une photo de l’article à vendre et renseignez son prix. Vous vérifierez l’offre avant de générer l’image.</p>
         <label class="upload-zone file-pick">Photos du produit<input id="champ-photos" :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="event => perform(() => choosePhotos(event))" /><span class="pick-button"><Icon n="plus" />{{ photos.length ? 'Changer les photos' : 'Ajouter des photos' }}</span><span>1 à 3 photos · JPEG, PNG ou WebP · 10 Mo maximum</span></label>
         <div class="photo-strip"><span v-for="(photo, index) in photos" :key="photo.asset" class="mini"><img :src="`/api/assets/${photo.asset}`" width="76" height="76" alt="Photo originale du produit" /><button type="button" class="text-button" :aria-label="`Retirer la photo ${index + 1}`" @click="photos.splice(index, 1)">Retirer</button></span></div>
         <p v-if="photos.some(photo => photo.warnings.includes('low_resolution'))" class="help" role="status">Photo petite (moins de 800 px de côté) : l’affiche peut manquer de netteté. Si vous avez une photo plus grande, préférez-la.</p>
-        <label>Nom du produit<input v-model="intake.name" name="product" autocomplete="off" maxlength="160" required placeholder="Ex. Soundcore R50i…" /></label>
-        <div class="form-row"><label>Variante confirmée<input v-model="intake.variant" name="variant" autocomplete="off" maxlength="160" required aria-describedby="aide-variante" /></label><label>Prix en ariary<input id="prix-nouveau" v-model="intake.price" name="price" autocomplete="off" inputmode="numeric" required placeholder="90 000…" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="priceError = ''" /></label></div>
+        <label>Nom du produit<input v-model="intake.name" name="product" autocomplete="off" maxlength="160" required placeholder="Ex. Samsung Galaxy A15" /></label>
+        <div class="form-row">
+          <div><label>Variante confirmée<input v-model="intake.variant" name="variant" autocomplete="off" maxlength="160" required placeholder="Ex. Noir, 128 Go" aria-describedby="aide-variante" /></label>
+            <p id="aide-variante" class="help">Précisez la couleur ou la capacité si vous les connaissez. Sinon, gardez « Conforme à la photo ».</p></div>
+          <label>Prix en ariary<input id="prix-nouveau" v-model="intake.price" name="price" autocomplete="off" inputmode="numeric" required placeholder="Ex. 450 000" :aria-invalid="!!priceError || undefined" :aria-describedby="priceError ? 'erreur-prix' : undefined" @input="priceError = ''" /></label>
+        </div>
         <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
-        <p id="aide-variante" class="help">Variante : précisez la couleur ou le modèle exact, par exemple « Noir · 128 Go ».</p><label class="check"><input id="champ-conforme" v-model="intake.confirmed" type="checkbox" />Les photos correspondent au produit et à la variante indiqués.</label>
-        <details open><summary>Identité de la boutique</summary><label>Nom de la boutique<input v-model="profile.name" name="shop" autocomplete="off" maxlength="160" /></label><label>Contact<textarea v-model="profile.contact" name="contact" autocomplete="off" rows="2" maxlength="500" placeholder="Téléphone, adresse ou WhatsApp…" /></label><label class="file-pick">Logo<input :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLogo(event))" /><span class="pick-button"><Icon n="plus" />{{ profile.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label><img v-if="profile.logo_asset" class="logo-preview" :src="`/api/assets/${profile.logo_asset}`" width="120" height="80" alt="Logo de la boutique" /><div class="checks-row"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input v-model="include[role]" type="checkbox" />{{ roleNames[role] }}</label></div></details>
-        <button class="primary wide" :disabled="busy">{{ busy ? 'Préparation…' : 'Préparer mon affiche' }}</button><p v-if="whyNoDraft" class="why" role="status">{{ whyNoDraft }}</p>
+        <label class="check"><input id="champ-conforme" v-model="intake.confirmed" type="checkbox" />Les photos correspondent au produit et à la variante indiqués.</label>
+        <button class="primary wide" :disabled="busy">{{ busy ? 'Préparation…' : 'Préparer mon affiche' }}</button><p v-if="whyNoDraft && (photos.length || intake.name || intake.price)" class="why" role="status">{{ whyNoDraft }}</p>
+        <details><summary>Nom, contact et logo de la boutique (facultatif)</summary><label>Nom de la boutique<input v-model="profile.name" name="shop" autocomplete="off" maxlength="160" /></label><label>Contact<textarea v-model="profile.contact" name="contact" autocomplete="off" rows="2" maxlength="500" placeholder="Téléphone, adresse ou WhatsApp…" /></label><label class="file-pick">Logo<input :disabled="busy" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLogo(event))" /><span class="pick-button"><Icon n="plus" />{{ profile.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label><img v-if="profile.logo_asset" class="logo-preview" :src="`/api/assets/${profile.logo_asset}`" width="120" height="80" alt="Logo de la boutique" /><p id="intake-identity-label" class="help">Éléments à afficher sur cette affiche</p><div class="checks-row" role="group" aria-labelledby="intake-identity-label"><label v-for="role in (['logo','shop_name','contact'] as const)" :key="role" class="check"><input v-model="include[role]" type="checkbox" />{{ roleNames[role] }}</label></div></details>
       </form>
     </div>
     <section v-if="!doc && view === 'posters'" class="gallery" aria-labelledby="titre-affiches" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><p v-if="hasLibrary" class="meta">{{ activeTotal }} {{ activeTotal > 1 ? 'affiches' : 'affiche' }} · ouvrez-en une pour préparer une nouvelle version ou télécharger à nouveau le fichier confirmé</p></div><a v-if="publishOn" href="#publier" class="download-button secondary"><Icon n="share" />Publier sur Facebook</a><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><label class="check"><input v-model="showRemoved" type="checkbox" :disabled="busy" @change="perform(loadLibrary)" />Afficher les affiches retirées</label></div>
-      <p v-if="listFailed"><button class="secondary" @click="perform(loadLibrary)">Réessayer la liste</button></p>
+      <div class="titlerow library-heading"><h1 id="titre-affiches" class="page-title" tabindex="-1">Mes affiches</h1><button class="primary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button></div>
+      <div class="library-toolbar">
+        <div class="library-filters" role="group" aria-label="Afficher les affiches">
+          <button type="button" :aria-pressed="!showRemoved" :disabled="busy" @click="filterLibrary(false)">Actives</button>
+          <button type="button" :aria-pressed="showRemoved" :disabled="busy" @click="filterLibrary(true)">Retirées</button>
+        </div>
+        <span v-if="hasLibrary && !listFailed" class="meta">{{ shownTotal }} {{ shownTotal > 1 ? 'affiches' : 'affiche' }}</span>
+      </div>
+      <p v-if="listFailed" class="why" role="status">La liste n’a pas pu être actualisée. <button type="button" class="text-button" :disabled="busy" @click="perform(loadLibrary)">Réessayer la liste</button></p>
       <p v-else-if="!hasLibrary" role="status">Lecture des affiches…</p>
-      <p v-if="hasLibrary && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
-      <div v-if="hasLibrary" class="rows"><div v-for="item in library" :key="item.id" class="library-row">
-        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="64" height="80" alt="" loading="lazy" /><Icon v-else n="image" /><strong translate="no">{{ item.title }}</strong><span v-if="!showRemoved" :class="stateBadges[item.state]">{{ stateNames[item.state] }}</span><span class="details">{{ [showRemoved && 'Retirée', `${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span><Icon v-if="!showRemoved" n="chevron" /><i v-else /></component>
-        <div class="row-actions"><button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button><button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button><button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button></div>
+      <p v-if="hasLibrary && !listFailed && !library.length" class="empty">{{ showRemoved ? 'Aucune affiche retirée.' : 'Vos affiches apparaîtront ici dès la première création.' }}</p>
+      <div v-if="hasLibrary && library.length" class="rows"><div v-for="item in library" :key="item.id" class="library-row" @keydown.esc="rowActions === item.id && closeRowActions(item.id)" @focusout="event => { if (rowActions === item.id && event.relatedTarget && !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) rowActions = null }">
+        <component :is="showRemoved ? 'div' : 'button'" class="library-item" :type="showRemoved ? undefined : 'button'" @click="showRemoved || perform(() => openFromList(item.id))">
+          <img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="64" height="80" alt="" loading="lazy" /><Icon v-else n="image" />
+          <strong translate="no">{{ item.title }}</strong>
+          <span v-if="!showRemoved" :class="stateBadges[item.state]">{{ stateNames[item.state] }}</span>
+          <span class="details">{{ [`${shownPrice(item.price_ar)} Ar`, day(item.created_at), item.variant].filter(Boolean).join(' · ') }}</span>
+        </component>
+        <button v-if="!showRemoved && (item.has_current_file ?? item.state === 'confirmed')" type="button" class="library-file" :disabled="busy" :aria-label="`Ouvrir le fichier de « ${item.title} »`" @click="perform(() => openFromList(item.id, undefined, 'file'))"><Icon n="image" />Ouvrir le fichier</button>
+        <button :id="`actions-${item.id}`" type="button" class="row-options" :aria-label="`Actions pour « ${item.title} »`" :title="`Actions pour « ${item.title} »`" :aria-expanded="rowActions === item.id" :aria-controls="`options-${item.id}`" @click="rowActions = rowActions === item.id ? null : item.id"><Icon n="more" /></button>
+        <div v-show="rowActions === item.id" :id="`options-${item.id}`" class="row-actions" role="group" :aria-label="`Actions pour « ${item.title} »`">
+          <button type="button" :disabled="busy" :aria-label="`Dupliquer « ${item.title} »`" @click="duplicate(item)">Dupliquer</button>
+          <button v-if="showRemoved" type="button" :disabled="busy" :aria-label="`Remettre « ${item.title} » dans la liste`" @click="restore(item)">Remettre dans la liste</button>
+          <button v-else type="button" :disabled="busy" :aria-label="`Retirer « ${item.title} » de la liste`" @click="askRemove(item)">Retirer de la liste</button>
+        </div>
       </div></div>
       <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
@@ -2418,6 +2787,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
       <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
     </section>
+    <button v-if="activeRepair && !modalOpen" class="secondary" :disabled="busy" @click="perform(returnToPost)">Revenir à ma publication</button>
     <div v-if="editing && doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
       <div ref="bar" class="titlerow bar" :inert="peeking">
         <a href="#affiches" class="back-link" aria-label="Retour à Mes affiches" title="Retour à Mes affiches"><Icon n="back" /></a>
@@ -2425,22 +2795,41 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         <button v-if="chatOn && (doc || view === 'create')" type="button" class="ghost icon to-chat" aria-label="Continuer par message" title="Continuer par message" @click="switchTo('chat')"><Icon n="chat" /></button>
         <span v-if="caps?.image_mode === 'stub'" class="demo-badge" title="Mode de démonstration : les images sont simulées, sans dépense.">Démo</span>
         <ol class="progress" aria-label="Avancement"><li v-for="(name, index) in PHASES" :key="name" :class="{ done: index < stage, now: index === stage }" :aria-current="index === stage ? 'step' : undefined"><Icon v-if="index < stage" n="check" />{{ name }}</li></ol>
-        <div class="undo"><button class="ghost icon" :disabled="busy || !history.past.length" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
+        <div class="undo"><button class="ghost icon" :disabled="busy || (!history.past.length && unfinishedTitle === null)" aria-label="Annuler" title="Annuler" @click="undo"><Icon n="undo" /></button><button class="ghost icon" :disabled="busy || !history.future.length" aria-label="Rétablir" title="Rétablir" @click="redo"><Icon n="redo" /></button></div>
         <!-- On a phone the application's header leaves the editor: « Se déconnecter » is here (R-MULTI-SHOP-001). -->
         <button class="ghost icon bar-sign-out" type="button" aria-label="Se déconnecter" title="Se déconnecter" @click="perform(askSignOut)"><Icon n="out" /></button>
       </div>
+      <section v-if="stepping && !job" class="offer-review" aria-labelledby="offer-heading" :inert="peeking">
+        <div class="offer-product">
+          <div v-if="offerSource" class="offer-photos">
+            <a v-for="(asset, index) in offerSource.photo_assets" :key="asset" :href="`/api/assets/${asset}`" target="_blank" rel="noopener" :aria-label="`Ouvrir la photo originale ${index + 1} dans un nouvel onglet`"><img :src="preparedUrl(`/api/assets/${asset}`)" width="56" height="56" :alt="`Photo originale ${index + 1} du produit`" /></a>
+          </div>
+          <div>
+            <h2 id="offer-heading">Offre à générer</h2>
+            <strong class="offer-title" translate="no">{{ enteredTitle.trim() || 'Titre à compléter' }}</strong>
+            <p v-if="offerSource" translate="no">{{ [offerSource.name !== doc.offer.title.trim() && offerSource.name, offerSource.variant].filter(Boolean).join(' · ') }}</p>
+            <p v-if="!offerSource" role="status">{{ sourceIssue }} <button v-if="offerSourceError" class="text-button" type="button" @click="retryOfferSource">Recharger le produit</button></p>
+          </div>
+        </div>
+        <dl class="offer-details">
+          <div><dt>Prix</dt><dd class="offer-price">{{ priceError ? 'Prix à corriger' : shownPrice(doc.offer.price_ar) + ' Ar' }}</dd></div>
+          <div><dt>Format et style</dt><dd>{{ FORMAT_NAMES[format].join(' ') }} · <span translate="no">{{ offerStyle }}</span></dd></div>
+          <div><dt>Boutique</dt><dd>{{ offerIdentity || 'Aucun élément ajouté' }}</dd></div>
+          <div v-if="offerWords.length"><dt>Texte complémentaire</dt><dd translate="no">{{ offerWords.join(' · ') }}</dd></div>
+          <div v-if="offerSource?.facts.length"><dt>Caractéristiques vérifiées</dt><dd translate="no">{{ offerSource.facts.join(' · ') }}</dd></div>
+        </dl>
+      </section>
       <div class="work">
         <aside ref="rail" class="rail card" :inert="peeking">
-          <button type="button" class="text-button creator-credits" aria-haspopup="dialog" @click="toCredits">{{ balanceLabel }}</button>
-          <div ref="toolsRow" class="steps-row"><p v-if="stepping" class="step-count">Étape {{ stepAt + 2 }} sur 4</p>
-          <div class="tabs"><span v-if="stepping" class="tab done"><Icon n="check" />Produit</span>
-            <div role="tablist" :aria-label="stepping ? 'Étapes de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="([id, name, icon], index) in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" :disabled="!reachable(id)" @click="go(id, false)"><span v-if="stepping" class="n" aria-hidden="true">{{ index + 2 }}</span><Icon v-else :n="icon" class="tool" />{{ name }}</button></div></div></div>
+          <div class="editor-links"><button type="button" class="text-button guide-entry" aria-haspopup="dialog" @click="openGuide($event, stage === 3 ? 3 : currentVisual ? 2 : 1)"><Icon n="help" />Aide pour cette affiche</button><button type="button" class="text-button creator-credits" aria-haspopup="dialog" @click="toCredits">{{ balanceLabel }}</button></div>
+          <div ref="toolsRow" class="steps-row"><div class="tabs">
+            <div role="tablist" :aria-label="stepping ? 'Préparation de l’affiche' : 'Groupes de réglages'" @keydown="tabKey"><button v-for="[id, name, icon] in shownGroups" :id="`onglet-${id}`" :key="id" type="button" class="tab" role="tab" :aria-selected="group === id" aria-controls="panneau" :tabindex="group === id ? 0 : -1" @click="go(id, false)"><Icon :n="icon" class="tool" />{{ name }}</button></div></div></div>
           <div id="panneau" ref="panel" class="panel" role="tabpanel" tabindex="-1" :aria-labelledby="`onglet-${group}`" @focusin="panelFocus" @focusout="panelFocus">
             <p v-if="fieldError?.group === group" class="why refusal" role="alert">{{ fieldError.text }}</p>
             <template v-if="group === 'textes'">
             <p class="help lead">Les mots de l’affiche. Seuls le titre et le prix sont obligatoires.</p>
-            <label>Titre<textarea :value="doc.offer.title" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" @input="event => edit(d => { d.offer.title = (event.target as HTMLTextAreaElement).value }, 'title')" /></label>
-            <p v-if="headline.on" id="limite-titre" class="help">{{ doc.offer.title.length }} / 60 caractères pour un titre dessiné.</p><p v-if="headlineFaults.title" id="erreur-titre" class="why" role="status">{{ headlineFaults.title }}</p>
+            <label>Titre<textarea v-model="enteredTitle" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" /></label>
+            <p v-if="headline.on" id="limite-titre" class="help">{{ enteredTitle.length }} / 60 caractères pour un titre dessiné.</p><p v-if="headlineFaults.title" id="erreur-titre" class="why" role="status">{{ headlineFaults.title }}</p>
             <p v-if="staleTitle && currentVisual" class="why" role="status">Le titre est dessiné dans l’image<template v-if="currentVisual?.headline"> (« {{ currentVisual.headline.title }} »)</template>. Pour le changer, générez une nouvelle version, ou remettez l’ancien titre.</p>
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" name="price" autocomplete="off" inputmode="numeric" :disabled="drawingTexts && headline.price" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="changePrice" @blur="tidyPrice" /></span></label>
             <p v-if="priceError" id="erreur-prix" class="why" role="alert">{{ priceError }}</p>
@@ -2472,14 +2861,18 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             </template>
             <template v-else-if="group === 'style'">
             <p class="help lead">L’allure de l’affiche : choisissez un style, ou décrivez l’ambiance vous-même.</p>
-            <div v-if="formatsShown.length > 1" class="choice format-choice"><span id="format-label">Format</span><div class="chips" role="radiogroup" aria-labelledby="format-label" :aria-describedby="formatFixed ? 'format-lock' : undefined"><label v-for="item in formatsShown" :key="item" class="chip"><input v-model="formatChoice" type="radio" name="format" :value="item" :disabled="formatHeld" />{{ FORMAT_NAMES[item][0] }} {{ FORMAT_NAMES[item][1] }}</label></div>
+            <div v-if="formatsShown.length > 1" class="choice format-choice"><span id="format-label">Format</span><div class="chips" role="radiogroup" aria-labelledby="format-label" :aria-describedby="formatFixed ? 'aide-format format-lock' : 'aide-format'"><label v-for="item in formatsShown" :key="item" class="chip"><input v-model="formatChoice" type="radio" name="format" :value="item" :disabled="formatHeld" />{{ FORMAT_NAMES[item][0] }} {{ FORMAT_NAMES[item][1] }}</label></div>
               <template v-if="formatFixed"><p id="format-lock" class="help">Le format ne change plus après la première version : le titre, le prix et le contact sont dessinés dans une image à cette taille.</p><div class="row"><button v-for="item in otherFormats" :key="item" type="button" class="secondary" :disabled="busy || !!job" @click="perform(() => remakeIn(item)).then(focusFormat)">Refaire en {{ FORMAT_NAMES[item][0] }}</button></div></template></div>
+            <p id="aide-format" class="help format-hint">
+              <template v-if="format === 'feed' && publishOn"><strong>Gardez Publication</strong> pour télécharger le PNG ou publier directement sur votre Page Facebook.</template>
+              <template v-else><strong>{{ FORMAT_NAMES[format][0] }}</strong> permet de télécharger votre affiche en PNG.<template v-if="publishOn && formatsShown.includes('feed')"> Pour publier directement sur votre Page Facebook, utilisez le format Publication.</template></template>
+            </p>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
-            <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="group" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
+            <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="group" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :aria-invalid="!!paletteBlocked || undefined" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
             <div v-if="formatQuestion?.where === 'look'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div>
             <p v-if="look === 'couleur' && !styleAccent" class="help">Ce style est teinté de la couleur d’accent choisie dans « Textes ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p><p v-if="styleAccent" class="help" role="status">Ce style propose sa couleur d’accent ; la vôtre est conservée. <button type="button" class="text-button" @click="useStyleAccent">Utiliser la couleur du style</button></p>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
-            <label class="ambiance">{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label>
+            <label class="ambiance">{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" :aria-invalid="!direction.trim() || undefined" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label>
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="preparedUrl(`/api/assets/${lookReference}`)" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             </template>
             <template v-else>
@@ -2502,15 +2895,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             </template>
           </div>
           <div v-if="stepping" class="main-action step-nav">
-            <button v-if="group !== 'textes'" type="button" class="secondary" @click="go(GROUPS[stepAt - 1][0])">Retour</button>
             <button type="button" class="ghost icon see" aria-label="Voir l’affiche" title="Voir l’affiche" @click="setPeek(true)"><Icon n="image" /></button>
-            <button v-if="group !== 'style'" type="button" class="primary" @click="go(GROUPS[stepAt + 1][0])">Continuer<Icon n="chevron" /></button>
-            <button v-else type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
-            <p v-if="group === 'style' && mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p>
+            <button type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
+            <p v-if="mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix" type="button" class="text-button" @click="openMainFix(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button><button v-else-if="saveIssue && !busy && !job" type="button" class="text-button" @click="focusSaveRecovery">Ouvrir les options d’enregistrement</button></p>
           </div>
         </aside>
-        <section ref="stageBox" class="stage" :class="{ peek: peeking }" aria-label="Affiche" :role="peeking ? 'dialog' : undefined" :aria-modal="peeking || undefined" @keydown.esc="peeking && setPeek(false)">
-          <button v-if="peeking" id="fermer-affiche" type="button" class="secondary back" @click="setPeek(false)"><Icon n="close" />{{ stepping ? 'Revenir à l’étape' : 'Revenir aux réglages' }}</button>
+        <section ref="stageBox" class="stage" :class="{ peek: peeking, attention: job || saveIssue }" aria-label="Affiche" :role="peeking ? 'dialog' : undefined" :aria-modal="peeking || undefined" @keydown.esc="peeking && setPeek(false)">
+          <button v-if="peeking" id="fermer-affiche" type="button" class="secondary back" @click="setPeek(false)"><Icon n="close" />Revenir aux réglages</button>
           <div class="stage-head"><p class="coach" :role="waitJob ? undefined : 'status'"><Icon n="clock" /><span><b>À faire :</b> {{ nextStep }}</span></p>
             <div v-if="!stepping" class="main-action"><button type="button" class="ghost icon see" aria-label="Voir l’affiche" title="Voir l’affiche" @click="setPeek(true)"><Icon n="image" /></button><button type="button" class="primary" :disabled="mainAction.disabled" @click="mainAction.run"><Icon :n="mainAction.icon" />{{ mainAction.label }}</button>
             <p v-if="mainWhy" class="why" role="status">{{ mainWhy }} <button v-if="mainFix && mainFix !== group" type="button" class="text-button" @click="go(mainFix)">Ouvrir « {{ groupNames[mainFix] }} »</button></p></div></div>
@@ -2550,7 +2941,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div v-if="proposal?.status === 'pending' || effect?.status === 'proposed'" class="polish-preview"><strong>Ajustement à vérifier</strong><label class="check"><input v-model="previewPolish" type="checkbox" />Voir la proposition sur l’affiche</label><button v-if="!stepping" type="button" class="text-button" @click="selected = (effect?.status === 'proposed' ? effect : proposal).layer_id; go('reglages')">Ouvrir l’ajustement</button></div>
           <div v-if="saveState === 'failed' || saveState === 'conflict'" class="save-recovery"><button v-if="saveState === 'failed'" @click="perform(flush)">Réessayer l’enregistrement</button><template v-else><button @click="perform(conflictCopy)">Conserver mes modifications dans une copie</button><button class="quiet" @click="askDiscard">Abandonner mes modifications et recharger</button></template></div>
           <ul v-if="issues.length" class="issues"><li v-for="issue in issues" :key="issue.id" :class="{ blocking: issue.blocking }"><button class="text-button" @click="pick(issue.layer_id)">{{ issue.message }}</button></li></ul>
-          <p v-if="currentVisual" class="help">{{ currentVisual.status === 'approved' ? 'Fidélité du produit approuvée.' : currentVisual.status === 'rejected' ? 'Cette version a été refusée. Choisissez une autre version ou générez-en une nouvelle.' : 'Comparez le produit avec la photo originale avant d’approuver sa fidélité.' }}</p>
+          <p v-if="currentVisual" class="help">{{ currentVisual.status === 'approved' ? 'Fidélité du produit approuvée.' : currentVisual.status === 'rejected' ? 'Cette version a été refusée. Choisissez une autre version ou générez-en une nouvelle.' : 'Comparez le produit à votre photo sur l’aperçu final.' }}</p>
         </section>
         <aside id="poster-versions" class="versions" aria-labelledby="titre-versions" :inert="peeking">
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
@@ -2559,7 +2950,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-busy="choosing === visual.id || undefined" :aria-label="`Choisir la version ${visuals.length - index} (${versionStates[visual.status]})`" @click="chooseVisual(visual)"><img :src="thumbnailUrl(visual.image_url)" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
             <strong class="version-number">Version {{ visuals.length - index }}</strong><span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
-            <button class="text-button" :aria-label="`Comparer la version ${visuals.length - index}`" @click="review = visual; resetChecks()">Comparer</button>
+            <button class="text-button" :disabled="busy && currentVisual?.id === visual.id && visual.status !== 'rejected'" :aria-label="`Comparer la version ${visuals.length - index}`" @click="compareVisual(visual)">Comparer</button>
           </article>
           <button v-if="visuals.length && visuals.length < 12" type="button" class="version new" :disabled="busy || !!job || !!whyNoHeadline" @click="askScene"><span class="add"><Icon n="plus" /></span>Nouvelle version<small>Même produit, autre essai</small></button>
           <p v-else-if="visuals.length" class="help">Douze versions au plus par affiche. Pour d’autres essais, dupliquez l’affiche depuis « Mes affiches ».</p>
@@ -2583,24 +2974,109 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <p v-if="termsLine" class="cost" role="alert">{{ termsLine }}</p>
       <div class="row"><button v-if="terms" class="primary" :disabled="accepting" @click="acceptTerms">J’accepte</button><button v-else class="primary" @click="retryTerms">Réessayer</button><button class="secondary" @click="later">Plus tard</button></div>
     </div></div>
-    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null">
-      <div class="section-heading"><div><h2 id="final-title">{{ earlier ? finalPreview.download_url ? 'Version confirmée précédente' : 'Aperçu d’une version précédente' : finalPreview.download_url ? finalPreview.loaded ? 'Votre affiche est prête' : 'Ouverture du fichier confirmé…' : 'Dernière vérification avant le téléchargement' }}</h2><p class="lede">{{ earlier ? finalPreview.download_url ? 'Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager.' : 'Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle.' : finalPreview.download_url ?'Le fichier confirmé ne changera plus, même si vous modifiez l’affiche ensuite.' : 'Ce fichier est celui qui sera téléchargé après votre confirmation.' }}</p></div><button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button></div>
-      <div class="final-grid">
-        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id" ref="previewImage" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="previewError" /></a><p class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
+    <section v-if="finalPreview" v-modal class="review-panel final-preview" :style="finalPreview.format === 'story' ? { '--shot-ratio': finalPreview.width / finalPreview.height } : undefined" role="dialog" aria-modal="true" aria-labelledby="final-title" :inert="!!paid || termsOpen" @keydown.esc="finalPreview = null" @keydown.tab="keepTab">
+      <div class="section-heading">
         <div>
-          <p v-if="finalPreview.download_url && !earlier && finalPreview.loaded" class="done" role="status"><Icon n="check" />Affiche confirmée. Elle reste disponible dans « Mes affiches ».</p>
-          <dl class="facts"><div><dt>Format</dt><dd>{{ finalPreview.width }} × {{ finalPreview.height }} px</dd></div><div><dt>Fichier</dt><dd>PNG</dd></div><div v-if="!earlier && finalPreview.loaded"><dt>Prix affiché</dt><dd>{{ doc ? doc.offer.price_ar.toLocaleString('fr-FR') : '' }} Ar</dd></div></dl>
+          <h2 id="final-title" tabindex="-1">{{ earlier ? finalPreview.download_url ? 'Version confirmée précédente' : 'Aperçu d’une version précédente' : finalPreview.download_url ? finalPreview.loaded ? 'Affiche confirmée' : 'Ouverture du fichier confirmé…' : 'Vérifier votre affiche' }}</h2>
+          <p v-if="earlier" id="file-context" class="lede">{{ finalPreview.download_url ? 'Ce fichier a été confirmé avant vos dernières modifications. Vérifiez la version actuelle pour la partager.' : 'Ce fichier a été préparé avant vos dernières modifications. Vérifiez la version actuelle.' }}</p>
+          <p v-else class="lede" translate="no">{{ chatTitle }}</p>
+        </div>
+        <button class="ghost" @click="finalPreview = null"><Icon n="close" />Fermer</button>
+      </div>
+      <div class="final-grid file-layout" :class="{ inspecting: !earlier && !finalPreview.download_url }">
+        <div class="file-controls">
+          <dl class="facts file-facts">
+            <div><dt>Format</dt><dd>{{ finalFormat }} <small>{{ finalPreview.width }} × {{ finalPreview.height }} px · PNG</small></dd></div>
+            <div v-if="!earlier && finalPreview.loaded && doc"><dt>{{ finalPreview.download_url ? 'Prix affiché' : 'Prix de l’offre' }}</dt><dd>{{ doc.offer.price_ar.toLocaleString('fr-FR') }} Ar</dd></div>
+          </dl>
+          <div v-if="!earlier && !finalPreview.download_url && fileVisual" class="file-originals">
+            <h3>{{ fileVisual.original_urls.length === 1 ? 'Photo d’origine' : 'Photos d’origine' }}</h3>
+            <div><a v-for="(url, i) in fileVisual.original_urls" :key="finalPreview.id + url + finalPreview.attempt" :href="url" target="_blank" rel="noopener">
+              <img :src="url" width="80" height="80" :alt="`Photo originale ${i + 1} à comparer`" @load="finalPreview.originals.add(url)" @error="finalPreview.imageFailed = true" />
+            </a></div>
+          </div>
+          <p v-if="repairCopy" class="help">Copie au format Publication · {{ chatTitle }}</p>
+          <div v-if="earlier || finalPreview.download_url" class="file-outputs">
+            <button v-if="earlier" class="primary" :disabled="chatting ? busy || !currentVisual : exportBlocked" @click="currentVisual && perform(() => inspectVisual(currentVisual!))"><Icon n="eye" />Vérifier l’aperçu final</button>
+            <button v-else-if="repairedFile && activeRepair?.destination === 'publier'" class="primary" :disabled="busy" @click="perform(() => returnToPost(true))">Ajouter à ma publication</button>
+            <button v-else-if="repairCopy" class="primary" :disabled="busy" @click="perform(() => returnToPost(true))">Continuer avec cette copie</button>
+            <button v-else-if="repairedFile && activeRepair" class="primary" :disabled="busy" @click="perform(returnToPost)">Revenir à ma publication</button>
+            <button v-else-if="pageFile && !activeRepair" class="primary" @click="publishAlone">Publier sur ma Page</button>
+            <a v-if="finalPreview.download_url" ref="downloadLink" :href="finalPreview.download_url" class="download-button" :class="{ secondary: earlier || (pageFile && (!activeRepair || repairedFile)) }" :aria-describedby="earlier ? 'file-context' : undefined" download><Icon n="download" />Télécharger le PNG</a>
+            <button v-if="activeRepair && (!repairedFile || activeRepair.destination === 'publier' || repairCopy)" class="secondary" :disabled="busy" @click="perform(returnToPost)">Revenir à ma publication</button>
+          </div>
+          <p v-if="earlier && !chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p>
+          <p v-if="facebookOn && !earlier && finalPreview.format !== 'feed'" class="help">{{ aloneLine('other_format').text }}</p>
+          <section v-if="facebookOn && unansweredPosts.length" class="publications" aria-labelledby="titre-publications-incertaines">
+            <h3 id="titre-publications-incertaines">Publications à vérifier</h3>
+            <ul class="points"><li v-for="line in unansweredPosts" :key="line.post.id">
+              <small><time :datetime="line.post.sent_at">{{ moment(line.post.sent_at) }}</time> · <span translate="no">{{ line.post.page_name }}</span> · {{ line.alone }}</small>
+              <span>{{ line.state }}</span><div class="row"><a href="#publier">Répondre</a></div>
+            </li></ul>
+          </section>
+          <div v-if="facebookOn && facebookRead === 'failed'"><p class="why" role="alert">Les publications de cette affiche n’ont pas pu être lues.</p><button class="secondary" @click="readPosts()">Réessayer</button></div>
+        </div>
+        <div class="shot"><a :href="finalPreview.preview_url" target="_blank" rel="noopener"><img :key="finalPreview.id + finalPreview.attempt" ref="previewImage" :src="finalPreview.preview_url" :width="finalPreview.width" :height="finalPreview.height" alt="Aperçu final du fichier à télécharger" @load="previewLoad" @error="previewError" /><small v-if="!earlier && !finalPreview.download_url">Agrandir l’affiche</small></a><p v-if="earlier || finalPreview.download_url" class="help">Ouvrir l’image pour vérifier les détails à pleine taille.</p></div>
+        <div class="file-details">
           <template v-if="!finalPreview.download_url && !earlier">
-          <div class="group"><h3><Icon n="check" />À vérifier sur ce fichier</h3><ul class="points"><li v-for="(label, point) in finalPoints" :key="point">{{ label }}</li><li v-if="currentVisual?.logo_disc">Le logo recouvre bien son disque</li><li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li></ul></div>
-          <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="primary" :disabled="busy || !finalPreview.loaded" @click="perform(confirmFinal)"><Icon n="check" />Tout est conforme, confirmer</button><p v-if="!finalPreview.loaded" class="why" role="status">La confirmation s’active dès que l’aperçu est affiché.</p></div>
+            <p class="review-instruction">Comparez le produit à votre photo et vérifiez le prix. Chaque texte ou caractéristique ajouté par l’IA doit être exact et correspondre à votre demande.</p>
+            <details><summary>Détails à vérifier</summary><ul class="points">
+              <li>Couleur, forme, boutons et inscriptions fidèles aux photos d’origine</li>
+              <li v-for="label in finalPoints" :key="label">{{ label }}</li>
+              <li v-for="item in textChecks.filter(item => item.key !== 'text_price')" :key="item.key">{{ item.label }} <strong translate="no">{{ item.value }}</strong></li>
+            </ul></details>
+            <ul v-if="fileVisual?.logo_disc || finalPreview.warnings.length" class="points">
+              <li v-if="fileVisual?.logo_disc">Le logo doit recouvrir tout son disque.</li>
+              <li v-for="warning in finalPreview.warnings" :key="warning.id" class="warn">{{ warning.message }}</li>
+            </ul>
+            <p v-if="finalPreview.imageFailed" class="why" role="alert">Une image n’a pas pu être chargée. <button type="button" class="text-button" @click="openFinalPreview(finalPreview)">Réessayer</button></p>
+            <p v-else-if="!canAcceptFile" class="help" role="status">Chargement des images à vérifier…</p>
+            <p class="help review-consent">Retrouvez-la ensuite dans « Mes affiches ».</p>
+            <div class="file-outputs">
+              <button v-if="facebookOn && finalPreview.format === 'feed'" class="primary" :disabled="busy || !canAcceptFile" @click="perform(() => acceptFile(activeRepair ? 'batch' : 'facebook'))">{{ activeRepair?.destination === 'publier' ? 'Confirmer et ajouter à ma publication' : repairCopy ? 'Confirmer et utiliser cette copie' : activeRepair ? 'Confirmer et revenir à ma publication' : 'Confirmer et préparer la publication' }}</button>
+              <button :class="facebookOn && finalPreview.format === 'feed' ? 'secondary' : 'primary'" :disabled="busy || !canAcceptFile" @click="perform(() => acceptFile('download'))"><Icon n="download" />Confirmer et télécharger le PNG</button>
+            </div>
+            <div class="review-options">
+              <button class="text-button" :disabled="busy || !canAcceptFile" @click="perform(() => acceptFile('library'))">Confirmer pour plus tard</button>
+              <button class="text-button" @click="correctFile">Corriger l’affiche</button>
+              <button class="text-button" :disabled="busy || !canAcceptFile" @click="perform(() => acceptFile('share'))">Confirmer et préparer le partage</button>
+              <button v-if="fileVisual?.status === 'pending_review'" class="text-button" :aria-expanded="rejecting" @click="rejecting = !rejecting">Signaler un problème</button>
+              <button v-if="activeRepair" class="text-button" :disabled="busy" @click="perform(returnToPost)">Revenir à ma publication</button>
+            </div>
+            <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" name="rejection" autocomplete="off" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(rejectFile)">Refuser cette version</button></div>
           </template>
-          <div v-if="captionShown" class="group caption"><label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label><p id="etat-legende" class="why" role="status">{{ captionLine }}</p><p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p><button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button><p id="copie-legende" :class="copyLine === CAPTION_LINES.copied || !copyLine ? 'help' : 'why'" role="status">{{ copyLine }}</p></div>
-          <div v-if="finalPreview.download_url || earlier" class="after"><template v-if="shareView === 'ready' || shareView === 'preparing'"><button class="primary" :disabled="shareView !== 'ready'" :aria-busy="shareView === 'preparing' || undefined" aria-describedby="partage-etat" @click="share"><Icon n="share" />{{ shareView === 'ready' ? 'Partager' : 'Préparation de l’image…' }}</button><span v-if="prepared?.weight" class="count">{{ prepared.weight }}</span></template><template v-if="facebookShown"><button v-if="finalPreview.format === 'feed'" class="secondary" @click="publishAlone">Publier sur ma Page</button><p v-else class="help">{{ aloneLine('other_format').text }}</p></template><a v-if="finalPreview.download_url" :href="finalPreview.download_url" :class="shareView === 'ready' || shareView === 'preparing' ? 'download-button secondary' : 'download-button'" download><Icon n="download" />Télécharger le PNG confirmé</a><p v-if="shareView" id="partage-etat" class="why" role="status">{{ shareView === 'cannot' || shareView === 'unprepared' ? SHARE_LINES[shareView] : shareLine }}</p><template v-if="earlier"><button class="primary" :disabled="chatting ? busy : exportBlocked" @click="perform(renderFinal)"><Icon n="eye" />Vérifier l’aperçu final</button><p v-if="!chatting && exportBlocked && whyNoExport" class="why" role="status">{{ whyNoExport }}</p></template><button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button><button class="secondary" @click="changePriceLater">Changer le prix</button><p class="help">Changer le prix crée une nouvelle version, car le prix est dessiné dans l’image.</p></div>
-          <section v-if="facebookOn && (posts.length || facebookRead === 'failed')" class="group publications" aria-labelledby="titre-publications"><h3 id="titre-publications">Publications sur Facebook</h3>
-            <template v-if="facebookRead === 'failed'"><p class="why" role="alert">Les publications de cette affiche n’ont pas pu être lues.</p><button class="secondary" @click="readPosts()">Réessayer</button></template>
-            <ul class="points"><li v-for="line in postLines" :key="line.post.id"><small><time :datetime="line.post.sent_at">{{ moment(line.post.sent_at) }}</time> · <span translate="no">{{ line.post.page_name }}</span> · {{ line.alone }}</small><span>{{ line.state }}</span>
-              <div v-if="line.link || line.answer" class="row"><a v-if="line.link" :href="line.link" target="_blank" rel="noopener">Voir la publication</a><a v-if="line.answer" href="#publier">Répondre</a></div></li></ul>
-            <button v-if="postsAfter && facebookRead === 'read'" class="secondary" @click="readPosts(true)">Voir plus</button></section>
+          <details v-if="captionShown" ref="shareDetails" :key="'share-' + finalPreview.id" class="file-disclosure">
+            <summary>Partager dans une autre application</summary>
+            <div class="caption">
+              <label>Légende de la publication<textarea :value="caption" name="caption" autocomplete="off" rows="4" aria-describedby="aide-legende etat-legende" :aria-invalid="captionLine === CAPTION_LINES.too_long || captionLine === CAPTION_LINES.bad_character || undefined" @input="typeCaption(($event.target as HTMLTextAreaElement).value)" /></label>
+              <p id="etat-legende" class="why" role="status">{{ captionLine }}</p>
+              <p id="aide-legende" class="help">Sur Facebook, passez d’abord sur votre Page dans l’application Facebook. Puis touchez « Partager », choisissez l’application et collez la légende dans votre publication.</p>
+              <button class="secondary" :disabled="captionFault(caption) !== null" @click="copyCaption">Copier la légende</button>
+              <p id="copie-legende" :class="copyLine === CAPTION_LINES.copied || !copyLine ? 'help' : 'why'" role="status">{{ copyLine }}</p>
+              <template v-if="shareView === 'ready' || shareView === 'preparing'">
+                <button class="secondary" :disabled="shareView !== 'ready'" :aria-busy="shareView === 'preparing' || undefined" aria-describedby="partage-etat" @click="share"><Icon n="share" />{{ shareView === 'ready' ? 'Partager' : 'Préparation de l’image…' }}</button>
+                <span v-if="prepared?.weight" class="count">{{ prepared.weight }}</span>
+              </template>
+              <p v-if="shareView" id="partage-etat" class="why" role="status">{{ shareView === 'cannot' || shareView === 'unprepared' ? SHARE_LINES[shareView] : shareLine }}</p>
+            </div>
+          </details>
+          <details v-if="finalPreview.download_url || earlier || historyPosts.length || postsAfter" :key="'more-' + finalPreview.id" class="file-disclosure">
+            <summary>Autres actions</summary>
+            <div v-if="finalPreview.download_url || earlier" class="after">
+              <button v-if="pageFile && activeRepair?.destination === 'publier'" class="secondary" @click="publishAlone">Publier sur ma Page</button>
+              <button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button>
+              <button class="secondary" @click="changePriceLater">Changer le prix</button>
+              <p class="help">{{ priceChangeHelp }}</p>
+            </div>
+            <section v-if="facebookOn && (historyPosts.length || postsAfter)" class="publications" aria-labelledby="titre-publications">
+              <h3 id="titre-publications">Publications sur Facebook</h3>
+              <ul class="points"><li v-for="line in historyPosts" :key="line.post.id">
+                <small><time :datetime="line.post.sent_at">{{ moment(line.post.sent_at) }}</time> · <span translate="no">{{ line.post.page_name }}</span> · {{ line.alone }}</small>
+                <span>{{ line.state }}</span><div v-if="line.link" class="row"><a :href="line.link" target="_blank" rel="noopener">Voir la publication</a></div>
+              </li></ul>
+              <button v-if="postsAfter && facebookRead === 'read'" class="secondary" @click="readPosts(true)">Voir plus</button>
+            </section>
+          </details>
         </div>
       </div>
     </section>
@@ -2615,8 +3091,22 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
         </div>
       </div>
     </section>
-    <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid || termsOpen" @keydown.esc="review = null">
-      <div class="section-heading"><div><h2 id="review-title">Vérifier la fidélité du produit</h2><p class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
+    <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid || termsOpen" @keydown.esc="review = null" @keydown.tab="keepTab">
+      <div class="section-heading"><div><h2 id="review-title" tabindex="-1">{{ reviewingSelected ? 'Préparation de l’aperçu' : review.status === 'approved' ? 'Fidélité approuvée' : 'Vérifier la fidélité du produit' }}</h2><p v-if="!reviewingSelected && review.status !== 'approved'" class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
+      <div v-if="reviewingSelected">
+        <p role="status">{{ reviewFileBlock || (busy ? 'Préparation de votre affiche…' : error || 'Vérifiez le fichier de cette affiche.') }}</p>
+        <button v-if="!job && !busy && !reviewFileBlock" class="primary" @click="perform(checkReviewedFile)">Réessayer</button>
+        <button class="secondary" @click="correctFile">Corriger l’affiche</button>
+      </div>
+      <template v-else>
+      <div v-if="review.status === 'approved'">
+        <p class="lede">{{ currentVisual?.id === review.id ? 'Vérifiez le cadrage, les textes et le prix sur le fichier final.' : 'Une autre version est choisie pour l’affiche.' }}</p>
+        <div class="row">
+          <button class="primary" :disabled="busy || !!job" @click="chooseVisual(review); perform(checkReviewedFile)">Choisir cette version</button>
+          <button class="secondary" @click="review = null; if (chatting && creation) leave(creation.id)">Revenir aux réglages</button>
+        </div>
+        <p v-if="currentVisual?.id === review.id && reviewFileBlock" class="why" role="status">{{ reviewFileBlock }}</p>
+      </div>
       <div class="side-choice" role="group" aria-label="Image affichée"><button type="button" :aria-pressed="compareSide === 'photo'" @click="compareSide = 'photo'">Votre photo</button><button type="button" :aria-pressed="compareSide === 'version'" @click="compareSide = 'version'">La version</button></div>
       <div class="comparison" :class="[{ zoomed }, `side-${compareSide}`]"><figure><a v-for="(url, index) in review.original_urls" :key="url" :href="url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="url" width="540" height="380" :alt="`Photo originale ${index + 1} à comparer`" /></a><figcaption>Votre photo<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure><figure><a :href="review.image_url" target="_blank" rel="noopener" @click.exact.prevent="zoomed = !zoomed"><img :src="review.image_url" width="540" height="380" alt="Version générée à vérifier" /></a><figcaption>Version générée<span class="zoom-hint"> · appuyez pour {{ zoomed ? 'réduire' : 'agrandir' }}</span></figcaption></figure></div>
       <template v-if="review.status === 'pending_review'">
@@ -2625,18 +3115,21 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small translate="no">{{ item.value }}</small></li><li>Aucun autre texte, sauf ceux que vous avez demandés à l’IA</li></ul></div>
           <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li><li v-if="review.logo_disc">Un disque blanc vide est prévu pour le logo : rien ne doit être dessiné dedans</li><li v-if="review.logo_disc === null" class="warn">Le disque du logo n’a pas été trouvé dans l’image : le logo a été retiré de cette affiche. Activez « Logo » dans « Boutique » pour le placer vous-même, ou générez une nouvelle version.</li></ul></div>
         </div>
-        <div class="actions"><span class="count">Un seul accord pour tous les points ci-dessus.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="primary" :disabled="busy" @click="perform(() => decide('approve'))"><Icon n="check" />Tout est conforme, approuver</button></div>
+        <div class="actions"><span class="count">Choisir cette version ouvre l’affiche finale. Vous pouvez aussi approuver cette variante pour plus tard.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="secondary" :disabled="busy" @click="perform(() => decide('approve'))">Tout est conforme, approuver</button><button class="primary" :disabled="busy || !!job" @click="chooseVisual(review); perform(checkReviewedFile)">Choisir cette version</button></div>
         <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" name="rejection" autocomplete="off" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(() => decide('reject'))">Refuser cette version</button><p v-if="!rejection.trim()" class="why" role="status">Décrivez d’abord ce qui doit être corrigé.</p></div>
       </template>
-      <p v-else>{{ review.status === 'approved' ? 'La fidélité de cette version a été approuvée.' : 'Cette version a été refusée.' }}</p>
+      <p v-else-if="review.status === 'rejected'">Cette version a été refusée.</p>
+      </template>
     </section>
   </main>
+  <FirstPosterGuide v-if="guideOpen && !guideBlocked" :step="guideStep" :style="{ '--guide-viewport': availableHeight + 'px' }" @step="guideStep = $event" @close="dismissGuide(true)" @finish="guideStep = 0; dismissGuide(true)" @keydown.tab="keepTab" />
   <!-- The phone's bottom bar, outside the chat and the editor, where the composer or the tools take its place. -->
   <nav v-if="shown && !chatting && !editing" class="phone-bar" aria-label="Navigation" :inert="modalOpen || peeking || drawer" @click="accountLink">
     <a href="#accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span>Accueil</span></a>
     <a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="long">Mes affiches <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></span><span aria-hidden="true">Affiches</span></a>
-    <a href="#creer" class="make" aria-label="Nouvelle affiche"><Icon n="plus" /></a>
-    <a href="#styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a>
+    <a href="#creer" class="make"><Icon n="plus" /><span>Créer</span></a>
+    <a v-if="publishOn" href="#publier" :aria-current="view === 'publier' ? 'page' : undefined"><Icon n="share" /><span>Publier</span></a>
+    <a v-else href="#styles" :aria-current="view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a>
     <a href="#compte" :aria-current="!doc && view === 'compte' ? 'page' : undefined"><Icon n="user" /><span class="long">Mon compte</span><span aria-hidden="true">Compte</span></a>
   </nav>
 </template>

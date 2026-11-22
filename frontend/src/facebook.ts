@@ -1,7 +1,7 @@
 import type { Post } from './publish'
 
 // The « Page Facebook » card of « Mon compte » (D-FB-PUBLISH-004): GET /api/facebook's answer, and the form it gives the
-// card. Nothing of this feature is kept in the browser.
+// card. Page names, choices and errors come from the server.
 export interface FacebookAnswer {
   page: { id: string; name: string; state: 'connected' | 'reconnect' } | null
   choice: { id: string; name: string }[] | null
@@ -11,6 +11,38 @@ export interface FacebookAnswer {
 export function facebookCard(answer: FacebookAnswer): 'choose' | 'connected' | 'reconnect' | 'connect' {
   if (answer.choice?.length) return 'choose'
   return answer.page ? answer.page.state === 'reconnect' ? 'reconnect' : 'connected' : 'connect'
+}
+
+const returnKey = 'affiche.facebook-publish-return'
+export function isPublishOrigin(value: unknown): value is string {
+  return typeof value === 'string' && (value === 'publier' ||
+    /^publier-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value) && value.length === 44)
+}
+
+// One departure per tab. The binding is checked after the account is authenticated again.
+export function keepFacebookOrigin(shop: number, origin: string): boolean {
+  if (!Number.isSafeInteger(shop) || shop <= 0 || !isPublishOrigin(origin)) return false
+  try {
+    const record = JSON.stringify({ shop, origin })
+    sessionStorage.setItem(returnKey, record)
+    if (sessionStorage.getItem(returnKey) === record) return true
+  } catch { /* Mon compte offers a manual return when this tab cannot keep the route. */ }
+  clearFacebookOrigin()
+  return false
+}
+
+export function clearFacebookOrigin() {
+  try { sessionStorage.removeItem(returnKey) } catch { /* Storage is unavailable; the in-memory origin is cleared by the caller. */ }
+}
+
+export function takeFacebookOrigin(shop: number): string | null {
+  try {
+    const raw = sessionStorage.getItem(returnKey)
+    if (!raw) return null
+    sessionStorage.removeItem(returnKey)
+    const record = JSON.parse(raw)
+    return Number.isSafeInteger(shop) && shop > 0 && record?.shop === shop && isPublishOrigin(record.origin) ? record.origin : null
+  } catch { return null } // Missing access or malformed record: keep the normal account navigation.
 }
 
 /** The final panel's read of the posts that hold its poster: the first page, or the one after the last post shown. */

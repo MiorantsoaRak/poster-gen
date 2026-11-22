@@ -257,11 +257,11 @@ def walk(browser, playwright, engine, errors):
         expect(page.get_by_role("heading", name=WIDE_ID, level=1)).to_be_focused()
         expect(page.get_by_text(WIDE_NAME, exact=True)).to_be_visible()
         expect(page.get_by_text("active · 1 live session", exact=True)).to_be_visible()
-        expect(page.locator(".shop-head dt")).to_have_text(["Available", "En attente"])
+        expect(page.locator(".shop-head dt")).to_have_text(["Available", "Pending"])
         expect(page.locator(".shop-head dd")).to_have_text(["5", "0"])
         expect(page.get_by_text("Provider spend: $0.00 of $2.00", exact=True)).to_be_visible()
         expect(page.get_by_text("Messages read: 0 of 100", exact=True)).to_be_visible()
-        page.get_by_text("Access", exact=True).click()
+        shop_action(page, "Access").click()
 
         dialog, confirm = ask(page, page.get_by_role("button", name="Set a new password", exact=True), "Set a new password?", "Set a new password")
         expect(dialog).to_have_accessible_description(f"A new password for {WIDE_ID}. Its 1 session ends.")
@@ -325,18 +325,18 @@ def walk(browser, playwright, engine, errors):
         page.get_by_role("link", name="← Shops", exact=True).click()
         page.get_by_role("link", name=smoke.IDENTIFIER, exact=True).click()
         expect(page.get_by_role("heading", name=smoke.IDENTIFIER, level=1)).to_be_focused()
-        page.get_by_text("Access", exact=True).click()
+        shop_action(page, "Access").click()
         route, response = held.pop()
         route.fulfill(response=response)
         expect(page.get_by_role("button", name="Suspend", exact=True)).to_be_enabled()  # the answer came: nothing in flight
-        access = page.locator("details.fold", has=page.locator("summary", has_text="Access"))
+        access = page.get_by_role("region", name="Access", exact=True)
         expect(access.locator("[role=status]")).to_have_text("")
         expect(access.locator("[role=alert]")).to_have_text("")
         page.unroute("**/api/admin/shops/*/suspend")
         page.get_by_role("link", name="← Shops", exact=True).click()
         page.get_by_role("link", name=WIDE_ID, exact=True).click()
         expect(page.get_by_text("suspended · 0 live sessions", exact=True)).to_be_visible()
-        page.get_by_text("Access", exact=True).click()
+        shop_action(page, "Access").click()
         expect(page.get_by_role("status").filter(has_text="Suspended; 0 queued images cancelled, credits back.")).to_be_visible()
 
         # A long refusal under the form, both themes, no sideways scroll.
@@ -397,7 +397,7 @@ def walk(browser, playwright, engine, errors):
         assert third not in page.content()
         # A confirmation open when the session ends (the tab's return reads the shop: 401): dismissed, nothing sent.
         page.get_by_role("link", name="boutiquedeux", exact=True).click()
-        page.get_by_text("Access", exact=True).click()
+        shop_action(page, "Access").click()
         dialog, confirm = ask(page, page.get_by_role("button", name="Suspend", exact=True), "Suspend this shop?", "Suspend")
         with write_tx(engine) as conn:
             assert shops.end_operator_sessions(conn) == 1
@@ -424,11 +424,11 @@ def walk(browser, playwright, engine, errors):
         check_layout(page, "the shop list at 1280 px, dark")
         # Numbers are right-aligned with tabular figures, headers and cells; the other columns are not (D-POLISH-004).
         # Each column by its position: the seven headers, then the seven cells of the first shop (the shop, its state,
-        # Available, En attente, Posters, Last poster, Sessions).
+        # Available, Pending, Posters, Last poster, Sessions).
         aligned = page.evaluate("""() => [...document.querySelectorAll('.shops th, .shops tbody tr:first-child td')].map(cell => {
             const style = getComputedStyle(cell)
             return [cell.cellIndex, style.textAlign === 'right' && style.fontVariantNumeric.includes('tabular-nums')] })""")
-        numeric = {2, 3, 4, 6}  # Available, En attente, Posters, Sessions
+        numeric = {2, 3, 4, 6}  # Available, Pending, Posters, Sessions
         assert len(aligned) == 14 and all(right == (column in numeric) for column, right in aligned), aligned
         page.screenshot(path=str(OUTPUT / "shops-1280-dark.png"), full_page=True)
 
@@ -580,6 +580,16 @@ def open_shop(page, id, identifier):
     expect(page.get_by_role("heading", name=identifier, level=1)).to_be_focused()
 
 
+def shop_action(page, name):
+    return page.get_by_role("group", name="Shop actions").get_by_role("button", name=name, exact=True)
+
+
+def show_grant(page):
+    toggle = shop_action(page, "Grant credits")
+    if toggle.get_attribute("aria-expanded") == "false":
+        toggle.click()
+
+
 def money_form(page, button):
     return page.locator("form", has=page.get_by_role("button", name=button, exact=True))
 
@@ -599,6 +609,7 @@ def answers(page, title):
 
 
 def fill_grant(page, credits_, origin="bought", amount=None, method=None, ref=None, note=None):
+    show_grant(page)
     form = money_form(page, "Grant…")
     form.get_by_label("Credits", exact=True).fill(credits_)
     form.get_by_label("Bought or offered", exact=True).select_option(origin)
@@ -617,6 +628,7 @@ def grant(page, summary):
     """« Grant… », then the confirmation, which must say exactly `summary` (figures grouped), then « Grant »."""
     dialog, confirm = ask(page, page.get_by_role("button", name="Grant…", exact=True), "Grant credits?", "Grant")
     expect(dialog.locator("#confirm-text")).to_have_text(summary)
+    expect(dialog.locator("#confirm-context")).to_have_text(re.compile(r"^Prepared .* UTC · dashboard:[0-9a-f]{8}$"))
     return dialog, confirm
 
 
@@ -654,16 +666,26 @@ def walk_money(browser, engine, errors):
         go(page, "Shops")
         expect(page.get_by_role("heading", name="Shops", exact=True, level=1)).to_be_visible()
 
-        # The grant comes first on a shop's screen, before the history and the access actions.
         open_shop(page, wide, WIDE_ID)
-        tops = [page.get_by_role("heading", name=name, exact=True).bounding_box()["y"] for name in ("Grant credits", "History")]
-        tops.append(page.locator("summary", has_text="Access").bounding_box()["y"])
-        assert tops == sorted(tops), tops
+        actions = page.get_by_role("group", name="Shop actions")
+        expect(actions.get_by_role("button")).to_have_text(["History", "Access", "Grant credits"])
+        expect(shop_action(page, "Grant credits")).to_have_attribute("aria-expanded", "false")
+        expect(page.locator("#grant-credits")).to_be_hidden()
+        shop_action(page, "History").click()
+        expect(page.get_by_role("heading", name="History", exact=True)).to_be_focused()
 
         # A bought grant with the widest values; its answer is lost after the server wrote it, and the history read
         # that follows fails too: kept, the forms wait, « Send again » is written once and reads « as sent ».
         fill_grant(page, "10", amount="20000", method=METHOD40, ref=REF100, note=NOTE500)
+        toggle = shop_action(page, "Grant credits")
+        toggle.click()
+        expect(toggle).to_be_focused()
+        expect(page.locator("#grant-credits")).to_be_hidden()
+        toggle.press("Enter")
+        expect(page.get_by_role("heading", name="Grant credits", exact=True)).to_be_focused()
+        expect(page.locator("#grant-credits")).to_have_value("10")
         expect(money_form(page, "Grant…").get_by_label("Bought or offered", exact=True)).to_have_value("bought")
+        assert posts == [], posts
         lost, history_failed = [], []
         def lose(route):
             if route.request.method != "POST":
@@ -704,6 +726,13 @@ def walk_money(browser, engine, errors):
         assert list(held) == [str(wide)] and held[str(wide)]["body"] == sent, held
         assert set(held[str(wide)]) == {"shop", "form", "path", "at", "body"}
         assert held[str(wide)]["path"] == f"/api/admin/shops/{wide}/grants" and held[str(wide)]["form"] == "grant"
+        # Recovery stays before the shop actions and keeps the frozen payload while navigating within the shop.
+        assert kept.bounding_box()["y"] < actions.bounding_box()["y"]
+        shop_action(page, "History").click()
+        expect(page.get_by_role("heading", name="History", exact=True)).to_be_focused()
+        shop_action(page, "Access").click()
+        expect(page.get_by_role("heading", name="Access", exact=True)).to_be_focused()
+        assert pending(page) == held and posts == [(f"shops/{wide}/grants", sent)], posts
         [written] = lines_of(engine, REF100)
         page.unroute(grants, lose)
         page.unroute("**/api/admin/shops/*/history*", fail_history_once)
@@ -797,7 +826,7 @@ def walk_money(browser, engine, errors):
         page.unroute(grants, unanswered_503)
         discard = page.get_by_role("button", name="Discard", exact=True)
         dialog, confirm = ask(page, discard, "Discard this request?", "Discard")
-        expect(dialog).to_have_accessible_description("If the first send was recorded, a new one writes a second line. Read the history first.")
+        expect(dialog).to_have_accessible_description(f"This removes the saved request for boutiquedeux from this browser. Reference {made}. If the first send was recorded, a new one writes a second line. Read the history first.")
         page.keyboard.press("Escape")
         expect(discard).to_be_focused()
         assert pending(page)[str(deux)]["body"]["ref"] == made
@@ -859,7 +888,7 @@ def walk_money(browser, engine, errors):
         other = context.new_page()
         other.on("pageerror", lambda error: errors.append(str(error)))
         other.goto(f"{ADMIN}#/shops/{deux}")
-        expect(other.get_by_role("button", name="Grant…", exact=True)).to_be_visible()
+        expect(shop_action(other, "Grant credits")).to_have_attribute("aria-expanded", "false")
         fill_grant(other, "6", origin="offered")
         raced = other.get_by_role("alertdialog")
         other.get_by_role("button", name="Grant…", exact=True).click()
@@ -970,7 +999,7 @@ def walk_money(browser, engine, errors):
         confirm.click()
         expect(status_c).to_contain_text("Corrected: line ")
         [repaid] = lines_of(engine, f"repay-{spent[0]}")
-        expect(status_c).to_contain_text(f"Corrected: line {repaid.id}. Balance: available 9 · en attente 0.")
+        expect(status_c).to_contain_text(f"Corrected: line {repaid.id}. Balance: available 9 · pending 0.")
         expect(job).to_contain_text(f"repaid by line {repaid.id}")
         expect(job.get_by_role("button", name="Repay")).to_have_count(0)
         expect(image(spent[1]).get_by_role("button", name="Repay")).to_have_count(1)
@@ -998,6 +1027,12 @@ def walk_money(browser, engine, errors):
         with engine.connect() as conn:
             received = conn.execute(text("SELECT SUM(amount_ar), COUNT(*) FROM credit_grants WHERE amount_ar IS NOT NULL AND created_at >= :start"
                                          " AND created_at < :end"), {"start": first.isoformat(), "end": (last + timedelta(days=1)).isoformat()}).one()
+        paid_total = page.get_by_text(re.compile(r"^Received: "))
+        dates = page.locator("summary", has_text="Change dates")
+        expect(dates).to_be_visible()
+        assert paid_total.bounding_box()["y"] < dates.bounding_box()["y"]
+        expect(page.get_by_label("First day (UTC)", exact=True)).to_be_hidden()
+        dates.click()
         expect(page.get_by_label("First day (UTC)", exact=True)).to_have_value(first.isoformat())
         expect(page.get_by_label("Last day, included", exact=True)).to_have_value(last.isoformat())
         expect(page.get_by_text(re.compile(r"^Received: "))).to_have_text(f"Received: {received[0]:,} Ar".replace(",", " "))
@@ -1007,7 +1042,8 @@ def walk_money(browser, engine, errors):
         expect(rows).to_have_count(received[1])
         expect(rows.filter(has_text="MV-MOVE")).to_have_count(3)  # moved: +A, −A, +A, counted once
         spent = rows.filter(has_text="MV-SPENT")
-        expect(spent.locator("td[data-label=Shop]")).to_have_text("boutiquesix")
+        payment_shop = spent.get_by_role("link", name="boutiquesix", exact=True)
+        expect(payment_shop).to_have_attribute("href", f"#/shops/{six}")
         expect(spent.locator("td[data-label=Entry]")).to_contain_text("grant bought · line ")
         expect(spent.locator("td[data-label=Amount]")).to_have_text(re.compile(r"^\+20\s000\sAr$"))
         for scheme in ("light", "dark"):
@@ -1017,9 +1053,31 @@ def walk_money(browser, engine, errors):
         emulate(page, "light")
         page.get_by_label("First day (UTC)", exact=True).fill("2020-01-01")
         page.get_by_label("Last day, included", exact=True).fill("2020-01-31")
+        edited = page.get_by_text("Dates edited. Choose Show to apply them.", exact=True)
+        expect(edited).to_be_visible()
+        applied = page.get_by_role("heading", name=f"Payments from {first} to {last}")
+        expect(applied).to_be_visible()
+        with page.expect_response(lambda r: "/api/admin/payments?" in r.url) as refreshed:
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        assert f"start={first}&end={last}" in refreshed.value.url
+        expect(edited).to_be_visible()
+        expect(applied).to_be_visible()
+        january = "**/payments?start=2020-01-01&end=2020-01-31"
+        page.route(january, lambda route: route.fulfill(status=500, json=SERVER_ERROR))
         page.get_by_role("button", name="Show", exact=True).click()
-        expect(page.get_by_role("heading", name="Payments from 2020-01-01 to 2020-01-31")).to_be_visible()
-        expect(page.get_by_text(re.compile(r"^Received: "))).to_have_text("Received: 0 Ar")
+        retry = page.get_by_role("button", name="Retry payments", exact=True)
+        expect(retry).to_be_visible()
+        expect(applied).to_be_visible()
+        expect(paid_total).to_have_text(f"Received: {received[0]:,} Ar".replace(",", " "))
+        page.get_by_label("Last day, included", exact=True).fill("2020-02-01")
+        page.unroute(january)
+        with page.expect_response(lambda r: "/api/admin/payments?" in r.url) as retried:
+            retry.click()
+        assert retried.value.url.endswith("start=2020-01-01&end=2020-01-31")
+        expect(page.get_by_role("heading", name="Payments from 2020-01-01 to 2020-01-31 UTC", exact=True)).to_be_visible()
+        expect(paid_total).to_have_text("Received: 0 Ar")
+        expect(edited).to_be_visible()
+        expect(retry).to_be_hidden()
         expect(page.get_by_text("No payment in this period.", exact=True)).to_be_visible()
 
         # Nothing of a resolved request is left behind; nothing else was ever kept.
@@ -1045,6 +1103,7 @@ def walk_no_storage(browser, engine, errors):
         sign_in(page)
         open_shop(page, shop_ids(engine)["boutiquedeux"], "boutiquedeux")
         section = page.locator("section", has=page.get_by_role("heading", name="Grant credits"))
+        show_grant(page)
         expect(section).to_contain_text(unstored)
         fill_grant(page, "1", origin="offered")
         made = money_form(page, "Grant…").get_by_label("Reference", exact=True).input_value()
@@ -1067,18 +1126,30 @@ def walk_no_storage(browser, engine, errors):
         expect(page.locator("tr", has=page.get_by_role("link", name="boutiquedeux", exact=True))).to_contain_text("unresolved request")
         page.get_by_role("link", name="boutiquedeux", exact=True).click()
         expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
-        # « Needs you » lists it from the page's memory (storage refused it), and its line leads back to its shop.
+        # Drop this shop's detail from the current view. Its recovery link and exact request survive a failed detail read.
+        ids = shop_ids(engine)
+        open_shop(page, ids[smoke.IDENTIFIER], smoke.IDENTIFIER)
+        detail = f"**/api/admin/shops/{ids['boutiquedeux']}"
+        page.route(detail, lambda route: route.fulfill(status=500, json=SERVER_ERROR))
         side.get_by_role("link", name="Overview", exact=True).click()
         expect(page.get_by_role("heading", name="Overview", level=1)).to_be_focused()
-        need = needs_box(page).get_by_role("link", name=re.compile("^A request with no definite answer"))
-        expect(need).to_have_text("A request with no definite answer boutiquedeux")
+        need = needs_box(page).get_by_role("link", name=re.compile("^Review unresolved grant"))
+        expect(need).to_have_text(f"Review unresolved grant boutiquedeux · {made}")
         expect(need).to_have_attribute("href", f"#/shops/{shop_ids(engine)['boutiquedeux']}")
         need.click()
         expect(page.get_by_role("heading", name="boutiquedeux", level=1)).to_be_focused()
         expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
         page.get_by_role("button", name="Expand the menu", exact=True).click()
         page.set_viewport_size({"width": 360, "height": 640})
+        retry = page.get_by_role("button", name="Retry shop details", exact=True)
+        expect(retry).to_be_visible()
+        expect(shop_action(page, "Grant credits")).to_have_count(0)
         page.get_by_role("button", name="Send again", exact=True).click()
+        receipt = page.get_by_role("status").filter(has_text="Granted: line ")
+        expect(receipt).to_be_visible()
+        expect(page.locator(".kept")).to_have_count(0)
+        page.unroute(detail)
+        retry.click()
         expect(section.get_by_role("status")).to_contain_text("Granted: line ")
         assert len(lines_of(engine, made)) == 1
     finally:
@@ -1115,7 +1186,7 @@ def walk_keyboard(browser, errors):
         tab_to(page, page.get_by_role("link", name="clavier", exact=True))
         page.keyboard.press("Enter")
         expect(page.get_by_role("heading", name="clavier", level=1)).to_be_focused()
-        tab_to(page, page.locator("summary", has_text="Access"))
+        tab_to(page, shop_action(page, "Access"))
         page.keyboard.press("Enter")
         suspend = page.get_by_role("button", name="Suspend", exact=True)
         tab_to(page, suspend)
@@ -1147,7 +1218,10 @@ def walk_keyboard(browser, errors):
         # A grant with the keyboard alone: its fields in order, the reference made when the form opened, Cancel first in
         # the confirmation, then Grant; the answer with the cap's warning in bold.
         credits_field = page.locator("#grant-credits")
-        tab_to(page, credits_field, back=True)
+        tab_to(page, shop_action(page, "Grant credits"), back=True)
+        page.keyboard.press("Enter")
+        expect(page.get_by_role("heading", name="Grant credits", exact=True)).to_be_focused()
+        tab_to(page, credits_field)
         page.keyboard.type("100000")
         page.keyboard.press("Tab")
         origin = page.locator("#grant-origin")
@@ -1168,7 +1242,7 @@ def walk_keyboard(browser, errors):
         expect(dialog.get_by_role("button", name="Grant", exact=True)).to_be_focused()
         page.keyboard.press("Enter")
         status = page.locator("section", has=page.get_by_role("heading", name="Grant credits")).get_by_role("status")
-        expect(status).to_contain_text(re.compile(r"Granted: line \d+\. Balance: available 100\s005 · en attente 0\."))  # its 5 welcome credits
+        expect(status).to_contain_text(re.compile(r"Granted: line \d+\. Balance: available 100\s005 · pending 0\."))  # its 5 welcome credits
         expect(status.locator("strong")).to_have_text(CAP_WARNING)
         tab_to(page, page.get_by_role("button", name="Sign out", exact=True), back=True)
         page.keyboard.press("Enter")
@@ -1218,6 +1292,12 @@ def walk_service(browser, engine, errors):
         with engine.connect() as conn:
             migration = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         main = page.locator("main")
+        technical = main.locator("summary", has_text="Technical details")
+        backup = main.get_by_text("Last backup: unknown", exact=True)
+        pause = main.get_by_role("button", name="Pause new requests…", exact=True)
+        assert max(backup.bounding_box()["y"], pause.bounding_box()["y"]) < technical.bounding_box()["y"]
+        expect(main.get_by_text(re.compile(r"^Version dev"))).to_be_hidden()
+        unfold(page, "Technical details")
         expect(main.locator("p", has_text="Version")).to_have_text(re.compile(rf"^Version dev · schema {migration} · started \d{{4}}-\d\d-\d\d \d\d:\d\d UTC$"))
         expect(main.get_by_text("Last backup: unknown", exact=True)).to_be_visible()  # the smokes' server keeps no backup
         expect(main.get_by_text(re.compile(r"^Jobs failed or interrupted in the last 24 hours: \d+$"))).to_be_visible()
@@ -1225,6 +1305,7 @@ def walk_service(browser, engine, errors):
         expect(main.get_by_text("Provider spend per shop: $2.00 · messages read per shop: 100", exact=True)).to_be_visible()
 
         # The live operator sessions: both devices, this one marked once, the other's 200-character browser name.
+        unfold(page, "Session details")
         sessions = page.locator("section", has=page.get_by_role("heading", name="Operator sessions")).locator("li")
         expect(sessions).to_have_count(2)
         expect(sessions.filter(has_text="this device")).to_have_count(1)
@@ -1457,7 +1538,7 @@ def walk_shell(browser, engine, errors):
         screens = (("#/overview", "Overview", page.locator("main .kpis .value").first, ("main .kpi",) * 2, (None, None)),
                    ("#/shops", "Shops", page.locator(".shops"), (".table-card", ".shops tbody tr"), ("aside .new", None)),
                    (f"#/shops/{deux}", "boutiquedeux", page.get_by_role("heading", name="History"), ("main section.card",) * 2, ("main button.primary",) * 2),
-                   ("#/money", "Payments", page.get_by_text(re.compile(r"^Received: ")), ("main div.card",) * 2, ("main button.primary",) * 2),
+                   ("#/money", "Payments", page.get_by_text(re.compile(r"^Received: ")), ("main section.card",) * 2, (None, None)),
                    ("#/service", "Service", page.get_by_role("heading", name="Health"), ("main section.card",) * 2, ("main button.primary",) * 2))
         for phone, (width, height) in enumerate(((1280, 800), (360, 640))):
             page.set_viewport_size({"width": width, "height": height})
@@ -1770,9 +1851,23 @@ def walk_overview(browser, engine, data, errors):
         confirm.click()
         expect(page.locator(".kept")).to_contain_text(UNCERTAIN)
         page.unroute(grants, unanswered_503)
+        reads_held = []
+        overview_reads = re.compile(r"/api/admin/(shops|service|payments)$")
+        page.route(overview_reads, lambda route: reads_held.append(route))
         side.get_by_role("link", name="Overview", exact=True).click()
         expect(page.get_by_role("heading", name="Overview", level=1)).to_be_focused()
         expect(side.get_by_role("link", name="Overview", exact=True)).to_have_attribute("aria-current", "page")
+        wait_until(page, lambda: len(reads_held) == 3)
+        need = needs_box(page).get_by_role("link", name=re.compile("^Review unresolved grant"))
+        expect(need).to_have_text(f"Review unresolved grant shop {wide} · {made}")
+        expect(need).to_have_attribute("href", f"#/shops/{wide}")
+        expect(needs_box(page)).not_to_contain_text("Nothing needs you.")
+        page.unroute(overview_reads)
+        for held in reads_held:
+            held.fulfill(status=500, json=SERVER_ERROR)
+        expect(page.get_by_text("Shops not read: passwords not checked.", exact=True)).to_be_visible()
+        expect(need).to_have_text(f"Review unresolved grant shop {wide} · {made}")
+        refresh.click()
 
         # The four figures, against the store.
         with engine.connect() as conn:
@@ -1837,7 +1932,7 @@ def walk_overview(browser, engine, data, errors):
         # « Needs you »: its six causes, each line a link to where it is settled or read.
         no_password = [shop.identifier for shop in sorted(listed, key=lambda shop: shop.identifier) if not shop.has_password]
         assert no_password == ["ouverte", "sanspasse"], no_password
-        lines = [("A request with no definite answer", WIDE_ID, f"#/shops/{wide}"),
+        lines = [("Review unresolved grant", f"{WIDE_ID} · {made}", f"#/shops/{wide}"),
                  *[("No password", identifier, f"#/shops/{ids[identifier]}") for identifier in no_password],
                  ("No purchase text", "Shops read the fallback sentence", "#/service"),
                  ("Last backup unknown", "No backup marker could be read", "#/service"),
@@ -1855,10 +1950,11 @@ def walk_overview(browser, engine, data, errors):
         page.screenshot(path=str(OUTPUT / "overview-1280-light.png"), full_page=True)
 
         # The figures four across over 1180 px, two by two from 600 px, one column under. « Needs you » the full width
-        # under them at every width, then the shops and the service, the payments beside them over 1180 px and last on a
+        # above them at every width, then the shops and the service, the payments beside them over 1180 px and last on a
         # phone. At 360 px, with the widest identifier among « Needs you » and a 100-character reference among the
         # payments, both themes.
         blocks = [page.locator(selector) for selector in ("main .kpis", "main .needs")] + [shops_box, service_box, pay_box]
+        assert needs_box(page).evaluate("e => !!(e.compareDocumentPosition(document.querySelector('main .kpis')) & Node.DOCUMENT_POSITION_FOLLOWING)")
         for width, rows, columns in ((1280, 1, 4), (800, 2, 2), (360, 4, 1)):
             page.set_viewport_size({"width": width, "height": 800})
             boxes = page.locator("main .kpi").evaluate_all(KPI_JS)
@@ -1866,7 +1962,7 @@ def walk_overview(browser, engine, data, errors):
             assert boxes == sorted(boxes), (width, boxes)  # in reading order
             figures, need, shop, service, payment = [block.bounding_box() for block in blocks]
             first_shop = shops_box.locator("tbody tr").first.bounding_box()
-            assert figures["y"] + figures["height"] <= need["y"] and need["y"] + need["height"] <= first_shop["y"], (width, need, first_shop)
+            assert need["y"] + need["height"] <= figures["y"] and figures["y"] + figures["height"] <= first_shop["y"], (width, need, first_shop)
             assert abs(need["x"] - figures["x"]) < 1 and abs(need["width"] - figures["width"]) < 1, (width, need, figures)
             assert shop["y"] + shop["height"] <= service["y"], (width, shop, service)
             if width > 1180:
@@ -1885,13 +1981,13 @@ def walk_overview(browser, engine, data, errors):
         settled = []
         def left(**instead):
             return [instead.get(line[0], line) for line in lines if line[0] not in settled]
-        needs_box(page).get_by_role("link", name=re.compile("^A request with no definite answer")).click()
+        needs_box(page).get_by_role("link", name=re.compile("^Review unresolved grant")).click()
         expect(page.get_by_role("heading", name=WIDE_ID, level=1)).to_be_focused()
         dialog, confirm = ask(page, page.get_by_role("button", name="Discard", exact=True), "Discard this request?", "Discard")
         confirm.click()
         expect(page.locator(".kept")).to_have_count(0)
         side.get_by_role("link", name="Overview", exact=True).click()
-        settled.append("A request with no definite answer")
+        settled.append("Review unresolved grant")
         needs(page, left())
         expect(shop_row(WIDE_ID).locator(".unresolved")).to_have_count(0)
         needs_box(page).get_by_role("link", name=re.compile("^No purchase text")).click()

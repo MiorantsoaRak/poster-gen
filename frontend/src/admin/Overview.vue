@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// The console's home (D-REDESIGN-006, R-REDESIGN-006): four figures, « Needs you », the shops by last poster, the service
+// The console's home (D-REDESIGN-006, R-REDESIGN-006): « Needs you », four figures, the shops by last poster, the service
 // and this month's payments, from three reads made together. Each block shows its own read; a failed read says so in its
 // blocks, and « Needs you » never says it is empty when what it reads was not read by the current refresh.
 import { computed, h, onMounted, ref, type FunctionalComponent, type Ref } from 'vue'
@@ -48,11 +48,14 @@ const recent = computed(() => payments.value.answer?.items.slice(-5).reverse()) 
 
 // « Needs you »: what the operator can act on, from three inputs. Shops gives the missing passwords; Service the purchase
 // text, the backup, the failed jobs and the cap; the page's memory the unanswered requests (storage refused included).
+const operationNames = { grant: 'grant', move: 'transfer', correction: 'correction' }
 const needs = computed(() => {
   const items = shops.value.answer?.items, view = service.value.answer
-  const list: { text: string; detail: string; href: string }[] = Object.values(props.kept).map(request => ({
-    text: 'A request with no definite answer', detail: items?.find(shop => shop.id === request.shop)?.identifier ?? `shop ${request.shop}`,
-    href: `#/shops/${request.shop}` }))
+  const list: { text: string; detail: string; href: string; reference?: string }[] = Object.values(props.kept).map(request => {
+    const action = request.form === 'correction' && request.body.job_id ? 'repayment' : operationNames[request.form]
+    return { text: `Review unresolved ${action}`, detail: items?.find(shop => shop.id === request.shop)?.identifier ?? `shop ${request.shop}`,
+      reference: request.body.ref, href: `#/shops/${request.shop}` }
+  })
   for (const shop of items ?? []) if (!shop.has_password) list.push({ text: 'No password', detail: shop.identifier, href: `#/shops/${shop.id}` })
   if (view) {
     if (view.purchase_text.stored == null) list.push({ text: 'No purchase text', detail: 'Shops read the fallback sentence', href: '#/service' })
@@ -69,6 +72,22 @@ const checked = computed(() => !!shops.value.answer && !!service.value.answer &&
 
 <template>
   <button type="button" class="title-action" @click="read">Refresh</button>
+  <!-- What needs action comes first, the full width, at every width: one order for the eye, the keyboard and a phone. -->
+  <section class="card needs" aria-labelledby="overview-needs">
+    <h2 id="overview-needs">Needs you</h2>
+    <ul v-if="needs.length" class="lines">
+      <li v-for="need in needs" :key="need.href + need.text">
+        <a :href="need.href" :class="{ 'review-request': need.reference }"><span><strong>{{ need.text }}</strong> <small>{{ need.detail }}<template v-if="need.reference"> · <code>{{ need.reference }}</code></template></small></span>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></a>
+      </li>
+    </ul>
+    <p v-if="shops.pending">Checking shops…</p>
+    <p v-else-if="shops.failed">Shops not read: passwords not checked.</p>
+    <p v-if="service.pending">Checking service…</p>
+    <p v-else-if="service.failed">Service not read: purchase text, backup, jobs and cap not checked.</p>
+    <p v-if="!needs.length && checked">Nothing needs you.</p>
+  </section>
+
   <div class="refusal" role="alert"><p v-for="line in failures" :key="line">{{ line }}</p></div>
 
   <!-- The four figures: one card split by hairlines, a label over each value. -->
@@ -102,22 +121,6 @@ const checked = computed(() => !!shops.value.answer && !!service.value.answer &&
       <dd v-else><Unread :from="service" /></dd>
     </div>
   </dl>
-
-  <!-- What needs action comes first, the full width, at every width: one order for the eye, the keyboard and a phone. -->
-  <section class="card needs" aria-labelledby="overview-needs">
-    <h2 id="overview-needs">Needs you</h2>
-    <ul v-if="needs.length" class="lines">
-      <li v-for="need in needs" :key="need.href + need.text">
-        <a :href="need.href"><span><strong>{{ need.text }}</strong> <small>{{ need.detail }}</small></span>
-          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></a>
-      </li>
-    </ul>
-    <p v-if="shops.pending">Checking shops…</p>
-    <p v-else-if="shops.failed">Shops not read: passwords not checked.</p>
-    <p v-if="service.pending">Checking service…</p>
-    <p v-else-if="service.failed">Service not read: purchase text, backup, jobs and cap not checked.</p>
-    <p v-if="!needs.length && checked">Nothing needs you.</p>
-  </section>
 
   <!-- Below it: the shops and the service, then the payments; two columns over 1180 px. -->
   <div class="cols">

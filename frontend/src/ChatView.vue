@@ -7,7 +7,7 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from './api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, productsOf, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
+import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, picturesOfRecap, productsOf, recapFormat, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
   type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
 import { ended, FEATURES_WARNING, ONCE } from './generation'
@@ -40,6 +40,12 @@ const products = () => draft.pictures.filter(item => item.role === 'product')
 // On an existing poster the style's model image is the editor's (the selected version's): what `start` sends. The
 // thread's draft is not asked there: the bundle from before added every attached image to it (D-TEXT-FIRST-007).
 const inspiration = computed(() => state.creation ? !!state.styleReference : [...draft.pictures, ...tray.value].some(item => item.role === 'inspiration'))
+const intakePictures = computed<Picture[]>(() => [...draft.pictures, ...tray.value.flatMap(item => item.asset ? [{ asset: item.asset, role: item.role, warnings: item.warnings }] : [])])
+const recapPictures = computed<Picture[]>(() => state.creation
+  ? [...(state.productAssets ?? []).map(asset => ({ asset, role: 'product' as const })), ...(state.styleReference ? [{ asset: state.styleReference, role: 'inspiration' as const }] : [])]
+  : intakePictures.value)
+const needsProduct = (item: Item) => !!state.creation && !state.productAssets?.length && !item.spent && !item.done && item.card?.kind === 'recap'
+const picturesOf = (item: Item) => picturesOfRecap(item, recapPictures.value, state.creation?.id)
 const smallPhoto = computed(() => needsAgreement.value || products().some(item => item.warnings?.includes('low_resolution')))
 // Only the open poster's versions; the one shown is the one selected in its document.
 const versions = computed(() => state.creation ? state.visuals : [])
@@ -76,8 +82,9 @@ const waitLine = computed(() => reading.value ? 'Je lis votre message…' : copy
 // Nothing in the thread and no poster: the greeting is the centred welcome (D-REDESIGN-003). A card imported from
 // « Pas à pas » or a stored assistant-only thread is a conversation already.
 const empty = computed(() => !shown.value && !items.value.length)
-const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Quel produit, à quel prix ? Ajoutez sa photo, et une affiche qui vous inspire si vous en avez une.')
-const styleName = (item: Item) => inspiration.value ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
+const preparedDraft = computed(() => empty.value && !!state.creation && !state.job)
+const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Ajoutez une photo du produit. Écrivez son nom, sa couleur ou son modèle, et son prix en ariary, puis touchez « Envoyer ».')
+const styleName = (item: Item) => picturesOf(item).some(photo => photo.role === 'inspiration') ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent || item.done ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
 const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value, !free(item) && (state.credit.terms ? 'terms' : state.credit.stop)); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
@@ -136,14 +143,18 @@ function load(id?: string | null) {
   if (awaited.value && !items.value.some(item => item.card?.kind === 'failed' && !item.done)) app('L’envoi a été interrompu.', { kind: 'failed', code: 'interrupted', retry: pending.value!.text })
 }
 const add = (item: Partial<Item> & { role: Item['role'] }) => { items.value.push({ id: crypto.randomUUID(), text: '', at: Date.now(), ...item }) }
-const app = (line: string, card?: Card) => add({ role: 'app', text: line, card })
+const recapDetails = () => ({
+  ...(state.offer ? { name: state.offer.title, price_ar: state.offer.price_ar } : {}),
+  format: state.format, pictures: [...recapPictures.value], style: draft.style,
+})
+const app = (line: string, card?: Card) => add({ role: 'app', text: line, card: card?.kind === 'recap' ? { ...card, ...recapDetails() } : card })
 // A new question or recap replaces the open ones: only the latest may be tapped.
 // On an existing poster it shows what the next scene draws: the document's own words.
 const recap = (line = '') => { supersede(items.value); app(line, { kind: 'recap', name: state.offer?.title ?? draft.name ?? undefined, price_ar: state.offer?.price_ar ?? draft.price_ar ?? undefined, style: draft.style, ...(draft.identity !== null && !state.creation ? { identity: draft.identity } : {}) }) }
 // The editor's form fields are the same refs: the draft fills them, so the switch to « Pas à pas » loses nothing.
 function sync() {
   if (state.creation) return
-  const all: Picture[] = [...draft.pictures, ...tray.value.flatMap(item => item.asset ? [{ asset: item.asset, role: item.role, warnings: item.warnings }] : [])]
+  const all = intakePictures.value
   state.intake.name = draft.name ?? ''; state.intake.price = draft.price_ar === null ? '' : String(draft.price_ar)
   state.photos = all.filter(item => item.role === 'product').map(item => ({ asset: item.asset, warnings: item.warnings ?? [] }))
   state.styleReference = all.find(item => item.role === 'inspiration')?.asset ?? null
@@ -331,9 +342,9 @@ async function create(item: Item) {
   const at = token, card = item.card!, kind = effect(item), visual = target(card)
   // Its own sentence stays on a card from before: the server's said the price is redrawn.
   if (kind === 'free') return setWords(visual, card.words ?? {}, 'C’est changé sur l’affiche.', Object.assign(item, { text: lineOf(item) }), true)
-  if (held.value || !spend(items.value, item.id)) return
-  const style = inspiration.value ? 'clair' : draft.style ?? 'clair'
-  if (card.kind === 'recap') card.style = style
+  if (held.value || needsProduct(item) || !spend(items.value, item.id)) return
+  const style = recapPictures.value.some(photo => photo.role === 'inspiration') ? 'clair' : draft.style ?? 'clair'
+  if (card.kind === 'recap') Object.assign(card, recapDetails(), { style })
   item.creation = state.creation?.id; looked.value = null
   // Spent and saved before anything leaves (strict send, chat.ts keepRequest): a browser that cannot store the card sends
   // nothing at all, not even the poster or its plan. The poster's id and the job's id are added by the two watchers below.
@@ -518,6 +529,8 @@ props.adapter.waiting = () => mine() ? !!openCard() : undefined
 // The agreement to a small photo is for one product and its photos.
 watch(() => [draft.name, products().map(item => item.asset).join()], () => { smallAccepted.value = false })
 watch(() => [draft.name, draft.price_ar, draft.pictures.length, tray.value.map(item => `${item.asset}${item.role}`).join()], sync)
+// A deep link can mount the chat before the poster finishes loading. Update its open recap when the offer arrives.
+watch(() => [state.creation?.id, state.offer?.title, state.offer?.price_ar], () => { if (mine() && state.creation) importForm() })
 watch(() => [state.busy, state.job, state.creation?.id], () => void reconcile(), { flush: 'post', immediate: true })
 // The versions this poster may still ask for, by the server's rule. Not known (a failed read of its jobs): no line, and
 // the server's own refusal still holds.
@@ -559,14 +572,30 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       <div v-if="stale && !staleCard" class="chat-stale"><p class="why" role="status">{{ stale }}</p><button type="button" class="secondary" :disabled="held" @click="setWords(state.selected!, state.stale, 'Les textes de l’image sont remis.')">Remettre les textes de l’image</button></div>
     </aside>
     <div ref="thread" class="chat-thread" role="log" aria-live="polite" aria-label="Conversation" tabindex="0">
-      <div v-if="empty" class="hello"><img src="/favicon.svg" width="56" height="56" alt="" /><p class="hello-q">Quelle affiche créons-nous ?</p><p>{{ greeting }}</p></div>
+      <div v-if="empty" class="hello">
+        <img src="/favicon.svg" width="56" height="56" alt="" />
+        <template v-if="preparedDraft">
+          <p class="hello-q" translate="no">{{ state.offer?.title || 'Votre brouillon' }}</p>
+          <p>Retrouvez la photo, le prix et le style dans Pas à pas pour créer la première image.</p>
+          <button type="button" class="secondary" @click="emit('steps')">Vérifier l’offre</button>
+        </template>
+        <template v-else>
+          <p class="hello-q">Quel produit vendez-vous ?</p>
+          <p>{{ greeting }}</p>
+          <small v-if="!state.creation">Le format Publication est déjà choisi pour Facebook et le téléchargement.</small>
+        </template>
+      </div>
       <div v-else class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
         <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
         <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
         <template v-if="item.card?.kind === 'recap'">
-          <div v-if="!state.creation && draft.pictures.length" class="pics"><span v-for="picture in draft.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
-          <p class="recap"><b translate="no">{{ item.card.name }}</b><span class="recap-price">{{ price(item.card.price_ar) }}</span><small>Style : {{ styleName(item) }}</small><small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small></p>
+          <div v-if="picturesOf(item).length" class="pics"><span v-for="picture in picturesOf(item)" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
+          <p v-if="needsProduct(item)" class="why" role="status">
+            {{ state.productError || state.productAssets ? 'Les photos du produit sont indisponibles.' : 'Chargement des photos du produit…' }}
+            <button v-if="state.productError || state.productAssets" type="button" class="text-button" @click="adapter.reloadProduct()">Recharger le produit</button>
+          </p>
+          <p class="recap"><b translate="no">{{ item.card.name }}</b><span v-if="item.card.price_ar != null" class="recap-price">{{ price(item.card.price_ar) }}</span><small v-if="recapFormat(item, state.format)" class="recap-format">{{ recapFormat(item, state.format) }}</small><small>Style : {{ styleName(item) }}</small><small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small></p>
         </template>
         <template v-for="version in item.card?.kind === 'result' ? [versionOf(item)] : []" :key="item.id">
           <template v-if="version">
@@ -589,7 +618,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
           <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || copies(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || needsProduct(item) || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
             <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, 'une-fois-' + item.id].filter(Boolean).join(' ')" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
@@ -622,10 +651,10 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       </div>
       <p v-for="entry in tray.filter(item => item.error)" :key="entry.id" class="why" role="alert">{{ entry.error }}</p>
       <p v-if="elsewhere" class="chat-elsewhere-read" role="status">Un message attend encore sur une autre affiche.<button type="button" class="secondary" @click="toPending">Ouvrir cette affiche</button></p>
-      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Produit et prix…'"
+      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Ex. Téléphone noir 128 Go, 899 000 Ar'"
         @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
       <div class="tools">
-        <button type="button" class="ghost attach" aria-label="Ajouter des images" :disabled="copying" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Images</span></button>
+        <button type="button" class="ghost attach" :class="{ 'first-photos': !state.creation }" aria-label="Ajouter des photos" :disabled="copying" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Photos</span></button>
         <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
         <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
           <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>

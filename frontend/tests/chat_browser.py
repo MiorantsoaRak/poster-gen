@@ -17,7 +17,7 @@ from playwright.sync_api import sync_playwright, expect
 import browser_smoke as smoke
 
 OUT = smoke.ROOT / "outputs" / "chat-smoke"
-REVIEW, FINAL = "Vérifier la fidélité du produit", "Dernière vérification avant le téléchargement"
+REVIEW, FINAL = "Vérifier la fidélité du produit", "Vérifier votre affiche"
 THREAD = "id => JSON.parse(localStorage.getItem('affiche.shop1.chat.' + id))"
 START = "localStorage.getItem('affiche.start')"
 PENDING = "() => JSON.parse(localStorage.getItem('affiche.shop1.chat.pending'))?.key ?? null"
@@ -31,9 +31,6 @@ UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cett
 COST, ONCE = re.compile(r"1 crédit · il vous en reste \d+"), "1 crédit, une seule fois pour cette demande"
 # Above the button of every scene adjustment still to be had, whatever brought the card (D-TERMS-005, generation.ts).
 WARNING = "Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier."
-# The check's wording, true for every version, made with or without features asked of the AI (D-TERMS-006).
-EXTRAS, OTHER_TEXT = "Rien d’ajouté par l’IA sans votre demande, et ce qu’elle a ajouté est exact pour ce produit", "Aucun autre texte, sauf ceux que vous avez demandés à l’IA"
-CONTENT = "Tous les textes sont exacts : le titre, le prix, et chaque mot, chiffre ou caractéristique ajouté par l’IA"
 
 
 def sign_in(page):
@@ -212,7 +209,7 @@ def walk_desktop(browser, errors, product, inspiration):
     switch = page.get_by_role("group", name="Façon de créer")
     expect(switch.get_by_role("button", name="Message")).to_have_attribute("aria-pressed", "true")
     thread, field, send = page.get_by_role("log"), page.get_by_label("Votre message"), page.get_by_role("button", name="Envoyer")
-    expect(thread).to_contain_text("Quel produit, à quel prix ?")
+    expect(thread).to_contain_text("Ajoutez une photo du produit.")
     expect(send).to_be_disabled()
     # The chat reloads in place. The empty address opens Home and its creator defaults to chat.
     page.reload()
@@ -247,7 +244,7 @@ def walk_desktop(browser, errors, product, inspiration):
     pics.nth(1).locator(".pic-role").click()
     expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    for label in ("Ajouter des images", "Envoyer", "Retirer cette image"):
+    for label in ("Ajouter des photos", "Envoyer", "Retirer cette image"):
         expect(page.get_by_role("button", name=label).first).to_be_visible()
     send.click()
     # One message, two images: the recap, with the price large and the cost said as the paid dialog says it.
@@ -255,9 +252,10 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(recap).to_have_count(1)
     expect(recap.locator(".recap b")).to_have_text("Sony WH-1000XM6 noir")
     expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^700\s000 Ar$"))
+    expect(recap.locator(".recap-format")).to_have_text("Publication 4:5")
     expect(recap).to_contain_text("Style : comme votre inspiration")
     expect(recap).to_contain_text(COST)
-    expect(recap.locator(".pic")).to_have_count(2)
+    expect(recap.locator(".pic")).to_have_text(["Produit", "Inspiration"])
     expect(thread.locator(".bubble.me")).to_contain_text("Sony WH-1000XM6 noir, 700 000 Ar")
     expect(field).to_be_focused()
     expect(field).to_have_value("")
@@ -292,8 +290,10 @@ def walk_desktop(browser, errors, product, inspiration):
     # The version arrives as a card; the check never opens by itself.
     verify = page.get_by_role("button", name="Vérifier", exact=True)
     expect(verify).to_be_visible(timeout=30000)
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+    expect(page.get_by_role("heading", name=FINAL)).to_have_count(0)
     expect(thread).to_contain_text("Version 1 prête.")
+    assert spent[0]["request"]["body"]["format"] == "feed"
+    expect(recap.locator(".recap-format")).to_have_text("Publication 4:5")
     assert scenes == [spent[0]["id"]], scenes
     side = page.locator(".chat-side")
     expect(side).to_contain_text("Version 1 · à vérifier")
@@ -301,25 +301,30 @@ def walk_desktop(browser, errors, product, inspiration):
     assert thread.locator(".chat-poster img").evaluate("e => e.complete && e.naturalWidth > 0 && e.src.includes('display=true')")
     both_themes(page, "result, desktop", "chat-result-1366", marks=(ARROW,))  # « fond plus sombre » typed
     pressed_send(page, "result, desktop")
-    # « Vérifier » is the editor's own review, with the photo; its approval turns the card into « Télécharger ou partager ».
+    # A single review compares the original with the exact file; correction leaves both decisions open.
+    address = f"{smoke.ORIGIN}/api/creations/{poster}"
+    balance_url = smoke.ORIGIN + "/api/balance"
+    before_review = page.request.get(balance_url, fail_on_status_code=True).json()
     verify.click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
+    panel = page.locator(".final-preview")
+    expect(panel.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
     assert chat.evaluate("e => e.inert")
-    expect(page.get_by_alt_text("Photo originale 1 à comparer")).to_be_visible()
-    for line in (EXTRAS, OTHER_TEXT):
-        expect(page.locator(".review-checks .points li", has_text=line)).to_have_count(1)
-    page.get_by_role("button", name="Tout est conforme, approuver").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
-    expect(thread.locator(".chat-state")).to_have_text("Approuvée")
-    expect(verify).to_have_count(0)
-    page.get_by_role("button", name="Télécharger ou partager", exact=True).click()
-    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
-    expect(page.locator(".final-preview .points li", has_text=CONTENT)).to_have_count(1)
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
-    expect(page.get_by_role("heading", name="Votre affiche est prête")).to_be_visible()
-    expect(page.get_by_role("link", name="Télécharger le PNG confirmé")).to_be_visible()
+    expect(panel.get_by_alt_text("Photo originale 1 à comparer")).to_be_visible()
+    expect(panel).to_contain_text("Chaque texte ou caractéristique ajouté par l’IA doit être exact")
+    expect(panel).to_contain_text(re.compile(r"700\s000 Ar"))
+    assert page.request.get(address).json()["confirmation"] is None
+    panel.get_by_role("button", name="Fermer").click()
+    assert page.request.get(address + "/visuals").json()["items"][0]["status"] == "pending_review"
+    verify.click()
+    smoke.download_review(page)
+    assert page.request.get(address + "/visuals").json()["items"][0]["status"] == "approved"
+    expect(page.get_by_role("link", name="Télécharger le PNG")).to_be_visible()
+    after_render = page.request.get(balance_url, fail_on_status_code=True).json()
+    assert (after_render["available"], after_render["pending"]) == (before_review["available"], before_review["pending"])
     page.screenshot(path=str(OUT / "chat-confirmed-1366.png"))
     page.get_by_role("button", name="Fermer").click()
+    expect(thread.locator(".chat-state")).to_have_text("Approuvée")
+    expect(verify).to_have_count(0)
     # The chat never mounted the canvas, nor loaded its code (Konva and the fonts' module) or a poster font.
     expect(page.locator(".poster-canvas, .konvajs-content")).to_have_count(0)
     assert not fonts, fonts
@@ -330,7 +335,7 @@ def walk_desktop(browser, errors, product, inspiration):
     page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
     page.wait_for_url(f"**/#message-{poster}")
     # As in the editor, a confirmed poster opens on its file, ready to download again.
-    expect(page.get_by_role("link", name="Télécharger le PNG confirmé")).to_be_visible()
+    expect(page.get_by_role("link", name="Télécharger le PNG")).to_be_visible()
     page.get_by_role("button", name="Fermer").click()
     expect(thread).to_contain_text("Version 1 prête.")
     switch.get_by_role("button", name="Pas à pas").click()
@@ -429,6 +434,9 @@ def walk_desktop(browser, errors, product, inspiration):
     # (made for an older revision of the poster), and only then is a new card offered, with the new words.
     switch.get_by_role("button", name="Pas à pas").click()
     page.wait_for_url(f"**/#{second}")
+    square = page.get_by_role("radio", name="Carré 1:1", exact=True)
+    square.check()
+    page.get_by_role("tab", name="Textes", exact=True).click()
     page.locator("textarea[name=title]").fill("Casque JBL Tune 520 Pro")
     page.get_by_label("Prix en ariary", exact=True).fill("270 000")
     saved_after(kept["request"]["revision"])
@@ -438,15 +446,51 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(resume).to_be_visible()
     page.wait_for_timeout(500)
     assert scenes.count(kept["id"]) == 1, scenes  # nothing sent on the return
+    # The previously consented request may be replayed even if the product read is unavailable.
+    source_path = "**/api/product-inputs/*"
+    page.route(source_path, lambda route: route.abort("failed"))
+    page.reload(wait_until="domcontentloaded")
+    expect(resume).to_be_enabled()
     resume.click()
+    # The new recap needs its actual source photos before its own first tap. Reloading these is free.
+    create = thread.get_by_role("button", name="Créer l’affiche")
+    expect(recap.last).to_contain_text("Les photos du produit sont indisponibles.")
+    expect(create).to_be_disabled()
+    page.unroute(source_path)
+    pending_source = []
+    page.route(source_path, lambda route: pending_source.append(route))
+    recap.last.get_by_role("button", name="Recharger le produit").click()
+    expect(recap.last).to_contain_text("Chargement des photos du produit…")
+    expect(create).to_be_disabled()
+    for _ in range(50):
+        if pending_source:
+            break
+        page.wait_for_timeout(50)
+    assert len(pending_source) == 1
+    pending_source[0].continue_()
+    page.unroute(source_path)
+    expect(create).to_be_enabled()
     expect(page.get_by_role("button", name="Créer l’affiche")).to_have_count(1)
     expect(recap.last.locator(".recap b")).to_have_text("Casque JBL Tune 520 Pro")
+    expect(recap.last.locator(".recap-format")).to_have_text("Carré 1:1")
+    expect(recap.last.locator(".pic")).to_have_text(["Produit"])
+    expect(recap.nth(-2).locator(".recap-format")).to_have_text("Publication 4:5")
     expect(recap.last.locator(".recap-price")).to_have_text(re.compile(r"^270\s000 Ar$"))
     assert scenes.count(kept["id"]) == 2 and page.evaluate(SCENE_JOBS, second) == 0, scenes
+    # An open recap kept by an older client may predate a saved offer edit made elsewhere.
+    page.evaluate("""id => {
+      const key = 'affiche.shop1.chat.' + id, thread = JSON.parse(localStorage.getItem(key))
+      thread.items.at(-1).card.price_ar = 1
+      localStorage.setItem(key, JSON.stringify(thread))
+    }""", second)
+    page.reload(wait_until="domcontentloaded")
+    expect(recap.last.locator(".recap-price")).to_have_text(re.compile(r"^270\s000 Ar$"))
+    assert page.evaluate(SCENE_JOBS, second) == 0
     # A later correction in « Pas à pas » reaches the unpaid recap; spent cards stay as they were.
     switch.get_by_role("button", name="Pas à pas").click()
     page.wait_for_url(f"**/#{second}")
     before = revision()
+    page.get_by_role("tab", name="Textes", exact=True).click()
     page.get_by_label("Prix en ariary", exact=True).fill("280 000")
     saved_after(before)
     switch.get_by_role("button", name="Message").click()
@@ -459,11 +503,12 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(retry).to_be_visible()
     context.unroute("**/scenes")
     busy = spent()
+    assert busy["request"]["body"]["format"] == "square"
     other = browser.new_context(storage_state=context.storage_state())
     headers = lambda: {"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE), "If-Match": f'"{revision()}"', "Idempotency-Key": str(uuid4())}
-    plan = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/plans", headers=headers(), data={"mode": "fixed", "direction": "Studio clair", "format": "feed"})
+    plan = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/plans", headers=headers(), data={"mode": "fixed", "direction": "Studio clair", "format": "square"})
     assert plan.ok, plan.text()
-    started = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/scenes", headers=headers(), data={"plan_id": plan.json()["id"], "format": "feed"})
+    started = other.request.post(f"{smoke.ORIGIN}/api/creations/{second}/scenes", headers=headers(), data={"plan_id": plan.json()["id"], "format": "square"})
     assert started.status == 202, started.text()
     retry.click()
     expect(thread).to_contain_text("Une image est déjà en cours de préparation pour cette création.")
@@ -588,9 +633,14 @@ def walk_changes(browser, errors, session, data):
         while verify.count():
             left = verify.count()
             verify.last.click()
-            expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
-            page.get_by_role("button", name="Tout est conforme, approuver").click()
-            expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+            title = page.get_by_role("heading", name=REVIEW).or_(page.get_by_role("heading", name=FINAL))
+            expect(title).to_be_visible(timeout=30000)
+            if title.inner_text() == FINAL:
+                smoke.download_review(page)
+                page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+            else:
+                page.get_by_role("button", name="Tout est conforme, approuver").click()
+                page.get_by_role("dialog", name="Fidélité approuvée").get_by_role("button", name="Fermer").click()
             expect(verify).to_have_count(left - 1)
         expect(download.last).to_be_visible()  # on the selected version only
 
@@ -715,6 +765,17 @@ def walk_changes(browser, errors, session, data):
     selected(fourth["id"])
     expect(side).to_contain_text(re.compile(r"Version 4 · à vérifier\s*WH-1000XM6 noir · 650\s000 Ar"))
     expect(mods.first).to_have_text(re.compile(r"^V4\s*Titre : WH-1000XM6 noir · Marque : Sony\s*À vérifier$"))
+    # Reviewing the earlier V3 changes its fidelity decision only. V4 is still the export selection.
+    expect(verify).to_have_count(2)
+    renders = len(made("render"))
+    verify.first.click()
+    page.get_by_role("button", name="Tout est conforme, approuver").click()
+    historical = page.get_by_role("dialog", name="Fidélité approuvée")
+    expect(historical.get_by_role("button", name="Choisir cette version")).to_be_visible()
+    expect(historical.get_by_role("button", name="Vérifier le fichier final")).to_have_count(0)
+    selected(fourth["id"])
+    historical.get_by_role("button", name="Fermer").click()
+    assert len(made("render")) == renders
     approve()
 
     # The card's words are saved in the document before the scene is asked. A reload between the two: nothing paid
@@ -765,10 +826,12 @@ def walk_changes(browser, errors, session, data):
     expect(stale).to_contain_text(COST)
     expect(stale.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler", "Remettre les textes de l’image"])
     both_themes(page, "the image still shows other words, desktop", "chat-stale-1366")
-    # The download of the old image is refused by the server; in the chat its sentence is in the general message.
+    # A mismatch in the drawn words blocks the new preview before rendering.
+    before = len(made("render"))
     download.click()
-    refusal = page.locator(".message.error")
-    expect(refusal).to_contain_text("dessiné dans l’image ne correspond plus")
+    refusal = page.get_by_role("dialog", name="Préparation de l’aperçu")
+    expect(refusal).to_contain_text("Un texte dessiné dans l’image a changé")
+    assert len(made("render")) == before
     looks_right(page, "download refused, desktop")
     refusal.get_by_role("button", name="Fermer").click()
     # The same after a reload: nothing of it is kept on a card.
@@ -814,8 +877,13 @@ def walk_changes(browser, errors, session, data):
     expect(field).to_have_value("titre WH-1000XM6 Max")
     expect(thread.locator(".bubble.me").last).not_to_have_text("titre WH-1000XM6 Max")
     assert len(reads) == count and creation()["document"]["offer"]["price_ar"] == 600000, reads
+    for width, height in ((360, 480), (1366, 768)):
+        page.set_viewport_size({"width": width, "height": height})
+        expect(send).to_be_in_viewport(ratio=1)
+        send.click(trial=True)  # the visible save error must leave the composer reachable
     context.unroute(f"**/api/creations/{poster}")
-    page.locator(".message.error").get_by_role("button", name="Fermer").click()
+    page.locator(".message.error").get_by_role("button", name="Fermer").press("Enter")
+    expect(field).to_be_focused()
     send.click()
     # The card is read against the saved poster: the price typed in « Pas à pas » is one of its lines.
     expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(re.compile(r"^Titre : WH-1000XM6 Max\s+Prix : 590\s000 Ar$"))
@@ -996,11 +1064,11 @@ def walk_changes(browser, errors, session, data):
     page.get_by_role("button", name="Fermer").click()
     expect(resume).to_be_enabled()
     verify.click()  # the eighth version, still to check
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible()
+    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
     page.get_by_role("button", name="Signaler un problème").click()
     page.locator("textarea[name=rejection]").fill("Le fond ne va pas")
     page.get_by_role("button", name="Refuser cette version").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+    expect(page.get_by_role("heading", name=FINAL)).to_have_count(0)
     expect(thread.locator(".chat-state.rejected")).to_have_count(1)
     page.wait_for_timeout(500)
     paid_buttons = thread.get_by_role("button", name=re.compile("^(Créer|Créer l’affiche|Refaire l’affiche|Réessayer)$"))
@@ -1055,7 +1123,8 @@ def walk_changes(browser, errors, session, data):
     expect(waits).to_have_count(0)
     before = page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/jobs").json()["items"]
     document = lambda: page.request.get(f"{smoke.ORIGIN}/api/creations/{other}").json()["document"]
-    chosen = document()["formats"]["feed"]["scene"]["visual_id"]
+    other_format = document()["primary_format"]
+    chosen = document()["formats"][other_format]["scene"]["visual_id"]
     drawn = [item for item in page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/visuals").json()["items"] if item["id"] == chosen][0]["headline"]
     assert drawn is None, drawn
     change, scenes = thread.get_by_role("button", name="Changer", exact=True), len(sent["scenes"])
@@ -1067,7 +1136,7 @@ def walk_changes(browser, errors, session, data):
             if document()["offer"][field] == value:
                 break
             page.wait_for_timeout(200)
-        assert document()["offer"][field] == value and document()["formats"]["feed"]["scene"]["visual_id"] == chosen
+        assert document()["offer"][field] == value and document()["formats"][other_format]["scene"]["visual_id"] == chosen
         assert page.request.get(f"{smoke.ORIGIN}/api/creations/{other}/jobs").json()["items"] == before and len(sent["scenes"]) == scenes, sent
     say(page, "titre Casque JBL Tune 520 Max")
     card = thread.locator(".bubble.bot").last
@@ -1210,7 +1279,9 @@ def walk_uploads(browser, errors, session, small, broken, animated):
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
     expect(notice).to_contain_text("Trois photos du produit et une image d’inspiration au plus.")
     looks_right(page, "fifth image refused", "chat-fifth-image-1366.png")
-    notice.get_by_role("button", name="Fermer").click()
+    # The notice can expire during screenshot capture. Clear it before testing the next refusal.
+    notice.get_by_role("button", name="Fermer").evaluate_all("buttons => buttons[0]?.click()")
+    expect(notice).to_have_count(0)
     pics.nth(1).locator(".pic-role").click()  # the inspiration as a fourth product photo
     expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
     expect(notice).to_be_visible()
@@ -1307,8 +1378,9 @@ def walk_layout(browser, errors, session, product):
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(smoke.ORIGIN + "/#creer")
         page.wait_for_url("**/#message")
-        expect(page.locator(".hello-q")).to_have_text("Quelle affiche créons-nous ?")
-        expect(page.locator(".hello")).to_contain_text("Quel produit, à quel prix ?")
+        expect(page.locator(".hello-q")).to_have_text("Quel produit vendez-vous ?")
+        expect(page.locator(".hello")).to_contain_text("Le format Publication est déjà choisi")
+        expect(page.get_by_role("button", name="Ajouter des photos").get_by_text("Photos", exact=True)).to_be_visible()
         return context, page
 
     def first_message(page, text):
@@ -1362,7 +1434,7 @@ def walk_layout(browser, errors, session, product):
     expect(page.get_by_role("log").get_by_role("button", name="Créer l’affiche")).to_be_visible()
     expect(page.locator(".hello")).to_have_count(0)
     expect(page.locator(".chat.welcome")).to_have_count(0)
-    expect(page.get_by_role("log").locator(".bubble.bot").first).to_contain_text("Quel produit, à quel prix ?")
+    expect(page.get_by_role("log").locator(".bubble.bot").first).to_contain_text("Ajoutez une photo du produit.")
     chat, composer = box(page, ".chat"), box(page, ".composer")
     assert abs(bottom(composer) - bottom(chat)) <= 1, ("imported recap", chat, composer)
     context.close()
@@ -1374,7 +1446,7 @@ def walk_layout(browser, errors, session, product):
     assert abs(bottom(composer) - bottom(chat)) <= 1, (chat, composer)
     assert tools["height"] < 2 * 44 and abs(send["x"] + send["width"] - tools["x"] - tools["width"]) <= 1 and send["y"] >= tools["y"], (tools, send)
     on_phone(page, "empty chat")
-    # The style strip scrolls sideways to its last style; « Ajouter des images » and « Envoyer » stay where they are.
+    # The style strip scrolls sideways to its last style; « Ajouter des photos » and « Envoyer » stay where they are.
     last = page.locator(".style-row .style-pill").last
     last.evaluate("e => e.scrollIntoView({ inline: 'end', block: 'nearest', behavior: 'instant' })")
     assert page.locator(".style-row").evaluate("e => e.scrollLeft > 0"), "the style strip did not scroll"
@@ -2133,12 +2205,12 @@ def walk_rest(browser, errors, product, inspiration):
     def new_poster(message, line, *files):
         """One message with its images to the first version. Returns the poster's id."""
         page.goto(f"{smoke.ORIGIN}/#message")
-        expect(thread).to_contain_text("Quel produit, à quel prix ?")
+        expect(thread).to_contain_text("Ajoutez une photo du produit.")
         page.locator(".composer input[type=file]").set_input_files(list(files))
         expect(page.locator(".tray .pic")).to_have_count(len(files))
         expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
         say(page, message)
-        expect(recap.locator(".recap small")).to_have_text([re.compile("^Style : "), line])  # the style's line, then this one
+        expect(recap.locator(".recap small")).to_have_text(["Publication 4:5", re.compile("^Style : "), line])
         assert "identity" not in bodies[-1]["draft"], bodies[-1]  # asked in this message: the draft sent is the old shape
         first_tap.click()
         page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
@@ -2288,6 +2360,7 @@ def walk_rest(browser, errors, product, inspiration):
     # turned on by it.
     page.goto(f"{smoke.ORIGIN}/#message")
     switch.get_by_role("button", name="Pas à pas").click()
+    page.locator(".intake details > summary").click()
     page.get_by_role("textbox", name="Nom de la boutique").fill("Original Phone Mada")
     page.get_by_label("Contact", exact=True).first.fill("034 12 345 67")
     page.locator("label.file-pick", has_text="Logo").locator("input[type=file]").set_input_files(product)
@@ -2304,6 +2377,7 @@ def walk_rest(browser, errors, product, inspiration):
     # poster): the recap says it, and the poster is made without them. The shop's name, ticked too, is not its matter.
     page.goto(f"{smoke.ORIGIN}/#message")
     switch.get_by_role("button", name="Pas à pas").click()
+    page.locator(".intake details > summary").click()
     for name in ("Logo", "Nom de la boutique", "Contact"):
         page.get_by_role("checkbox", name=name, exact=True).check()
     switch.get_by_role("button", name="Message").click()
@@ -2313,7 +2387,7 @@ def walk_rest(browser, errors, product, inspiration):
     assert get(f"creations/{plain}")["document"]["include"] == off
     # Asked in one message, the price corrected in the next: the draft carries the wish, and the new recap keeps its line.
     page.goto(f"{smoke.ORIGIN}/#message")
-    expect(thread).to_contain_text("Quel produit, à quel prix ?")
+    expect(thread).to_contain_text("Ajoutez une photo du produit.")
     page.locator(".composer input[type=file]").set_input_files(product)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
     say(page, f"Enceinte Bose Micro, 150 000 Ar, {with_identity}")
@@ -2443,7 +2517,30 @@ def walk_photo(browser, errors, product, other):
     assert after["revision"] == source["revision"] and after["document"] == source["document"]  # the poster left behind is unchanged
     # Nothing was read or paid for the copy, and its image is the editor's own « Générer ».
     assert len(reads) == read_before and len(sent["scenes"]) == scenes_before and not sent["refinements"], (reads[read_before:], sent)
-    expect(page.get_by_role("button", name="Générer l’affiche")).to_be_visible()
+    # The guided copy has no chat history or image. Its chat takes the seller back to the same offer.
+    page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Message").click()
+    page.wait_for_url(f"**/#message-{made}")
+    expect(page.locator(".hello-q")).to_have_text(title)
+    expect(thread).to_contain_text("pour créer la première image")
+    expect(first_tap).to_have_count(0)
+    thread.get_by_role("button", name="Vérifier l’offre").click()
+    page.wait_for_url(f"**/#{made}")
+    expect(page.get_by_role("region", name="Offre à générer")).to_contain_text(title)
+    assert len(reads) == read_before and len(sent["scenes"]) == scenes_before
+    generate = page.get_by_role("button", name="Générer l’affiche")
+    expect(generate).to_be_enabled()
+    generate.click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text(COST)
+    assert len(sent["scenes"]) == scenes_before
+    dialog.get_by_role("button", name="Annuler").click()
+    assert len(sent["scenes"]) == scenes_before
+    generate.click()
+    dialog.get_by_role("button", name="Lancer la génération").click()
+    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    assert len(sent["scenes"]) == scenes_before + 1 and sent["scenes"][-1][2].endswith(f"/{made}/scenes")
+    assert len(get(f"creations/{made}/visuals")["items"]) == 1
+    assert get(f"creations/{poster}")["revision"] == source["revision"]
     # Back on the poster's chat: its card is over, and no paid card was added.
     page.goto(f"{smoke.ORIGIN}/#message-{poster}")
     expect(thread).to_contain_text("La copie est créée : retrouvez-la dans Mes affiches. Cette affiche reste telle quelle.")
@@ -2497,7 +2594,7 @@ def run():
     Image.new("RGB", (64, 64), "red").save(animated, save_all=True, append_images=[Image.new("RGB", (64, 64), "blue")], duration=200)
     errors = []
     with tempfile.TemporaryDirectory(prefix="affiche-chat-") as data, tempfile.TemporaryDirectory(prefix="affiche-chat-fail-") as failing:
-        server = smoke.serve(data)
+        server = smoke.serve(data, formats_enabled="feed,square,story")
         with (OUT / "vite.log").open("w", encoding="utf-8") as log:
             vite = subprocess.Popen(["node", str(smoke.ROOT / "frontend/node_modules/vite/bin/vite.js"), "--host", "127.0.0.1"],
                                     cwd=smoke.ROOT / "frontend", stdout=log, stderr=log,

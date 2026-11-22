@@ -20,7 +20,8 @@ from playwright.sync_api import sync_playwright, expect
 import browser_smoke as smoke
 from affiche.api import BUNDLE, MESSAGES
 from affiche.posters import facebook
-from share_browser import READY, made_in_chat, sign_in
+from affiche.posters.facebook_connect import STUB_CODE
+from share_browser import READY, show_sharing, made_in_chat, sign_in
 from terms_browser import open_atelier, until
 
 OUT = smoke.ROOT / "outputs" / "publish-browser"
@@ -78,10 +79,11 @@ def confirmed(page, product, message, caption=None):
     page.evaluate("() => { location.hash = 'accueil' }")
     expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
     poster = made_in_chat(page, product, message)
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
+    page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     expect(page.get_by_role("heading", name=READY)).to_be_visible()
     panel = page.locator(".final-preview")
     if caption is not None:
+        show_sharing(panel)
         panel.get_by_label("Légende de la publication").fill(caption)
     panel.get_by_role("button", name="Fermer").click()
     found = page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}").json()
@@ -96,7 +98,7 @@ def walk(browser, data, product):
     errors, sent = [], []  # every POST /api/facebook/posts that leaves the browser: its key and its body
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("response", lambda r: print(f"HTTP {r.status} {r.request.method} {r.url}", flush=True) if r.status >= 400 and "/api/" in r.url else None)
-    page.on("request", lambda r: sent.append((r.headers.get("idempotency-key"), r.post_data_json))
+    context.on("request", lambda r: sent.append((r.headers.get("idempotency-key"), r.post_data_json))
             if r.method == "POST" and r.url.endswith("/api/facebook/posts") else None)
     heading = page.get_by_role("heading", name="Publier sur Facebook", exact=True)
     mine = page.get_by_role("region", name="Votre publication", exact=True)
@@ -123,14 +125,46 @@ def walk(browser, data, product):
     expect(mine).to_have_count(0)
     expect(grid).to_have_count(0)
     page.screenshot(path=str(OUT / "no-page-1366.png"), full_page=True)
-    page.get_by_role("link", name="Mon compte", exact=True).last.click()
-    page.wait_for_url(re.compile(r"#compte$"))
     card = page.get_by_role("region", name="Page Facebook", exact=True)
+
+    def connect_and_return(destination):
+        saved, requests = draft_of(page), len(sent)
+        page.get_by_role("link", name="Mon compte", exact=True).last.click()
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        expect(card.get_by_role("heading", name="Page Facebook", exact=True)).to_be_focused()
+        card.get_by_role("button", name="Connecter ma Page Facebook").click()
+        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        card.get_by_role("radio", name=PAGE_NAME).check()
+        card.get_by_role("button", name="Connecter cette Page").click()
+        expect(card).to_contain_text(f"Page connectée : {PAGE_NAME}")
+        card.get_by_role("link", name="Revenir à ma publication").click()
+        page.wait_for_url(smoke.ORIGIN + "/#" + destination)
+        expect(mine).to_be_visible()
+        current = draft_of(page)
+        if saved is None:
+            assert current is None or (current["items"] == [] and current["description"] == "" and current["post"] is None)
+        else:
+            assert current == saved
+        assert len(sent) == requests
+
+    # A browser refusing the OAuth return marker must show the ordinary route before the seller leaves.
+    page.get_by_role("link", name="Mon compte", exact=True).last.click()
+    page.evaluate("""() => {
+      const write = Storage.prototype.setItem;
+      window.restoreSessionWrites = () => { Storage.prototype.setItem = write };
+      Storage.prototype.setItem = function (name, value) {
+        if (this === sessionStorage) throw new DOMException('Session indisponible', 'SecurityError');
+        return write.call(this, name, value)
+      }
+    }""")
     card.get_by_role("button", name="Connecter ma Page Facebook").click()
-    page.wait_for_url(smoke.ORIGIN + "/#compte")
-    card.get_by_role("radio", name=PAGE_NAME).check()
-    card.get_by_role("button", name="Connecter cette Page").click()
-    expect(card).to_contain_text(f"Page connectée : {PAGE_NAME}")
+    expect(card.get_by_role("button", name="Continuer vers Facebook")).to_be_visible()
+    expect(card.get_by_role("status")).to_contain_text(re.compile("ouvrez « Publier( sur Facebook)? » depuis le menu"))
+    page.evaluate("() => window.restoreSessionWrites()")
+    card.get_by_role("link", name="Revenir à ma publication").click()
+    expect(page.get_by_text(NO_PAGE, exact=True)).to_be_visible()
+    assert not sent
+    connect_and_return("publier")
 
     # Three posters confirmed in the « Publication » format (the first with a caption), and a fourth changed since its
     # confirmation: counted among those left out, not offered.
@@ -139,22 +173,185 @@ def walk(browser, data, product):
     c, title_c = confirmed(page, product, "Casque JBL noir, 200 000 Ar")
     d, title_d = confirmed(page, product, "Casque Sennheiser noir, 500 000 Ar")
     address = f"{smoke.ORIGIN}/api/creations/{d}"
-    now = page.request.get(address).json()
-    changed = page.request.put(address, data=now["document"] | {"offer": now["document"]["offer"] | {"price_ar": 510000}},
-        headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "If-Match": f'"{now["revision"]}"', "Idempotency-Key": str(uuid4())})
-    assert changed.ok, changed.text()
+    def change_price(price):
+        current = page.request.get(address)
+        assert current.ok, current.text()
+        poster = current.json()
+        document = poster["document"]
+        changed = page.request.put(address, data=document | {"offer": document["offer"] | {"price_ar": price}},
+            headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "If-Match": f'"{poster["revision"]}"',
+                     "Idempotency-Key": str(uuid4())})
+        assert changed.ok, changed.text()
+        return document["input_id"]
+
+    source_input = change_price(510000)
     assert len({title_a, title_b, title_c, title_d}) == 4, (title_a, title_b, title_c, title_d)
     tile = lambda title: grid.locator(".tile", has_text=title)  # noqa: E731
     row = lambda title: mine.locator("ol.chosen > li", has_text=title)  # noqa: E731
 
+    smoke.go(page, "Publier")
+    omitted = grid.locator(".left-out")
+    summary = omitted.locator("summary")
+    expect(summary).to_have_text("Affiches à préparer (1)")
+    summary.click()
+    expect(omitted.locator("li", has_text=title_d)).to_be_visible()
+    grid.screenshot(path=str(OUT / "affiches-a-preparer-1366.png"))
+    smoke.go(page, "Accueil")
+
+    # Put the changed poster on the second real page. These drafts reuse its source and need no generation.
+    square_title = "Casque carré de démonstration"
+    for i in range(20):
+        square = i == 19
+        created = page.request.post(f"{smoke.ORIGIN}/api/creations", data={
+            "input_id": source_input, "offer": {"title": square_title if square else f"Casque test {i}", "price_ar": 100000},
+            "primary_format": "square" if square else "feed", "brand_selection": {"logo": False, "shop_name": False, "contact": False}},
+            headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE), "Idempotency-Key": str(uuid4())})
+        assert created.ok, created.text()
+        if square:
+            square_id = created.json()["id"]
+    calls = []
+    excluded_route = "**/api/facebook/posts/excluded*"
+
+    def fail_second_once(route):
+        calls.append(route.request.url)
+        if len(calls) == 2 and "before=" in route.request.url:
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route(excluded_route, fail_second_once)
     smoke.go(page, "Publier")
     expect(heading).to_be_visible()
     expect(page.locator(".shop-publish .titlerow .meta")).to_have_text(f"Sur la Page {PAGE_NAME}")
     for title in (title_a, title_b, title_c):
         expect(tile(title)).to_have_attribute("aria-pressed", "false")
     expect(tile(title_d)).to_have_count(0)
-    expect(grid.locator(".left-out")).to_contain_text("1 affiche n’est pas proposée :")
-    expect(grid.get_by_role("link", name="1 modifiée depuis sa vérification : vérifiez-la à nouveau")).to_have_attribute("href", "#affiches")
+    expect(summary).to_have_text("Affiches à préparer (21)")
+    assert not calls, calls
+    summary.click()
+    square_row = omitted.locator("li", has_text=square_title)
+    changed_row = omitted.locator("li", has_text=title_d)
+    expect(omitted.locator("li")).to_have_count(20)
+    expect(square_row.get_by_role("button", name=re.compile("Préparer au format Publication"))).to_be_visible()
+    expect(changed_row).to_have_count(0)
+    omitted.get_by_role("button", name="Voir plus").click()
+    expect(omitted.get_by_role("button", name="Réessayer")).to_be_visible()
+    expect(tile(title_a)).to_be_enabled()
+    expect(omitted.locator("li")).to_have_count(20)
+    omitted.get_by_role("button", name="Réessayer").click()
+    expect(omitted.locator("li")).to_have_count(21)
+    expect(changed_row).to_contain_text(re.compile("modifi", re.I))
+    assert len(calls) == 3 and calls[1] == calls[2] and "before=" in calls[2], calls
+    page.unroute(excluded_route)
+
+    # The batch survives either repair link, including its description and the order of the selected posters.
+    for title in (title_b, title_a):
+        tile(title).click()
+    old_draft = draft_of(page)
+    page.evaluate("""key => { const write = Storage.prototype.setItem
+      window.restoreBatchStorage = () => { Storage.prototype.setItem = write }
+      Storage.prototype.setItem = function (name, value) {
+        if (name === key) throw new DOMException('Plein pour l’essai.', 'QuotaExceededError')
+        return write.call(this, name, value) } }""", DRAFT_KEY)
+    field.fill("Deux casques en boutique")
+    changed_row.get_by_role("button", name="Vérifier l’affiche").click()
+    expect(page.get_by_role("alert").filter(has_text="Réessayez avant de quitter")).to_be_visible()
+    expect(field).to_have_value("Deux casques en boutique")
+    assert page.url.endswith("#publier") and draft_of(page) == old_draft
+    page.evaluate("() => window.restoreBatchStorage()")
+    field.fill("Deux casques disponibles en boutique")
+    kept = draft_of(page)
+    for candidate, action, poster in ((changed_row, "Vérifier l’affiche", d), (square_row, "Préparer au format Publication", square_id)):
+        candidate.get_by_role("button", name=re.compile(action)).click()
+        page.wait_for_url(smoke.ORIGIN + "/#" + poster)
+        expect(heading).to_have_count(0)
+        target = "textes" if poster == d else "style"
+        expect(page.locator("#onglet-" + target)).to_have_attribute("aria-selected", "true")
+        expect(page.get_by_role("button", name=re.compile("ajouter à ma publication$", re.I))).to_have_count(0)
+        page.get_by_role("button", name="Revenir à ma publication", exact=True).click()
+        page.wait_for_url(smoke.ORIGIN + "/#publier")
+        expect(field).to_have_value("Deux casques disponibles en boutique")
+        assert draft_of(page) == kept and not sent
+        if poster == d:
+            summary.click()
+    add = page.get_by_role("button", name=re.compile(r"^(Ajouter|Confirmer et ajouter) à ma publication$"))
+    outcome = page.locator("#retour-ajout")
+
+    def repair_current_file(*, download_first=False):
+        # Match the price already drawn in the scene. A new revision still needs its own confirmed PNG.
+        change_price(510000)
+        change_price(500000)
+        page.reload()
+        summary.click()
+        omitted.get_by_role("button", name="Voir plus").click()
+        changed_row.get_by_role("button", name="Vérifier l’affiche").click()
+        page.wait_for_url(smoke.ORIGIN + "/#" + d)
+        page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+        expect(page.locator(".final-preview").get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
+        if download_first:
+            smoke.download_review(page)
+        expect(add).to_be_enabled()
+
+    # While the repaired file is open, another tab changes the description and order.
+    repair_current_file()
+    other = context.new_page()
+    open_atelier(other, "/#publier")
+    other_mine = other.get_by_role("region", name="Votre publication", exact=True)
+    other_mine.get_by_label("Description de la publication").fill("Ordre choisi dans le second onglet")
+    other_mine.get_by_role("button", name=f"Déplacer {title_a}", exact=True).press("ArrowUp")
+    kept = draft_of(other)
+    assert kept["items"] == [a, b]
+    other.close()
+    # Re-read the actual cap at the time of the add. Failed add leaves every stored field intact.
+    with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+        store.execute("UPDATE shop_profile SET post_image_limit=2 WHERE id=1")
+    add.click()
+    expect(outcome).to_contain_text("La limite d’images est atteinte.")
+    expect(field).to_have_value("Ordre choisi dans le second onglet")
+    assert draft_of(page) == kept and not sent
+    with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+        store.execute("UPDATE shop_profile SET post_image_limit=NULL WHERE id=1")
+    page.get_by_role("button", name="Réessayer l’ajout").click()
+    expect(row(title_d)).to_be_visible()
+    assert draft_of(page)["items"] == [a, b, d] and not sent
+    row(title_d).get_by_role("button", name=f"Retirer « {title_d} »").click()
+
+    # A downloaded file can already be added by a second tab. Preserve its position and stamp.
+    repair_current_file(download_first=True)
+    other = context.new_page()
+    open_atelier(other, "/#publier")
+    other.locator(".tile", has_text=title_d).click()
+    other.get_by_role("button", name=f"Déplacer {title_d}", exact=True).press("ArrowUp")
+    kept = draft_of(other)
+    assert kept["items"] == [a, d, b]
+    other.close()
+    add.click()
+    expect(outcome).to_contain_text("Cette affiche est déjà dans votre publication.")
+    assert draft_of(page) == kept and not sent
+    row(title_d).get_by_role("button", name=f"Retirer « {title_d} »").click()
+
+    # A saved offer changed after the file was checked. The current candidate read refuses that file.
+    repair_current_file(download_first=True)
+    kept = draft_of(page)
+    change_price(510000)
+    add.click()
+    expect(outcome).to_contain_text("Cette affiche ne peut plus être ajoutée.")
+    assert draft_of(page) == kept and not sent
+
+    # Reload while the candidate read is interrupted. The explicit add tap never survives that reload.
+    repair_current_file()
+    pending = []
+    candidates = re.compile(r"/api/facebook/posts/candidates(?:\?|$)")
+    page.route(candidates, lambda route: pending.append(route))
+    add.click()
+    until(page, lambda: pending)
+    assert draft_of(page) == kept and not sent
+    page.once("framenavigated", lambda frame: page.unroute(candidates))
+    page.reload(wait_until="domcontentloaded")
+    expect(tile(title_d)).to_have_attribute("aria-pressed", "false")
+    assert draft_of(page) == kept and not sent
+    change_price(510000)
+    mine.get_by_role("button", name="Vider", exact=True).click()
     expect(publish).to_be_disabled()
     expect(mine.get_by_text("Choisissez au moins une affiche.")).to_be_visible()
     expect(mine.get_by_text("2 000 caractères au plus. Les retours à la ligne et les émojis sont gardés. Les caractères de contrôle sont refusés, sauf les retours à la ligne et les tabulations.")).to_be_visible()
@@ -190,60 +387,13 @@ def walk(browser, data, product):
     stamp = draft_of(page)["stamp"]
     handle(title_b).click()  # a tap moves nothing
     assert draft_of(page)["stamp"] == stamp
-    row(title_c).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")  # away from the edges
-    box, top = handle(title_b).bounding_box(), row(title_c).bounding_box()["y"]
-    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-    page.mouse.move(x, y)
-    page.mouse.down()
-    for step in range(1, 11):
-        page.mouse.move(x, y + (top + 5 - y) * step / 10)
-    expect(mine.locator("ol.chosen")).to_have_class(re.compile(r"\bsliding\b"))
-    expect(row(title_b).locator(".number")).to_have_text("1")
-    expect(row(title_b)).to_contain_text("En tête")
-    expect(row(title_c).locator(".number")).to_have_text("2")
-    expect(tile(title_b).locator(".number")).to_have_text("1")  # the grid's numbers are the list's, during the drag too
-    expect(tile(title_c).locator(".number")).to_have_text("2")
-    assert draft_of(page)["items"] == [c, a, b]  # nothing stored before the drop
-    page.wait_for_timeout(400)  # the others have made room
-    boxes = [box for box in (mine.locator("ol.chosen > li").nth(i).bounding_box() for i in range(3))]
-    # The two others have made room under the dragged one's new place, one row apart; it follows the pointer above them.
-    assert abs(boxes[1]["y"] - boxes[0]["y"] - boxes[0]["height"]) <= 1 and boxes[2]["y"] < boxes[0]["y"], boxes
-    page.screenshot(path=str(OUT / "mid-drag-1366.png"))
-    page.mouse.up()
-    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
-    for number, title in enumerate([title_b, title_c, title_a], 1):
-        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
-        expect(mine.locator("ol.chosen > li").nth(number - 1).locator(".number")).to_have_text(str(number))
-    expect(row(title_b)).to_contain_text("En tête")
-    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] != stamp
-    # A drag ended by Escape leaves the order as it was, and stores nothing.
-    stamp = draft_of(page)["stamp"]
-    box = handle(title_c).bounding_box()
-    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-    page.mouse.move(x, y)
-    page.mouse.down()
-    for step in range(1, 8):
-        page.mouse.move(x, y + 25 * step)
-    expect(row(title_c).locator(".number")).to_have_text("3")
-    page.keyboard.press("Escape")
-    page.mouse.up()
-    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
-    expect(row(title_c).locator(".number")).to_have_text("2")
-    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] == stamp
-    # With the handle focused, the up arrow moves the poster one place; the focus stays on its handle, and the place is said.
-    handle(title_a).focus()
-    page.keyboard.press("ArrowUp")
-    expect(handle(title_a)).to_be_focused()
-    expect(mine.locator("p.visually-hidden[role=status]")).to_have_text(f"{title_a} : place 2 sur 3.")
-    order = [title_b, title_a, title_c]
-    for number, title in enumerate(order, 1):
-        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
     sliding = re.compile(r"\bsliding\b")
 
     def hold_drag(title, to_top_of=None, by=0, steps=10):
         """The mouse down on that poster's handle and moved, to just under the top of another row or by `by` pixels; held."""
         # Aimed only once the page has stopped moving under the pointer (a sheet that closes gives the focus back, which
         # may scroll after the test's own scroll): two reads in a row on the same point, and that point on this handle.
+        handle(title).scroll_into_view_if_needed()
         aim, steady = None, 0
         for _ in range(100):
             box = handle(title).bounding_box()
@@ -264,6 +414,43 @@ def walk(browser, data, product):
         expect(mine.locator("ol.chosen")).to_have_class(sliding)
         expect(row(title)).to_have_class(re.compile(r"\blifted\b"))  # this poster's, not a neighbour's
 
+    row(title_c).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")  # away from the edges
+    hold_drag(title_b, to_top_of=title_c)
+    expect(row(title_b).locator(".number")).to_have_text("1")
+    expect(row(title_b)).to_contain_text("En tête")
+    expect(row(title_c).locator(".number")).to_have_text("2")
+    expect(tile(title_b).locator(".number")).to_have_text("1")  # the grid's numbers are the list's, during the drag too
+    expect(tile(title_c).locator(".number")).to_have_text("2")
+    assert draft_of(page)["items"] == [c, a, b]  # nothing stored before the drop
+    page.wait_for_timeout(400)  # the others have made room
+    boxes = [box for box in (mine.locator("ol.chosen > li").nth(i).bounding_box() for i in range(3))]
+    # The two others have made room under the dragged one's new place, one row apart; it follows the pointer above them.
+    assert abs(boxes[1]["y"] - boxes[0]["y"] - boxes[0]["height"]) <= 1 and boxes[2]["y"] < boxes[0]["y"], boxes
+    page.screenshot(path=str(OUT / "mid-drag-1366.png"))
+    page.mouse.up()
+    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
+    for number, title in enumerate([title_b, title_c, title_a], 1):
+        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
+        expect(mine.locator("ol.chosen > li").nth(number - 1).locator(".number")).to_have_text(str(number))
+    expect(row(title_b)).to_contain_text("En tête")
+    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] != stamp
+    # A drag ended by Escape leaves the order as it was, and stores nothing.
+    stamp = draft_of(page)["stamp"]
+    hold_drag(title_c, by=175, steps=7)
+    expect(row(title_c).locator(".number")).to_have_text("3")
+    page.keyboard.press("Escape")
+    page.mouse.up()
+    expect(mine.locator("ol.chosen")).not_to_have_class(re.compile(r"\bsliding\b"))
+    expect(row(title_c).locator(".number")).to_have_text("2")
+    assert draft_of(page)["items"] == [b, c, a] and draft_of(page)["stamp"] == stamp
+    # With the handle focused, the up arrow moves the poster one place; the focus stays on its handle, and the place is said.
+    handle(title_a).focus()
+    page.keyboard.press("ArrowUp")
+    expect(handle(title_a)).to_be_focused()
+    expect(mine.locator("p.visually-hidden[role=status]")).to_have_text(f"{title_a} : place 2 sur 3.")
+    order = [title_b, title_a, title_c]
+    for number, title in enumerate(order, 1):
+        expect(mine.locator("ol.chosen > li").nth(number - 1)).to_contain_text(title)
     # The sheet opened by the keyboard (Tab, Enter) while a drag is held: the drag is put back, never committed; the sheet
     # shows the order as stored; the release changes nothing (the first post below sends that order).
     row(title_b).evaluate("e => scrollBy({ top: e.getBoundingClientRect().top - 220, behavior: 'instant' })")
@@ -564,14 +751,22 @@ def walk(browser, data, product):
     until(page, lambda: draft_of(page)["stamp"] != stamp)  # not on the Page: the draft stays, a new try
     assert draft_of(page)["post"] is None and len(draft_of(page)["items"]) == 2
     page.screenshot(path=str(OUT / "unknown-no-page-1366.png"), full_page=True)
+    # Denied consent returns to the disconnected batch with its description, order and send key intact.
+    kept, sends_before_denial = draft_of(page), len(sent)
     page.get_by_role("link", name="Mon compte", exact=True).last.click()
+    def deny_consent(route):
+        answer = route.fetch()
+        route.fulfill(response=answer, json={"url": answer.json()["url"].replace(f"code={STUB_CODE}", "error=access_denied")})
+    page.route("**/api/facebook/connect", deny_consent, times=1)
     card.get_by_role("button", name="Connecter ma Page Facebook").click()
-    page.wait_for_url(smoke.ORIGIN + "/#compte")
-    card.get_by_role("radio", name=PAGE_NAME).check()
-    card.get_by_role("button", name="Connecter cette Page").click()
-    expect(card).to_contain_text(f"Page connectée : {PAGE_NAME}")
-    smoke.go(page, "Publier")
+    expect(card.get_by_role("alert")).to_have_text("Connexion annulée.")
+    card.get_by_role("link", name="Revenir à ma publication").click()
+    page.wait_for_url(smoke.ORIGIN + "/#publier")
+    expect(page.get_by_text(NO_PAGE, exact=True)).to_be_visible()
+    assert draft_of(page) == kept and len(sent) == sends_before_denial
+    connect_and_return("publier")
     expect(mine.locator("ol.chosen > li")).to_have_count(2)
+    expect(field).to_have_value("Inconnu [stub:unknown]")
     expect(publish).to_be_enabled()
     publish.click()
     confirm.click()
@@ -594,6 +789,38 @@ def walk(browser, data, product):
     expect(mine.get_by_text("Votre publication en préparation (1 affiche) est gardée.")).to_be_visible()
     field.fill("Légende reprise ici")
     assert page.evaluate("key => localStorage.getItem(key)", f"affiche.shop1.caption.{a}") == "Légende reprise ici"
+    disconnected = page.request.delete(smoke.ORIGIN + "/api/facebook/page",
+        headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(BUNDLE)})
+    assert disconnected.ok, disconnected.text()
+    page.reload()
+    expect(page.get_by_text(NO_PAGE, exact=True)).to_be_visible()
+    caption_key = f"affiche.shop1.caption.{a}"
+    page.evaluate("""key => {
+      const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
+      window.restoreCaptionStorage = () => { Storage.prototype.setItem = set; Storage.prototype.removeItem = remove };
+      Storage.prototype.setItem = function (name, value) {
+        if (name === key) throw new DOMException('Écriture refusée', 'SecurityError');
+        return set.call(this, name, value)
+      };
+      Storage.prototype.removeItem = function (name) {
+        if (name === key) throw new DOMException('Suppression refusée', 'SecurityError');
+        return remove.call(this, name)
+      }
+    }""", caption_key)
+    account_link = page.get_by_role("link", name="Mon compte", exact=True).last
+    account_link.click()
+    retained_caption = page.get_by_label("Légende de l’affiche")
+    expect(retained_caption).to_have_value("Légende reprise ici")
+    retained_caption.fill("")
+    account_link.click()
+    expect(page.get_by_role("alert").filter(has_text="Copiez votre légende")).to_be_visible()
+    assert page.url.endswith(f"#publier-{a}")
+    assert page.evaluate("key => localStorage.getItem(key)", caption_key) == "Légende reprise ici"
+    page.evaluate("() => window.restoreCaptionStorage()")
+    retained_caption.fill("Légende reprise ici")
+    connect_and_return(f"publier-{a}")
+    expect(field).to_have_value("Légende reprise ici")
+    assert draft_of(page) == kept_draft
     page.screenshot(path=str(OUT / "one-poster-1366.png"), full_page=True)
     last = page.request.get(f"{smoke.ORIGIN}/api/facebook/posts/candidates?ids={a}").json()["items"][0]["last"]
     confirmation = page.request.get(f"{smoke.ORIGIN}/api/creations/{a}").json()["confirmation"]["id"]
@@ -636,6 +863,11 @@ def walk(browser, data, product):
     expect(field).to_have_count(0)
     mine.get_by_role("button", name="Ouvrir l’affiche").click()
     page.wait_for_url(re.compile(rf"#(message-)?{d}$"))
+    mark = len(sent)
+    page.get_by_role("button", name="Revenir à ma publication", exact=True).click()
+    page.wait_for_url(smoke.ORIGIN + f"/#publier-{d}")
+    expect(mine.get_by_text("Cette affiche a été modifiée depuis sa vérification : vérifiez-la à nouveau pour la publier.")).to_be_visible()
+    assert draft_of(page) == kept_draft and len(sent) == mark
 
     # A draft that cannot be read is never an empty one: said, with « Réessayer » and, damaged, « Vider »; nothing is
     # removed or written over, nothing is sent.
@@ -744,10 +976,13 @@ def walk(browser, data, product):
     page.set_viewport_size({"width": 360, "height": 640})
     smoke.go(page, "Mes affiches")
     expect(page.get_by_role("heading", name="Mes affiches", exact=True)).to_be_visible()
-    expect(page.locator("nav.phone-bar a")).to_have_count(5)
+    phone_nav = page.locator("nav.phone-bar")
+    expect(phone_nav.get_by_role("link")).to_have_count(5)
+    expect(phone_nav.get_by_role("link", name="Publier", exact=True)).to_be_visible()
+    expect(phone_nav.get_by_role("link", name="Styles")).to_have_count(0)
     page.wait_for_function(smoke.SETTLED, polling=100)
     page.screenshot(path=str(OUT / "mes-affiches-360.png"))
-    page.get_by_role("link", name="Publier sur Facebook").click()
+    phone_nav.get_by_role("link", name="Publier", exact=True).click()
     page.wait_for_url(re.compile(r"#publier$"))
     expect(heading).to_be_visible()
     look(360)
@@ -774,9 +1009,10 @@ def walk(browser, data, product):
     assert not re.search(r"facebook|stub:|post_id|100000000000001|Page d’essai", json.dumps(session, ensure_ascii=False), re.I), session
     assert not errors, errors
     context.close()
+    return square_id
 
 
-def walk_touch(browser):
+def walk_touch(browser, square_id):
     """Sliding with a finger (T-FB-014) on a 360 px phone: touches sent through Chromium's own input (CDP
     Input.dispatchTouchEvent), so the page receives pointer events of type touch and the browser applies touch-action.
     A drag on the handle moves the poster; a swipe on the row outside it scrolls the page and moves nothing."""
@@ -837,6 +1073,45 @@ def walk_touch(browser):
     rows.nth(0).scroll_into_view_if_needed()
     smoke.check_contrast(page, "the draft with its handles, 360")
     mine.screenshot(path=str(OUT / "list-360.png"))
+    # A square that has its own first generation keeps its format. Repair from the single composer creates a new
+    # feed poster, whose confirmed file is chosen explicitly. The phone's current two-image draft survives.
+    sends = []
+    page.on("request", lambda request: sends.append(request.url)
+            if request.method == "POST" and request.url.endswith("/api/facebook/posts") else None)
+    page.evaluate("id => { location.hash = 'publier-' + id }", square_id)
+    mine.get_by_role("button", name="Ouvrir l’affiche").click()
+    page.wait_for_url(smoke.ORIGIN + "/#" + square_id)
+    remake = page.get_by_role("button", name="Refaire en Publication")
+
+    def generate_visual():
+        page.get_by_role("button", name="Générer l’affiche", exact=True).click()
+        page.get_by_role("button", name="Lancer la génération", exact=True).click()
+        expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=30000)
+
+    expect(page.locator("#onglet-style")).to_have_attribute("aria-selected", "true")
+    source_url = smoke.ORIGIN + "/api/creations/" + square_id
+    if not page.request.get(source_url + "/visuals").json()["items"]:
+        generate_visual()
+        page.locator(".final-preview").get_by_role("button", name="Corriger l’affiche").click()
+        page.locator("#onglet-style").click()
+    original = page.request.get(source_url).json()
+    assert original["document"]["primary_format"] == "square"
+    with page.expect_response(lambda response: response.url == source_url + "/copies" and response.request.method == "POST") as copied:
+        remake.click()
+    assert copied.value.ok, copied.value.text()
+    copy_id = copied.value.json()["id"]
+    assert copy_id != square_id
+    page.wait_for_url(smoke.ORIGIN + "/#" + copy_id)
+    generate_visual()
+    preview = page.locator(".final-preview")
+    expect(preview).to_contain_text("Copie au format Publication")
+    expect(preview.get_by_role("button", name=re.compile("ajouter à ma publication$", re.I))).to_have_count(0)
+    preview.get_by_role("button", name="Confirmer et utiliser cette copie").tap()
+    page.wait_for_url(smoke.ORIGIN + "/#publier-" + copy_id)
+    expect(mine.get_by_role("figure")).to_be_visible()
+    assert page.request.get(source_url).json()["document"] == original["document"]
+    assert page.request.get(smoke.ORIGIN + "/api/creations/" + copy_id).json()["confirmation"]["format"] == "feed"
+    assert draft_of(page) == moved and not sends
     assert not errors, errors
     context.close()
 
@@ -861,9 +1136,9 @@ def run():
                         walk_off(browser)
                         # The page exists only with the feature on: a server of its own, on the stand-in.
                         smoke.stop(*server)
-                        server = smoke.serve(Path(data), facebook_provider="stub")
-                        walk(browser, data, product)
-                        walk_touch(browser)
+                        server = smoke.serve(Path(data), facebook_provider="stub", formats_enabled="feed,square")
+                        square_id = walk(browser, data, product)
+                        walk_touch(browser, square_id)
                     finally:
                         browser.close()
             finally:
@@ -876,7 +1151,8 @@ def run():
                 smoke.stop(*server)
     print("Publish browser checks passed (stub only): with the feature off no way in and #publier falls back to Accueil; "
           "on the stand-in the page from the desktop navigation, « Mes affiches » and Accueil on a 360 px phone; no Page: "
-          "said, with « Mon compte » and the posts; three posters chosen and reordered (numbers, « En tête »), a refused "
+          "said, with « Mon compte » and the posts; batch and single Page connection returns; repair without adding, "
+          "a confirmed file added to the latest draft, duplicate/cap/stale/reload and storage refusals; three posters chosen and reordered (numbers, « En tête »), a refused "
           "character said, a caption taken as the description, the draft kept through a reload; the sheet's Page, strip "
           "in order, description, a thumbnail failed then « Réessayer », what is already on the Page and « Publier à nouveau »; "
           "published in the order sent with the draft's stamp as the key, then the draft forgotten; an image refused names it, "

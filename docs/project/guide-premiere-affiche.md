@@ -1,0 +1,21 @@
+# Votre première affiche avec Doka Studio
+
+Préparez une photo nette du produit que vous vendez, son nom, sa variante et son prix exact en ariary. Vous pouvez terminer sur votre téléphone ou sur ordinateur.
+
+Pour suivre ces étapes dans l’atelier, ouvrez « Aide » dans le menu. Si vous commencez votre première affiche, vous pouvez aussi choisir « Ma première affiche » sur Accueil. « Fermer » vous ramène à votre travail.
+
+1. **Présentez le produit.** Depuis « Accueil », choisissez « Créer une affiche ». Dans « Message », joignez votre photo et écrivez le nom, la variante et le prix. Indiquez uniquement les caractéristiques que vous avez vérifiées. Si vous ajoutez une image pour son style, identifiez-la comme inspiration. Touchez « Envoyer ». Vous préférez remplir un formulaire ? Ouvrez « Pas à pas ». Le format « Publication » est déjà choisi pour une nouvelle affiche. Gardez-le pour Facebook ou pour télécharger le PNG.
+2. **Relisez l’offre avant de générer.** Vérifiez la photo, le nom, le prix, les textes et le style dans le récapitulatif. Corrigez une erreur avant de continuer. Lisez les conditions si l’atelier vous les présente, puis vérifiez le coût indiqué. Dans « Message », choisissez « Créer l’affiche ». Dans « Pas à pas », relisez « Offre à générer ». Ouvrez « Textes » ou « Boutique » si vous souhaitez modifier ces réglages, puis choisissez « Générer l’affiche ». Si la génération est en cours, attendez son résultat. Vous retrouverez l’affiche dans « Mes affiches ».
+3. **Vérifiez l’affiche terminée.** Comparez le PNG à la photo du produit. Vérifiez la forme, la couleur et les accessoires. Agrandissez l’image pour lire le prix, les textes et les coordonnées. Pour modifier votre composition, choisissez « Corriger l’affiche ». Si le produit lui-même est incorrect, signalez ce qui doit changer. Vérifiez le nouvel aperçu après chaque modification.
+4. **Confirmez l’affiche depuis l’aperçu.**
+   - **La garder pour plus tard.** Choisissez « Confirmer pour plus tard ». Le PNG confirmé vous attend dans « Mes affiches ».
+   - **Enregistrer l’image.** Touchez « Confirmer et télécharger le PNG ». Retrouvez-le dans « Mes affiches » pour le télécharger à nouveau.
+   - **Publier sur votre Page Facebook.** Pour une affiche au format « Publication », choisissez « Confirmer et préparer la publication » depuis l’aperçu, ou « Publier sur ma Page » si le PNG est déjà validé. Relisez la description, touchez « Publier… », vérifiez le nom de la Page et les images, puis touchez « Publier ». Après confirmation de l’envoi, ouvrez « Voir la publication » si le lien est disponible.
+   - **Publier plusieurs affiches ensemble.** Ouvrez « Publier » dans la navigation. Ajoutez une description si vous le souhaitez. Choisissez les affiches confirmées, puis déplacez-les par leur poignée pour changer l’ordre. La première image est indiquée « En tête ». Vérifiez la publication et sa destination avant de l’envoyer.
+   - **Envoyer dans une autre application.** Ouvrez « Partager dans une autre application » pour préparer votre légende. Sur un téléphone compatible, touchez « Partager ». Choisissez l’application puis collez la légende si elle a été copiée. Si le partage échoue, téléchargez le PNG.
+
+## Si vous êtes bloqué
+
+- **Aucune Page connectée.** Dans « Mon compte », ouvrez « Page Facebook », puis « Connecter ma Page Facebook ». Autorisez la Page de votre boutique, sélectionnez-la et choisissez « Connecter cette Page ». Revenez à « Publier ».
+- **L’affiche est approuvée mais absente de « Publier ».** Ouvrez-la dans « Mes affiches ». Ouvrez l’aperçu actuel au format « Publication », puis préparez la publication. Si le prix est dessiné dans l’image, un changement de prix demande une nouvelle génération et une nouvelle vérification.
+- **Vous reprenez après une interruption.** Si une version attend votre avis, « Vérifier l’affiche » sur Accueil rouvre la comparaison avec la photo du produit. Pour retrouver un PNG déjà confirmé, ouvrez « Mes affiches », puis « Ouvrir le fichier » sur la ligne du produit. Si le résultat d’une publication est inconnu, regardez d’abord votre Page Facebook et indiquez ce que vous voyez dans « Publications » avant d’envisager un nouvel envoi.

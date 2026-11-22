@@ -5,6 +5,7 @@ import io
 import pytest
 from PIL import Image
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from affiche import assets
 from affiche.db import utc_now, write_tx
@@ -31,9 +32,10 @@ def creation(engine, settings, input_id):
         return store.get_creation(conn, 1, original["id"])
 
 
-def render(engine, settings, creation):
-    request = exports.request_render(engine, settings, 1, key(), creation["id"], creation["revision"], exports.RenderRequest())[1]
-    repeated = exports.request_render(engine, settings, 1, key(), creation["id"], creation["revision"], exports.RenderRequest())[1]
+def render(engine, settings, creation, review_visual_id=None):
+    body = exports.RenderRequest(review_visual_id=review_visual_id)
+    request = exports.request_render(engine, settings, 1, key(), creation["id"], creation["revision"], body)[1]
+    repeated = exports.request_render(engine, settings, 1, key(), creation["id"], creation["revision"], body)[1]
     assert request == repeated
     job = jobs.claim(engine, ("render",))
     service = PosterService(engine, settings)
@@ -47,6 +49,92 @@ def confirm_request(render):
     return exports.ConfirmRequest(render_id=render["id"], png_sha256=render["png_sha256"],
         checks={check: True for check in ("framing", "content", "identity", "readability")},
         acknowledged_warning_ids=[warning["id"] for warning in render["warnings"]])
+
+
+@pytest.fixture
+def pending(engine, settings, input_id):
+    original = draft(engine, settings.data_dir, input_id)
+    visuals.request_scene(engine, settings, 1, key(), original["id"], original["revision"], visuals.SceneRequest(
+        plan_id=fixed(engine, settings, original)["id"], acknowledged_warnings=["low_resolution"], headline=Headline(price=True)))
+    visual = execute(engine, settings)
+    with engine.connect() as conn:
+        return store.get_creation(conn, 1, original["id"]), visual
+
+
+def test_one_review_confirms_exact_pending_image_and_file_together(engine, settings, pending):
+    poster, visual = pending
+    id, revision = poster["id"], poster["revision"]
+    with pytest.raises(store.Refused, match="scene_unapproved"):
+        exports.request_render(engine, settings, 1, key(), id, revision, exports.RenderRequest())
+    with pytest.raises(store.Refused, match="preview_stale"):
+        exports.request_render(engine, settings, 1, key(), id, revision, exports.RenderRequest(review_visual_id=key()))
+    preview = render(engine, settings, poster, visual)
+    assert preview["download_url"] is None
+    with pytest.raises(store.Refused, match="scene_unapproved"):
+        exports.confirm(engine, settings, 1, key(), id, revision, confirm_request(preview))
+    request = confirm_request(preview)
+    request.review_visual_id = visual
+    request.fidelity_checks = {check: True for check in visuals.CHECKS | {"text_title", "text_price"}}
+    for changes, error in [
+        ({"fidelity_checks": {check: True for check in visuals.CHECKS}}, "fidelity_incomplete"),
+        ({"fidelity_checks": request.fidelity_checks | {"text_price": False}}, "fidelity_incomplete"),
+        ({"review_visual_id": key()}, "preview_stale"),
+        ({"acknowledged_warning_ids": ["incorrect-warning"]}, "confirmation_incomplete"),
+        ({"png_sha256": "0"*64}, "preview_stale"),
+    ]:
+        with pytest.raises(store.Refused, match=error):
+            exports.confirm(engine, settings, 1, key(), id, revision, request.model_copy(update=changes))
+
+    # Simulate failure after the scene decision, inside the same write transaction.
+    with write_tx(engine) as conn:
+        conn.execute(text("CREATE TRIGGER fail_confirmation BEFORE INSERT ON confirmations "
+                          "BEGIN SELECT RAISE(ABORT, 'failed insert'); END"))
+    with pytest.raises(IntegrityError, match="failed insert"):
+        exports.confirm(engine, settings, 1, key(), id, revision, request)
+    with write_tx(engine) as conn:
+        assert visuals.get_visual(conn, 1, visual)["status"] == "pending_review"
+        assert exports.current_confirmation(conn, 1, id, "feed") is None
+        conn.execute(text("DROP TRIGGER fail_confirmation"))
+
+    mutation_key = key()
+    result = exports.confirm(engine, settings, 1, mutation_key, id, revision, request)
+    assert exports.confirm(engine, settings, 1, mutation_key, id, revision, request) == result
+    assert exports.confirm(engine, settings, 1, key(), id, revision, request) == result
+    with engine.connect() as conn:
+        saved = visuals.get_visual(conn, 1, visual)
+        assert saved["status"] == "approved" and saved["checks"] == request.fidelity_checks
+        assert exports.download(conn, settings, 1, result[1]["confirmation_id"])[1] == exports.read_png(
+            settings, exports.render_row(conn, 1, preview["id"]))
+        assert conn.execute(text("SELECT COUNT(*) FROM confirmations")).scalar_one() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM poster_calls")).scalar_one() == 1
+
+
+def test_rejected_or_changed_preview_cannot_approve_a_scene(engine, settings, pending):
+    poster, visual = pending
+    preview = render(engine, settings, poster, visual)
+    request = confirm_request(preview)
+    request.review_visual_id = visual
+    request.fidelity_checks = {check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS}
+    changed = save_price(engine, settings, poster, 1000)
+    with pytest.raises(store.Refused, match="revision_conflict"):
+        exports.confirm(engine, settings, 1, key(), poster["id"], poster["revision"], request)
+    with pytest.raises(store.Refused, match="preview_stale"):
+        exports.confirm(engine, settings, 1, key(), poster["id"], changed["revision"], request)
+    with pytest.raises(store.Refused, match="price_stale"):
+        exports.request_render(engine, settings, 1, key(), poster["id"], changed["revision"],
+                               exports.RenderRequest(review_visual_id=visual))
+    restored = save_price(engine, settings, changed, poster["document"]["offer"]["price_ar"])
+    fresh = render(engine, settings, restored, visual)
+    current_request = request.model_copy(update={"render_id": fresh["id"], "png_sha256": fresh["png_sha256"]})
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="reject", reasons=["coloris"]))
+    with pytest.raises(store.Refused, match="scene_unapproved"):
+        exports.confirm(engine, settings, 1, key(), poster["id"], restored["revision"], current_request)
+    with pytest.raises(store.Refused, match="scene_unapproved"):
+        exports.request_render(engine, settings, 1, key(), poster["id"], restored["revision"],
+                               exports.RenderRequest(review_visual_id=visual))
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, visual)["status"] == "rejected"
+        assert exports.current_confirmation(conn, 1, poster["id"], "feed") is None
 
 
 def test_confirmed_bytes_survive_edits_and_corruption_is_explicit(engine, settings, creation):

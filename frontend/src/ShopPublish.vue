@@ -5,16 +5,17 @@ import { captionFault, readCaption } from './share'
 import { retryDelay } from './generation'
 import {
   aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe, dropIndex, emptyDraft, faultLine, inFlight, isCandidate,
-  keptForSending, leftOutLines, limitLine, LOST, move, moveTo, placeLine, postLine, posterCount, reorder, SLACK, publishAction, readStored, refusalOf, remove,
-  requestOf, seenOf, takenOut, toggle, whyNot, without, type Candidate, type Candidates, type Draft, type Item, type LeftOut,
+  keptForSending, limitLine, LOST, move, moveTo, placeLine, postLine, posterCount, reorder, SLACK, publishAction, readStored, refusalOf, remove,
+  requestOf, seenOf, takenOut, toggle, whyNot, without, type Candidate, type Candidates, type Draft, type ExcludedPoster, type Item, type LeftOut,
   type Page, type Post, type PostBody,
 } from './publish'
 
 // « Publier sur Facebook » (D-FB-POST-005): `#publier`, the draft of a post of one or several posters, or with `poster`
 // (`#publier-<id>`) the page for that poster alone, whose description is its caption. What it keeps on the device is the
 // draft (`post-draft`), whose stamp is the request's key, and for one poster its caption: nothing else.
-const props = defineProps<{ poster: string | null; terms: Terms | null; handed?: { poster: string; text: string } | null }>()
-const emit = defineEmits<{ terms: []; poster: [id: string]; handed: [] }>()
+interface ReturnedPoster { id: string; download_url: string }
+const props = defineProps<{ poster: string | null; terms: Terms | null; handed?: { poster: string; text: string } | null; addPoster?: ReturnedPoster | null }>()
+const emit = defineEmits<{ terms: []; poster: [id: string]; repair: [id: string, mayLeave: () => boolean]; handed: []; account: []; consumed: []; guide: [event: MouseEvent] }>()
 const TIMEOUT = 20_000, DRAFT = 'post-draft', POSTS = '/api/facebook/posts'
 const UNKEPT = 'Cet appareil n’a pas pu garder votre publication : rien n’a été envoyé. Libérez de la place ou quittez la navigation privée, puis réessayez.'
 const UNREAD = 'Votre publication gardée sur cet appareil n’a pas pu être lue.'
@@ -35,10 +36,14 @@ const titleOf = (item: Candidate) => item.title || item.name
 const owner = ref<boolean | null>(null), lockless = !navigator.locks
 let release: (() => void) | undefined, closed = false, token = 0
 const holding = (at = token) => !closed && owner.value === true && at === token
-function lost() { owner.value = false; clearTimeout(pollTimer); clearTimeout(checkTimer); sheet.value = null; absent.value = null; settle() }
+function discardAdd() {
+  retryAdd.value = null; addLine.value = ''; adding.value = false
+  if (props.addPoster) emit('consumed')
+}
+function lost() { owner.value = false; discardAdd(); clearTimeout(pollTimer); clearTimeout(checkTimer); sheet.value = null; absent.value = null; settle() }
 const hold = (options: LockOptions) => navigator.locks.request('affiche-publish', options, lock => {
   if (closed) return
-  if (!lock) { owner.value = false; return }
+  if (!lock) { owner.value = false; discardAdd(); return }
   token++; owner.value = true; begin()
   return new Promise<void>(done => { release = done })
 }).catch(() => { if (!closed) lost() })  // taken over by another tab
@@ -89,9 +94,10 @@ function learn(answer: Candidates) {
   if (found.length) known.value = { ...known.value, ...Object.fromEntries(found.map(item => [item.id, item])) }
   return answer
 }
-let readTurn = 0
-async function readCandidates() {
+let readTurn = 0, excludedTurn = 0
+async function readCandidates(addId?: string) {
   const at = token, turn = ++readTurn, counts = () => holding(at) && turn === readTurn
+  excludedTurn++; excludedLoading.value = false
   reading.value = true; readError.value = ''
   try {
     if (props.poster) {
@@ -99,19 +105,29 @@ async function readCandidates() {
       if (counts()) { alone.value = learn(answer).items[0] ?? { id: props.poster, reason: 'gone' }; stale.value = false }
       return
     }
-    const ids = draft.value.items, chunks: string[][] = []
+    const ids = [...new Set([...draft.value.items, ...(addId ? [addId] : [])])], chunks: string[][] = []
     for (let start = 0; start < ids.length; start += 200) chunks.push(ids.slice(start, start + 200))  // 200 ids a request at most
     const [first, ...resolved] = await Promise.all([candidates('limit=20'), ...chunks.map(chunk => candidates(`ids=${chunk.join(',')}`))])
     if (!counts()) return
     learn(first); grid.value = first.items.filter(isCandidate); gridNext.value = first.next_cursor; stale.value = false
-    const gone = resolved.flatMap(answer => learn(answer).items.filter((item): item is LeftOut => !isCandidate(item)))
+    const items = resolved.flatMap(answer => learn(answer).items)
+    const gone = items.filter((item): item is LeftOut => !isCandidate(item))
       .filter(item => draft.value.items.includes(item.id))
-    if (gone.length) {
+    if (gone.length && !draft.value.post && !checking.value && !sending.value) {
       takenLines.value = gone.map(item => takenOut(draft.value.items.indexOf(item.id), item.reason))
       keep(without(draft.value, new Set(gone.map(item => item.id))))
     }
+    return items
   } catch (reason) { if (counts()) readError.value = message(reason) }
-  finally { if (turn === readTurn) reading.value = false }
+  finally {
+    if (counts()) {
+      reading.value = false
+      if (!props.poster && !readError.value) {
+        if (!connected.value || !excludedCount.value) excludedOpen.value = false
+        if (excludedOpen.value) void readExcluded(true)
+      }
+    }
+  }
 }
 // « Voir plus »: one page at a time; an answer a full read has overtaken is dropped; a poster is never shown twice.
 async function moreGrid() {
@@ -132,16 +148,77 @@ const connected = computed(() => page.value?.state === 'connected')
 const chosen = computed(() => props.poster ? (alone.value && isCandidate(alone.value) ? [alone.value] : [])
   : draft.value.items.map(id => known.value[id]).filter((item): item is Candidate => !!item))
 const full = computed(() => atLimit(draft.value, limit.value))
-const left = computed(() => leftOutLines(leftOut.value))
+const excludedCount = computed(() => leftOut.value ? Object.values(leftOut.value).reduce((a, b) => a + b, 0) : 0)
+const excluded = shallowRef<ExcludedPoster[]>([]), excludedNext = ref<string | null>(null)
+const excludedOpen = ref(false), excludedLoading = ref(false), excludedError = ref(''), repairError = ref('')
+const exclusionReason: Record<ExcludedPoster['reason'], string> = {
+  unconfirmed: 'Fichier final à confirmer.', changed: 'Affiche modifiée depuis sa confirmation.',
+  other_format: 'Fichier confirmé dans un autre format.',
+}
+
+function toggleExcluded(event: Event) {
+  excludedOpen.value = (event.currentTarget as HTMLDetailsElement).open
+  if (excludedOpen.value) void readExcluded(true)
+}
+
+async function readExcluded(reset = false) {
+  if (!holding() || !excludedOpen.value || reading.value || !excludedCount.value) return
+  if (!reset && excludedLoading.value) return
+  const at = token, turn = ++excludedTurn, current = () => holding(at) && turn === excludedTurn
+  const cursor = reset ? null : excludedNext.value
+  if (reset) { excluded.value = []; excludedNext.value = null }
+  excludedLoading.value = true; excludedError.value = ''
+  try {
+    const answer = await api<{ items: ExcludedPoster[]; next_cursor: string | null }>(
+      `${POSTS}/excluded?limit=20${cursor ? '&before=' + encodeURIComponent(cursor) : ''}`, { quiet: true, timeout: TIMEOUT })
+    if (!current()) return
+    excluded.value = [...excluded.value, ...answer.items.filter(item => !excluded.value.some(row => row.id === item.id))]
+    excludedNext.value = answer.next_cursor
+  } catch (reason) { if (current()) excludedError.value = message(reason) }
+  finally { if (current()) excludedLoading.value = false }
+}
+
+function keptBatch(value = draft.value) {
+  return keptForSending({ get: () => shopStorage.getItem(shopKey(DRAFT)), set: value => shopStorage.setItem(shopKey(DRAFT), value) }, value) === 'kept'
+}
+function saveBeforeLeaving() {
+  if (!holding() || checking.value || sending.value) { repairError.value = RUNNING; return false }
+  if (!props.poster && unread.value) { repairError.value = UNREAD; return false }
+  repairError.value = props.poster ? verifyCaption(props.poster) : keptBatch() ? '' : DRAFT_UNKEPT + ' Réessayez avant de quitter la publication.'
+  return !repairError.value
+}
+
+function repairPoster(id: string) {
+  const at = token
+  function mayLeave() {
+    if (!holding(at) || unread.value || reading.value || stale.value || readError.value) return false
+    return saveBeforeLeaving()
+  }
+  if (mayLeave()) emit('repair', id, mayLeave)
+}
 
 // ── the description: the draft's, or the one poster's caption (« Partager »'s own key, its rules) ───────────────
 const caption = ref(''), captionLine = ref('')
+let captionRead = false
 let carried: { poster: string; text: string } | null = null  // the caption this page holds for its poster (begin)
 const description = computed(() => props.poster ? caption.value : draft.value.description)
+function verifyCaption(id: string) {
+  try {
+    const key = shopKey('caption.' + id)
+    if (!captionRead) { caption.value = readCaption(shopStorage.getItem(key)); captionRead = true }
+    const fault = faultLine(caption.value)
+    if (fault) return fault + ' Corrigez ou copiez votre légende avant de continuer.'
+    const expected = captionFault(caption.value) === 'blank' ? null : caption.value
+    if (expected === null) shopStorage.removeItem(key)
+    else shopStorage.setItem(key, expected)
+    if (shopStorage.getItem(key) === expected) { captionLine.value = ''; return '' }
+  } catch { /* keep the current text in the composer for correction or copying */ }
+  return CAPTION_UNKEPT + ' Copiez votre légende ou réessayez.'
+}
 function typeDescription(text: string) {
   if (!props.poster) { keep(describe(draft.value, text)); return }
   if (!holding()) return
-  caption.value = text
+  caption.value = text; captionRead = true
   if (props.poster) carried = { poster: props.poster, text }
   single.value = { stamp: crypto.randomUUID(), post: null }  // another description is another request
   const fault = captionFault(text)
@@ -321,7 +398,7 @@ async function publishNow() {
   sending.value = true; open.line = ''
   try {
     // Written and read back before it leaves: nothing is sent unless the device keeps this very draft.
-    if (!props.poster && keptForSending({ get: () => shopStorage.getItem(shopKey(DRAFT)), set: value => shopStorage.setItem(shopKey(DRAFT), value) }, draft.value) === 'unkept') {
+    if (!props.poster && !keptBatch()) {
       open.line = UNKEPT
       return
     }
@@ -475,6 +552,48 @@ function keepTab(event: KeyboardEvent) {
 const modal = computed(() => !!sheet.value || !!absent.value)
 defineExpose({ modal })
 
+const retryAdd = shallowRef<ReturnedPoster | null>(null), addLine = ref(''), adding = ref(false)
+function retryReturnedPoster() {
+  if (!holding() || !retryAdd.value || adding.value) return
+  if (unread.value) readKept()
+  void refreshComposer(retryAdd.value)
+}
+async function refreshComposer(add: ReturnedPoster | null) {
+  const at = token
+  if (!holding(at) || adding.value) return
+  if (add) { adding.value = true; retryAdd.value = add; addLine.value = 'Vérification de l’affiche…' }
+  const own = props.poster || unread.value ? null : draft.value.post
+  const marks = readCandidates(add?.id), turn = readTurn
+  const [items] = await Promise.all([marks, readPosts(), own && readOwnPost(own)])
+  if (!holding(at) || !add) return
+  adding.value = false
+  if (unread.value) { addLine.value = UNREAD; return }
+  if (!items || turn !== readTurn || stale.value || readError.value || postsError.value
+      || draft.value.items.some(id => !items.some(item => item.id === id))) {
+    addLine.value = 'Les affiches et les publications doivent être relues avant l’ajout.'; return
+  }
+  if (!connected.value) { addLine.value = 'Connectez votre Page avant d’ajouter cette affiche.'; return }
+  const item = items.find(entry => entry.id === add.id)
+  if (!item || !isCandidate(item)) {
+    addLine.value = 'Cette affiche ne peut plus être ajoutée. ' + aloneLine(item?.reason ?? 'gone').text; return
+  }
+  if (item.download_url !== add.download_url) {
+    addLine.value = 'Le fichier confirmé a changé. Ouvrez l’affiche pour vérifier le nouveau fichier.'; return
+  }
+  if (draft.value.items.includes(add.id)) {
+    retryAdd.value = null; addLine.value = 'Cette affiche est déjà dans votre publication.'; return
+  }
+  if (running.value || sending.value || checking.value || sheet.value || absent.value) { addLine.value = RUNNING; return }
+  if (draft.value.post || [item, ...chosen.value].some(entry => entry.pending || (entry.last && (inFlight(entry.last) || entry.last.status === 'unknown')))) {
+    addLine.value = 'Vérifiez le résultat de la publication avant d’ajouter cette affiche.'; return
+  }
+  if (atLimit(draft.value, limit.value)) { addLine.value = 'La limite d’images est atteinte. Retirez une affiche avant de réessayer.'; return }
+  const next = toggle(draft.value, add.id, limit.value)
+  if (!keptBatch(next)) { addLine.value = DRAFT_UNKEPT + ' Réessayez l’ajout.'; return }
+  draft.value = next; draftLine.value = ''; retryAdd.value = null
+  addLine.value = 'L’affiche a été ajoutée à votre publication.'
+}
+
 // Each hold starts afresh: what an earlier one had begun is not this one's.
 function begin() {
   clearTimeout(pollTimer); clearTimeout(checkTimer); settle(); placeSaid.value = ''
@@ -483,18 +602,22 @@ function begin() {
   // What this tab read before it lost the page may be old (another tab may have published meanwhile): « Publier… »
   // stays off until the candidates are read again, as after a refusal (third code review of T-FB-013).
   stale.value = true
+  excludedOpen.value = false; excluded.value = []; excludedNext.value = null; excludedError.value = ''; repairError.value = ''
   single.value = { stamp: crypto.randomUUID(), post: null }; alone.value = null; remarked = new Set(); sought = new Set()
   // From the final panel: the caption its field shows, given once on this navigation (a failed or refused write there
   // left storage behind it); the description's rules judge it here. What this page showed for this poster since (handed
   // or typed) is kept when the page is taken back from another tab; a direct address reads storage.
   if (props.poster && props.handed?.poster === props.poster) { carried = { poster: props.poster, text: props.handed.text }; emit('handed') }
-  if (props.poster && carried?.poster === props.poster) { caption.value = carried.text; captionLine.value = '' }
-  else if (props.poster) { try { caption.value = readCaption(shopStorage.getItem(shopKey('caption.' + props.poster))); captionLine.value = '' } catch { captionLine.value = CAPTION_UNKEPT } }
+  caption.value = ''; captionRead = false; captionLine.value = ''
+  if (props.poster && carried?.poster === props.poster) { caption.value = carried.text; captionRead = true }
+  else if (props.poster) { try { caption.value = readCaption(shopStorage.getItem(shopKey('caption.' + props.poster))); captionRead = true } catch { captionLine.value = CAPTION_UNKEPT } }
   readKept()
-  const own = props.poster || unread.value ? null : draft.value.post
-  void Promise.all([readCandidates(), readPosts(), own && readOwnPost(own)])
+  const add = props.poster ? null : props.addPoster ?? null
+  discardAdd()
+  void refreshComposer(add)
 }
 if (!lockless) void hold({ ifAvailable: true })
+else discardAdd()
 // One page for both addresses (`#publier`, `#publier-<id>`), under the same hold: a remount would ask for the lock
 // before this instance had given it back. Another poster starts afresh, and what the earlier one began stays stopped.
 watch(() => props.poster, () => { if (holding()) { token++; begin() } })
@@ -505,13 +628,24 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 <template>
   <section class="gallery shop-publish" aria-labelledby="titre-page-publier">
     <div class="titlerow"><div class="what"><h1 id="titre-page-publier" class="page-title" tabindex="-1">Publier sur Facebook</h1>
-      <p v-if="owner && connected" class="meta">Sur la Page <span translate="no">{{ page!.name }}</span></p></div></div>
+      <p v-if="owner && connected" class="meta">Sur la Page <span translate="no">{{ page!.name }}</span></p></div>
+      <button v-if="!modal" type="button" class="text-button" aria-haspopup="dialog" @click="emit('guide', $event)">Aide à la publication</button>
+    </div>
     <div v-if="lockless" class="empty chat-elsewhere"><p role="status">Ce navigateur ne permet pas la page Publier. Ouvrez l’atelier dans un navigateur à jour.</p></div>
     <div v-else-if="owner === false" class="empty chat-elsewhere"><p role="status">La page Publier est ouverte dans un autre onglet.</p><button type="button" class="primary" @click="takeOver">Continuer ici</button></div>
     <template v-else-if="owner">
     <p v-if="reading && page === undefined" role="status">Lecture de votre Page et de vos affiches…</p>
-    <p v-if="readError" class="why lead" role="alert">{{ readError }} <button class="text-button" @click="readCandidates">Réessayer</button></p>
-    <div v-if="page !== undefined && !connected" class="refusal"><p>{{ page ? 'Reconnectez votre Page dans « Mon compte ».' : 'Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».' }}</p><a href="#compte">Mon compte</a></div>
+    <p v-if="readError" class="why lead" role="alert">{{ readError }} <button class="text-button" @click="readCandidates()">Réessayer</button></p>
+    <div v-if="page !== undefined && !connected" class="refusal"><p>{{ page ? 'Reconnectez votre Page dans « Mon compte ».' : 'Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».' }}</p><a href="#compte" @click.prevent="saveBeforeLeaving() && emit('account')">Mon compte</a></div>
+    <div v-if="repairError && (!connected || poster)" class="refusal">
+      <p class="why" role="alert">{{ repairError }}</p>
+      <label v-if="poster && (!connected || !chosen.length)">Légende de l’affiche<textarea :value="caption" rows="4" @input="typeDescription(($event.target as HTMLTextAreaElement).value)" /></label>
+      <label v-if="!poster && !connected && !unread">Description de la publication<textarea :value="description" rows="4" @input="typeDescription(($event.target as HTMLTextAreaElement).value)" /></label>
+      <button v-if="!connected && unread" type="button" class="text-button" @click="readAgain">Relire la publication</button>
+      <button v-if="!connected && unread === 'damaged'" type="button" class="secondary" @click="dropDamaged">Vider</button>
+    </div>
+    <div v-if="addLine" class="refusal"><p id="retour-ajout" role="status">{{ addLine }}</p>
+      <button v-if="retryAdd && !adding" type="button" class="text-button" @click="retryReturnedPoster">Réessayer l’ajout</button></div>
     <p v-if="line && !beside" class="why lead" role="alert">{{ line }}</p>
     <div v-if="connected && accepted === false" class="refusal"><p>Acceptez d’abord les conditions d’utilisation pour publier.</p><button class="secondary" @click="emit('terms')">Lire les conditions</button></div>
 
@@ -519,7 +653,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
       <h2 id="titre-votre-publication" tabindex="-1">Votre publication</h2>
       <template v-if="poster">
         <template v-if="alone && !isCandidate(alone)"><p>{{ aloneLine(alone.reason).text }}</p>
-          <button v-if="aloneLine(alone.reason).open" class="secondary" @click="emit('poster', alone.id)">Ouvrir l’affiche</button></template>
+          <button v-if="aloneLine(alone.reason).open" class="secondary" :disabled="reading || stale || !!readError" @click="repairPoster(alone.id)">Ouvrir l’affiche</button></template>
       </template>
       <!-- A draft kept here that cannot be read is never an empty one: nothing is removed, written over or sent. -->
       <template v-else-if="unread"><p class="why" role="alert">{{ UNREAD }}</p>
@@ -589,7 +723,20 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
         </button></li>
       </ul>
       <p v-if="gridNext" class="more"><button type="button" :disabled="gridLoading || reading" :aria-busy="gridLoading || undefined" @click="moreGrid">Voir plus</button></p>
-      <div v-if="left" class="left-out"><p>{{ left.lead }}</p><ul><li v-for="entry in left.lines" :key="entry.reason"><a href="#affiches">{{ entry.text }}</a></li></ul></div>
+      <details v-if="excludedCount" class="left-out" :open="excludedOpen" @toggle="toggleExcluded">
+        <summary>Affiches à préparer ({{ excludedCount }})</summary>
+        <ul><li v-for="item in excluded" :key="item.id">
+          <div :id="'a-preparer-' + item.id"><strong translate="no">{{ item.title || item.name }}</strong><small>{{ exclusionReason[item.reason] }}</small></div>
+          <button type="button" class="text-button" :aria-describedby="'a-preparer-' + item.id" :disabled="reading || stale || !!readError" @click="repairPoster(item.id)">
+            {{ item.primary_format === 'feed' ? 'Vérifier l’affiche' : 'Préparer au format Publication' }}
+          </button>
+        </li></ul>
+        <p v-if="repairError" class="why" role="alert">{{ repairError }}</p>
+        <p v-if="excludedError" class="why" role="alert">{{ excludedError }} <button class="text-button" @click="readExcluded()">Réessayer</button></p>
+        <p v-else-if="excludedLoading" role="status">Lecture des affiches à préparer…</p>
+        <button v-else-if="excludedNext" type="button" @click="readExcluded()">Voir plus</button>
+        <p v-else-if="excludedOpen && !reading && !excluded.length">Aucune affiche à préparer pour le moment.</p>
+      </details>
     </section>
 
     <!-- Always shown: an unknown post must be answerable with no Page connected (after a restore every connection is gone). -->
@@ -643,6 +790,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 
 <style scoped>
 .shop-publish { padding: clamp(18px, 4vw, 46px) 0 30px; overflow-wrap: anywhere }
+.titlerow .text-button { min-height: 44px }
 .shop-publish > .group, .shop-publish > .refusal { margin-top: 20px }
 .group { display: grid; gap: 12px }
 .group > :is(h2, p, label, figure, ol, ul) { margin: 0 }
@@ -692,9 +840,13 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 .tile .number { position: absolute; top: 12px; left: 12px }
 .tile .mark { padding: 0 4px; font-size: 12.5px; font-weight: 600; color: var(--muted) }
 .tile:disabled .mark { color: var(--faint) }
-.left-out { display: grid; gap: 4px; color: var(--muted) }
+.left-out { border-top: 1px solid var(--line); padding-top: 6px }
+.left-out summary { cursor: pointer; min-height: 44px; padding-block: 12px; font-weight: 650 }
+.left-out li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; border-top: 1px solid var(--line); padding-block: 8px }
+.left-out li div { min-width: 0; overflow-wrap: anywhere }
+.left-out li small { display: block; color: var(--muted) }
+.left-out button { min-height: 44px }
 .left-out p { margin: 0 }
-.left-out a { display: inline-flex; align-items: center; min-height: 44px }
 .posts small { color: var(--muted) }
 .posts .said { font-weight: 600 }
 .posts .row { align-items: center }

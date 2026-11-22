@@ -41,7 +41,7 @@ OWN = {("GET", "/api/creations"), ("GET", "/api/looks"), ("GET", "/api/shop-prof
        # The shop's Facebook Page and its one attempt, always the session's shop (D-FB-PUBLISH-002).
        ("GET", "/api/facebook"), ("POST", "/api/facebook/connect"), ("DELETE", "/api/facebook/page"),
        # A post's candidates and the shop's posts (D-FB-POST-003); with an id of A's, attempted or checked below.
-       ("GET", "/api/facebook/posts/candidates"), ("GET", "/api/facebook/posts")}
+       ("GET", "/api/facebook/posts/candidates"), ("GET", "/api/facebook/posts/excluded"), ("GET", "/api/facebook/posts")}
 # The stand-in's first Page, as a connection leaves it, written straight into the database (D-FB-PUBLISH-001).
 PAGE_ROW = "INSERT INTO facebook_pages VALUES (:shop,:id,:name,:token,'connected',:now)"
 NO_BRAND = {"logo": False, "shop_name": False, "contact": False}
@@ -367,7 +367,8 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     leaked = lambda answer: [name for name, value in theirs.items() if value in answer.text]  # noqa: E731
     for path in ("/api/creations", "/api/creations?status=abandoned", "/api/looks", "/api/shop-profile",
                  f"/api/creations/{bid}/jobs", f"/api/creations/{bid}/visuals", f"/api/creations/{bid}/versions",
-                 "/api/shop-dashboard", "/api/shop-credit-history", "/api/facebook/posts/candidates", "/api/facebook/posts"):
+                 "/api/shop-dashboard", "/api/shop-credit-history", "/api/facebook/posts/candidates",
+                 "/api/facebook/posts/excluded", "/api/facebook/posts"):
         answer = b.get(path)
         assert answer.status_code == 200 and leaked(answer) == [], (path, leaked(answer))
     # A's poster asked by its id among a post's candidates: gone, as a poster that exists nowhere.

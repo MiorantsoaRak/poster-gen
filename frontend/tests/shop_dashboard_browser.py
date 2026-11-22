@@ -1,6 +1,7 @@
 """Run from backend after the production frontend build. Stub stores and providers only."""
 import json
 import re
+import sqlite3
 import subprocess
 import tempfile
 from urllib.parse import urlencode
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
+from affiche.db import utc_now
 from affiche.posters.facebook_connect import STUB_CODE
 import browser_smoke as smoke
 import share_browser as sb
@@ -125,7 +127,7 @@ def walk_header(browser):
         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
         page.get_by_label("Les photos correspondent").check()
         page.get_by_role("button", name="Préparer mon affiche").click()
-        expect(page.get_by_label("Titre", exact=True)).to_have_value(title)
+        expect(page.locator(".poster-title")).to_have_text(title)
         page.goto(smoke.ORIGIN + "/#message-" + page.url.split("#")[1])
         expect(page.get_by_label("Votre message")).to_be_visible()
         one_row("the chat with a long poster name, 360 px", ["Ouvrir le menu", "Façon de créer", "Nouvelle affiche", "12345 crédits"])
@@ -227,23 +229,16 @@ def level_one(page):
 
 
 def check_bar(nav, items, where):
-    """The bottom bar on a phone (D-POLISH-003, D-REDESIGN-002): five items in order by their full French names. The four
-    labelled ones each show their short text on one line inside their link at 11 px or more, a 44 × 44 px target, the name
-    containing what is shown; the centre « Nouvelle affiche » is a painted plus on a target of 44 × 44 px or more."""
+    """All five mobile labels stay inside their touch targets, including the centre creation action."""
     links = nav.get_by_role("link")
-    names = [name for _, name in items[:2]] + ["Nouvelle affiche"] + [name for _, name in items[2:]]
+    items = [*items[:2], ("Créer", "Créer"), *items[2:]]
     expect(links).to_have_count(5)
-    for link, name in zip(links.all(), names):
-        expect(link).to_have_accessible_name(name)
-    for shown, name in items:
-        assert shown.casefold() in name.casefold(), (shown, name)
     measured = nav.evaluate(BAR_JS)
-    labelled = measured[:2] + measured[3:]
-    assert [item["text"] for item in labelled] == [shown for shown, _ in items], (where, measured)
-    for item in labelled:
+    for link, (shown, name), item in zip(links.all(), items, measured):
+        expect(link).to_have_accessible_name(name)
+        assert shown.casefold() in name.casefold() and item["text"] == shown, (where, name, item)
         assert item["size"] >= 11 and item["lines"] == 1 and item["inside"] and item["width"] >= 44 and item["height"] >= 44, (where, item)
     centre = links.nth(2)
-    assert measured[2]["text"] == "" and measured[2]["width"] >= 44 and measured[2]["height"] >= 44, (where, measured[2])
     assert centre.evaluate("e => { const plus = e.querySelector('svg path'); const box = plus.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(plus).stroke !== 'none' }"), where
 
 
@@ -270,7 +265,7 @@ def walk_frame(browser):
         for name, link, first in (
                 ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.locator(".gallery").get_by_role("button", name="Nouvelle affiche")),  # the page's action, then its filter
                 ("Styles", nav.get_by_role("link", name=re.compile("^Styles")), page.locator(".look-card").first),
-                ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("button", name="Actualiser")),
+                ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("link", name="Créer une affiche")),
                 ("Mes crédits", home.get_by_role("link", name="Voir mes crédits"), page.locator(".shop-credits").get_by_role("link", name="Retour à l’accueil")),
                 ("Mon compte", home.get_by_role("link", name="Mon compte"), page.locator(".shop-account").get_by_role("link", name="Retour à l’accueil"))):
             if name == "Mon compte":
@@ -328,7 +323,7 @@ def walk_frame(browser):
         page.route("**/api/creations?limit=50&status=active", lambda route: route.fulfill(json={"items": [], "total": answers["posters"], "next_cursor": None}))
         pill = page.locator(".app-header .credits-pill")
         nav = page.get_by_role("navigation", name="Navigation", exact=True).and_(page.locator("nav.phone-bar"))
-        nav.get_by_role("link", name="Nouvelle affiche", exact=True).click()  # the creator reads the styles: their count is known from here on
+        nav.get_by_role("link", name="Créer", exact=True).click()  # the creator reads the styles: their count is known from here on
         expect(page.get_by_label("Photos du produit")).to_be_enabled()
         for posters in (0, 3, 120):
             answers["posters"] = posters
@@ -345,7 +340,7 @@ def walk_frame(browser):
                 check_bar(nav, items, "Accueil, " + where)
                 expect(pill).to_have_text(credits[0])
                 expect(pill).to_have_accessible_name(credits[1])
-                nav.get_by_role("link", name="Nouvelle affiche", exact=True).click()
+                nav.get_by_role("link", name="Créer", exact=True).click()
                 expect(page.get_by_label("Photos du produit")).to_be_enabled()
                 check_bar(nav, items, "creator, " + where)
                 expect(pill).to_have_text(credits[0])
@@ -368,7 +363,9 @@ def walk(browser, out):
         page.get_by_role("button", name="Ouvrir l’atelier").click()
         page.wait_for_url("**/#accueil")
         home = page.get_by_role("region", name="Accueil", exact=True)
-        expect(home.get_by_text("Disponibles", exact=True)).to_be_visible()
+        expect(page.locator(".app-header .credits-pill")).to_have_text("100")
+        expect(home.locator(".home-bal")).to_have_count(0)
+        expect(home.get_by_role("link", name="Créer une affiche")).to_be_in_viewport(ratio=1)
         expect(home.get_by_text("Lecture des affiches…")).to_be_visible()
         all_clear = home.get_by_text("Aucune affiche à vérifier.", exact=True)
         expect(all_clear).to_be_visible()
@@ -406,20 +403,24 @@ def walk(browser, out):
             page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
             page.screenshot(path=str(out / f"accueil-{scheme}.png"), full_page=True)
         # The home sections retain their last successful data when an explicit refresh fails.
+        # A healthy available balance stays in the header; a high balance with pending credits is actionable.
+        balance = page.request.get(smoke.ORIGIN + "/api/balance").json()
+        page.route("**/api/balance", lambda route: route.fulfill(json={**balance, "pending": 1}))
         stamp = home.locator(".home-bal .meta")
         page.clock.set_fixed_time("2026-11-18T10:30:00Z")
         home.get_by_role("button", name="Actualiser").click()
         expect(stamp).to_have_text("Solde vérifié à 10:30.")
+        expect(home.locator(".home-numbers strong")).to_have_text(["100", "1"])
         page.clock.set_fixed_time("2026-11-18T10:40:00Z")
-        page.route("**/api/balance", lambda route: route.abort())
+        page.route("**/api/balance", lambda route: route.abort(), times=1)
         home.get_by_role("button", name="Actualiser").click()
         expect(home.get_by_role("button", name="Réessayer le solde")).to_be_visible()
         expect(stamp).to_have_text("Dernier solde connu à 10:30.")
         expect(home.get_by_text("Disponibles", exact=True)).to_be_visible()
-        page.unroute("**/api/balance")
         home.get_by_role("button", name="Réessayer le solde").click()
         expect(home.get_by_role("button", name="Réessayer le solde")).to_have_count(0)
         expect(stamp).to_have_text("Solde vérifié à 10:40.")
+        page.unroute("**/api/balance")
         for title, link, route in (("Mes crédits", "Voir mes crédits", "credits"), ("Mon compte", "Mon compte", "compte")):
             home.get_by_role("link", name=link).click()
             page.wait_for_url(f"**/#{route}")
@@ -488,11 +489,14 @@ def walk(browser, out):
         summary["failed"] = {"total": 1, "first_creation_id": recent_id}  # dashboard response from an older build
         page.route("**/api/shop-dashboard", lambda route: route.fulfill(json=summary))
         smoke.go(page, "Accueil")
-        review_action = home.get_by_role("button", name="Vérifier Casque de la boutique")
+        review_action = home.get_by_role("button", name=re.compile("Vérifier l’affiche")).filter(has_text="Casque de la boutique")
+        failed_action = home.get_by_role("button").filter(has_text="Génération échouée")
         expect(review_action).to_be_visible()
         expect(all_clear).to_have_count(0)
         expect(home.get_by_text("+ 2 à vérifier")).to_be_visible()
-        expect(home.get_by_role("button", name="Génération échouée")).to_be_visible()
+        expect(failed_action).to_contain_text("Affiche 5")
+        expect(review_action).to_be_in_viewport(ratio=1)
+        assert review_action.bounding_box()["y"] < failed_action.bounding_box()["y"]
         poster = home.get_by_role("button", name="Affiche 5 Brouillon")
         expect(poster).to_be_visible()
         expect(home.locator(".home-recent button")).to_have_count(5)
@@ -505,11 +509,11 @@ def walk(browser, out):
         home.get_by_role("button", name="Actualiser").click()
         expect(home.locator(".home-recent .badge.ok")).to_have_count(0)
         for button, target, title in ((review_action, made["id"], "Casque de la boutique"),
-                                      (home.get_by_role("button", name="Génération échouée"), recent_id, "Affiche 5"),
+                                      (failed_action, recent_id, "Affiche 5"),
                                       (poster, recent_id, "Affiche 5")):
             button.click()
             page.wait_for_url(f"**/#{target}")
-            expect(page.get_by_label("Titre", exact=True)).to_have_value(title)
+            expect(page.locator(".poster-title")).to_have_text(title)
             with page.expect_response(lambda r: r.url.endswith("/api/balance")):
                 page.evaluate(smoke.VISIBILITY, True)
                 page.evaluate(smoke.VISIBILITY, False)
@@ -521,7 +525,7 @@ def walk(browser, out):
         page.route("**/api/creations?limit=5", lambda route: held.append(route))
         with page.expect_request("**/api/creations?limit=5"):
             home.get_by_role("button", name="Actualiser").click()
-        expect(home.get_by_role("button", name="Génération échouée · " + title)).to_be_visible()
+        expect(failed_action).to_contain_text(title)
         page.wait_for_function(smoke.NO_SIDEWAYS)
         expect(home.get_by_role("link", name="Créer une affiche")).to_be_visible()
         held.pop().continue_()
@@ -566,6 +570,7 @@ def walk(browser, out):
         page.route(gallery_url, four_states)
         gallery.get_by_role("button", name="Réessayer la liste").click()
         expect(gallery.locator(".library-item")).to_have_count(6)
+        expect(gallery.locator(".library-toolbar .meta")).to_have_text("6 affiches")
         check_states(gallery.locator(".library-item"), details=True)
         # From an open poster, a successful creator reload must yield to the later choice of the gallery.
         page.set_viewport_size({"width": 1366, "height": 768})
@@ -579,7 +584,7 @@ def walk(browser, out):
             smoke.check_contrast(page, f"Mes affiches 1366 with the four states, {scheme}")
         page.unroute(gallery_url)
         gallery.get_by_role("button", name="Affiche 5 Brouillon", exact=False).click()
-        expect(page.get_by_label("Titre", exact=True)).to_have_value("Affiche 5")
+        expect(page.locator(".poster-title")).to_have_text("Affiche 5")
         page.route("**/api/capabilities", lambda route: pending_caps.append(route))
         with page.expect_request("**/api/capabilities"):
             smoke.go(page, "Nouvelle affiche")
@@ -737,7 +742,7 @@ def credit_poster_paths(browser, session, first, second):
         panel.get_by_role("button", name="Fermer").click()
         page.wait_for_url(f"**/#{created_id}")
         expect(opener).to_be_focused()
-        expect(page.get_by_label("Titre", exact=True)).to_have_value("Affiche en préparation")
+        expect(page.locator(".poster-title")).to_have_text("Affiche en préparation")
 
     finally:
         context.close()
@@ -775,6 +780,7 @@ def current_credit_poster(browser, session, poster_id):
 
         page.goto("about:blank")
         page.goto(f"{smoke.ORIGIN}/#{poster_id}")
+        page.get_by_role("tab", name="Textes", exact=True).click()
         field = page.get_by_label("Titre", exact=True)
         expect(field).to_be_enabled()
         original = field.input_value()
@@ -928,21 +934,6 @@ def landmarks(page, role="navigation"):
     return [node.get("name", {}).get("value") for node in nodes if not node.get("ignored") and node.get("role", {}).get("value") == role]
 
 
-def to_review(page, message):
-    """A poster made in the chat, its first version in the review panel."""
-    page.goto(smoke.ORIGIN + "/#message")
-    page.locator(".composer input[type=file]").set_input_files([PHOTO])
-    expect(page.locator(".tray .pic")).to_have_count(1)
-    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    page.get_by_label("Votre message").fill(message)
-    page.get_by_role("button", name="Envoyer").click()
-    page.get_by_role("log").get_by_role("button", name="Créer l’affiche").click()
-    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
-    page.get_by_role("button", name="Vérifier", exact=True).click(timeout=30000)
-    expect(page.get_by_role("heading", name=sb.REVIEW)).to_be_visible()
-    return page.url.split("#message-")[1]
-
-
 def never_reached(page, where, presses=40):
     """Tab and Shift+Tab never put the focus in the sidebar, nor give « Se déconnecter » to a key."""
     for key in ("Tab", "Shift+Tab"):
@@ -967,14 +958,16 @@ def walk_shell(browser, out):
         open_atelier(page)
         sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
         side, header = page.locator("aside.side"), page.locator(".app-header")
-        # Under a panel in front (1440 px): the final panel, then the review panel.
+        # The ready file and the pending review both keep keyboard focus inside at 1440 px.
         approved = sb.made_in_chat(page, PHOTO, "Casque Sony WH-CH720N noir, 289 000 Ar")
         expect(page.get_by_role("heading", name=sb.FINAL)).to_be_visible()
+        smoke.download_review(page)
         never_reached(page, "the final panel")
         page.get_by_role("button", name="Fermer", exact=True).click()
-        reviewed = to_review(page, "Écouteurs JBL Tune Flex blancs, 199 000 Ar")
+        smoke.go(page, "Accueil")
+        reviewed = sb.made_in_chat(page, PHOTO, "Écouteurs JBL Tune Flex blancs, 199 000 Ar")
         never_reached(page, "the review panel")
-        page.locator(".review-panel").get_by_role("button", name="Fermer").click()
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
         expect(side).not_to_have_attribute("inert", "")
 
         # Sticky after a document scroll, on « Mes affiches » long enough to scroll: eight more drafts, made by the API.
@@ -1029,7 +1022,7 @@ def walk_shell(browser, out):
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(f"{smoke.ORIGIN}/#{approved}")
         expect(page.locator(".poster-canvas canvas").first).to_be_visible()
-        if page.get_by_role("heading", name=sb.FINAL).count():
+        if page.get_by_role("heading", name=sb.READY).count():
             page.get_by_role("button", name="Fermer", exact=True).click()
         # A work surface: no frame's gap (the 12 px go to the poster); the sidebar column from the window's left edge, and
         # the poster's name only in the editor's own title row.
@@ -1048,7 +1041,7 @@ def walk_shell(browser, out):
         page.set_viewport_size({"width": 1181, "height": 800})
         for poster in (draft, approved):
             page.goto(f"{smoke.ORIGIN}/#{poster}")
-            expect(page.get_by_label("Titre", exact=True)).to_be_visible()
+            expect(page.locator(".poster-title")).to_be_visible()
             expect(side).to_have_js_property("offsetWidth", 76)
             expect(page.get_by_role("button", name=re.compile("(Réduire|Agrandir) le menu"))).to_have_count(0)
             columns = page.locator(".work").evaluate("e => getComputedStyle(e).gridTemplateColumns").split()
@@ -1056,7 +1049,7 @@ def walk_shell(browser, out):
             page.wait_for_function(smoke.NO_SIDEWAYS)
         page.goto(f"{smoke.ORIGIN}/#message-{approved}")
         expect(page.locator(".chat-side")).to_be_visible()
-        if page.get_by_role("heading", name=sb.FINAL).count():
+        if page.get_by_role("heading", name=sb.READY).count():
             page.get_by_role("button", name="Fermer", exact=True).click()
         assert page.get_by_role("log").bounding_box()["width"] >= 460, page.get_by_role("log").bounding_box()
         page.wait_for_function(smoke.NO_SIDEWAYS)
@@ -1084,7 +1077,7 @@ def walk_shell(browser, out):
         rail = side.locator("a:visible, button:visible")
         expected = [("link", re.compile("^Doka Studio — Accueil$")), ("link", re.compile("^Nouvelle affiche$")), ("link", re.compile("^Accueil$")),
                     ("link", re.compile("^Mes affiches \\d+$")), ("link", re.compile("^Styles( \\d+)?$")), ("link", re.compile("^(-?\\d+ crédits?|Mes crédits)$")),
-                    ("link", re.compile("^" + re.escape(side.locator("a.account").get_attribute("title").strip()) + "$")), ("button", re.compile("^Se déconnecter$"))]
+                    ("link", re.compile("^" + re.escape(side.locator("a.account").get_attribute("title").strip()) + "$")), ("button", re.compile("^Aide$")), ("button", re.compile("^Se déconnecter$"))]
         expect(rail).to_have_count(len(expected))
         for control, (role, name) in zip(rail.all(), expected):
             assert control.evaluate("e => e.tagName") == ("A" if role == "link" else "BUTTON")
@@ -1134,7 +1127,7 @@ def walk_shell(browser, out):
             other.click()
             leave.get_by_role("button", name="Quitter sans les envoyer").click()
             page.wait_for_url("**/" + target)
-            expect(page.get_by_label("Votre message") if start == "chat" else page.get_by_label("Titre", exact=True)).to_be_visible()
+            expect(page.get_by_label("Votre message") if start == "chat" else page.locator(".poster-title")).to_be_visible()
             expect(page.locator(".tray .pic")).to_have_count(0)
         page.goto(smoke.ORIGIN + "/#compte")
         name = page.get_by_role("region", name="Mon compte", exact=True).get_by_label("Nom de la boutique")
@@ -1154,6 +1147,8 @@ def walk_shell(browser, out):
         panel = page.get_by_role("dialog", name="Mes crédits")
         for opener, address in ((header.locator(".credits-pill"), "#message"), (page.locator(".rail .creator-credits"), f"#{draft}")):
             page.goto(smoke.ORIGIN + "/" + address)
+            if address != "#message":
+                page.get_by_role("tab", name="Textes", exact=True).click()
             work = page.get_by_label("Votre message") if address == "#message" else page.get_by_label("Titre", exact=True)
             expect(work).to_be_visible()
             if address == "#message":
@@ -1181,7 +1176,7 @@ def walk_shell(browser, out):
         page.get_by_label("Prix en ariary", exact=True).fill("90 000")
         page.get_by_label("Les photos correspondent").check()
         page.get_by_role("button", name="Préparer mon affiche").click()
-        expect(page.get_by_label("Titre", exact=True)).to_have_value("Compte à jour")
+        expect(page.locator(".poster-title")).to_have_text("Compte à jour")
         expect(mine).to_have_accessible_name(f"Mes affiches {listed + 1}")
         expect(side.locator(".recent a").first).to_contain_text("Compte à jour")
         smoke.go(page, "Accueil")
@@ -1199,7 +1194,20 @@ def walk_shell(browser, out):
         listed = page.request.get(smoke.ORIGIN + "/api/creations?limit=1").json()["total"]
         expect(mine).to_have_accessible_name(f"Mes affiches {listed}")
         page.route("**/api/creations?limit=50&status=active", lambda route: route.abort())
-        page.locator(".library-row", has_text="Défilement 0").get_by_role("button", name=re.compile("^Retirer")).click()
+        row = page.locator(".library-row", has_text="Défilement 0")
+        options = row.get_by_role("button", name="Actions pour « Défilement 0 »")
+        remove = row.get_by_role("button", name=re.compile("^Retirer"))
+        expect(remove).to_have_count(0)
+        options.focus()
+        page.keyboard.press("Enter")
+        expect(options).to_have_attribute("aria-expanded", "true")
+        page.keyboard.press("Tab")
+        expect(row.get_by_role("button", name=re.compile("^Dupliquer"))).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(options).to_be_focused()
+        expect(remove).to_have_count(0)
+        options.click()
+        remove.click()
         page.get_by_role("dialog").get_by_role("button", name="Retirer de la liste").click()
         expect(page.locator(".message.error")).to_be_visible()
         expect(mine).to_have_accessible_name(f"Mes affiches {listed - 1}")
@@ -1273,7 +1281,7 @@ def walk_shell(browser, out):
         length = plain.evaluate("history.length")
         row.click()
         plain.wait_for_url("**/#" + target.removeprefix("#message-"))
-        expect(plain.get_by_label("Titre", exact=True)).to_be_visible()
+        expect(plain.locator(".poster-title")).to_be_visible()
         assert plain.evaluate("history.length") == length + 1, (plain.evaluate("history.length"), length)
         plain.go_back()
         plain.wait_for_url("**/#accueil")
@@ -1389,7 +1397,7 @@ def walk_drawer(browser, approved, draft, removed):
             name.fill(kept)
             # The poster already open: the drawer closes, the address stays, the menu button has the focus.
             page.goto(f"{smoke.ORIGIN}/#{draft}")
-            expect(page.get_by_label("Titre", exact=True)).to_be_visible()
+            expect(page.locator(".poster-title")).to_be_visible()
             if width == 360:
                 expect(bar).to_have_count(0)
                 page.goto(f"{smoke.ORIGIN}/#message-{draft}")
@@ -1422,7 +1430,7 @@ def walk_drawer(browser, approved, draft, removed):
         # The editor's full-screen look (1024 px): the top bar and the sidebar are out of reach under it.
         page.set_viewport_size({"width": 1024, "height": 768})
         page.goto(f"{smoke.ORIGIN}/#{approved}")
-        expect(page.get_by_role("heading", name=sb.FINAL)).to_be_visible()  # its file to check opens with it
+        expect(page.get_by_role("heading", name=sb.READY)).to_be_visible()  # its confirmed file opens with it
         page.get_by_role("button", name="Fermer", exact=True).click()
         page.get_by_role("button", name="Voir l’affiche").first.click()
         expect(page.get_by_role("button", name="Revenir aux réglages")).to_be_visible()
@@ -1530,7 +1538,7 @@ def walk_gate(browser, data):
         for address in (f"#{latest}", "#affiches"):
             sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
             page.goto(smoke.ORIGIN + "/" + address)
-            expect(page.get_by_label("Titre", exact=True) if address != "#affiches" else page.locator(".library-item").first).to_be_visible()
+            expect(page.locator(".poster-title") if address != "#affiches" else page.locator(".library-item").first).to_be_visible()
             assert page.evaluate(smoke.HOLDS, a_markers), "the markers are on the screen before the sign-out"
             ended = context.request.delete(smoke.ORIGIN + "/api/session", headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE)})
             assert ended.ok, ended.text()
@@ -2019,6 +2027,8 @@ def walk_facebook(browser):
         page.get_by_label("Identifiant de la boutique").fill(smoke.IDENTIFIER)
         page.get_by_label("Mot de passe", exact=True).fill(smoke.PASSWORD)
         page.get_by_role("button", name="Ouvrir l’atelier").click()
+        nav = page.locator("nav.phone-bar")
+        check_bar(nav, [("Accueil", "Accueil"), ("Affiches", "Mes affiches 0"), ("Publier", "Publier"), ("Compte", "Mon compte")], "Facebook enabled before connecting a Page")
         card = page.get_by_role("region", name="Page Facebook", exact=True)
         connect = card.get_by_role("button", name="Connecter ma Page Facebook")
         expect(connect).to_be_visible()
@@ -2099,6 +2109,75 @@ def walk_facebook(browser):
         context.close()
 
 
+def walk_review_with_current_file(browser, data):
+    """An alternative scene can await review while the selected one already has a confirmed file."""
+    context = browser.new_context(viewport={"width": 360, "height": 640})
+    try:
+        page = context.new_page()
+        open_atelier(page)
+        sb.sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
+        poster = sb.made_in_chat(page, PHOTO, "Samsung Galaxy A15 noir, 650 000 Ar")
+        smoke.download_review(page)
+        page.get_by_role("dialog").get_by_role("button", name="Fermer", exact=True).click()
+        address = f"{smoke.ORIGIN}/api/creations/{poster}"
+        original = page.request.get(address).json()
+        visual = page.request.get(address + "/visuals").json()["items"][0]
+        alternate, stamp = str(uuid4()), utc_now()
+        with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+            job = store.execute("SELECT job_id FROM poster_visuals WHERE id=?", (visual["id"],)).fetchone()[0]
+            done = sb.copy_row(store, "poster_jobs", job, result_ref=alternate, created_at=stamp, started_at=stamp, finished_at=stamp)
+            sb.copy_row(store, "poster_visuals", visual["id"], id=alternate, job_id=done, status="pending_review", checks_json="{}", decided_at=None, created_at=stamp)
+        posts = []
+        page.on("request", lambda req: posts.append(req.url) if req.method not in ("GET", "HEAD", "OPTIONS") and "/api/" in req.url else None)
+        home = page.get_by_role("region", name="Accueil", exact=True)
+        resume = home.get_by_role("button", name=re.compile("Vérifier l’affiche"))
+        for mode, url in (("chat", f"message-{poster}"), ("steps", poster)):
+            page.evaluate("mode => localStorage.setItem('affiche.start', mode)", mode)
+            page.goto(smoke.ORIGIN + "/#accueil")
+            page.reload()
+            expect(resume).to_be_in_viewport(ratio=1)
+            expect(resume).to_contain_text(original["document"]["offer"]["title"])
+            expect(resume.locator("img")).to_be_visible()
+            page.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=resume.locator("img").element_handle())
+            resume.click()
+            page.wait_for_url(f"**/#{url}")
+            review = page.get_by_role("dialog", name=sb.REVIEW)
+            expect(review).to_be_visible()
+            expect(page.locator(".final-preview")).to_have_count(0)
+            review.get_by_role("button", name="Fermer").click()
+        page.goto(smoke.ORIGIN + "/#affiches")
+        row = page.locator(".library-row", has_text=original["document"]["offer"]["title"])
+        expect(row.locator(".badge")).to_have_text("À vérifier")
+        row.get_by_role("button", name=re.compile("^Ouvrir le fichier")).click()
+        expect(page.get_by_role("heading", name=sb.READY)).to_be_visible()
+        expect(page.get_by_role("link", name="Télécharger le PNG")).to_have_attribute("href", original["confirmation"]["download_url"])
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+        page.goto(smoke.ORIGIN + "/#accueil")
+        expect(resume).to_be_visible()
+        # Another tab reviews the alternate after Accueil has read the summary.
+        with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+            store.execute("UPDATE poster_visuals SET status='approved', decided_at=? WHERE id=?", (utc_now(), alternate))
+        resume.click()
+        expect(page.locator(".message.notice")).to_contain_text("Cette affiche n’a plus de version à vérifier.")
+        expect(page.get_by_role("dialog", name=sb.REVIEW)).to_have_count(0)
+        saved = page.request.get(address).json()
+        assert saved["document"] == original["document"] and saved["confirmation"] == original["confirmation"]
+        # The price changes in another tab after this list has already offered the previous file.
+        page.goto(smoke.ORIGIN + "/#affiches")
+        file_action = row.get_by_role("button", name=re.compile("^Ouvrir le fichier"))
+        expect(file_action).to_be_visible()
+        changed = saved["document"] | {"offer": saved["document"]["offer"] | {"price_ar": saved["document"]["offer"]["price_ar"] + 1000}}
+        answer = page.request.put(address, data=changed, headers={"Origin": smoke.ORIGIN, "X-Affiche-Bundle": str(smoke.BUNDLE),
+                                  "If-Match": f'"{saved["revision"]}"', "Idempotency-Key": str(uuid4())})
+        assert answer.ok, answer.text()
+        file_action.click()
+        expect(page.locator(".message.notice")).to_contain_text("Cette affiche n’a plus de fichier confirmé pour sa version actuelle.")
+        expect(page.locator(".final-preview")).to_have_count(0)
+        assert not posts, posts
+    finally:
+        context.close()
+
+
 def run():
     out = smoke.ROOT / "outputs" / "shop-dash"
     out.mkdir(exist_ok=True, parents=True)
@@ -2124,6 +2203,7 @@ def run():
                         smoke.stop(*server)
                         server = smoke.serve(Path(facebook_data), facebook_provider="stub")
                         walk_facebook(browser)
+                        walk_review_with_current_file(browser, facebook_data)
                     finally:
                         browser.close()
             finally:

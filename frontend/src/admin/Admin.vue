@@ -60,9 +60,17 @@ const asking = ref(false)
 // The three forms of the shop on screen; their references are made once, when the shop's screen opens with new drafts.
 const drafts = ref<{ shop: number; grant: GrantDraft; correction: CorrectionDraft; move: MoveDraft }>()
 const forms = computed(() => drafts.value && drafts.value.shop === current.value?.shop.id ? drafts.value : undefined)
-const pendingHere = computed(() => current.value ? kept[current.value.shop.id] : undefined)
+const pendingHere = computed(() => signedIn.value && route.value.view === 'shop' ? kept[route.value.id] : undefined)
+const openPanel = ref<'access' | 'grant'>()
+async function showSection(section: 'history' | 'access' | 'grant') {
+  if (openPanel.value === section) { openPanel.value = undefined; return }
+  openPanel.value = section === 'history' ? undefined : section
+  await nextTick()
+  document.getElementById(section + '-title')?.focus()
+}
 const others = computed(() => (shops.value ?? []).filter(shop => shop.id !== current.value?.shop.id))
 const correctionFold = ref<HTMLDetailsElement>(), reasonField = ref<HTMLTextAreaElement>(), payments = ref<InstanceType<typeof Payments>>()
+const moveFold = ref<HTMLDetailsElement>()
 const service = ref<InstanceType<typeof Service>>(), purchaseDraft = ref<string>()  // the Service screen's text area
 const overview = ref<InstanceType<typeof Overview>>()
 // A money answer belongs to its shop and its form, as an access action's note does.
@@ -72,6 +80,15 @@ const said = (form: Form, refused: boolean) => {
   return answer && answer.form === form && answer.refused === refused && answer.shop === current.value?.shop.id ? answer : undefined
 }
 const say = (shop: number, form: Form, lines: string[], refused = false, warning?: string) => { result.value = { shop, form, lines, refused, warning } }
+// A replay after a reload may finish before the detail read. Reveal its receipt when that shop is on screen.
+watch([result, () => current.value?.shop.id], ([answer, shop]) => {
+  if (!answer || answer.shop !== shop) return
+  if (answer.form === 'grant') openPanel.value = 'grant'
+  else {
+    const fold = answer.form === 'move' ? moveFold.value : correctionFold.value
+    if (fold) fold.open = true
+  }
+}, { flush: 'post' })
 const history = ref<{ shop: number; items: Item[]; next: string | null }>(), historyMessage = ref<{ shop: number; text: string }>(), older = ref(false)
 const shopHistory = computed(() => history.value && history.value.shop === current.value?.shop.id ? history.value : undefined)
 const find = (id: number) => shops.value?.find(shop => shop.id === id) ?? (one.value?.shop.id === id ? one.value.shop : undefined)
@@ -176,7 +193,7 @@ function leave(all: boolean) {
   copied.value = listMessage.value = createMessage.value = shopMessage.value = headerMessage.value = ''
   creating.value = busy.value = asking.value = older.value = false
   sending.clear()
-  if (all) { draft.value = blank(); drafts.value = undefined; purchaseDraft.value = undefined; filter.value = '' }
+  if (all) { openPanel.value = undefined; draft.value = blank(); drafts.value = undefined; purchaseDraft.value = undefined; filter.value = '' }
 }
 
 /** What a refused request says. A 401 is shown on the sign-in form, which takes the view's place; a defect is not an
@@ -203,7 +220,10 @@ async function load() {
   if (!signedIn.value) return
   const at = route.value
   if (at.view === 'shop') {
-    if (drafts.value?.shop !== at.id) drafts.value = { shop: at.id, grant: newGrant(), correction: newCorrection(), move: newMove() }
+    if (drafts.value?.shop !== at.id) {
+      openPanel.value = undefined
+      drafts.value = { shop: at.id, grant: newGrant(), correction: newCorrection(), move: newMove() }
+    }
     await Promise.all([loadShop(at.id), loadHistory(at.id), loadShops()])  // the shops: the move's destinations
   } else if (at.view === 'shops') await loadShops()
   else if (at.view === 'overview') await overview.value?.read()
@@ -405,7 +425,8 @@ async function confirmAndSend(make: (shop: number) => Kept, title: string, actio
   if (!shop || asking.value || kept[shop.id]) return
   const request = make(shop.id)
   asking.value = true
-  const yes = await confirm.value!.ask({ title, text: describe(request, find), action })
+  const yes = await confirm.value!.ask({ title, text: describe(request, find), action,
+    context: `Prepared ${when(request.at)} · ${session.value!.actor}` })
   asking.value = false
   if (yes) await send(request)
 }
@@ -453,7 +474,7 @@ function renew(request: Kept) {
   else if (request.form === 'correction') shop.correction = newCorrection()
   else shop.move = newMove()
 }
-const balance = (now: Balance) => `available ${grouped(now.available)} · en attente ${grouped(now.pending)}`
+const balance = (now: Balance) => `available ${grouped(now.available)} · pending ${grouped(now.pending)}`
 function answered(request: Kept, answer: any) {
   if (request.form === 'grant') {
     const room: Headroom = answer.headroom
@@ -498,7 +519,8 @@ function resolve(id: number, items: Item[]) {
 async function discard(request: Kept) {
   if (sending.has(request.shop) || asking.value) return
   asking.value = true
-  const yes = await confirm.value!.ask({ title: 'Discard this request?', text: 'If the first send was recorded, a new one writes a second line. Read the history first.', action: 'Discard' })
+  const yes = await confirm.value!.ask({ title: 'Discard this request?', action: 'Discard',
+    text: `This removes the saved request for ${named(request.shop)} from this browser. Reference ${request.body.ref}. If the first send was recorded, a new one writes a second line. Read the history first.` })
   asking.value = false
   if (!yes || sending.has(request.shop)) return
   release(kept, store, request); delete why[request.shop]; memoryOnly.delete(request.shop)
@@ -626,7 +648,7 @@ async function repay(job: JobItem) {
     <p class="refusal" role="alert">{{ listMessage }}</p>
     <div v-if="rows.length" class="card table-card">
       <table class="shops">
-        <thead><tr><th>Shop</th><th>State</th><th class="num">Available</th><th class="num" lang="fr">En attente</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
+        <thead><tr><th>Shop</th><th>State</th><th class="num">Available</th><th class="num">Pending</th><th class="num">Posters</th><th>Last poster</th><th class="num">Sessions</th></tr></thead>
         <tbody>
           <tr v-for="shop in rows" :key="shop.id">
             <td class="shop"><a :href="`#/shops/${shop.id}`" :title="shop.identifier">{{ shop.identifier }}</a><small :title="shop.name ?? undefined">{{ shop.name ?? '—' }}</small></td>
@@ -636,7 +658,7 @@ async function repay(job: JobItem) {
               <strong v-if="kept[shop.id]" class="unresolved">unresolved request</strong>
             </td>
             <td class="num" data-label="Available">{{ shop.available }}</td>
-            <td class="num" data-label="En attente">{{ shop.pending }}</td>
+            <td class="num" data-label="Pending">{{ shop.pending }}</td>
             <td class="num" data-label="Posters">{{ shop.posters }}</td>
             <td data-label="Last poster">{{ shop.last_poster_at?.slice(0, 10) ?? '—' }}</td>
             <td class="num" data-label="Sessions">{{ shop.sessions }}</td>
@@ -665,29 +687,51 @@ async function repay(job: JobItem) {
 
   <main v-else v-show="signedIn" class="single" :inert="drawer">
     <p><a href="#/shops">← Shops</a></p>
-    <h1 ref="heading" tabindex="-1">{{ current?.shop.identifier ?? 'Shop' }}</h1>
+    <h1 ref="heading" tabindex="-1">{{ current?.shop.identifier ?? (signedIn && route.view === 'shop' ? named(route.id) : 'Shop') }}</h1>
     <p class="refusal" role="alert">{{ shopMessage }}</p>
-    <template v-if="current">
-      <div class="card shop-head">
-        <p class="name">{{ current.shop.name ?? 'No name' }}</p>
-        <p class="state"><span class="badge" :class="current.shop.state === 'suspended' ? 'bad' : 'ok'">{{ current.shop.state }}</span><template v-if="!current.shop.has_password"> · no password</template> · {{ count(current.shop.sessions, 'live session') }}</p>
-        <dl class="figures"><div><dt>Available</dt><dd>{{ grouped(current.shop.available) }}</dd></div><div><dt lang="fr">En attente</dt><dd>{{ grouped(current.shop.pending) }}</dd></div></dl>
-      </div>
+    <button v-if="shopMessage && route.view === 'shop'" type="button" @click="loadShop(route.id)">Retry shop details</button>
+    <div v-if="current" class="card shop-head">
+      <p class="name">{{ current.shop.name ?? 'No name' }}</p>
+      <p class="state"><span class="badge" :class="current.shop.state === 'suspended' ? 'bad' : 'ok'">{{ current.shop.state }}</span><template v-if="!current.shop.has_password"> · no password</template> · {{ count(current.shop.sessions, 'live session') }}</p>
+      <dl class="figures"><div><dt>Available</dt><dd>{{ grouped(current.shop.available) }}</dd></div><div><dt>Pending</dt><dd>{{ grouped(current.shop.pending) }}</dd></div></dl>
+    </div>
 
-      <section v-if="pendingHere" class="kept card" aria-labelledby="kept-title">
-        <h2 id="kept-title">A request with no definite answer</h2>
-        <p>{{ describe(pendingHere, find) }}</p>
-        <p>{{ why[current.shop.id] ?? UNANSWERED }}</p>
-        <p v-if="memoryOnly.has(current.shop.id)" class="note">{{ UNSTORED }}</p>
+    <section v-if="pendingHere" class="kept card" aria-labelledby="kept-title">
+      <h2 id="kept-title">A request with no definite answer</h2>
+      <p>{{ describe(pendingHere, find) }}</p>
+      <small>Prepared {{ when(pendingHere.at) }}</small>
+      <p>{{ why[pendingHere.shop] ?? UNANSWERED }}</p>
+      <p v-if="memoryOnly.has(pendingHere.shop)" class="note">{{ UNSTORED }}</p>
+      <div class="actions">
+        <button class="primary" :aria-disabled="sending.has(pendingHere.shop)" @click="again(pendingHere)">Send again</button>
+        <button :aria-disabled="sending.has(pendingHere.shop)" @click="discard(pendingHere)">Discard</button>
+      </div>
+      <p role="status">{{ sending.has(pendingHere.shop) ? 'Sending…' : '' }}</p>
+    </section>
+
+    <div v-if="!current && signedIn && route.view === 'shop' && result?.shop === route.id" :role="result.refused ? 'alert' : 'status'" :class="{ refusal: result.refused }">
+      <p v-for="line in result.lines" :key="line">{{ line }}</p>
+      <p v-if="result.warning"><strong>{{ result.warning }}</strong></p>
+    </div>
+    <template v-if="current">
+      <div class="actions shop-actions" role="group" aria-label="Shop actions">
+        <button type="button" @click="showSection('history')">History</button>
+        <button type="button" :aria-expanded="openPanel === 'access'" aria-controls="shop-access" @click="showSection('access')">Access</button>
+        <button type="button" :class="{ primary: !pendingHere }" :aria-expanded="openPanel === 'grant'" aria-controls="shop-grant" @click="showSection('grant')">Grant credits</button>
+      </div>
+      <section v-show="openPanel === 'access'" id="shop-access" class="card" aria-labelledby="access-title">
+        <h2 id="access-title" tabindex="-1">Access</h2>
         <div class="actions">
-          <button class="primary" :aria-disabled="sending.has(current.shop.id)" @click="again(pendingHere)">Send again</button>
-          <button :aria-disabled="sending.has(current.shop.id)" @click="discard(pendingHere)">Discard</button>
+          <button :aria-disabled="busy" @click="setPassword(current.shop)">Set a new password</button>
+          <button :aria-disabled="busy" @click="endSessions(current.shop)">End its sessions</button>
+          <button :aria-disabled="busy" @click="suspendOrEnable(current.shop)">{{ current.shop.state === 'active' ? 'Suspend' : 'Enable' }}</button>
         </div>
-        <p role="status">{{ sending.has(current.shop.id) ? 'Sending…' : '' }}</p>
+        <p role="status">{{ own && !own.refused ? own.text : '' }}</p>
+        <p class="refusal" role="alert">{{ own?.refused ? own.text : '' }}</p>
       </section>
 
-      <section class="card" aria-labelledby="grant-title">
-        <h2 id="grant-title">Grant credits</h2>
+      <section v-show="openPanel === 'grant'" id="shop-grant" class="card" aria-labelledby="grant-title">
+        <h2 id="grant-title" tabindex="-1">Grant credits</h2>
         <p v-if="!storable" class="note">{{ UNSTORED }}</p>
         <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
         <form v-else-if="forms" class="stack" @submit.prevent="submitGrant">
@@ -751,7 +795,7 @@ async function repay(job: JobItem) {
         <div class="refusal" role="alert"><p v-for="line in said('correction', true)?.lines" :key="line">{{ line }}</p></div>
       </details>
 
-      <details class="fold card">
+      <details ref="moveFold" class="fold card">
         <summary>Move a payment</summary>
         <p v-if="pendingHere">Waiting for the request above: send it again or discard it.</p>
         <form v-else-if="forms" class="stack" @submit.prevent="submitMove">
@@ -772,7 +816,7 @@ async function repay(job: JobItem) {
       </details>
 
       <section class="card" aria-labelledby="history-title">
-        <h2 id="history-title">History</h2>
+        <h2 id="history-title" tabindex="-1">History</h2>
         <p class="refusal" role="alert">{{ historyMessage?.shop === current.shop.id ? historyMessage.text : '' }}</p>
         <ul v-if="shopHistory?.items.length" class="lines">
           <li v-for="item in shopHistory.items" :key="`${item.type}${item.id}`">
@@ -796,16 +840,6 @@ async function repay(job: JobItem) {
         <button v-if="shopHistory?.next" :aria-disabled="older" @click="olderPage">Older</button>
       </section>
 
-      <details class="fold card">
-        <summary>Access</summary>
-        <div class="actions">
-          <button :aria-disabled="busy" @click="setPassword(current.shop)">Set a new password</button>
-          <button :aria-disabled="busy" @click="endSessions(current.shop)">End its sessions</button>
-          <button :aria-disabled="busy" @click="suspendOrEnable(current.shop)">{{ current.shop.state === 'active' ? 'Suspend' : 'Enable' }}</button>
-        </div>
-        <p role="status">{{ own && !own.refused ? own.text : '' }}</p>
-        <p class="refusal" role="alert">{{ own?.refused ? own.text : '' }}</p>
-      </details>
       <section class="card" aria-labelledby="limits">
         <h2 id="limits">Today’s limits (UTC day)</h2>
         <p>Provider spend: {{ dollars(current.limits.day_spent_micros) }} of {{ dollars(current.limits.day_limit_micros) }}</p>
@@ -816,3 +850,9 @@ async function repay(job: JobItem) {
 
   <Confirm ref="confirm" />
 </template>
+
+<style scoped>
+.shop-actions { margin: 0 0 16px }
+.shop-actions button { padding-inline: 14px }
+.single h2[tabindex] { scroll-margin-top: 76px }
+</style>

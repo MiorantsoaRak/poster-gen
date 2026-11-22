@@ -22,7 +22,7 @@ OUT = smoke.ROOT / "outputs" / "terms-browser"
 LOST = "L’acceptation n’a pas pu être confirmée."
 UNREAD = "Les conditions n’ont pas pu être chargées."
 REQUIRED, OUTDATED = MESSAGES["terms_required"], MESSAGES["terms_outdated"]
-REVIEW, FINAL = "Vérifier la fidélité du produit", "Dernière vérification avant le téléchargement"
+FINAL = "Vérifier votre affiche"
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
 STEPS_FIRST = smoke.STEPS_FIRST
 FOCUS_IN = "selector => !!document.querySelector(selector)?.contains(document.activeElement)"
@@ -178,33 +178,71 @@ def walk_journey(browser, engine, errors, product, model):
     page.get_by_role("button", name="Préparer mon affiche").click()
     expect(page.get_by_role("heading", name="Casque Bose QC", exact=True)).to_be_visible()
     first = page.url.split("#")[1]
-    for _ in range(2):
-        page.get_by_role("button", name="Continuer", exact=True).click()
+    expect(page.get_by_role("tab", name="Style", exact=True)).to_have_attribute("aria-selected", "true")
     page.get_by_role("button", name="Générer l’affiche", exact=True).click()
     page.get_by_role("button", name="Lancer la génération", exact=True).click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible(timeout=30000)
-    page.locator(".review-panel").get_by_role("button", name="Fermer").click()
+    expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
 
     # Not accepted again, on the session that lasts: the dialog at the opening. After « Plus tard », free work goes on:
-    # an edit saved, the version approved, the final check confirmed, the file downloaded. No acceptance is sent.
+    # an edit saved, the finished poster reviewed and the exact file downloaded. No terms acceptance is sent.
     set_terms(engine, None)
     page.reload()
     shows_conditions(page)
     later(page)
+    page.locator(".final-preview").get_by_role("button", name="Corriger l’affiche").click()
     page.get_by_role("tab", name="Réglages", exact=True).click()
     with page.expect_response(lambda r: r.request.method == "PUT" and f"/api/creations/{first}" in r.url) as saved:
         page.get_by_label("Zoom", exact=True).press("ArrowRight")
     assert saved.value.ok, saved.value.text()
     expect(page.get_by_text("Enregistré", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Vérifier la fidélité", exact=True).click()
-    page.get_by_role("button", name="Tout est conforme, approuver").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_have_count(0)
+    # Closing the review while its free render is read must leave the seller in settings.
+    held_file = []
+    page.route("**/api/renders/*", lambda route: held_file.append((route, route.fetch())))
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).click()
+    until(page, lambda: held_file)
+    page.keyboard.press("Escape")
+    expect(page.locator("[aria-labelledby=review-title]")).to_have_count(0)
+    route, response = held_file.pop()
+    route.fulfill(response=response)
+    page.unroute("**/api/renders/*")
+    check_file = page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)
+    expect(check_file).to_be_enabled()
+    expect(page.locator(".final-preview")).to_have_count(0)
+    check_file.click()
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
-    page.get_by_role("button", name="Tout est conforme, confirmer").click()
     with page.expect_download() as download:
-        page.get_by_role("link", name="Télécharger le PNG confirmé").click()
+        page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).click()
     assert Path(download.value.path()).stat().st_size > 1000
+    png = page.locator(".final-preview a[download]").get_attribute("href")
+    final = page.locator(".final-preview")
+    more = final.locator("summary", has_text="Autres actions")
+    more.focus()
+    page.keyboard.press("Tab")
+    expect(final.get_by_role("button", name="Fermer")).to_be_focused()
+    page.keyboard.press("Shift+Tab")
+    expect(more).to_be_focused()
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+
+    # Even without accepting paid terms, an approved version reopens its own verified file for free.
+    before = len(posts)
+    compare = page.get_by_role("button", name="Comparer la version 1", exact=True)
+    if not compare.is_visible():
+        page.get_by_role("button", name=re.compile(r"^Versions ")).click()
+
+    def wrong_format(route):
+        response = route.fetch()
+        route.fulfill(response=response, json={**response.json(), "format": "square"})
+
+    page.route("**/api/renders/*", wrong_format)
+    compare.click()
+    expect(page.get_by_role("alert").filter(has_text="Le fichier confirmé a changé")).to_be_visible()
+    expect(page.locator(".final-preview")).to_have_count(0)
+    page.unroute("**/api/renders/*")
+    page.locator("[aria-labelledby=review-title]").get_by_role("button", name="Fermer", exact=True).click()
+    compare.click()
+    expect(page.locator(".final-preview a[download]")).to_have_attribute("href", png)
+    assert len(posts) == before
     page.locator(".final-preview").get_by_role("button", name="Fermer").click()
     expect(page.locator(TERMS)).to_have_count(0)
     assert count(posts, "terms") == 0 and stored(engine) is None
@@ -406,8 +444,9 @@ def walk_journey(browser, engine, errors, product, model):
     page.unroute("**/api/terms")
     assert count(posts, "terms") == accepted + 1, posts
     new_version_sheet(page).get_by_role("button", name="Lancer la génération").click()
-    expect(page.get_by_role("heading", name=REVIEW)).to_be_visible(timeout=30000)
-    page.locator(".review-panel").get_by_role("button", name="Fermer").click()
+    alternative = page.get_by_role("dialog", name="Vérifier la fidélité du produit")
+    expect(alternative.get_by_role("button", name="Choisir cette version")).to_be_visible(timeout=30000)
+    alternative.get_by_role("button", name="Fermer").click()
 
     # A new version of the text between the reading and the tap: 409, its sentence, the new text (its date and a changed
     # paragraph) shown before the next acceptance; then accepted.
@@ -541,6 +580,7 @@ def walk_keyboard(browser, engine, errors, product, model, first):
     approve = review.get_by_role("button", name="Tout est conforme, approuver")
     approve.focus()
     page.keyboard.press("Enter")
+    review.get_by_role("button", name="Revenir aux réglages").click()
     expect(review).to_have_count(0)
 
     # A chat request the server never took, refused (403), kept with its key; its « Réessayer » held. Meanwhile the
@@ -634,7 +674,7 @@ def run():
                 engine.dispose()
                 smoke.stop(*server)
     print("Conditions browser checks passed (stub only): the dialog at the opening after a sign-in and on a session that "
-          "lasts, no sign-out in it; « Plus tard » then an edit, the check, the final check and the download; a fresh chat "
+          "lasts, no sign-out in it; « Plus tard » then an edit, one finished-poster review and the download; a fresh chat "
           "card offering « Lire les conditions » with no /scenes sent; a refused chat message back in the field; a free "
           "Claude button refused; the balance answering late on an open paid sheet; the text not fetched, then read again "
           "as text only; an admitted request's lost 202 taken up with « Reprendre » after an older version, no dialog; a "

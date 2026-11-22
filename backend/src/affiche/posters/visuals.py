@@ -98,10 +98,13 @@ class RefinementRequest(Model):
         return screen_adjustment(value)  # the one screen of this field, for the editor and the chat (ADR-102)
 
 
+FidelityChecks = dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration",
+                              "text_title", "text_price", "text_signature"], bool]
+
+
 class Decision(Model):
     action: Literal["approve", "reject"]
-    checks: dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration",
-                         "text_title", "text_price", "text_signature"], bool] = Field(default_factory=dict)
+    checks: FidelityChecks = Field(default_factory=dict)
     reasons: list[ReasonCode] = Field(default_factory=list, max_length=9)
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
 
@@ -416,19 +419,24 @@ def get_visual(conn, shop, id):
         {"logo_disc": json.loads(row["placement_json"])["logo_disc"]} if row["placement_json"] else {})
 
 
+def record_decision(conn, shop, id, action, checks, reasons, note):
+    old = store._owned(conn, "poster_visuals", shop, id)
+    status = "approved" if action == "approve" else "rejected"
+    if old["status"] not in ("pending_review", status):
+        raise store.Refused("review_decided", 409)
+    if action == "approve" and (not required_checks(baked_headline(conn, shop, old)) <= checks.keys()
+                                or not all(checks.values())):
+        raise store.Refused("fidelity_incomplete")
+    if old["status"] == status:
+        return
+    conn.execute(text("UPDATE poster_visuals SET status=:status,checks_json=:checks,rejection_reasons_json=:reasons,"
+                      "rejection_note=:note,decided_at=:now WHERE id=:id"),
+                 {"id": id, "status": status, "checks": canonical(checks), "reasons": canonical(reasons),
+                  "note": note, "now": utc_now()})
+
+
 def decide(engine, shop, key, id, request: Decision):
     def apply(conn):
-        old = store._owned(conn, "poster_visuals", shop, id)
-        status = "approved" if request.action == "approve" else "rejected"
-        if old["status"] != "pending_review":
-            if old["status"] != status:
-                raise store.Refused("review_decided", 409)
-            return 200, get_visual(conn, shop, id)
-        if request.action == "approve" and not required_checks(baked_headline(conn, shop, old)) <= request.checks.keys():
-            raise store.Refused("fidelity_incomplete")
-        conn.execute(text("UPDATE poster_visuals SET status=:status,checks_json=:checks,rejection_reasons_json=:reasons,"
-                          "rejection_note=:note,decided_at=:now WHERE id=:id"),
-                     {"id": id, "status": status, "checks": canonical(request.checks), "reasons": canonical(request.reasons),
-                      "note": request.note, "now": utc_now()})
+        record_decision(conn, shop, id, request.action, request.checks, request.reasons, request.note)
         return 200, get_visual(conn, shop, id)
     return store.mutate(engine, shop, key, "POST", f"/api/visuals/{id}/decision", request.model_dump(), apply)

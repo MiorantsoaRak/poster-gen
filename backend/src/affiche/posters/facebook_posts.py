@@ -227,6 +227,26 @@ def _offered(conn, shop: int, page: str | None, row) -> dict:
             "pending": pending}
 
 
+def excluded(engine, shop: int, limit: int, cursor: tuple[str, str]) -> dict:
+    """Active posters omitted by the picker, newest first, with the same reasons as its counts."""
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT c.id, c.created_at, p.name, json_extract(v.document_json, '$.offer.title') AS title,
+                   json_extract(v.document_json, '$.primary_format') AS primary_format, {REASON} AS reason
+            FROM creations c
+            JOIN creation_versions v ON v.creation_id=c.id AND v.revision=c.current_revision
+            JOIN product_inputs p ON p.shop_id=c.shop_id AND p.id=json_extract(v.document_json, '$.input_id')
+            WHERE c.shop_id=:shop AND c.status='active' AND (c.created_at,c.id)<(:stamp,:id)
+              AND reason IS NOT NULL
+            ORDER BY c.created_at DESC,c.id DESC LIMIT :limit
+        """), {"shop": shop, "stamp": cursor[0], "id": cursor[1], "limit": limit + 1}).mappings().all()
+    items = [dict(row) for row in rows[:limit]]
+    after = f'{items[-1]["created_at"]}|{items[-1]["id"]}' if len(rows) > limit else None
+    for item in items:
+        del item["created_at"]
+    return {"items": items, "next_cursor": after}
+
+
 def candidates(engine, shop: int, limit: int, cursor: tuple[str, str], ids: str | None) -> dict:
     """GET /api/facebook/posts/candidates: the Page, the shop's limit, a page of candidates (as GET /api/creations: by
     created_at then id, newest first), or with `ids` those posters whatever their state, each a candidate or its reason;

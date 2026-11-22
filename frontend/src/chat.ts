@@ -1,7 +1,7 @@
 // Creation by message (D-TEXT-FIRST-003): what the chat keeps in this browser, and its rules that need no screen.
 // The conversation is never sent whole to the server: the posters, their versions and states are already there.
 import { shopKey } from './api'
-import type { Creation, Visual } from './document'
+import { FORMAT_NAMES, type Creation, type Format, type Visual } from './document'
 import { asksText, type Phase } from './generation'
 import { staleWords } from './words'
 
@@ -25,7 +25,7 @@ export interface Picture { asset: string; role: Role; warnings?: string[] }
  *  which offers the editor's copy of the poster on them. Nothing paid; a kind the bundle from before shows as text. */
 export type Effect = 'refine' | 'scene' | 'free'
 export interface Words { title?: string; price_ar?: number; brand?: string | null; subtitle?: string | null }
-export interface Card { kind: string; name?: string; price_ar?: number; style?: Style | null; identity?: boolean; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
+export interface Card { kind: string; name?: string; price_ar?: number; format?: Format; style?: Style | null; identity?: boolean; visual_id?: string; code?: string; retry?: string; error?: string; fix?: boolean
   effect?: Effect; words?: Words; instruction_fr?: string; said?: string; whole?: boolean; pictures?: Picture[]
   /** `ask_photo` only: photos this shop already used for the same product (D-TEXT-FIRST-004). */
   suggestions?: { asset: string; name: string }[] }
@@ -43,7 +43,7 @@ export interface JobRow { id: string; kind: string; status: string; result_ref: 
 /** What App.vue hands to the chat: its own refs (unwrapped) and functions, so the routes, guards and retries stay the editor's. */
 export interface ChatAdapter {
   state: {
-    creation: Creation | null; offer: { title: string; price_ar: number } | undefined; visuals: Visual[]; selected: string | undefined; job: { id: string; kind: string; status: string } | null; phase: Phase | null; offline: boolean
+    creation: Creation | null; format: Format; productAssets: string[] | undefined; productError: string; offer: { title: string; price_ar: number } | undefined; visuals: Visual[]; selected: string | undefined; job: { id: string; kind: string; status: string } | null; phase: Phase | null; offline: boolean
     /** The selected version's stored title and price, each only when it differs from the document's. */
     stale: Stale
     /** What a new image costs, as the editor's dialog says it (generation.ts credit); `stop`: no new paid tap; `terms`:
@@ -53,6 +53,7 @@ export interface ChatAdapter {
     /** What the shop's profile holds; `ticked`: the form of « Pas à pas » has the logo or the contact ticked. */
     shop: Shop
   }
+  reloadProduct(): Promise<void>
   attach(file: File, role: Role): Promise<{ asset: string; warnings: string[] }>
   /** `sending` runs right before the editor's paid request leaves, nothing awaited in between; a throw there stops it.
    *  `identity`: a new poster is made with the logo and the contact that the shop's profile holds (true), or without
@@ -121,6 +122,25 @@ export const isThread = (key: string) => key.startsWith(chatPrefix()) && key !==
 export const trim = (items: Item[]) => items.slice(-THREAD_ITEMS)
 
 const picture = (value: any): value is Picture => !!value && typeof value.asset === 'string' && (value.role === 'product' || value.role === 'inspiration')
+/** An open recap follows the editor. A completed recap keeps its own format, including requests sent by older versions. */
+export function recapFormat(item: Item, current: Format): string | undefined {
+  if (!item.spent && !item.done) return FORMAT_NAMES[current].join(' ')
+  const body = item.request?.body
+  const format = body && typeof body === 'object' && 'format' in body ? body.format : item.card?.format
+  if (typeof format === 'string' && Object.hasOwn(FORMAT_NAMES, format)) return FORMAT_NAMES[format as Format].join(' ')
+}
+/** Older sent recaps did not snapshot photos. Product inputs are immutable for their poster, and the sent
+ *  request records the inspiration actually used. A newer style reference belongs to the current recap only. */
+export function picturesOfRecap(item: Item, current: Picture[], creation?: string): Picture[] {
+  if (!item.spent && !item.done) return current
+  if (item.card?.pictures) return item.card.pictures
+  const photos = creation && item.creation === creation ? current.filter(photo => photo.role === 'product') : []
+  const body = item.request?.body
+  if (body && typeof body === 'object' && 'style_reference_asset' in body && typeof body.style_reference_asset === 'string') {
+    photos.push({ asset: body.style_reference_asset, role: 'inspiration' })
+  }
+  return photos
+}
 /** A stored thread. The storage is never trusted: what has the wrong shape is left out. */
 export function readThread(raw: string | null): { items: Item[]; draft: Draft; moved?: string } {
   let saved: any
@@ -236,6 +256,7 @@ export const unresolved = (item: Item) => paid(item.card) && !!item.spent && !it
  *  D-TEXT-FIRST-005 had a kind: `change: 'scene'` is a refinement; `change: 'price'` sets the price alone and has no
  *  `effect` (see `effectOf`). `previous` is no longer kept: `state.stale` says what the image still shows. */
 export function normal({ change, previous, ...card }: Card & { change?: unknown; previous?: unknown }): Card {
+  if (card.kind === 'recap' && card.pictures !== undefined) return { ...card, pictures: Array.isArray(card.pictures) ? card.pictures.filter(picture) : [] }
   if (card.kind !== 'change' || change !== 'scene' && change !== 'price') return card
   if (change === 'scene') return { ...card, effect: 'refine' }
   const { price_ar, ...rest } = card

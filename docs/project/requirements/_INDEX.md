@@ -4,6 +4,8 @@
 
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
+| [saas-journey.md](saas-journey.md) | R-JOURNEY-001 … 007 | Approved for design, 2026-11-22 | [Approved design](../designs/saas-journey.md) |
+| [first-poster-guide.md](first-poster-guide.md) | R-GUIDE-001 … 004 | Approved for design, 2026-11-22 | [Approved design](../designs/first-poster-guide.md) |
 | [multi-shop.md](multi-shop.md) | R-MULTI-SHOP-001 … 006 | Approved 2026-11-15 under the autonomy grant (ADR-106), Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105) | [multi-shop](../designs/multi-shop.md) v4, approved under the autonomy grant (ADR-107) |
 | [prepaid-balance.md](prepaid-balance.md) | R-BALANCE-001 … 007 | Approved 2026-11-16 under the autonomy grant, amended by its design (ADR-109), Release 1 | [prepaid-balance](../designs/prepaid-balance.md) v4 |
 | [admin-dashboard.md](admin-dashboard.md) | R-ADMIN-001 … 006 | Approved v4 2026-11-17 under the autonomy grant, amended by its design (ADR-110), Release 1 | [admin-dashboard](../designs/admin-dashboard.md) v3 |
@@ -22,7 +24,7 @@
 | [interface-polish.md](interface-polish.md) | R-POLISH-001 … 005 | Approved v2 2026-11-20 by the lead under the autonomy grant (ADR-122), after a Codex REJECT and a devil's advocate on the design's v1 | [interface-polish](../designs/interface-polish.md) |
 | [app-redesign.md](app-redesign.md) | R-REDESIGN-001 … 007 | Approved v2 2026-11-20 by the lead under the autonomy grant (ADR-123), on the owner's approval of the mockup `mockups/doka-console/`, after a Codex REJECT and a devil's advocate on the design's v1 | [app-redesign](../designs/app-redesign.md) |
 
-Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → fidelity review → manual or prompted selected-text polish → server preview → confirm → download the same PNG. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
+Approved flow: photo/title/exact price → optional Claude planning → GPT Image integrated scene → editable poster with independently selected logo/name/contact → optional manual or prompted selected-text polish → review the exact server PNG against the product and price → download those bytes or prepare a Facebook post. Cutout is optional. Scene refinements preserve the base and use it plus originals. Separate text/effect layers preserve manual editing; surface-embedded lettering is deferred. Feed is the first slice; square and story remain required for the pilot.
 
 Next gate: review the [technical designs](../designs/_INDEX.md), then approve them before implementation tasks, as required by [AGENTS.md](../../../AGENTS.md). No new feature code or paid testing was performed during design.
 | [poster-format.md](poster-format.md) | R-POSTER-FORMAT-001 … 002 | Approved 2026-11-14 (ADR-080) | [poster-format](../designs/poster-format.md) |

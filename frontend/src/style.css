@@ -231,8 +231,8 @@ details[open] > summary { color: var(--text) }
 .side .brand .signal-symbol { display: none; width: 40px; height: 40px; padding: 8px }
 .side .new { width: 100%; justify-content: center; margin: 4px 0 10px }
 .nav { display: grid; gap: 2px }
-.nav a, .side :is(.sign-out, .theme-toggle) { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 12px; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
-@media (hover: hover) { :is(.nav a, .side .sign-out, .side .theme-toggle, .recent a, .account):hover { background: var(--active); color: var(--text) } }
+.nav a, .side :is(.sign-out, .theme-toggle, .guide-entry) { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 12px; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; transition: background-color .15s ease-out, color .15s ease-out, var(--press) }
+@media (hover: hover) { :is(.nav a, .side .sign-out, .side .theme-toggle, .side .guide-entry, .recent a, .account):hover { background: var(--active); color: var(--text) } }
 .nav a[aria-current] { color: var(--text); font-weight: 700; background: var(--active) }
 .count { color: var(--faint); font-weight: 500 }
 .nav .count { margin-left: auto; font-size: 13px; font-weight: 600 }
@@ -252,7 +252,7 @@ details[open] > summary { color: var(--text) }
 .account[aria-current] { background: var(--active) }
 .account .avatar { display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--invert); color: var(--invert-ink) }
 .account .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.side :is(.sign-out, .theme-toggle) { background: none; font-weight: 600 }
+.side :is(.sign-out, .theme-toggle, .guide-entry) { background: none; font-weight: 600 }
 .side .theme-toggle { display: none; margin: 0 }
 @media (width > 1180px) {
   :root[data-shell] { --side-w: 288px; --gap: 12px }
@@ -277,7 +277,7 @@ details[open] > summary { color: var(--text) }
   :root[data-rail] .side .brand { align-self: center; padding: 0 0 10px }
   :root[data-rail] .side .brand .signal-symbol { display: block }
   :root[data-rail] .side .new { width: 48px; padding: 0 }
-  :root[data-rail] .side :is(.nav a, .sign-out, .account) { justify-content: center; width: 44px; min-height: 44px; padding: 0 }
+  :root[data-rail] .side :is(.nav a, .sign-out, .guide-entry, .account) { justify-content: center; width: 44px; min-height: 44px; padding: 0 }
   :root[data-rail] .side :is(.nav, .side-foot) { justify-items: center; width: 100% }
   :root[data-rail] .side .credit-card { justify-content: center; flex-direction: column; gap: 2px; width: 56px; padding: 10px 4px; font-size: 13px }
   :root[data-rail] .side .credit-card .number { display: block }
@@ -312,8 +312,8 @@ details[open] > summary { color: var(--text) }
   /* Each label on one line (R-POLISH-003): a count, or the long words behind a short label, leave the eye, not the name. */
   .phone-bar a > span { white-space: nowrap }
   .phone-bar :is(.count, .long) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
-  .phone-bar .make { justify-self: center; width: 56px; height: 56px; min-height: 0; padding: 0; border: 1.5px solid var(--signal-edge); border-radius: 50%; background: var(--signal); color: var(--on-signal); box-shadow: var(--lift) }
-  .phone-bar .make .i { width: 24px; height: 24px; padding: 0; stroke-width: 2 }
+  .phone-bar .make { color: var(--text) }
+  .phone-bar .make .i { width: 46px; padding: 6px 13px; background: var(--signal); color: var(--on-signal); stroke-width: 2 }
 }
 main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, env(safe-area-inset-right)); max-width: 1480px; margin: auto; padding: 8px var(--gutter-r) max(64px, env(safe-area-inset-bottom)) var(--gutter-l) }
 /* Accueil, Mes affiches, Styles, Mes crédits and Mon compte share one frame (D-POLISH-003): this width and one title. The
@@ -377,32 +377,31 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .photo-strip img { width: 76px; height: 76px; object-fit: contain; background: #fff; border-radius: var(--field) }
 .logo-preview { width: 120px; height: 80px; object-fit: contain }
 .gallery { max-width: var(--page); margin: 0 auto }
+.library-heading { justify-content: space-between }
+.library-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px }
+.library-filters { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--raised) }
+.library-filters button { min-height: 44px; padding: 0 16px; border-color: transparent; color: var(--muted) }
+.library-filters button[aria-pressed=true] { color: var(--text); background: var(--surface); box-shadow: var(--lift) }
 .rows { display: grid; border-radius: var(--radius); overflow: hidden }
-.library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center }
+.library-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center }
 .library-row + .library-row { border-top: 1px solid var(--line) }
-/* A row's second actions are words, not a stack of outlined buttons: the row itself (and its chevron) is the main one. */
-.row-actions { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 12px 8px 0 }
-.row-actions button { min-height: 36px; padding: 0 10px; border-color: transparent; color: var(--muted); font-weight: 600; text-decoration: underline; text-underline-offset: 2px }
-.more { margin: 14px 0 0; text-align: center }
-.gallery .titlerow label.check { padding: 0 }
-.library-item { display: grid; align-items: center; grid-template-columns: 64px minmax(0, 1fr) 16px; gap: 14px; width: 100%; min-height: 96px; padding: 8px 20px; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; justify-content: stretch }
-/* Rows off screen are not laid out or painted: enough for a long list without a virtual scroller. */
-.library-item { content-visibility: auto; contain-intrinsic-size: auto 96px }
-@media (hover: hover) { .library-item:hover:not(:disabled) { background: var(--active) } }
-.library-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-/* The state, price and date go under the title at every width: beside it they were cut short in the 860 px frame (D-POLISH-003). */
-/* The state is a badge on its own line between the title and the details (D-REDESIGN-004); « Retirée » stays in the details. */
-.library-item { row-gap: 4px }
-.library-item > :first-child { grid-row: 1 / span 2 }
-.library-item .badge { grid-column: 2; grid-row: 2; justify-self: start }
-.library-item .details { grid-column: 2; grid-row: 2; color: var(--faint); font-weight: 500; line-height: 20px }
-.library-item .badge + .details { grid-row: 3 }
-.library-item > :last-child { grid-column: 3; grid-row: 1 / span 2 }
-.library-item:has(.badge) > :is(:first-child, :last-child) { grid-row: 1 / span 3 }
+.library-item { grid-column: 1; grid-row: 1; display: grid; align-content: center; align-items: center; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 14px; width: 100%; min-height: 104px; padding: 12px 18px; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; justify-content: stretch; content-visibility: auto; contain-intrinsic-size: auto 104px }
+@media (hover: hover) { button.library-item:hover:not(:disabled) { background: var(--active) } }
+.library-item strong { font-size: 16px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.library-item > :first-child { grid-column: 1; grid-row: 1 / span 3 }
+.library-item .badge, .library-item .details { grid-column: 2; justify-self: start }
+.library-item .details { color: var(--faint); font-size: 14px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere }
 .library-item svg { color: var(--faint); justify-self: center }
-/* Whole, in its own shape: a Story or a Square poster is not cut to 4:5. */
-/* 64 x 80: a poster is known by its look (a 48 px one is a colour); artwork keeps a small radius. */
+/* Keep the whole artwork, including Story and square, in the same thumbnail space. */
 .library-item img { width: 64px; height: 80px; object-fit: contain; border-radius: 4px; display: block }
+.row-options { grid-column: 3; grid-row: 1; width: 44px; min-height: 44px; padding: 0; margin-right: 8px; border-color: transparent; color: var(--muted) }
+.row-options svg { stroke-width: 2.8 }
+.row-options[aria-expanded=true] { color: var(--text); background: var(--raised) }
+.library-file { grid-column: 2; grid-row: 1; min-height: 44px; padding: 0 12px; border-color: transparent; color: var(--text); font-size: 14px }
+.row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; grid-column: 1 / -1; gap: 4px; padding: 4px 12px; border-top: 1px solid var(--line); background: var(--raised) }
+.row-actions button { min-height: 44px; padding: 0 12px; border-color: transparent; color: var(--text); font-size: 14px }
+.library-item:focus-visible { outline-offset: -3px }
+.more { margin: 14px 0 0; text-align: center }
 .empty { color: var(--muted); border-radius: var(--radius); padding: 28px }
 .look-wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, calc(50% - 7px)), 1fr)); gap: 14px; margin-bottom: 14px }
 .look-card { margin: 0; border-radius: var(--radius); padding: 6px 6px 12px; display: grid; gap: 10px; justify-content: stretch; text-align: left; min-height: 0; overflow-wrap: anywhere }
@@ -420,7 +419,6 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .titlerow { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 10px 0 16px }
 .titlerow .what { margin-right: auto; min-width: 0 }
 .gallery .titlerow .what { flex: 1 1 0 }
-.gallery .titlerow label.check { flex-basis: 100%; min-height: 44px; align-items: center }
 .meta { color: var(--faint); font-size: 13px; font-weight: 500; margin: 0 }
 .progress { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; color: var(--faint); font-size: 13px }
 .progress li { display: flex; align-items: center; gap: 6px }
@@ -443,24 +441,34 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 /* The rail holds the phone's fixed bottom bar: no blur, filter, transform or containment on it (a blurred element is the
    containing block of its fixed descendants, part A). It is a card at rest. */
 .rail.card { padding-bottom: 0 }
-.step-count { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--muted) }
-/* Steps and tabs are the same row: steps carry their number and open once visited, tabs are all open. The chosen one
-   is a raised pill, the others have no shape. */
+/* The source photos and the exact offer stay together above the editing controls. */
+.offer-review { display: flex; align-items: center; flex-wrap: wrap; gap: 16px 32px; margin: 0 0 16px; padding: 18px 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface) }
+.offer-product { display: flex; flex: 1 1 260px; min-width: 0; align-items: center; gap: 14px; overflow-wrap: anywhere }
+.offer-product h2, .offer-details dt { margin: 0 0 2px; color: var(--muted); font-size: 12.5px; line-height: 17px; font-weight: 550 }
+.offer-title { display: block; font-size: 20px; line-height: 1.15; letter-spacing: -.025em }
+.offer-product p { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 18px }
+.offer-photos { display: flex; flex-wrap: wrap; flex: 0 0 auto; gap: 4px }
+.offer-photos a { display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--raised) }
+.offer-photos img { display: block; width: 56px; height: 56px; border-radius: inherit; object-fit: contain }
+.offer-details { display: flex; flex: 2 1 340px; flex-wrap: wrap; gap: 10px 24px; align-items: start; min-width: 0; margin: 0 }
+.offer-details div { min-width: 0; max-width: 100% }
+.offer-details dd { margin: 0; color: var(--text); font-size: 14px; line-height: 19px; font-weight: 600; overflow-wrap: anywhere; white-space: pre-line }
+.offer-details .offer-price { font-variant-numeric: tabular-nums; white-space: nowrap }
+.format-hint { margin: 0 0 14px }
 .tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 16px; background: var(--raised); box-shadow: inset 0 0 0 1.5px var(--line); border-radius: 999px; overflow-x: auto }
 .tabs [role=tablist] { display: flex; gap: 2px; flex: 3 1 auto; min-width: 0 }
 .tab { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 8px; gap: 5px; border: 0; background: none; color: var(--muted); font-size: 13.5px; font-weight: 600; white-space: nowrap }
 .stepping .tab { flex: 1 1 auto; padding: 0 6px; gap: 4px }
 .tab[aria-selected=true] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--lift) }
 @media (hover: hover) { .tab[aria-selected=true]:hover { background: var(--surface) } }
-span.tab { display: inline-flex; align-items: center; justify-content: center }
-.tab .n { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--line); font-size: 11px; line-height: 1; font-weight: 700 }
-.tab[aria-selected=true] .n { background: var(--text); color: var(--surface) }
+.stepping .tab { min-height: 44px }
+.stepping .tab .tool { display: block; width: 16px; height: 16px; padding: 0; background: none; color: currentColor }
 .panel { min-width: 0; padding-bottom: 20px }
 .lead { margin-bottom: 14px }
 .panel > .check:last-child { margin-bottom: -8px }
 .refusal { padding: 10px 12px; margin: 0 0 14px; background: var(--warn-bg); border-radius: var(--field) }
 .ambiance { margin-top: 16px }
-/* « Retour » and « Continuer » stay in reach at the bottom of the step, however long it is. */
+/* Keep generation in reach from every preparation panel. */
 .main-action.step-nav { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 -22px; padding: 14px 22px 18px;
   background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius) }
 .step-nav .primary { margin-left: auto }
@@ -639,7 +647,6 @@ p.done { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; paddin
 .after { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px }
 .after .help { flex-basis: 100%; margin: 0 }
 a.primary, .download-button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 1.5px solid var(--signal-edge); border-radius: 999px; font-weight: 700; text-decoration: none; transition: background-color .15s ease-out, var(--press) }
-/* Where « Partager » is the main action (D-SHARE-004), the download is the second one: outlined like button.secondary. */
 .download-button.secondary { background: transparent; border-color: var(--edge); color: var(--text) }
 @media (hover: hover) { .download-button.secondary:hover { background: var(--active) } }
 .after .why { text-align: left }
@@ -647,6 +654,56 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
 .publications .row a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text) }
 .publications .row { align-items: center }
 .after > .count { align-self: center; font-size: 13px }
+
+/* The file actions come first in the reading order; on wide screens the preview spans both rows beside them. */
+.file-layout { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); grid-template-rows: auto 1fr; grid-template-areas: "preview controls" "preview details"; column-gap: clamp(18px, 3vw, 40px) }
+.file-layout > .shot { grid-area: preview; min-width: 0 }
+.file-layout > .file-controls { grid-area: controls; min-width: 0 }
+.file-layout > .file-details { grid-area: details; min-width: 0 }
+.final-preview .section-heading > div { min-width: 0; overflow-wrap: anywhere }
+.file-controls .file-facts { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin: 0; border-radius: var(--radius) }
+.file-facts dd small { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; font-weight: 500 }
+.file-facts dd { font-variant-numeric: tabular-nums }
+.file-outputs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px }
+.file-outputs .download-button { justify-content: center }
+.file-disclosure { margin: 0; padding: 0 2px }
+.file-disclosure > summary { min-height: 52px; color: var(--text) }
+.file-disclosure[open] { padding-bottom: 16px }
+.file-disclosure .caption { padding-block: 4px }
+.file-disclosure [role=status]:empty { margin: 0 }
+.file-disclosure .after { margin-top: 4px }
+.inspecting .shot small { display: block; margin-top: 6px; text-align: center }
+.review-instruction { margin-block: 0 8px }
+.review-consent { margin-bottom: 0 }
+.file-originals { margin-top: 16px }
+.file-originals h3 { margin: 0 0 8px }
+.file-originals > div, .review-options { display: flex; flex-wrap: wrap; gap: 8px }
+.file-originals img { display: block; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--surface) }
+.review-options { margin-block: 8px; column-gap: 16px }
+.file-layout .publications { margin-top: 18px }
+.file-layout .publications h3 { margin-bottom: 4px }
+@media (min-width: 721px) {
+  .final-preview { height: fit-content; max-height: 94dvh; margin-block: auto }
+}
+@media (max-width: 720px) {
+  .final-preview .file-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "controls" "preview" "details" }
+  .final-preview .file-layout.inspecting { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-areas: "preview controls" "details details"; gap: 14px }
+  .inspecting .shot { padding: 0; background: none; border: 0; align-self: start }
+  .inspecting .shot a { display: block; width: 100% }
+  .inspecting .shot img { width: 100%; max-height: min(36dvh, 240px); object-fit: contain; box-shadow: none }
+  .inspecting .file-facts { display: block; background: none; border: 0 }
+  .inspecting .file-facts > div { padding: 0; border: 0 }
+  .inspecting .file-facts > div + div { margin-top: 8px }
+  .inspecting .file-facts small { font-size: 12px }
+  .inspecting .file-originals { margin-top: 12px }
+  .inspecting .file-originals h3 { margin-bottom: 4px; font-size: 13px }
+  .inspecting .file-originals img { width: 48px; height: 48px }
+  .inspecting .file-outputs { margin-top: 8px }
+  .file-facts > div { padding: 12px 14px }
+}
+@media (max-width: 480px) {
+  .file-outputs > :is(button, a) { width: 100%; justify-content: center }
+}
 
 @media (max-width: 1080px) {
   /* A column, not a one-column grid: a grid item can only stick inside its own row, and the poster of the tabs must
@@ -658,13 +715,11 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .versions h2, .versions > .help { grid-column: 1 / -1 }
   .versions > .version { grid-row: 2 }
   .why, .stage-head .why { text-align: left }
-  /* One column: the main action (or the step's « Retour » and « Continuer ») and its reason stay at the bottom of the screen. */
+  /* One column keeps the main action and its reason at the bottom of the screen. */
   html { scroll-padding-bottom: 150px }
   .editor { padding-bottom: 150px }
   .main-action, .main-action.step-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 12px max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     background: var(--glass-strong); -webkit-backdrop-filter: var(--blur-panel); backdrop-filter: var(--blur-panel); border-top: 1px solid var(--line); border-radius: 0 }
-  /* The bottom bar's buttons: 52 px, bold 15.5 px (ADR-077). At 360 px « Retour », « Voir l’affiche » and « Générer
-     l’affiche » fit on one line only with 16 px paddings and an icon button 44 px wide (measured: 4 px to spare). */
   .main-action button:not(.text-button) { min-height: 52px; padding: 0 16px; font-size: 15.5px }
   .main-action button.icon { width: 44px; padding: 0 }
   .main-action .primary { flex: 1; margin: 0 }
@@ -675,20 +730,17 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   main.editing .message.notice { top: auto; bottom: calc(max(20px, env(safe-area-inset-bottom)) + 130px) }
   main.editing .message.error + .message.notice { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 196px) }
   .rail.card { padding: 14px 16px 0 }
-  /* During the steps the step comes first: the poster is a small proof beside what to do, and opens in front on demand.
-     The bottom bar names the action, so the coach line goes; the step count joins the row of steps. */
   .steps-row { display: flex; align-items: center; gap: 4px 10px; min-width: 0; margin-bottom: 14px }
-  .steps-row .step-count { flex: none; margin: 0 }
   .steps-row .tabs { flex: 1; min-width: 0; margin: 0 }
   .stepping .versions { order: 1 }
-  .stepping .stage:not(.peek) { grid-template-columns: 104px minmax(0, 1fr); gap: 4px 14px; padding: 14px }
+  /* The original offer comes first. The optional draft preview follows the tools until a job or save needs attention. */
+  .stepping .stage:not(.peek) { order: 0; grid-template-columns: 104px minmax(0, 1fr); gap: 4px 14px; padding: 14px }
+  .stepping .stage.attention:not(.peek) { order: -2 }
   .stepping .stage:not(.peek) > * { grid-column: 1 / -1 }
   .stepping .stage:not(.peek) > .pin { grid-column: 1; grid-row: 1 }
   .stepping .stage:not(.peek) > .see-big { display: inline-flex; grid-column: 2; grid-row: 1; justify-self: start; align-self: center }
   .stepping .stage:not(.peek) :is(.stage-head, .selection, .photo, .layer-list), .stepping .stage:not(.peek) > .help { display: none }
-  /* The thumbnail is narrower than the pill: it hangs from the thumbnail's corner, towards the empty column. */
   .stepping .stage:not(.peek) .gen-pill { left: 6px; bottom: 6px; transform: none }
-  /* « Aperçu » is one word: on a Story's 73 px thumbnail it hangs past the edge, like the pill, rather than out of its own background. */
   .stepping .stage:not(.peek) .frame .badge { max-width: none; white-space: nowrap }
   /* Once a version exists the real image stays on top (D-POSTER-EDITOR-005): the stage dissolves into the column, so
      that only the poster and its row of elements stick under the top bar; its other blocks follow, then the versions,
@@ -752,8 +804,11 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .bar .format { display: none }
   .back-link { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; border-radius: 999px; color: var(--text) }
   .demo-badge { display: inline-block; flex: none; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 700 }
-  /* At 360 px the count, which already says which step this is, leaves no room for the done « Produit » or the numbers. */
-  .stepping .lead, .steps-row span.tab.done, .tab .n { display: none }
+  .stepping .lead { display: none }
+  .offer-review { margin: 12px 0; padding: 16px; gap: 12px }
+  .offer-product { flex-basis: 100%; gap: 10px }
+  .offer-product:has(.offer-photos a:nth-child(2)) { flex-direction: column; align-items: start }
+  .offer-details { flex-basis: 100%; gap: 8px 18px; padding-top: 10px; border-top: 1px solid var(--line) }
   .panel-theme { display: inline-flex; margin-top: 18px }
   /* The lists' title rows keep wrapping: at 360 px « Mes affiches » was squeezed to one word per line under its checkbox. */
   .gallery .titlerow { flex-wrap: wrap; align-items: center }
@@ -786,10 +841,11 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   .comparison.side-version figure:first-child, .comparison.side-photo figure:last-child, .zoom-hint { display: none }
   .comparison figure { padding: 8px }
   .comparison img { height: auto }
-  .facts { grid-template-columns: 1fr }
-  .facts div + div { border-left: 0; border-top: 1px solid var(--line) }
-  .library-row { grid-template-columns: 1fr }
-  .row-actions { padding: 0 12px 6px 80px; margin-top: -6px }
+  .library-row { grid-template-columns: minmax(0, 1fr) 48px }
+  .library-file { grid-column: 1; grid-row: 2; justify-self: start; margin: -4px 0 6px 78px }
+  .row-options { grid-column: 2; margin-right: 4px }
+  .gallery .library-heading { column-gap: 8px }
+  .library-heading button { padding-inline: 12px }
   /* Beside a 64 px thumbnail a name has about 190 px: it takes a second line rather than losing its end. */
   .library-item strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2 }
   .library-item { padding: 8px 12px }
@@ -797,9 +853,6 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
   /* iOS zooms the page on a field under 16px. */
   input, textarea, select { font-size: 16px }
   main:not(.editing) { padding-bottom: calc(88px + env(safe-area-inset-bottom)) }
-  /* The format and the file type never change: on a phone only the price is worth a row before the points. */
-  .facts div:not(:last-child) { display: none }
-  .facts div + div { border: 0 }
 }
 @media (pointer: coarse) {
   button, .download-button, label.check, summary, select, textarea, input:not([type=checkbox]) { min-height: 44px }
@@ -820,7 +873,13 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
 .chat-elsewhere p { margin: 0; color: var(--text); font-weight: 600 }
 /* The chat's height is set by ChatView from the visible screen: the page itself does not scroll. */
 main.chatting:not(.editing) { padding-bottom: 0 }
+/* The composer measures the remaining height when either message changes. Leave its Send and attachment controls clear. */
+main.chatting:has(.chat:not([inert])) > .message { position: static; transform: none; max-width: min(100%, 680px); margin: 0 auto 8px; box-shadow: none; background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none }
 .chat { display: grid; grid-template: "side" auto "thread" minmax(0, 1fr) "composer" auto / minmax(0, 1fr); gap: 10px; max-width: 680px; margin: 0 auto; font-size: 15px; line-height: 22px }
+@media (width < 880px) {
+  main.chatting:has(> .message) .chat.has-poster { grid-template-rows: fit-content(35%) minmax(0, 1fr) auto }
+  main.chatting:has(> .message) .chat-side { min-height: 0; overflow-y: auto }
+}
 .chat, .chat * { scrollbar-width: thin; scrollbar-color: var(--control) transparent }
 .chat svg.i { width: 20px; height: 20px; stroke-width: 2 }
 .chat small { font-size: 13px; line-height: 18px; color: var(--muted) }
@@ -927,7 +986,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
 @media (max-width: 720px) {
   .seg { margin-left: auto }
   .chat .attach { width: 44px; padding: 0; justify-content: center }
-  .attach .lbl { display: none }
+  .attach:not(.first-photos) .lbl { display: none }
+  .chat .attach.first-photos { width: auto; padding-inline: 8px; gap: 4px }
   /* The editor's bar stands for the header here: it holds the way back to the chat. */
   .bar .to-chat { display: inline-flex; flex: none }
   /* The keyboard is open: the style row makes room, the images stay on one line. */
@@ -968,6 +1028,8 @@ main.chatting:not(.editing) { padding-bottom: 0 }
   .confirm-sheet { -webkit-backdrop-filter: none; backdrop-filter: none }
 }
 
+.editor-links { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px }
+.editor-links .guide-entry, .side button.guide-entry { min-height: 44px }
 .rail .creator-credits { display: block; margin-inline-start: auto; min-height: 44px }
 dialog.credits-container { width: min(680px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 4px 20px 16px; color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: var(--radius); overscroll-behavior: contain }
 dialog.credits-container::backdrop { background: var(--scrim) }
