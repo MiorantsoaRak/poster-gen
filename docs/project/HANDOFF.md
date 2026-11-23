@@ -150,19 +150,19 @@ No work order. The owner released the redesign and reported two things; his word
 
 **Nothing of this track is left uncommitted.** Its next step was the owner's release: done.
 
-## Publishing on a Facebook Page — Claude, 2026-11-22 (READ FIRST: released, connected, no real post yet)
+## Publishing on a Facebook Page — Claude, 2026-11-23 (READ FIRST: released, connected, no real post yet)
 
 No work order: the owner's own project. Scope ADR-127 (stage 1: shops whose Page admin has a role on his Meta app « Doka studio », app id `29711342541804784`; free; a link to the post), ADR-128 (a publish page: one post of one or several confirmed posters, in his order, no limit of the app, a limit per shop as the operator's setting, « Publication » format only), ADR-129 (one way to publish: a poster alone is a post of one image), ADR-130 (how a post is never sent twice; the rehearsal; the restore rule; his UI choices). Requirements `requirements/facebook-publishing.md`, `requirements/facebook-post-page.md` (with « What the proofs showed »); designs `designs/facebook-publishing.md`, `designs/facebook-post-page.md`; runbook `deploy/README.md` « Publishing on a Facebook Page ».
 
 **State:**
-- **Code: complete, on `main`, pushed (`05a12ee`) and released by the owner on 2026-11-22** (the container's image revision checked). Tasks T-FB-001 to 004, 008 to 011, 013, 014 done; reviews in `reviews/t-fb-0*`.
+- **Code: complete; released by the owner on 2026-11-22 at `05a12ee`** (the container's image revision checked). Since then `main` holds Codex's journey work on top (`0b67fbe` « Simplify poster creation, review, and Facebook publishing », `ad6cacc`: pushed, NOT released), which changes `facebook_posts.py`, `ShopPublish.vue`, `publish.ts` and their tests (« Affiches à préparer », the return to the publication, confirm for later): read its sections above before touching this feature. Tasks T-FB-001 to 004, 008 to 011, 013, 014 done; reviews in `reviews/t-fb-0*`.
 - **On the box:** `FACEBOOK_PROVIDER='meta'`, the app id and secret set by the owner in `app.env`, recreated. Gates of T-FB-005 all passed: (1) the front proxy keeps no access log (Maizina's Caddy has no `log` directive; a dummy `facebook.html?code=…` is in no log); (2) « Clé requise » is on and works (without the proof: code 100; with it: the answers; `me/accounts` lists his four Pages); (3) the redirect URI `https://affiches.miorantsoa.app/facebook.html` was missing in « Facebook Login for Business → Paramètres » — added by Claude on his word, saved; then **the pilot's Page Original Phone Mada is connected** (his words: « It's connected now »).
 - **No real post yet** (T-FB-012).
 - **Meta app « Doka studio »:** published; permissions `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `business_management`; privacy address « Vos données »; « Domaines de l'app » holds `affiches.miorantsoa.app` twice (harmless). With « Clé requise » on, the Graph API Explorer no longer lists Pages (its own call has no proof); use a user token with the proof (`/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/gate2.py`, scratchpad, asks for the token and the secret with getpass, prints only Facebook's answers).
 - **Nothing of the proofs is left on Facebook:** every test post deleted by the owner, the three never-attached photos deleted by Claude on his word. Deleting a post on Facebook deletes its photos.
 
 **Open with the owner (his words awaited):**
-- **T-FB-015 (proposed, not confirmed):** on the released app he read the publish page as showing only « À vérifier » posters and not « Approuvée » ones. True to the rule: it offers only posters whose final file is confirmed at their current version (Willen II and WH-CH720N, whose list state « À vérifier » is a new version waiting); his six « Approuvée » posters have no confirmed final file (counted « 4 jamais vérifiées », « 2 modifiées depuis leur vérification »). Proposed: keep the rule, name each left-out poster in the list's words with a link « Confirmer le fichier final ». Asked: "go", or publishing « Approuvée » posters as they are (advised against: an unchecked price). To publish one now: open it, « Vérifier l'aperçu final », « Tout est conforme, confirmer ».
+- **T-FB-015 is superseded** (TODO `[-]`): the owner's question (« Approuvée » posters missing from the publish page) is answered by Codex's approved D-JOURNEY-005, built as T-JOURNEY-01 to 03 (each left-out poster named with its reason and the way to fix it), committed in `0b67fbe`, not released.
 - **T-FB-012:** the first real post, public, his choice of poster and moment. Then check with him: « Voir la publication » opens the post; the collage a visitor sees (order, layout); for several images, read the post back in the Explorer (`<post id>?fields=attachments{subattachments{target{id}}}`, with a proof now: use the script's approach).
 - **T-REHEARSE-ORDER:** the rehearsal hashes tables other than the posts in their primary key's order (`run_products` shows in `rowid` order): a reorder there would pass. From before this work; no pending migration touches it.
 
@@ -171,15 +171,11 @@ No work order: the owner's own project. Scope ADR-127 (stage 1: shops whose Page
 - Never set `FACEBOOK_PROVIDER=stub` on the box: the first Facebook call records the data folder's mode and the other is then refused.
 - A restore: `FACEBOOK_PROVIDER='off'` until the LAST successful `after-restore --apply`, then the recreate command (never `docker start`): runbook « Restore » steps 1, 3, 4, 7.
 - The publish page holds one tab at a time (Web Lock `affiche-publish`); a second tab shows « … ouverte dans un autre onglet » with « Continuer ici ».
-- The dev server (`/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/dev/dev_serve.py`, background in this session, http://127.0.0.1:5273, `FACEBOOK_PROVIDER=stub`, fresh data at each start; credentials in `/tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/9b8248f7-9429-41d2-92de-a2b67ec798ff/scratchpad/dev/credentials.txt`) dies with the session.
+- The local dev shop on http://127.0.0.1:5273 is now Codex's user service `doka-shop-dev.service` (stub providers, the Facebook stand-in); this session's own dev server was stopped by Claude Code for low memory on 2026-11-22 and is not to be restarted beside it (same ports).
 
-**Uncommitted from this track (commit on his word):** `deploy/README.md` (gate 2 passed and why the Explorer lists no Page; the redirect URI done, and that the Meta app enforces HTTPS so no local address), ADR-130 in `DECISIONS.md`, this section, and TODO's lines (T-FB-005 closed with the gates' results; statuses now « pushed and released »; T-FB-015 proposed). The other session's hunks in `DECISIONS.md`, `TODO.md`, `PROJECT.md`, this file and its untracked folders are not this track's: never stage them.
+**Uncommitted from this track:** nothing. The owner committed and pushed this track's last docs (ADR-130, the runbook's gate notes, TODO's statuses, this section) inside `ad6cacc` on 2026-11-23.
 
-**Exact next step:** the owner's answer on T-FB-015 ("go" → build it: `frontend/src/ShopPublish.vue` left-out block and `publish.ts` `leftOutLines`, needing the server to name the left-out posters: `GET /api/facebook/posts/candidates` gains, for a page of left-out posters, their id, name and reason; one review; the share and publish smokes); and his moment for T-FB-012's first real post. Before any of it, commit this track's uncommitted docs on his word:
-```
-cd ~/Documents/Miorantsoa/Vite/affiche-ia
-git add deploy/README.md   # then this track's hunks only of DECISIONS.md, TODO.md, HANDOFF.md (git apply --cached on their hunks)
-```
+**Exact next step:** with the owner, the first real post (T-FB-012), at his moment and with his poster, on the released app (`05a12ee`, Page Original Phone Mada connected). Then check with him: « Voir la publication » opens the post; the collage a visitor sees (order, layout); for several images, read the post back with the proof (the approach of `gate2.py`). The release of `0b67fbe`/`ad6cacc` is his (pyinfra); it has no migration of this feature. T-REHEARSE-ORDER stays open, small.
 
 ## App redesign — Claude, 2026-11-21
 
