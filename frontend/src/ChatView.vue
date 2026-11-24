@@ -182,8 +182,9 @@ const recapDetails = () => ({
 })
 const app = (line: string, card?: Card) => add({ role: 'app', text: line, card: card?.kind === 'recap' ? { ...card, ...recapDetails() } : card })
 // A new question or recap replaces the open ones: only the latest may be tapped.
-// On an existing poster it shows what the next scene draws: the document's own words.
-const recap = (line = '') => { supersede(items.value); app(line, { kind: 'recap', name: state.offer?.title ?? draft.name ?? undefined, price_ar: state.offer?.price_ar ?? draft.price_ar ?? undefined, style: draft.style, ...(draft.identity !== null && !state.creation ? { identity: draft.identity } : {}) }) }
+// On an existing poster it shows what the next scene draws: the document's own words, and, before its first version, the
+// logo and contact it carries (a drawn contact leaves only with a new paid image: review r2, finding 3).
+const recap = (line = '') => { supersede(items.value); app(line, { kind: 'recap', name: state.offer?.title ?? draft.name ?? undefined, price_ar: state.offer?.price_ar ?? draft.price_ar ?? undefined, style: draft.style, ...(draft.identity !== null && !state.creation ? { identity: draft.identity } : state.creation && newPoster.value && state.shop.ticked ? { identity: true } : {}), ...(newPoster.value ? { first: true } : {}) }) }
 // The editor's form fields are the same refs: the draft fills them, so the switch to « Pas à pas » loses nothing.
 function sync() {
   if (state.creation) return
@@ -239,6 +240,17 @@ async function sendFile(entry: Unsaved) {
   Object.assign(entry, { status: 'sending', error: '', asset: undefined })
   try { Object.assign(entry, await props.adapter.attach(entry.file, entry.role), { status: 'done' }) }
   catch (reason) { Object.assign(entry, { status: 'failed', error: reason instanceof Error ? reason.message : 'Envoi impossible. Réessayez.' }) }
+  sendWaiting()
+}
+// « Envoyer » asked while a photo is still on its way is kept, and leaves once every photo is in: before, « Entrée »
+// did nothing then and the button was off, which read as a lost key press (second walk, 2026-11-24). A photo that
+// fails, or one taken out, drops the wish: the owner decides again. Until it leaves, the field is held as it was at
+// the press and a line says why: typed on meanwhile, the message would leave in the middle of a word.
+const waiting = ref(false)
+function sendWaiting() {
+  if (!waiting.value || tray.value.some(item => item.status === 'sending')) return
+  waiting.value = false
+  if (!tray.value.some(item => item.status === 'failed')) void send()
 }
 // A photo this shop already used for the same product: attached without an upload, and no read is paid for it.
 function reuse(asset: string) {
@@ -267,7 +279,7 @@ function swap(entry: Unsaved) {
   if (next === tray.value) { state.notice = 'Trois photos du produit et un modèle de style au plus.'; return }
   for (const [index, item] of tray.value.entries()) if (item.role !== next[index].role) { item.role = next[index].role; void sendFile(item) }
 }
-function drop(entry: Unsaved) { URL.revokeObjectURL(entry.url); tray.value = tray.value.filter(item => item !== entry) }
+function drop(entry: Unsaved) { URL.revokeObjectURL(entry.url); tray.value = tray.value.filter(item => item !== entry); waiting.value = false }
 
 // ── a message ────────────────────────────────────────────────────────────────────────────────────────────
 // A change is read against the stored poster (D-TEXT-FIRST-005): an unsaved edit of « Pas à pas » is saved before a new
@@ -286,6 +298,7 @@ async function savedFirst() {
 }
 const sendable = () => !(held.value || pending.value || tray.value.some(item => item.status !== 'done') || (!text.value.trim() && !tray.value.length))
 async function send() {
+  if (!held.value && !pending.value && tray.value.some(item => item.status === 'sending') && !tray.value.some(item => item.status === 'failed')) { waiting.value = true; return }
   // Saved first only for words that will be read: images on a poster are not (the copy saves by itself).
   if (!sendable() || (text.value.trim() && versions.value.length && !tray.value.length && !(await savedFirst() && sendable()))) return
   const message = text.value.trim()
@@ -399,6 +412,9 @@ async function create(item: Item) {
   const at = token, card = item.card!, kind = effect(item), visual = target(card)
   // Its own sentence stays on a card from before: the server's said the price is redrawn.
   if (kind === 'free') return setWords(visual, card.words ?? {}, 'C’est changé sur l’affiche.', Object.assign(item, { text: lineOf(item) }), true)
+  // A recap made before the first version, tapped once the poster has one (made in « Pas à pas » or on another device):
+  // it shows no kit any more and would still draw one. Retired with a sentence, nothing paid (review r2, N3).
+  if (card.kind === 'recap' && card.first && !newPoster.value) { item.done = true; app('Cette affiche a déjà une version. Dites ce qu’il faut changer.'); save(); return }
   if (held.value || needsProduct(item) || !spend(items.value, item.id)) return
   const photo = recapPictures.value.find(picture => picture.role === 'inspiration')?.asset
   const style = photo ? 'clair' : draft.style ?? 'clair'
@@ -753,12 +769,13 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       </div>
       <p v-for="entry in tray.filter(item => item.error)" :key="entry.id" class="why" role="alert">{{ entry.error }}</p>
       <p v-if="elsewhere" class="chat-elsewhere-read" role="status">Un message attend encore sur une autre affiche.<button type="button" class="secondary" @click="toPending">Ouvrir cette affiche</button></p>
-      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Dites ce qu’il faut corriger.' : 'Ex. Téléphone noir 128 Go, 899 000 Ar'"
+      <p v-if="waiting" class="help" role="status">Envoi dès que la photo est prête…</p>
+      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :readonly="waiting" :placeholder="state.creation ? 'Dites ce qu’il faut corriger.' : 'Ex. Téléphone noir 128 Go, 899 000 Ar'"
         @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
       <div class="tools">
         <button type="button" class="ghost attach" :class="{ 'first-photos': !state.creation }" aria-label="Ajouter des photos" :disabled="copying" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Photos</span></button>
         <!-- mousedown is held back so that the tap keeps the focus, and the keyboard, on the field. -->
-        <button type="submit" class="send" aria-label="Envoyer" :aria-busy="reading || undefined" :disabled="held || !!pending || tray.some(item => item.status !== 'done') || (!text.trim() && !tray.length)" @mousedown.prevent><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
+        <button type="submit" class="send" aria-label="Envoyer" :aria-busy="reading || waiting || undefined" :disabled="held || !!pending || tray.some(item => item.status === 'failed') || (!text.trim() && !tray.length)" @mousedown.prevent><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
       </div>
       <input ref="picker" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden @change="attach" />
     </form>

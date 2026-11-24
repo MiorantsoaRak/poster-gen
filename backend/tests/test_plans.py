@@ -295,8 +295,8 @@ def test_shop_lines_are_drawn_verbatim_and_named_in_the_constraints():
     line = next(row for row in rows if row.startswith("Shop lines,"))
     assert rows[rows.index(line) - 1].startswith("Contact line")
     assert ('rendered verbatim, each character exactly as written, one per line in this order: "Garantie 6 mois", '
-            '"Livraison gratuite à Tana". Clearly legible on a phone, at least as large as the contact line, in the '
-            "headline's colour family, each after a small check-mark icon, grouped in free backdrop beside the product "
+            '"Livraison gratuite à Tana". Clearly legible on a phone, in semi-bold letters about 2.8% of the frame '
+            "height, at least as large as the contact line, in the headline's colour family, each after a small check-mark icon, grouped in free backdrop beside the product "
             "or just above the price label; never over the product, the headline, the price label or the contact line. "
             "They are conditions of sale, not prices; add no other condition.") in line
     assert ("the only writing is the headline, the price label, the contact line, the shop lines and the markings"
@@ -305,7 +305,8 @@ def test_shop_lines_are_drawn_verbatim_and_named_in_the_constraints():
     # Without the price or the contact drawn, only what this scene draws is named.
     alone = compile_scene(fixed_plan(context()), context(), photo_count=1, headline=Headline(), title="JBL Flip 7",
                           shop_lines=["Paiement Mvola"])
-    assert ('"Paiement Mvola". Clearly legible on a phone, in the headline\'s colour family, each after a small '
+    assert ('"Paiement Mvola". Clearly legible on a phone, in semi-bold letters about 2.8% of the frame height, in the '
+            'headline\'s colour family, each after a small '
             "check-mark icon, grouped in free backdrop beside the product; never over the product, the headline or the "
             "areas listed under Layout.") in alone
     assert "the only writing is the headline above, the shop lines and the markings" in alone
@@ -383,6 +384,9 @@ def test_the_owners_words_win_over_the_house_style():
     # The request is an instruction, it may move what the base shows, and a name in it is one of the products.
     assert "listed as requested_adjustment: make that change, clearly visible, even where it moves" in refined
     assert "Everything the request does not touch stays as in image 1." in refined
+    # The request is the prompt's first line, in the owner's words (the deployed model returned its base unchanged).
+    assert refined.startswith('Task: edit image 1. The owner asks for this change, in his own words: "plus sombre". ')
+    assert not kept.startswith("Task:") and plain.startswith("Use case:")
     assert "preserve its composition" not in refined
     for prompt in (kept, refined, compile_scene(plan, ctx, photo_count=1, refinement=True, refinement_note="x")):
         assert "it most likely names one of the products of the reference photos, not a kind of scene" in prompt
@@ -481,6 +485,9 @@ def as_captured(prompt):
     """The two sentences of a refinement reworded on purpose on 2026-11-24 (the request said as an instruction, a name
     in it read as a product), put back as they were: everything else is still byte for byte the capture."""
     return prompt.replace(
+        'Task: edit image 1. The owner asks for this change, in his own words: "Plus de lumière". The new image must '
+        "show that change clearly: an image that looks the same as image 1 has failed.\n", ""
+    ).replace(
         "Image 1 is the selected base scene to refine. It is not the identity reference. The owner asks for one change "
         "to it, in his own words, listed as requested_adjustment: make that change, clearly visible, even where it "
         "moves, swaps, resizes or replaces what image 1 shows. Everything the request does not touch stays as in "

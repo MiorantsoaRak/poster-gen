@@ -980,6 +980,10 @@ main.chatting:has(.chat:not([inert])) > .message { position: static; transform: 
    or on its own line under it on a phone. A model is a 44 px target; the strip clips, so its focus ring is drawn inside. */
 .kit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px }
 .style-row { display: flex; flex: 100 1 240px; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none }
+/* The strip scrolls with no bar: its right edge fades, so a model cut there reads as « more this way » (second walk);
+   the spacer lets the last model come clear of the fade. */
+.style-row { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent) }
+.style-row::after { content: ''; flex: none; width: 22px }
 .chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 44px; padding: 3px 14px 3px 3px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
 .style-pill img { display: block; width: 36px; height: 36px; border-radius: 50%; object-fit: cover }
 .chat .style-pill[aria-pressed=true] { border-color: var(--hue); background: var(--accent-soft); color: var(--accent-ink) }

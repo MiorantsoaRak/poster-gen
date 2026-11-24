@@ -104,6 +104,11 @@ watch([origin, facebookHeading, () => props.interactive], ([from, heading, inter
     focusedFacebook = document.activeElement === heading
   }
 }, { flush: 'post' })
+// A Page waits to be chosen only on the way back from Facebook: the card comes to the top of the screen with its
+// choice in view (the second walk found the choice below the fold: the title's focus shows one line of the card).
+watch(facebookState, card => {
+  if (card === 'choose' && props.interactive) facebookHeading.value?.scrollIntoView({ block: 'start' })
+}, { flush: 'post' })
 function showFacebook(answer: FacebookAnswer) {
   facebook.value = answer; facebookPick.value = answer.choice?.length === 1 ? answer.choice[0].id : ''
 }

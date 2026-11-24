@@ -1316,6 +1316,25 @@ def walk_uploads(browser, errors, session, small, broken, animated):
     page.wait_for_url("**/#message")
     thread, picker, send = page.get_by_role("log"), page.locator(".composer input[type=file]"), page.get_by_role("button", name="Envoyer")
     pics, alert, notice = page.locator(".tray .pic"), page.locator(".composer .why"), page.locator(".message.notice")
+    # « Entrée » while a photo is still on its way (T-KIT-018): the send is kept, the field is held as it was and a line
+    # says why; nothing has left yet. The photo taken out drops the wish and gives the field back.
+    kept = []
+    page.route("**/api/assets", lambda route: kept.append(route))
+    picker.set_input_files(small[0])
+    field = page.get_by_label("Votre message")
+    field.fill("Montre Casio F91, 90 000 Ar")
+    field.press("Enter")
+    expect(page.locator(".composer").get_by_text("Envoi dès que la photo est prête…")).to_be_visible()
+    expect(field).not_to_be_editable()
+    expect(field).to_have_value("Montre Casio F91, 90 000 Ar")
+    expect(thread.locator(".bubble.me")).to_have_count(0)
+    page.get_by_role("button", name="Retirer cette image").click()
+    expect(page.locator(".composer").get_by_text("Envoi dès que la photo est prête…")).to_have_count(0)
+    expect(field).to_be_editable()
+    for route in kept:  # before the route is lifted: lifting it answers what it still holds
+        route.abort()
+    page.unroute("**/api/assets")
+    field.fill("")
     # Not an image, then an animated one: the server's sentence under the tray, « Envoyer » waits, the image can be removed.
     for file, sentence in ((broken, "Utilisez une image JPEG, PNG ou WebP fixe."), (animated, "Les images animées ne sont pas acceptées.")):
         picker.set_input_files(file)
@@ -2923,7 +2942,7 @@ def walk_kit(browser, errors, product, data, app):
     expect(title).to_have_value("condense")
 
     # « Garder cette scène comme modèle » (D-KIT-010) in the final panel Message shares with « Pas à pas »: no dialog, no
-    # credit. The model is in « Mon kit » and offered as a chip; asked again on the same scene, it makes no second model.
+    # credit. The model is in « Mon kit » and offered as a chip; the panel then says so in place of the button.
     page.goto(f"{smoke.ORIGIN}/#message-{fourth}")
     thread.get_by_role("button", name="Vérifier", exact=True).click()
     panel = page.locator(".final-preview")
@@ -2935,14 +2954,16 @@ def walk_kit(browser, errors, product, data, app):
     panel.get_by_text("Autres actions", exact=True).click()
     keep = panel.get_by_role("button", name="Garder cette scène comme modèle")
     expect(keep.locator("xpath=following-sibling::p[1]")).to_have_text("Sans crédit.")
-    for status in (202, 200):
-        with page.expect_response(lambda response: response.url.endswith(f"/creations/{fourth}/looks")) as answer:
-            keep.click()
-        assert answer.value.status == status and answer.value.json().get("reused") is (True if status == 200 else None), answer.value.json()
-        expect(notice).to_contain_text(f"Le modèle « {name} » est dans votre kit.")
-        expect(page.locator(".confirm")).to_have_count(0)
-        assert looks[-1] == {"name": name, "visual_id": scene}, looks[-1]
-        assert len(get("looks")["items"]) == count + 1 and credits() == before
+    with page.expect_response(lambda response: response.url.endswith(f"/creations/{fourth}/looks")) as answer:
+        keep.click()
+    assert answer.value.status == 202 and answer.value.json().get("reused") is None, answer.value.json()
+    expect(notice).to_contain_text(f"Le modèle « {name} » est dans votre kit.")
+    expect(page.locator(".confirm")).to_have_count(0)
+    assert looks[-1] == {"name": name, "visual_id": scene}, looks[-1]
+    assert len(get("looks")["items"]) == count + 1 and credits() == before
+    # The panel says it in place of the button, which is gone: no second tap (the server's answer to one is test_looks').
+    expect(panel.get_by_text(f"Cette scène est un modèle de votre kit : « {name} ».")).to_be_visible()
+    expect(keep).to_have_count(0)
     panel.get_by_role("button", name="Fermer").click()
     smoke.go(page, "Mon kit")
     expect(page.locator(".look-card", has_text=name)).to_have_count(1)

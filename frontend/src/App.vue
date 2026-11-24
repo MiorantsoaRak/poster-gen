@@ -312,6 +312,9 @@ async function createLook() {
 // (the brief is the planner's), no dialog. A scene kept already answers the job that made its model, finished: followed the
 // same way, it makes no second model.
 let keptModel = ''
+// Said in the panel in place of the button, and still there at the next visit: the notice above the page was not seen
+// from the panel (second walk). A kept model's reference is the scene's own image.
+const keptAs = computed(() => fileVisual.value && savedLooks.value.find(item => fileVisual.value!.image_url.endsWith(`/${item.reference_asset}`)))
 async function keepModel() {
   await flush()
   const name = [...`Modèle ${doc.value!.offer.title.trim()}`].slice(0, 40).join('').trim()
@@ -328,13 +331,16 @@ function keepStyle(fields: object) {
   try { kept = JSON.parse(localStorage.getItem(styleKey()) ?? 'null') } catch { /* damaged or refused: written anew */ }
   try { shopStorage.setItem(styleKey(), JSON.stringify({ ...(kept instanceof Object ? kept : {}), ...fields })) } catch { /* convenience only */ }
 }
-// `withLook` false: the colour and the contact's place only, the remembered look stays (a scene asked on a version's own).
+// `withLook` false: the contact's place and the brand's writing only; the remembered look stays, and its colour with it (a
+// scene asked on a version's own, or the contact moved: another look's colour beside the kept look gave « Luxe sombre »
+// in the wrong accent at the next load; review r2, N1).
 function rememberStyle(withLook = true) {
   if (withLook) lastLook.value = look.value
-  keepStyle({ ...(withLook ? { look: look.value } : {}), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })
+  keepStyle({ ...(withLook ? { look: look.value, accent_colour: headline.value.accent_colour } : {}), brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })
 }
-// The seller's kit on this device (D-KIT-009, 012): the scene model and the title style of the last scene asked (or the title
-// kept in « Mon kit »), and the scene models, the most recently used first. A saved look counts once the looks are read.
+// The seller's kit on this device (D-KIT-009, 012): the scene model of a poster's first scene or of the seller's own pick,
+// the title style he chose (in the editor, the chat's row or « Mon kit »), and the scene models, the most recently used
+// first. A saved look counts once the looks are read.
 const lastLook = ref<string | null>(null), kitTitle = ref<Title | null>(null), recentLooks = ref<string[]>([])
 const isHouse = (id: unknown) => STYLES.some(([style]) => style === id)
 const lastKit = computed(() => ({ ...(savedLooks.value.some(item => item.id === lastLook.value) ? { look: lastLook.value! } : isHouse(lastLook.value) ? { style: lastLook.value! } : {}),
@@ -387,7 +393,7 @@ function moveContact(event: Event) {
   const align = rememberedAlign.value = (event.target as HTMLSelectElement).value as Align
   // A drawn contact moves with the next version; a rendered one moves now.
   if (contactLayer.value?.visible) edit(document => compactContact(document, align))
-  rememberStyle()
+  rememberStyle(false)  // the contact's place only: moving it is not a pick of this version's look (review r2, N1)
 }
 const shade = (hex: string) => '#' + [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * .5).toString(16).padStart(2, '0')).join('').toUpperCase()
 let autoPill = ''
@@ -2417,7 +2423,8 @@ function setWords(words: Words) {
 let copyInput: { signature: string; id: string } | null = null  // kept only for a retry of this copy
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, format, productAssets: computed(() => offerSource.value?.photo_assets), productError: offerSourceError, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
-    shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact, lines: profile.lines ?? [] })),
+    // On an open poster, the logo and the contact are the ones this poster carries (its own ticks): its recap names them.
+    shop: computed(() => ({ logo: creation.value ? include.logo : !!profile.logo_asset, contact: creation.value ? include.contact : !!profile.contact?.trim(), ticked: include.logo || include.contact, lines: profile.lines ?? [] })),
     drawn: computed(() => !creation.value || headline.value.on),  // a new poster starts with its texts drawn (adopt)
     looks: savedLooks, recent: recentLooks, kit: lastKit,
     busy, credit: computed(() => credit(balance.value, 'scene')) }),  // a recap is a scene, a change a scene or a refinement
@@ -3249,8 +3256,9 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <p class="help">{{ priceChangeHelp }}</p>
             </div>
             <div v-if="!earlier && finalPreview.download_url && fileVisual && caps?.planner_available" class="after">
-              <button class="secondary" :disabled="busy || !!job" @click="perform(keepModel)">Garder cette scène comme modèle</button>
-              <p class="help">Sans crédit.</p>
+              <p v-if="keptAs" role="status">Cette scène est un modèle de votre kit&nbsp;: «&nbsp;<span translate="no">{{ keptAs.name }}</span>&nbsp;».</p>
+              <template v-else><button class="secondary" :disabled="busy || !!job" @click="perform(keepModel)">Garder cette scène comme modèle</button>
+              <p class="help">Sans crédit.</p></template>
             </div>
             <section v-if="facebookOn && (historyPosts.length || postsAfter)" class="publications" aria-labelledby="titre-publications">
               <h3 id="titre-publications">Publications sur Facebook</h3>

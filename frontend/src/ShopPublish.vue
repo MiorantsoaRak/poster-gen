@@ -153,6 +153,9 @@ const connected = computed(() => page.value?.state === 'connected')
 const chosen = computed(() => props.poster ? (alone.value && isCandidate(alone.value) ? [alone.value] : [])
   : draft.value.items.map(id => known.value[id]).filter((item): item is Candidate => !!item))
 const full = computed(() => atLimit(draft.value, limit.value))
+// Every chosen poster is on the Page already: the button says that a tap posts it a second time (the second walk: after
+// a post of one poster the same poster stayed ready under the same « Publier… »; the sheet alone named the first post).
+const again = computed(() => chosen.value.length > 0 && chosen.value.every(item => item.published_at))
 const excludedCount = computed(() => leftOut.value ? Object.values(leftOut.value).reduce((a, b) => a + b, 0) : 0)
 const excluded = shallowRef<ExcludedPoster[]>([]), excludedNext = ref<string | null>(null)
 const excludedOpen = ref(false), excludedLoading = ref(false), excludedError = ref(''), repairError = ref('')
@@ -759,7 +762,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <p class="visually-hidden" role="status">{{ placeSaid }}</p>
           <p v-if="limit !== null" class="help">{{ limit }} images au plus par publication</p>
         </template>
-        <div class="row"><button class="primary" :disabled="action !== 'ready' || reading || sending" :aria-describedby="whyShown ? 'pourquoi-publier' : undefined" @click="openSheet">Publier…</button>
+        <div class="row"><button class="primary" :disabled="action !== 'ready' || reading || sending" :aria-describedby="whyShown ? 'pourquoi-publier' : undefined" @click="openSheet">{{ again ? 'Publier à nouveau…' : 'Publier…' }}</button>
           <button v-if="!poster" class="secondary" :disabled="!draft.items.length && !draft.description" @click="keep(emptyDraft()); replacing = null">Vider</button></div>
         <p v-if="whyShown" id="pourquoi-publier" :class="helpOnly(action) ? 'help' : 'why'">{{ why }}</p>
         <p v-if="line" class="why" role="alert">{{ line }}</p>

@@ -53,7 +53,9 @@ export interface Card { kind: string; name?: string; price_ar?: number; format?:
    *  words, and at the tap the shop's lines drawn (`shop_lines`). A `line` card: the lines it keeps. */
   offer_lines?: string[]; scene_fr?: string; shop_lines?: string[]; lines?: string[]
   /** A new poster's recap: the saved look's name and the title style it uses, the title only when not the default. */
-  look?: string; title?: Title }
+  look?: string; title?: Title
+  /** A recap made while its poster had no version: tapped once the poster has one, it is retired, nothing paid. */
+  first?: boolean }
 /** `done`: the card has its outcome, or a later card replaced it. A paid card records each step before the next request
  *  leaves: `spent` (tapped), `creation` (its poster's id), `request` (its /scenes or /refinements request exactly as it
  *  left; the card's id is its key), `job` (the job it made). */
@@ -84,7 +86,8 @@ export interface ChatAdapter {
      *  stopped by the conditions of use, which the card offers to read. */
     busy: boolean; look: string; paletteLoading: boolean; credit: { stop: boolean; text: string; terms?: boolean }; height: number; error: string; notice: string
     intake: { name: string; price: string; confirmed: boolean }; photos: { asset: string; warnings: string[] }[]; styleReference: string | null
-    /** What the shop's profile holds; `ticked`: the form of « Pas à pas » has the logo or the contact ticked. */
+    /** What the shop's profile holds, or on an open poster what that poster carries; `ticked`: the form of « Pas à pas »
+     *  (or the open poster) has the logo or the contact ticked. */
     shop: Shop
     /** Whether the texts are drawn in the image (`headline.on`; a poster not made yet draws them): the shop's lines are
      *  drawn only then. Not given: drawn. */

@@ -109,7 +109,7 @@ def walk(browser, data, product):
     lines = listed.locator("ol.posts > li")
     sheet = page.get_by_role("dialog", name=re.compile("^Publier sur "))
     confirm = sheet.get_by_role("button", name=re.compile(r"^Publier( à nouveau)?$"))  # « à nouveau » once a poster is on the Page
-    publish = mine.get_by_role("button", name="Publier…", exact=True)
+    publish = mine.get_by_role("button", name=re.compile(r"^Publier( à nouveau)?…$"))  # « à nouveau » when every chosen poster is on the Page
     field = mine.get_by_label("Description de la publication")
     result = page.get_by_role("region", name=RESULT, exact=True)
     connect = page.locator(".shop-publish").get_by_role("button", name=re.compile(r"^(Connecter ma Page Facebook|Reconnecter ma Page|Continuer vers Facebook)$"))
@@ -887,6 +887,8 @@ def walk(browser, data, product):
     assert sent[-1][1] == {"page_id": "100000000000001", "description": "Légende reprise ici",
                            "items": [{"creation_id": a, "confirmation_id": confirmation, "seen": last}]}, sent[-1]
     assert sent[-1][0] != kept_draft["stamp"] and draft_of(page) == kept_draft
+    # The poster just posted stays on its page: the button says that a tap posts it a second time (T-KIT-018).
+    expect(publish).to_have_text("Publier à nouveau…")
     publish.click()
     expect(sheet).to_contain_text(re.compile(r"Cette affiche est déjà sur votre Page depuis le \d{1,2} \w+ 2\d{3}\. Publier à nouveau \?"))
     expect(confirm).to_have_text("Publier à nouveau")
