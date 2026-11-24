@@ -22,9 +22,11 @@ Style = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 # Length limits are stated here as well as in the schema: the first real brief was accurate but twice too long.
 SYSTEM = (
     "You are an art director. You are shown one finished shop advertisement. Write a reusable style brief so "
-    "that an image model can make a new advertisement for a different product in the same visual style. "
+    "that an image model can make a new advertisement for other products with the same layout and visual style. "
     "Return only the requested JSON.\n"
-    "Describe only what is reusable: backdrop (colours, gradient, shapes, light effects), how the product is "
+    "Describe only what is reusable: the composition when the advert has one of its own (how the frame is "
+    "divided, and the frames, cards, panels, podiums or bands that each hold a product: how many, how arranged, "
+    "their shape and colours), backdrop (colours, gradient, shapes, light effects), how the product is "
     "staged (angle, scale, floating or resting, shadow or reflection), lighting, and the typographic style of "
     "the headline (weight, case, spacing, decorative rules or frames). Be concrete and visual: name shapes, "
     "directions and colours instead of praise words.\n"
@@ -36,7 +38,8 @@ SYSTEM = (
     "highlights one word of the headline. alignment is left when the headline and price sit at the left edge, "
     "otherwise centre.\n"
     "Hard length limits, because the brief is inserted into a fixed prompt: direction_fr at most 380 "
-    "characters (two or three sentences: backdrop, then staging), surface_fr at most 150 characters, "
+    "characters (two or three sentences: the composition first when there is one, then backdrop, then "
+    "staging), surface_fr at most 150 characters, "
     "headline_style_en at most 220 characters. Leave out accessories and secondary objects, the position of "
     "text blocks and of the price label, and any closing mood sentence."
 )

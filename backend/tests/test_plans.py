@@ -411,6 +411,10 @@ def test_a_title_style_reaches_the_prompt_without_a_look():
     # With a look, the title style's words and the look's alignment (visuals.lettering chooses them).
     styled = compiled(Headline(look_id=LOOK_ID, title_style="serif"), headline_style=TITLE_STYLES["serif"], align="left")
     assert "left-aligned at the left edge of" in styled and "elegant high-contrast serif in mixed case" in styled
+    # A saved model's art direction may hold a layout (frames, cards, several places): the prompt lets it replace the
+    # single hero object. Without a model, the sentence is absent.
+    layout = "Composition: where the quoted art direction describes frames, cards, podiums, panels or several places"
+    assert layout in styled and layout not in condensed
     with pytest.raises(ValidationError):
         Headline(title_style="gothique")
     assert "title_style" not in Headline(price=True).model_dump()  # earlier request bodies keep their hash
@@ -486,7 +490,11 @@ def as_captured(prompt):
     ).replace(
         "\nWhere the owner's words hold a brand or a model name, it most likely names one of the products of the "
         "reference photos, not a kind of scene: recognise that product by its shape and by the markings printed on it, "
-        "and apply the words to it.", "")
+        "and apply the words to it.", "").replace(
+        # 2026-11-24 too, with a saved model: its art direction may hold a layout.
+        "\nComposition: where the quoted art direction describes frames, cards, podiums, panels or several places for "
+        "products, build that composition inside the product area and set one product of the reference photos in each "
+        "place; it then replaces the single floating hero object.", "")
 
 
 def test_feed_and_square_plans_and_prompts_are_unchanged_byte_for_byte():

@@ -7,11 +7,11 @@ import { memory } from './fixture'
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
 const item = (extra: Partial<Item> = {}): Item => ({ id: 'i', role: 'app', text: 'x', at: 1, ...extra })
 
-it('makes every attached image a product photo, three at most; a style model only by a touch on its label (D-KIT-006)', () => {
+it('makes an attached image a product photo, three at most; a style model by a touch on its label, or as the fourth image (D-KIT-006)', () => {
   expect(nextRole([])).toBe('product')
   expect(nextRole(pictures('product'))).toBe('product')  // never a style model by its position
   expect(nextRole(pictures('product', 'product'))).toBe('product')
-  expect(nextRole(pictures('product', 'product', 'product'))).toBeNull()
+  expect(nextRole(pictures('product', 'product', 'product'))).toBe('inspiration')  // the only place left
   expect(nextRole(pictures('inspiration', 'product', 'product'))).toBe('product')  // the style photo is not a product
   expect(nextRole(pictures('product', 'inspiration', 'product', 'product'))).toBeNull()
   expect([ROLE_NAMES.product, ROLE_NAMES.inspiration]).toEqual(['Produit', 'Modèle de style'])

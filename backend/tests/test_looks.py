@@ -108,6 +108,18 @@ def test_reference_becomes_a_saved_look_and_styles_a_later_scene(engine, setting
         prompt = conn.execute(text("SELECT prompt_text FROM poster_visuals WHERE id=:id"), {"id": visual}).scalar_one()
         assert visuals.get_visual(conn, 1, visual)["headline"]["look_id"] == look_id
     assert "left-aligned at the left edge" in prompt and "Bold geometric sans-serif, mixed case" in prompt
+    # The model's own poster goes to the image model with its words, as the last image, and the prompt asks for its
+    # layout: said in words alone, three cards for three products were not built (the owner's reference, 2026-11-24).
+    # The page is not told: a correction must not send it again (its base image carries the layout).
+    with engine.connect() as conn:
+        shown = visuals.get_visual(conn, 1, visual)
+        sent, roles = conn.execute(text(
+            "SELECT json_extract(j.input_json,'$.style_reference_asset'), v.reference_roles_json FROM poster_visuals v "
+            "JOIN poster_jobs j ON j.id=v.job_id WHERE v.id=:id"), {"id": visual}).one()
+        reference = looks.get_look(conn, 1, look_id)["reference_asset"]
+    assert sent == reference and roles == '["original","style"]' and shown["style_reference_asset"] is None
+    assert "is a style reference only, a finished advert. Borrow its composition: how the frame is divided" in prompt
+    assert "Composition: where the quoted art direction describes frames, cards" in prompt
     with engine.connect() as conn:
         current = store.get_creation(conn, 1, creation["id"])
     with pytest.raises(store.Refused, match="not_found"):  # an unknown look never falls back silently

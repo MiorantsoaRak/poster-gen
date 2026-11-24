@@ -252,8 +252,14 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
         low_res = _low_resolution(conn, settings, product)
         if low_res and "low_resolution" not in request.acknowledged_warnings:
             raise store.Refused("acknowledgement_required")
-        if request.style_reference_asset:
-            store._asset(conn, settings.data_dir, shop, request.style_reference_asset, "style")
+        reference = request.style_reference_asset
+        if reference:
+            store._asset(conn, settings.data_dir, shop, reference, "style")
+        elif request.headline and request.headline.look_id:
+            # A saved model goes with the poster it was read from: its words carry the colours and the lettering, but a
+            # layout said in words was not built (three products each in its own card, the owner's reference of
+            # 2026-11-24). The image model sees it and decides. The job reads the file, and refuses a missing one.
+            reference = looks.get_look(conn, shop, request.headline.look_id)["reference_asset"]
         title = document.offer.title if request.headline else None
         signature = {}
         if request.headline and request.headline.signature:
@@ -286,7 +292,7 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             lines = {"shop_lines": kept}
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
-                                     photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
+                                     photo_count=len(product["photo_assets"]), style_reference=bool(reference),
                                      headline=request.headline, title=title, signature=signature, deduplicate_brand=True,
                                      adjustments=adjustments, **price, **style, **lines)
         except ValueError as refusal:
@@ -300,8 +306,12 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
                    "quality": settings.openai_image_quality or "high", "prompt": compiled, "photo_assets": product["photo_assets"],
                    "base_visual_id": None, "low_res_ack": low_res,
-                   "style_reference_asset": request.style_reference_asset,
-                   "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
+                   "style_reference_asset": reference,
+                   "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if reference else [])}
+        if reference and not request.style_reference_asset:
+            # The model's poster is the server's addition: the page is not told (it would send it again with a correction,
+            # whose base image carries the layout already, and say a model image was lost at a change of style).
+            payload["style_reference_from_look"] = True
         if request.headline:
             payload["headline"] = request.headline.model_dump(exclude={"lines"}) | {"title": title} | signature | price | lines
             if brand_in_title(request.headline.brand, title):
@@ -432,7 +442,8 @@ def get_visual(conn, shop, id):
         "image_url": f'/api/assets/{row["image_asset"]}',
         "replaces_visual_id": payload.get("replaces_visual_id"),  # the version a chat card redrew, if any
         "plan_id": row["plan_id"],  # its style lives there: a new image of the same poster starts from it (ADR-100)
-        "style_reference_asset": payload.get("style_reference_asset"), "headline": payload.get("headline"),
+        "style_reference_asset": None if payload.get("style_reference_from_look") else payload.get("style_reference_asset"),
+        "headline": payload.get("headline"),
         # The owner's words for a refinement; null for a scene, and for a refinement older than this field.
         "instruction_fr": payload.get("instruction_fr"),
         "original_urls": [f"/api/assets/{sha}" for sha in json.loads(row["source_assets_json"])],

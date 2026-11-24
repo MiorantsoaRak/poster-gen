@@ -1,6 +1,7 @@
 """Creation by message in a real browser (T-CHAT-003 and 004, D-TEXT-FIRST-001 and 003): stub providers, temporary data, zero
 spend. From backend/: uv run python ../frontend/tests/chat_browser.py (ports 8000 and 5173 must be free).
 Pictures: outputs/chat-smoke/."""
+import base64
 import json
 import os
 import re
@@ -240,9 +241,22 @@ def walk_desktop(browser, errors, product, inspiration):
     # Two images: both are product photos, never a style model by their position (D-KIT-006); each is uploaded at once.
     # One touch on a label makes that photo the style model; one on another moves the model there; one on the model
     # makes it a product photo again.
-    page.locator(".composer input[type=file]").set_input_files([product, inspiration])
+    # The first is pasted (an image copied from a page), the second dropped on the composer: attached like picked ones.
+    # Pasted text stays text.
+    handed = """([kind, name, mime, b64]) => {
+        const data = new DataTransfer()
+        if (b64) data.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name, { type: mime }))
+        else data.setData('text/plain', name)
+        const init = { bubbles: true, cancelable: true, [kind === 'paste' ? 'clipboardData' : 'dataTransfer']: data }
+        return !document.querySelector('.composer textarea').dispatchEvent(kind === 'paste' ? new ClipboardEvent('paste', init) : new DragEvent('drop', init))
+    }"""
     pics = page.locator(".tray .pic")
     roles = pics.locator(".pic-role")
+    assert page.evaluate(handed, ["paste", "du texte", "", ""]) is False  # not held back: the browser pastes it
+    expect(pics).to_have_count(0)
+    for kind, file in (("paste", product), ("drop", inspiration)):
+        mime = "image/png" if file.suffix == ".png" else "image/jpeg"
+        assert page.evaluate(handed, [kind, file.name, mime, base64.b64encode(file.read_bytes()).decode()]) is True
     expect(pics).to_have_count(2)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
     expect(roles).to_have_text(["Produit", "Produit"])
@@ -1312,22 +1326,19 @@ def walk_uploads(browser, errors, session, small, broken, animated):
         page.get_by_role("button", name="Retirer cette image").click()
         expect(pics).to_have_count(0)
         expect(alert).to_have_count(0)
-    # A fourth product photo is not taken, and a role that has no room is not given: both are said (D-KIT-006).
+    # Five images at once: three product photos, the fourth can only be the style model and is taken as one (a pack of
+    # three with a reference poster), the fifth is not taken and that is said. A role that has no room is not given.
     picker.set_input_files(small)
-    expect(pics).to_have_count(3)
+    expect(pics).to_have_count(4)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    expect(notice).to_contain_text("Trois photos du produit au plus. Pour un modèle de style, touchez l’étiquette d’une photo.")
-    looks_right(page, "fourth product photo refused", "chat-fourth-photo-1366.png")
+    expect(pics.locator(".pic-role")).to_have_text(["Produit", "Produit", "Produit", "Modèle de style"])
+    expect(notice).to_contain_text("Trois photos du produit et un modèle de style au plus.")
+    looks_right(page, "fifth photo refused", "chat-fourth-photo-1366.png")
     # The notice can expire during screenshot capture. Clear it before testing the next refusal.
     notice.get_by_role("button", name="Fermer").evaluate_all("buttons => buttons[0]?.click()")
     expect(notice).to_have_count(0)
-    pics.nth(2).locator(".pic-role").click()  # one of them as the style model: room for one more product photo
-    expect(pics.locator(".pic-role")).to_have_text(["Produit", "Produit", "Modèle de style"])
-    picker.set_input_files(small[3])
-    expect(pics).to_have_count(4)
-    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    pics.nth(2).locator(".pic-role").click()  # the style model as a fourth product photo
-    expect(pics.nth(2).locator(".pic-role")).to_have_text("Modèle de style")
+    pics.nth(3).locator(".pic-role").click()  # the style model as a fourth product photo
+    expect(pics.nth(3).locator(".pic-role")).to_have_text("Modèle de style")
     expect(notice).to_contain_text("Trois photos du produit et un modèle de style au plus.")
     notice.get_by_role("button", name="Fermer").click()
     for _ in range(3):

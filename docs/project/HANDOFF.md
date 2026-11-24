@@ -2,25 +2,92 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
-## The seller's kit, built and walked · Claude, 2026-11-24 (READ FIRST)
+## The seller's kit: built, walked twice, committed and pushed · Claude, 2026-11-24 (READ FIRST)
 
-After the first walk the owner asked to think the platform as a kit the seller reuses, free words still allowed, then: « Proceed in the order you see fit; paid call still allowed; you can continue till there is a testable app. When in doubt, take the place of the user … When everything is fixed, do a live test as an user again ». Done: requirements `requirements/seller-kit.md` (R-KIT-001 to 013), design `designs/seller-kit.md` v3 (a devil's advocate, review r1; its « Contracts as built » is the reference), ADR-131 and the dated entry of 2026-11-24 in DECISIONS, tasks T-KIT-001 to 017 all done in TODO, and [the second walk](reviews/user-walk-2-2026-11-24.md) with real providers.
+**State in one line:** the kit is on `origin/main` (`T-KIT-001` to `017`, `020`); T-KIT-021 (a model's layout) and the research note T-FREE-001 are committed on `main` and not pushed; nothing is deployed (the live site is still build `05a12ee`, which is why the owner's trials on it show none of this). The next move is the owner's.
 
-**What a seller gets now:** prices as he writes them (« 250000 », « 185k »); the scene he describes in his first message; his own lines (warranty, delivery, payment) kept once and drawn on each poster; a photo marked « Modèle de style » read into a saved model; « Mon kit » (models, title by default, lines); « Garder cette scène comme modèle »; a recap that names what will be used and what will not; « Confirmée » as soon as the file is confirmed; « Publier » with the result first and the connection on the page; « Pas à pas » without colour codes, with « Réglages avancés » closed. Migration 0021 (`shop_profile.lines_json`), no new table, no new route.
+**What happened.** After [the first walk](reviews/user-walk-2026-11-23.md) the owner asked to think the platform as a kit the seller reuses, free words still allowed, then gave the go: « Proceed in the order you see fit; paid call still allowed; you can continue till there is a testable app. When in doubt, take the place of the user … When everything is fixed, do a live test as an user again ». Built under that word: requirements `requirements/seller-kit.md` (R-KIT-001 to 013), design `designs/seller-kit.md` v3 (review r1, one devil's advocate; its « Contracts as built » is the reference for every wire shape), ADR-131 and three dated entries of 2026-11-24 in DECISIONS, tasks T-KIT-001 to 017 and T-KIT-020 done, [the second walk](reviews/user-walk-2-2026-11-24.md) with real providers.
 
-**Proof (Linux laptop):** backend suite 2130 passed before the walk's one prompt fix; after it, `1 failed, 2132 passed`: `test_exports.py::test_hidden_title_requires_scene_headline_with_the_current_title`, which passes alone and with its file (the known flake under load, T-SUITE-FLAKE, now named); Vitest 420; the nine browser smokes passed once each on the final frontend; backend code review r1 (fixes in), frontend code review r1 then r2 APPROVE; the walk: 4 paid images, 0.91 USD. **Committed on `main`; not pushed, not deployed.** The released build is still `05a12ee`.
+**What a seller gets now:** prices as he writes them (« 250000 », « 185k »); the scene he describes in his first message; his own lines (warranty, delivery, payment) kept once and drawn on each poster; a photo marked « Modèle de style » read into a saved model; « Mon kit » (models, title by default, lines); « Garder cette scène comme modèle »; a recap that names what will be used and what will not; « Confirmée » as soon as the file is confirmed; « Publier » with the result first and the connection on the page; « Pas à pas » without colour codes, with « Réglages avancés » closed; a guard for a request that is no advert. Migration 0021 (`shop_profile.lines_json`), no new table, no new route.
 
-**After the walk, the owner's own trial (T-KIT-020, 2026-11-24):** on the pack of three he wrote « Aura studio on the center » and got a version with nothing moved. Fixed in `compile_scene` (a correction is said as an instruction that may move things; the owner's words lead the scene on a correction too; a name in his words is read as a product), proved by one paid image on the same poster; whole backend suite after it: 2133 passed, 3 deselected. The owner then decided (2026-11-24): for a name the app does not know, the image model decides, and no prompt is blocked: no name per photo of a pack, no question from the chat. Still true: nothing says when a paid correction changed nothing.
+**The owner's own trial, after the walk (T-KIT-020).** On the pack of three he wrote « Aura studio on the center » and got a version with nothing moved (« The chat seems not aware »). Cause: a correction reached the image model only inside the data block the prompt calls « not additional instructions », against « preserve its composition ». Fixed in `compile_scene` (`backend/src/affiche/posters/plans.py`): a correction is an instruction that may move, swap, resize or replace what the base shows; the owner's words lead the scene on a correction too; a brand or model name in his words is read as one of the products. One paid image on the same poster proved it (`outputs/user-walk-2/05-pack-aura-centre-after-fix.png`, git-ignored). **His decision then:** « For that case, we let the image model decide, so we don't block any user prompt »: no name per photo of a pack, no question from the chat. I read « that case » as names the app does not know; the screens on price, discount and warranty words and the advert guard are unchanged. He did not answer whether he meant those too.
 
-**Left running by this session:** the walk's instance, http://127.0.0.1:5536 (API 8536), real providers from `backend/.env`, data `backend/data-walk` (two test shops, sign-in in its `acces.txt`). It dies with the session; it spends only when someone creates an image.
+**After the handoff, the same day: a reference poster with a layout (T-KIT-021).** On the deployed build the owner gave a reference of three cards, one product in each: « it copied only the color ». Now a first image made with a saved model sends the model's own poster to the image model (`request_scene`, `backend/src/affiche/posters/visuals.py`) and the prompt asks for its composition; the describer writes the layout too; past three product photos the next attached image is the style model (before, a pack of three took none); the composer takes a pasted or dropped image; « Vos données » says where the model's poster goes. Proof: with his reference and three products, words alone built no card, the poster sent built the three cards (`outputs/user-walk-2/06-…` and `07-…`). This replaces D-KIT-006's « never the raw image » (DECISIONS, 2026-11-24). The page is not told of that image (the job's payload marks it `style_reference_from_look`), so a correction does not send it again. Checks after it: whole backend suite `2133 passed, 3 deselected` (run before the last small change to `visuals.py` and `reads.py`; the five test files they touch then passed, 610), Vitest 420, `chat_browser.py`, `browser_smoke.py` and `terms_browser.py` passed. Three paid images this afternoon, about 0.65 USD. Not judged: a model kept from a finished poster now sends that poster, product and words included; the prompt says to ignore them, no real image has shown it.
 
-**Open with the owner:** T-KIT-018 (what a real seller would still hit: a second post of the same poster one tap away, small drawn lines on a phone, the Page choice below the fold, a lost key press right after a photo) and T-KIT-019 (title styles judged on real images, the visual guide, the conditions' first screen, the review's six actions, several products as its own feature: the three-product trial worked). T-FB-012 (the first real post) is unchanged. A release needs his word and his pyinfra; 0021 passes the rehearsal in tests.
+**Research only, same day (T-FREE-001):** the owner asked how to handle a poster of several products, each with its name and price, with free text: « one more general purpose and less barrier », the product chat and « Pas à pas » kept. Answer, code map and proposal (« Affiche libre »: a second kind of poster in the same chat, the guard moved from what the seller writes to what the image shows) are in [reviews/free-poster-research-2026-11-24.md](reviews/free-poster-research-2026-11-24.md). No code. Found on the way: **every paid proof of this track (both walks, T-KIT-020, T-KIT-021) was made on `gpt-image-2` at high, the local default; the deployed build runs `gpt-image-2.5-flare` at medium (`deploy/compose.yml`, ADR-078).** None of the prompt fixes is shown on the production model yet. Asked about the model, the owner answered « no need to change, keep it at the current version »: then « For your next test, set the model to 2-5 flare, it is faster »: the local instance now runs `gpt-image-2.5-flare` at medium, as the deployed build does, and every next paid test uses it. No rerun was done yet. The new kind of poster is for later (« we will handle the new kind of affiches later, just note it »).
 
-**Landmines:** `chat_browser.py` and `browser_smoke.py` are long (run them in the background, their own port pair); other sessions load this machine. The reader's SYSTEM text changed (scene words, lines, unused parts, advert): the measurements of 2026-11-14 are not repeated. A phone number sent alone as a whole message is still read as an amount (an older test pins it).
+**Proof (Linux laptop, 2026-11-24):** whole backend suite on the final code `2133 passed, 3 deselected` (9 min); Vitest 420; the nine browser smokes passed on the frontend before the review fixes, and the five that cover the changed screens after them (the frontend has not changed since); backend code review r1 (fixes in), frontend code review r1 then r2 APPROVE; 5 paid images over the second walk and the trial, about 1.1 USD (about 2.3 USD with the first walk).
 
-**Uncommitted:** nothing of this work (committed on `main` on the owner's word, 2026-11-24; push and release wait for his word). `.impeccable/` stays out.
+**Exact resume point.** No file is half-edited. Ask the owner which of these he wants, in this order of use to a first real seller:
+1. **A release** (his alone: his pyinfra, his word). It brings migration 0021; the rehearsal passes in tests (`backend/tests/test_db.py`). Runbook: `deploy/README.md`, « Each release ». The box is shared: look, never change.
+2. **T-KIT-018** (proposed, not confirmed). Smallest first: after a post of one poster the same poster stays loaded with « Publier… » on (`frontend/src/ShopPublish.vue`, the state after a sent post: empty the selection or turn the button into « Publier à nouveau »); « Mon compte » opens at its top when back from Facebook, the Page choice is below the fold (`frontend/src/ShopAccount.vue`: scroll to the Facebook block when the return carries a connection); the drawn lines are small on a phone (`compile_scene`, the « Shop lines » sentence: ask for a size, then one paid image to judge); no sentence after « Garder cette scène comme modèle » (`frontend/src/App.vue`); review r2's notes N1 to N3 ([r2](reviews/t-kit-frontend-code-r2.md)).
+3. **Not built, found by his trial:** nothing tells the seller when a paid correction changed nothing. No task yet; it needs his word before requirements.
+4. **T-KIT-019** (later): title styles judged on real images, a visual first-use guide, the conditions shorter on the first screen, the review's six actions.
+5. **T-FB-012**, the first real Facebook post with the owner: unchanged.
 
-## User walk as a new seller · Claude, 2026-11-23 (READ FIRST for the next polish work)
+**Commands.**
+
+```bash
+# backend, from backend/ (whole suite: about 9 min; run it alone, other sessions load this machine)
+uv run pytest -q
+uv run pytest tests/test_plans.py tests/test_poster_visuals.py tests/test_reads.py tests/test_looks.py -q   # the prompt and reader tests: 551 passed
+# frontend, from frontend/
+corepack npm@10 test
+corepack npm@10 run build
+# a browser smoke, from backend/, on its own port pair (build first)
+SMOKE_WEB_PORT=5546 SMOKE_API_PORT=8546 uv run python ../frontend/tests/chat_browser.py
+```
+
+The release, by the owner only, from his checkout (never add `--diff` or `--debug`: they print secrets):
+
+```bash
+cd deploy; pyinfra 89.167.56.26 deploy.py --user deploy -y
+```
+
+**The local trial instance.** http://127.0.0.1:5536 (API 8536), real image and message providers from `backend/.env` (never read or print that file), Facebook simulated, data `backend/data-walk` (git-ignored; test shops `essaiclaude` and `essaikit`, sign-in in `backend/data-walk/acces.txt`). It was running when this was written and dies with the session. It spends real money each time someone creates an image: start it only on the owner's word. Its launcher lived in the session's scratchpad and may be gone; this is the whole of it (save it outside the repo, run it from `backend/` with `.venv/bin/python <file>`; it serves `frontend/dist`, so build first; the original served a copy of that folder, this variant with `frontend/dist` itself was not run):
+
+```python
+import logging, os, subprocess
+from pathlib import Path
+import uvicorn
+from affiche.api import create_app, uvicorn_options
+from affiche.config import load_settings
+
+root = Path('/home/miorantsoa/Documents/Miorantsoa/Vite/affiche-ia')
+os.environ.update(IMAGE_PROVIDER='openai', PLANNER_PROVIDER='claude', FACEBOOK_PROVIDER='stub',
+                  DATA_DIR=str(root / 'backend/data-walk'), APP_ORIGIN='http://127.0.0.1:5536',
+                  # the deployed model (deploy/compose.yml, ADR-078): the owner, 2026-11-24
+                  OPENAI_IMAGE_MODEL='gpt-image-2.5-flare', OPENAI_IMAGE_QUALITY='medium')
+os.environ.pop('STUB_FAIL', None)
+settings = load_settings()
+web = subprocess.Popen(['node', 'node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', '5536',
+                        '--strictPort', '--outDir', str(root / 'frontend/dist')], cwd=root / 'frontend',
+                       env={**os.environ, 'SMOKE_WEB_PORT': '5536', 'SMOKE_API_PORT': '8536'})
+try:
+    uvicorn.run(create_app(settings), **{**uvicorn_options(settings), 'port': 8536})
+finally:
+    web.terminate()
+```
+
+To stop it without killing your own shell (a plain `pkill -f` matches its own command line):
+
+```bash
+pgrep -f "walk/serve[.]py" | xargs -r kill
+pgrep -f "vite/bin/vite[.]js preview --host 127.0.0.1 --port 5536" | xargs -r kill
+```
+
+**What the code does not say.**
+- The image prompt has two zones: rules, and a data block the model is told not to obey. The seller's words stay in the data block (that is what keeps them from setting a price); what the fixes of this track added is one sentence in the rules zone that points at them. Keep that shape for any next wording.
+- Prompts are compiled when a job is asked and stored with it: a wording change never touches a job already asked. `test_feed_and_square_plans_and_prompts_are_unchanged_byte_for_byte` (`backend/tests/test_plans.py`) pins older prompts; its helper `as_captured` puts the two reworded sentences of a correction back before it compares. A next deliberate wording change extends that helper; it does not re-capture the digests.
+- Every proof of a prompt wording here is one paid image: the scene words (poster 3 of the walk), the pack of three, the moved product. None is proof for every way of asking.
+- Three products in one picture work as a by-product of the photo roles and the scene words; the prompt still says « one product ». By the owner's decision it stays so.
+- « Nouvelle affiche » opens the way last used on the device (D-TEXT-FIRST-001), so a tester who used « Pas à pas » once lands there, not in Message.
+
+**Landmines:** `chat_browser.py` and `browser_smoke.py` are long (background, their own port pair). The whole backend suite can fail once under load with `test_exports.py::test_hidden_title_requires_scene_headline_with_the_current_title`, which passes alone and with its file (T-SUITE-FLAKE). The reader's SYSTEM text changed (scene words, lines, unused parts, advert): the measurements of 2026-11-14 are not repeated. A phone number sent alone as a whole message is still read as an amount (an older test pins it). Twice in the walk a key press right after attaching a photo was lost; it may be the automation's instant typing, unconfirmed on a real phone.
+
+**Uncommitted:** nothing of this track (T-KIT-021 and the research note were committed on `main` on the owner's word, 2026-11-24; the push waits for his word). `.impeccable/` is untracked and stays out (not this track's).
+
+## User walk as a new seller · Claude, 2026-11-23 (done; its findings are answered by the section above)
 
 The owner asked for a walk of the app in Edge as a real user before polishing: Message to a confirmed poster, « Pas à pas » to a confirmed poster, a poster from a reference photo, « Publier ». Done on `main` (not the released build) with real providers on his word, Facebook simulated. No code change. The findings, the simplifications, the features a seller would not use and his five ideas weighed are in [reviews/user-walk-2026-11-23.md](reviews/user-walk-2026-11-23.md); the six posters are in `outputs/user-walk/`.
 
@@ -28,9 +95,9 @@ The owner asked for a walk of the app in Edge as a real user before polishing: M
 
 **Left running by this session:** the walk's instance, http://127.0.0.1:5536 (API on 8536), real image and message providers from `backend/.env`, data in `backend/data-walk` (git-ignored), sign-in in `backend/data-walk/acces.txt`. It dies with the session; its script is in the session's scratchpad (`walk/serve.py`). It spends only when someone creates an image. Also: a fourth shop `essaiclaude` was added to the trial instance on port 5526 (its line is at the end of `/tmp/doka-journey08-trial/acces.txt`), and the owner's Edge session there was signed out.
 
-**Exact next step:** before any fix, the owner asked (2026-11-23) to think the platform as a kit the seller reuses (a title style, scene models, his own lines), free words still allowed. The concept is the last section of the report, not approved; his four decisions on it are awaited (shop-only kit or operator models; one way to create or two; title drawn or laid over; what free words may change). Then requirements for its first slice. No fix of the report is started. T-FB-012 (the first real post) is unchanged.
+**Was the next step (done since, see the section above):** before any fix, the owner asked (2026-11-23) to think the platform as a kit the seller reuses (a title style, scene models, his own lines), free words still allowed. The concept is the last section of the report, not approved; his four decisions on it are awaited (shop-only kit or operator models; one way to create or two; title drawn or laid over; what free words may change). Then requirements for its first slice. No fix of the report is started. T-FB-012 (the first real post) is unchanged.
 
-**Uncommitted from this session:** `docs/project/reviews/user-walk-2026-11-23.md` (new), `docs/project/TODO.md`, this section.
+**Uncommitted from this session:** nothing (committed and pushed with the kit, 2026-11-24).
 
 ## Repository handoff · 23 November 2026
 

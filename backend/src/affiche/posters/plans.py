@@ -403,9 +403,14 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "clearly visible, even where it moves, swaps, resizes or replaces what image 1 shows. "
                      "Everything the request does not touch stays as in image 1.")
     if style_reference:
-        lines.append(f"Image {start + photo_count} is a style reference only, a finished advert. Borrow its backdrop "
-                     "treatment, how large the product is in the frame, the hero angle, the lighting quality and the "
-                     "floor shadow. Ignore its product, every word and number in it, its logos and its price label.")
+        # A first image also takes the reference's layout; a refinement keeps its base's (and the sentence it had).
+        lines.append(f"Image {start + photo_count} is a style reference only, a finished advert. Borrow its "
+                     + ("" if refinement else
+                        "composition: how the frame is divided, and the frames, cards, panels or podiums that hold a "
+                        "product; where it shows several, rebuild them inside the product area and set one product of "
+                        "the identity references in each, in place of the single floating hero object. Borrow also its ")
+                     + "backdrop treatment, how large the product is in the frame, the hero angle, the lighting quality "
+                     "and the floor shadow. Ignore its product, every word and number in it, its logos and its price label.")
     # The owner's own words win over the house style too (D-KIT-003); without them, the wording stays as stored scenes had it.
     # They lead the scene sentence: said only as an exception to a long house style, and beside a pale palette, the
     # first paid image of the second walk (2026-11-24) kept the grey studio and drew none of « un fond rouge avec des
@@ -430,6 +435,12 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         f"{plan.product_region.y + plan.product_region.h:.0%} of the frame height and its highest edge below "
         f"{plan.product_region.y:.0%}; only the faint shadow may fall lower. Fully visible, and nothing touches "
         "the frame edges.",
+        # A saved model carries its poster's layout in its art direction (looks.SYSTEM): the owner's reference of
+        # 2026-11-24, three products each in its own card, came back as its colours alone.
+        *(["Composition: where the quoted art direction describes frames, cards, podiums, panels or several places "
+           "for products, build that composition inside the product area and set one product of the reference "
+           "photos in each place; it then replaces the single floating hero object."]
+          if headline and headline.look_id else []),
         f"Lighting: {_LIGHTING[plan.scene.lighting]}, a gentle rim light that separates the product's edges from "
         "the backdrop, crisp material detail, accurate colour, sharp focus across the whole product, 85mm "
         "product-photography look.",

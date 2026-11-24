@@ -216,15 +216,24 @@ function importForm() {
 // ── images: uploaded when attached, one request each ─────────────────────────────────────────────────────
 function attach(event: Event) {
   const input = event.target as HTMLInputElement
-  if (copying.value) { input.value = ''; return }  // the poster is about to change
-  for (const file of [...(input.files ?? [])]) {
+  take([...(input.files ?? [])]); input.value = ''
+}
+// An image copied from a page (« Copier l'image », then Ctrl+V) or dragged from a folder is attached like a picked
+// one: the owner's reference poster of 2026-11-24 was in his clipboard, and the composer took nothing.
+const images = (data: DataTransfer | null) => [...(data?.files ?? [])].filter(file => file.type.startsWith('image/'))
+function pasted(event: ClipboardEvent) {
+  const files = images(event.clipboardData)
+  if (files.length) { event.preventDefault(); take(files) }  // text alone is pasted as usual
+}
+function take(files: File[]) {
+  if (copying.value) return  // the poster is about to change
+  for (const file of files) {
     // On an existing poster every image is a product photo, the copy's (D-TEXT-FIRST-007).
     const role = state.creation ? tray.value.length < PRODUCT_PHOTOS ? 'product' : null : nextRole([...draft.pictures, ...tray.value])
-    if (!role) { state.notice = state.creation ? 'Trois photos du produit au plus.' : 'Trois photos du produit au plus. Pour un modèle de style, touchez l’étiquette d’une photo.'; break }
+    if (!role) { state.notice = state.creation ? 'Trois photos du produit au plus.' : 'Trois photos du produit et un modèle de style au plus.'; break }
     tray.value.push({ id: crypto.randomUUID(), role, file, url: URL.createObjectURL(file), status: 'sending', warnings: [], error: '' })
     void sendFile(tray.value[tray.value.length - 1])
   }
-  input.value = ''
 }
 async function sendFile(entry: Unsaved) {
   Object.assign(entry, { status: 'sending', error: '', asset: undefined })
@@ -721,7 +730,7 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       </div>
       <div v-if="waitLine" class="bubble bot chat-wait"><i aria-hidden="true" /><p>{{ waitLine }}</p></div>
     </div>
-    <form class="composer" @submit.prevent="send()">
+    <form class="composer" @submit.prevent="send()" @paste="pasted" @dragover.prevent @drop.prevent="take(images($event.dataTransfer))">
       <!-- The seller's kit (D-KIT-009), for the first version only: the scene models (a style photo takes their place) and
            the title's style. -->
       <div v-if="!state.creation" class="kit-row">

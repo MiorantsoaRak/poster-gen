@@ -802,7 +802,7 @@ def poster_words(conn, shop, document: dict, visual_id: str) -> dict:
     # A version with drawn words draws its title, brand and subtitle (null: none); its price only when it was asked to.
     return {"visual_id": visual_id, "accent_word": baked.get("accent_word"),
             # What a change of style does not carry, said on its card.
-            "model_image": bool(payload.get("style_reference_asset")),
+            "model_image": bool(payload.get("style_reference_asset")) and not payload.get("style_reference_from_look"),
             "adjusted": bool(kept_adjustments(conn, shop, visual_id)),
             "lines": baked.get("shop_lines") or [],  # the shop's lines this version draws (D-KIT-005)
             "image": {row.name: baked.get(row.name) for row in words if baked and (row.name in baked or not row.layer)},

@@ -144,10 +144,12 @@ export interface ChatAdapter {
   keepTitle?: (title: Title | null) => void
 }
 
-/** The role of the next attached image: a product photo, up to three (D-KIT-006). A style model is never given by
- *  position: the owner touches the photo's label. null: nothing more is accepted. */
+/** The role of the next attached image: a product photo, up to three (D-KIT-006); the owner makes one the style model
+ *  by a touch on its label. Past three product photos an image can only be the style model, so it is taken as one (a
+ *  pack of three with a reference poster: the owner, 2026-11-24). null: nothing more is accepted. */
 export const nextRole = (pictures: { role: Role }[]): Role | null =>
-  pictures.filter(picture => picture.role === 'product').length < PRODUCT_PHOTOS ? 'product' : null
+  pictures.filter(picture => picture.role === 'product').length < PRODUCT_PHOTOS ? 'product'
+    : pictures.some(picture => picture.role === 'inspiration') ? null : 'inspiration'
 
 /** A tap on an unsent image's label swaps its role. There is one inspiration at most: the other unsent one becomes a
  *  product photo. Refused (the same list comes back) when a sent image holds the place, or for a fourth product photo. */
