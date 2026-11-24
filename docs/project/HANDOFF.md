@@ -2,6 +2,36 @@
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; the working tree is not clean.
 
+## The seller's kit, built and walked · Claude, 2026-11-24 (READ FIRST)
+
+After the first walk the owner asked to think the platform as a kit the seller reuses, free words still allowed, then: « Proceed in the order you see fit; paid call still allowed; you can continue till there is a testable app. When in doubt, take the place of the user … When everything is fixed, do a live test as an user again ». Done: requirements `requirements/seller-kit.md` (R-KIT-001 to 013), design `designs/seller-kit.md` v3 (a devil's advocate, review r1; its « Contracts as built » is the reference), ADR-131 and the dated entry of 2026-11-24 in DECISIONS, tasks T-KIT-001 to 017 all done in TODO, and [the second walk](reviews/user-walk-2-2026-11-24.md) with real providers.
+
+**What a seller gets now:** prices as he writes them (« 250000 », « 185k »); the scene he describes in his first message; his own lines (warranty, delivery, payment) kept once and drawn on each poster; a photo marked « Modèle de style » read into a saved model; « Mon kit » (models, title by default, lines); « Garder cette scène comme modèle »; a recap that names what will be used and what will not; « Confirmée » as soon as the file is confirmed; « Publier » with the result first and the connection on the page; « Pas à pas » without colour codes, with « Réglages avancés » closed. Migration 0021 (`shop_profile.lines_json`), no new table, no new route.
+
+**Proof (Linux laptop):** backend suite 2130 passed before the walk's one prompt fix; after it, `1 failed, 2132 passed`: `test_exports.py::test_hidden_title_requires_scene_headline_with_the_current_title`, which passes alone and with its file (the known flake under load, T-SUITE-FLAKE, now named); Vitest 420; the nine browser smokes passed once each on the final frontend; backend code review r1 (fixes in), frontend code review r1 then r2 APPROVE; the walk: 4 paid images, 0.91 USD. **Committed on `main`; not pushed, not deployed.** The released build is still `05a12ee`.
+
+**After the walk, the owner's own trial (T-KIT-020, 2026-11-24):** on the pack of three he wrote « Aura studio on the center » and got a version with nothing moved. Fixed in `compile_scene` (a correction is said as an instruction that may move things; the owner's words lead the scene on a correction too; a name in his words is read as a product), proved by one paid image on the same poster; whole backend suite after it: 2133 passed, 3 deselected. The owner then decided (2026-11-24): for a name the app does not know, the image model decides, and no prompt is blocked: no name per photo of a pack, no question from the chat. Still true: nothing says when a paid correction changed nothing.
+
+**Left running by this session:** the walk's instance, http://127.0.0.1:5536 (API 8536), real providers from `backend/.env`, data `backend/data-walk` (two test shops, sign-in in its `acces.txt`). It dies with the session; it spends only when someone creates an image.
+
+**Open with the owner:** T-KIT-018 (what a real seller would still hit: a second post of the same poster one tap away, small drawn lines on a phone, the Page choice below the fold, a lost key press right after a photo) and T-KIT-019 (title styles judged on real images, the visual guide, the conditions' first screen, the review's six actions, several products as its own feature: the three-product trial worked). T-FB-012 (the first real post) is unchanged. A release needs his word and his pyinfra; 0021 passes the rehearsal in tests.
+
+**Landmines:** `chat_browser.py` and `browser_smoke.py` are long (run them in the background, their own port pair); other sessions load this machine. The reader's SYSTEM text changed (scene words, lines, unused parts, advert): the measurements of 2026-11-14 are not repeated. A phone number sent alone as a whole message is still read as an amount (an older test pins it).
+
+**Uncommitted:** nothing of this work (committed on `main` on the owner's word, 2026-11-24; push and release wait for his word). `.impeccable/` stays out.
+
+## User walk as a new seller · Claude, 2026-11-23 (READ FIRST for the next polish work)
+
+The owner asked for a walk of the app in Edge as a real user before polishing: Message to a confirmed poster, « Pas à pas » to a confirmed poster, a poster from a reference photo, « Publier ». Done on `main` (not the released build) with real providers on his word, Facebook simulated. No code change. The findings, the simplifications, the features a seller would not use and his five ideas weighed are in [reviews/user-walk-2026-11-23.md](reviews/user-walk-2026-11-23.md); the six posters are in `outputs/user-walk/`.
+
+**The three that change the plan:** (1) a confirmed poster stays « À vérifier » when an older version was left undecided: a defect of the server's rule, his remark on « Publier » (T-STATUS-STALE-REVIEW, proposed); (2) Message drops, without saying it, every word of the first message that is not a name, a price or a style, yet takes a free scene request from the second image on, with the best result of the walk; (3) a seller cannot put his own warranty or delivery line on a poster.
+
+**Left running by this session:** the walk's instance, http://127.0.0.1:5536 (API on 8536), real image and message providers from `backend/.env`, data in `backend/data-walk` (git-ignored), sign-in in `backend/data-walk/acces.txt`. It dies with the session; its script is in the session's scratchpad (`walk/serve.py`). It spends only when someone creates an image. Also: a fourth shop `essaiclaude` was added to the trial instance on port 5526 (its line is at the end of `/tmp/doka-journey08-trial/acces.txt`), and the owner's Edge session there was signed out.
+
+**Exact next step:** before any fix, the owner asked (2026-11-23) to think the platform as a kit the seller reuses (a title style, scene models, his own lines), free words still allowed. The concept is the last section of the report, not approved; his four decisions on it are awaited (shop-only kit or operator models; one way to create or two; title drawn or laid over; what free words may change). Then requirements for its first slice. No fix of the report is started. T-FB-012 (the first real post) is unchanged.
+
+**Uncommitted from this session:** `docs/project/reviews/user-walk-2026-11-23.md` (new), `docs/project/TODO.md`, this section.
+
 ## Repository handoff · 23 November 2026
 
 The owner requested committing and pushing the seller and operator journey to main. The change includes the shared review, confirm-for-later, PNG and Facebook actions, four-step guide, relevant service contracts, tests and approved design records. The follow-up documentation commit includes the root README, deployment runbook, brand kit, design mockups, research and outstanding project-log edits. The local .impeccable/ tool files remain outside this commit. The next release work is tracked by T-JOURNEY-08. Production deployment is a separate owner operation.

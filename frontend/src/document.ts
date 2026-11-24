@@ -46,7 +46,10 @@ export function drawOrder<T extends { role: string; z: number; visible: boolean 
 export function parsePrice(value: string): number {
   // All kinds of space look the same to the owner: they count as one separator.
   const text = value.replace(/[\u00a0\u202f]/g, ' ').trim().replace(/\s*(?:ar|ariary|mga)\.?$/i, '')
-  if (!/^(?:[0-9]+|[0-9]{1,3}([ .])[0-9]{3}(?:\1[0-9]{3})*)$/.test(text)) throw new Error('Écrivez le prix en ariary, sans virgule : par exemple 90 000 ou 90.000.')
+  // « 250k » is 250 000 (D-KIT-002): whole thousands only, so « 1,5k » is refused with every comma.
+  const thousands = /^([0-9]{1,4}) ?k$/i.exec(text)
+  if (thousands) return Number(thousands[1]) * 1000
+  if (!/^(?:[0-9]+|[0-9]{1,3}([ .])[0-9]{3}(?:\1[0-9]{3})*)$/.test(text)) throw new Error('Écrivez le prix en ariary : 90 000, 90.000 ou 90k. Sans virgule.')
   const result = Number(text.replace(/[ .]/g, ''))
   if (!Number.isSafeInteger(result) || result < 0) throw new Error('Montant trop élevé ou invalide.')
   return result

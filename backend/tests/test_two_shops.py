@@ -377,7 +377,7 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
             {"id": ids["creation"], "reason": "gone"}]
     assert [item["id"] for item in b.get("/api/creations").json()["items"]] == [bid]
     assert [item["id"] for item in b.get(f"/api/creations/{bid}/visuals").json()["items"]] == [visual_b]
-    assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None}
+    assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None, "lines": []}
     assert [item["id"] for item in a.get("/api/creations").json()["items"]] == [cid]
     assert [item["id"] for item in a.get("/api/looks").json()["items"]] == [look_a] and b.get("/api/looks").json()["items"] == []
     # The conditions (D-TERMS-002) take no id: A's acceptance is A's alone, and B's accepts for B without touching A's.
@@ -581,7 +581,7 @@ def test_a_tab_bound_to_another_shop_reads_changes_and_ends_nothing(client):
         assert (answer.status_code, answer.json()["error"]) == (409, refused), answer.text
     with client.app.state.engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM asset_access")).scalar_one() == 0
-    assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None}
+    assert b.get("/api/shop-profile").json() == {"revision": 1, "name": "Boutique Deux", "contact": None, "logo_asset": None, "lines": []}
     for forged in ("", "0", "B", f"{shop_b}0", f"{shop_b}.0", f"1, {shop_b}"):  # a forged value gains nothing
         assert b.get("/api/creations", headers={"X-Affiche-Shop": forged}).status_code == 409, forged
     # The session's own shop passes, and so does no header at all (an <img>, a bundle that does not send it).

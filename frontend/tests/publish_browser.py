@@ -26,7 +26,9 @@ from terms_browser import open_atelier, until
 
 OUT = smoke.ROOT / "outputs" / "publish-browser"
 PAGE_NAME = "Page d’essai 1"
-NO_PAGE = "Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte »."
+NO_PAGE = "Aucune Page Facebook n’est connectée."
+RESULT = "Résultat de la publication"  # the outcome of the latest send, first under the title (D-KIT-008)
+WARNING = ".shop-publish .why:visible"  # a line in the warning colour
 DRAFT_KEY = "affiche.shop1.post-draft"
 STORED = "() => ({ ...localStorage })"
 # The smoke's server runs in this process: while UPLOADS is set, the stand-in's uploads wait (a post stays in flight for
@@ -109,10 +111,13 @@ def walk(browser, data, product):
     confirm = sheet.get_by_role("button", name=re.compile(r"^Publier( à nouveau)?$"))  # « à nouveau » once a poster is on the Page
     publish = mine.get_by_role("button", name="Publier…", exact=True)
     field = mine.get_by_label("Description de la publication")
+    result = page.get_by_role("region", name=RESULT, exact=True)
+    connect = page.locator(".shop-publish").get_by_role("button", name=re.compile(r"^(Connecter ma Page Facebook|Reconnecter ma Page|Continuer vers Facebook)$"))
     open_atelier(page)
     sign_in(page, smoke.IDENTIFIER, smoke.PASSWORD)
 
-    # From the desktop navigation, with no Page connected: the page says so, leads to « Mon compte », and shows the posts.
+    # From the desktop navigation, with no Page connected: the page says so, offers the connection itself (D-KIT-008),
+    # and shows the posts.
     nav = page.locator("aside.side").get_by_role("link", name="Publier", exact=True)
     nav.click()
     page.wait_for_url(re.compile(r"#publier$"))
@@ -120,6 +125,10 @@ def walk(browser, data, product):
     expect(heading).to_be_focused()
     expect(nav).to_have_attribute("aria-current", "page")
     expect(page.get_by_text(NO_PAGE, exact=True)).to_be_visible()
+    expect(connect).to_have_text("Connecter ma Page Facebook")
+    expect(connect).to_have_class(re.compile(r"\bprimary\b"))
+    expect(page.locator(".shop-publish").get_by_role("link", name="Mon compte", exact=True)).to_have_count(0)
+    expect(result).to_have_count(0)
     expect(listed).to_be_visible()
     expect(listed.get_by_text("Aucune publication pour le moment.")).to_be_visible()
     expect(mine).to_have_count(0)
@@ -128,16 +137,15 @@ def walk(browser, data, product):
     card = page.get_by_role("region", name="Page Facebook", exact=True)
 
     def connect_and_return(destination):
+        """The page's own button, the stand-in's dialog, « Connecter cette Page » in « Mon compte », then back on the same
+        post by itself: its draft as it was, nothing sent."""
         saved, requests = draft_of(page), len(sent)
-        page.get_by_role("link", name="Mon compte", exact=True).last.click()
+        connect.click()
         page.wait_for_url(smoke.ORIGIN + "/#compte")
         expect(card.get_by_role("heading", name="Page Facebook", exact=True)).to_be_focused()
-        card.get_by_role("button", name="Connecter ma Page Facebook").click()
-        page.wait_for_url(smoke.ORIGIN + "/#compte")
+        expect(card.get_by_role("link", name="Revenir à ma publication")).to_be_visible()  # the way back stays, in case
         card.get_by_role("radio", name=PAGE_NAME).check()
         card.get_by_role("button", name="Connecter cette Page").click()
-        expect(card).to_contain_text(f"Page connectée : {PAGE_NAME}")
-        card.get_by_role("link", name="Revenir à ma publication").click()
         page.wait_for_url(smoke.ORIGIN + "/#" + destination)
         expect(mine).to_be_visible()
         current = draft_of(page)
@@ -147,8 +155,8 @@ def walk(browser, data, product):
             assert current == saved
         assert len(sent) == requests
 
-    # A browser refusing the OAuth return marker must show the ordinary route before the seller leaves.
-    page.get_by_role("link", name="Mon compte", exact=True).last.click()
+    # A browser refusing the OAuth return marker must show the ordinary route before the seller leaves; the same button
+    # then goes on (here with the tab's storage back, so the return is kept after all).
     page.evaluate("""() => {
       const write = Storage.prototype.setItem;
       window.restoreSessionWrites = () => { Storage.prototype.setItem = write };
@@ -157,11 +165,12 @@ def walk(browser, data, product):
         return write.call(this, name, value)
       }
     }""")
-    card.get_by_role("button", name="Connecter ma Page Facebook").click()
-    expect(card.get_by_role("button", name="Continuer vers Facebook")).to_be_visible()
-    expect(card.get_by_role("status")).to_contain_text(re.compile("ouvrez « Publier( sur Facebook)? » depuis le menu"))
+    connect.click()
+    expect(connect).to_have_text("Continuer vers Facebook")
+    expect(page.locator("#retour-manuel")).to_have_text("Ce navigateur ne peut pas mémoriser le retour. Après Facebook, ouvrez « Publier » depuis le menu.")
+    expect(connect).to_have_attribute("aria-describedby", "retour-manuel")
     page.evaluate("() => window.restoreSessionWrites()")
-    card.get_by_role("link", name="Revenir à ma publication").click()
+    assert page.url.endswith("#publier")
     expect(page.get_by_text(NO_PAGE, exact=True)).to_be_visible()
     assert not sent
     connect_and_return("publier")
@@ -354,6 +363,8 @@ def walk(browser, data, product):
     mine.get_by_role("button", name="Vider", exact=True).click()
     expect(publish).to_be_disabled()
     expect(mine.get_by_text("Choisissez au moins une affiche.")).to_be_visible()
+    expect(mine.get_by_text("Choisissez au moins une affiche.")).to_have_class("help")  # no fault: never the warning colour
+    expect(page.locator(WARNING)).to_have_count(0)
     expect(mine.get_by_text("2 000 caractères au plus. Les retours à la ligne et les émojis sont gardés. Les caractères de contrôle sont refusés, sauf les retours à la ligne et les tabulations.")).to_be_visible()
 
     # Three chosen, then reordered with the handles' arrow keys: the numbers follow, and the first leads. The row's two
@@ -560,11 +571,25 @@ def walk(browser, data, product):
     stamp = draft_of(page)["stamp"]
     confirm.click()
     expect(sheet).to_have_count(0)
+    # The outcome first (D-KIT-008): the first block under the title, its heading focused and in view.
+    expect(result.get_by_role("heading", name=RESULT)).to_be_focused()
+    expect(page.locator(".shop-publish > .titlerow + section")).to_have_attribute("aria-labelledby", "titre-resultat")
+    expect(result).to_be_in_viewport()
     expect(lines).to_have_count(1)
     expect(lines.first).to_contain_text(re.compile(r"Envoi de l’image \d sur 3…|Images envoyées\. Publication…|Publication en cours…"))
     expect(lines.first).to_contain_text("3 images")
     expect(lines.first).to_contain_text(f"Publié sur {PAGE_NAME}.", timeout=20000)
     expect(lines.first.get_by_role("link", name="Voir la publication")).to_have_attribute("href", re.compile(r"^https://www\.facebook\.com/100000000000001_\d+$"))
+    # Published: said there with its link, and nothing in the warning colour on the page (« Choisissez au moins une
+    # affiche. » is not shown while the outcome is).
+    expect(result).to_contain_text(f"Publié sur {PAGE_NAME}.")
+    expect(result).to_contain_text("3 images")
+    expect(result.get_by_role("link", name="Voir la publication")).to_have_attribute("href", lines.first.get_by_role("link", name="Voir la publication").get_attribute("href"))
+    until(page, lambda: draft_of(page) is None)
+    expect(mine.get_by_text("Choisissez au moins une affiche.")).to_have_count(0)
+    expect(page.locator(WARNING)).to_have_count(0)
+    expect(result.get_by_role("heading", name=RESULT)).to_be_focused()
+    page.screenshot(path=str(OUT / "outcome-1366.png"))
     confirmations = {poster: page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}").json()["confirmation"]["id"] for poster in (a, b, c)}
     # The draft's stamp is the key; the posters in the order chosen.
     assert sent[-1] == (stamp, {"page_id": "100000000000001", "description": "Casque Bose QC\n450 000 Ar 😀",
@@ -578,6 +603,7 @@ def walk(browser, data, product):
     # An image refused: nothing is published, the image is named, the draft is kept with a new stamp; « Publier » again
     # is a new try, a second post. The sheet says those posters are on the Page already, and asks to publish again.
     tile(title_a).click()
+    expect(result).to_have_count(0)  # the outcome stays until a poster is added
     tile(title_b).click()
     field.fill("Essai [stub:image:2]")
     refused = "L’image 2 n’a pas pu être envoyée (code 100). Rien n’a été publié. Retirez l’image 2 ou remplacez-la, puis réessayez."
@@ -589,6 +615,7 @@ def walk(browser, data, product):
         confirm.click()
         expect(lines).to_have_count(count)
         expect(lines.first).to_contain_text(refused, timeout=20000)
+        expect(result).to_contain_text(refused)
         assert sent[-1][0] == stamp and sent[-1][1]["items"][0]["seen"]["status"] in ("published", "failed"), sent[-1]
         expect(mine.locator("ol.chosen > li")).to_have_count(2)
         expect(field).to_have_value("Essai [stub:image:2]")
@@ -732,7 +759,20 @@ def walk(browser, data, product):
     expect(unknown.get_by_role("link", name="Ouvrir ma Page")).to_have_attribute("target", "_blank")
     expect(tile(title_a)).to_contain_text("Résultat inconnu : répondez plus bas")
     expect(publish).to_be_disabled()
-    expect(mine.get_by_text("Une de ces affiches attend votre réponse sur une publication au résultat inconnu : répondez plus bas.")).to_be_visible()
+    # The outcome first carries the owner's answers. Only « nothing chosen » gives way to it: the reason « Publier… » is
+    # off stays beside it, named by it (review t-kit-frontend r1, 4).
+    expect(result).to_contain_text("Je ne sais pas si la publication est sur votre Page. Ouvrez votre Page et dites-le-moi.")
+    expect(result.get_by_role("link", name="Ouvrir ma Page")).to_have_attribute("href", "https://www.facebook.com/100000000000001")
+    expect(result.get_by_role("button", name="Elle est sur ma Page")).to_be_visible()
+    expect(result.get_by_role("button", name="Elle n’y est pas")).to_be_visible()
+    waits = mine.get_by_text("Une de ces affiches attend votre réponse sur une publication au résultat inconnu : répondez plus bas.")
+    expect(waits).to_be_visible()
+    expect(publish).to_have_attribute("aria-describedby", "pourquoi-publier")
+    page.screenshot(path=str(OUT / "unknown-outcome-1366.png"))
+    page.reload()  # the page left: the outcome is gone, the reason stays
+    expect(lines.first).to_contain_text("Je ne sais pas si la publication est sur votre Page.")
+    expect(result).to_have_count(0)
+    expect(waits).to_be_visible()
     stamp = draft_of(page)["stamp"]
     assert draft_of(page)["post"] == unknown.get_attribute("data-post")
     page.screenshot(path=str(OUT / "unknown-1366.png"), full_page=True)
@@ -753,12 +793,12 @@ def walk(browser, data, product):
     page.screenshot(path=str(OUT / "unknown-no-page-1366.png"), full_page=True)
     # Denied consent returns to the disconnected batch with its description, order and send key intact.
     kept, sends_before_denial = draft_of(page), len(sent)
-    page.get_by_role("link", name="Mon compte", exact=True).last.click()
     def deny_consent(route):
         answer = route.fetch()
         route.fulfill(response=answer, json={"url": answer.json()["url"].replace(f"code={STUB_CODE}", "error=access_denied")})
     page.route("**/api/facebook/connect", deny_consent, times=1)
-    card.get_by_role("button", name="Connecter ma Page Facebook").click()
+    connect.click()
+    page.wait_for_url(smoke.ORIGIN + "/#compte")
     expect(card.get_by_role("alert")).to_have_text("Connexion annulée.")
     card.get_by_role("link", name="Revenir à ma publication").click()
     page.wait_for_url(smoke.ORIGIN + "/#publier")
@@ -807,12 +847,11 @@ def walk(browser, data, product):
         return remove.call(this, name)
       }
     }""", caption_key)
-    account_link = page.get_by_role("link", name="Mon compte", exact=True).last
-    account_link.click()
+    connect.click()  # the caption is kept before the page leaves for Facebook: refused here, nothing leaves
     retained_caption = page.get_by_label("Légende de l’affiche")
     expect(retained_caption).to_have_value("Légende reprise ici")
     retained_caption.fill("")
-    account_link.click()
+    connect.click()
     expect(page.get_by_role("alert").filter(has_text="Copiez votre légende")).to_be_visible()
     assert page.url.endswith(f"#publier-{a}")
     assert page.evaluate("key => localStorage.getItem(key)", caption_key) == "Légende reprise ici"
@@ -853,10 +892,17 @@ def walk(browser, data, product):
     expect(confirm).to_have_text("Publier à nouveau")
     sheet.get_by_role("button", name="Annuler").click()
     assert len(page.request.get(f"{smoke.ORIGIN}/api/facebook/posts?limit=50").json()["items"]) == count + 1
-    mine.get_by_role("link", name="Publier plusieurs affiches").click()
+    # « Publier plusieurs affiches » (D-KIT-008): the page of several, the poster the owner came with first in its post,
+    # before the one the draft held; nothing sent.
+    mark = len(sent)
+    mine.get_by_role("button", name="Publier plusieurs affiches").click()
     page.wait_for_url(re.compile(r"#publier$"))
-    expect(mine.locator("ol.chosen > li")).to_have_count(1)
+    expect(mine.locator("ol.chosen > li")).to_have_count(2)
+    expect(mine.locator("ol.chosen > li").first).to_contain_text(title_a)
     expect(row(title_b)).to_be_visible()
+    expect(page.locator("#retour-ajout")).to_have_text("L’affiche a été ajoutée à votre publication.")
+    kept_draft = draft_of(page)
+    assert kept_draft["items"] == [a, b] and len(sent) == mark, kept_draft
     # A poster that cannot go: its reason, and the way to it.
     page.evaluate("hash => { location.hash = hash }", f"publier-{d}")
     expect(mine.get_by_text("Cette affiche a été modifiée depuis sa vérification : vérifiez-la à nouveau pour la publier.")).to_be_visible()
@@ -979,7 +1025,7 @@ def walk(browser, data, product):
     phone_nav = page.locator("nav.phone-bar")
     expect(phone_nav.get_by_role("link")).to_have_count(5)
     expect(phone_nav.get_by_role("link", name="Publier", exact=True)).to_be_visible()
-    expect(phone_nav.get_by_role("link", name="Styles")).to_have_count(0)
+    expect(phone_nav.get_by_role("link", name="Mon kit")).to_have_count(0)
     page.wait_for_function(smoke.SETTLED, polling=100)
     page.screenshot(path=str(OUT / "mes-affiches-360.png"))
     phone_nav.get_by_role("link", name="Publier", exact=True).click()
@@ -991,7 +1037,22 @@ def walk(browser, data, product):
     assert page.evaluate(smoke.NO_SIDEWAYS), "sideways scroll with the sheet at 360 px"
     smoke.check_contrast(page, "publish sheet 360")
     page.screenshot(path=str(OUT / "sheet-360.png"))
-    sheet.get_by_role("button", name="Annuler").click()
+    # Published from a phone: the outcome is the focused first block, in view, with nothing in the warning colour.
+    confirm.click()
+    expect(sheet).to_have_count(0)
+    expect(result.get_by_role("heading", name=RESULT)).to_be_focused()
+    expect(result).to_be_in_viewport()
+    expect(result).to_contain_text(f"Publié sur {PAGE_NAME}.", timeout=20000)
+    expect(result.get_by_role("link", name="Voir la publication")).to_be_visible()
+    until(page, lambda: draft_of(page) is None)
+    expect(page.locator(WARNING)).to_have_count(0)
+
+    def outcome_look(theme):
+        assert page.evaluate(smoke.NO_SIDEWAYS), f"sideways scroll with the outcome at 360 px, {theme}"
+        smoke.check_contrast(page, f"publish outcome 360 {theme}")
+        page.screenshot(path=str(OUT / f"outcome-360-{theme}.png"))
+
+    smoke.both_themes(page, outcome_look)
     smoke.go(page, "Accueil")
     expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
     page.get_by_role("link", name="Publier sur Facebook").scroll_into_view_if_needed()
@@ -1151,7 +1212,11 @@ def run():
                 smoke.stop(*server)
     print("Publish browser checks passed (stub only): with the feature off no way in and #publier falls back to Accueil; "
           "on the stand-in the page from the desktop navigation, « Mes affiches » and Accueil on a 360 px phone; no Page: "
-          "said, with « Mon compte » and the posts; batch and single Page connection returns; repair without adding, "
+          "said, with the page's own « Connecter ma Page Facebook » and the posts; a tab that cannot keep the return says so "
+          "first; batch and single Page connection return to the same post by themselves, a refused consent by the link; "
+          "after a send the outcome is the focused first block, in view at 1366 and 360 px, with its link or the owner's "
+          "answers and nothing in the warning colour, until a poster is added or the page is left; « Choisissez au moins "
+          "une affiche. » is help; « Publier plusieurs affiches » puts the page's poster first in the post of several; repair without adding, "
           "a confirmed file added to the latest draft, duplicate/cap/stale/reload and storage refusals; three posters chosen and reordered (numbers, « En tête »), a refused "
           "character said, a caption taken as the description, the draft kept through a reload; the sheet's Page, strip "
           "in order, description, a thumbnail failed then « Réessayer », what is already on the Page and « Publier à nouveau »; "

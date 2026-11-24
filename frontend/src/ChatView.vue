@@ -7,17 +7,17 @@
 // (Web Locks), and a tab checks it still holds it right before anything paid leaves.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, displayUrl, mutation, preparedUrl, read, shopStorage } from './api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, fate, final, identityLine, keepRequest, limitLine, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, picturesOfRecap, productsOf, recapFormat, readPending, readThread, settled, spend, staleLine, STYLES, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
-  type Card, type ChatAdapter, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
+import { amountsOf, cardButton, changes, chosenKit, complete, createName, effectOf, fate, final, identityLine, keepRequest, kitChips, kitDraft, kitOf, limitLine, linesLine, newLines, ownTitle, PRODUCT_PHOTOS, lines, modifications, movedTo, newPending, nextRole, nextStep, normal, paid, pendingFor, pendingKey, picturesOfRecap, productsOf, recapFormat, readPending, readThread, ROLE_NAMES, sceneLine, settled, spend, staleLine, STYLES, storeThread, supersede, swapLabel, swapRole, textOf, texts, threadKey, titleLine, TITLES, trim, unresolved, unsentKey, UNSTORED, versionsLeft, warns, wireDraft,
+  type Card, type ChatAdapter, type Chip, type Draft, type Item, type JobRow, type Pending, type Picture, type Role, type SceneRequest, type Style, type Words, GONE } from './chat'
 import { parsePrice, type Visual } from './document'
-import { ended, FEATURES_WARNING, ONCE } from './generation'
+import { DRAW_TIME, ended, FEATURES_WARNING, ONCE } from './generation'
 
 const props = defineProps<{ adapter: ChatAdapter }>()
 const emit = defineEmits<{ steps: [] }>()
 const state = props.adapter.state
 
 interface Unsaved { id: string; role: Role; file: File; url: string; status: 'sending' | 'done' | 'failed'; asset?: string; warnings: string[]; error: string }
-const items = ref<Item[]>([]), draft = reactive<Draft>({ name: null, price_ar: null, style: 'clair', identity: null, pictures: [] })
+const items = ref<Item[]>([]), draft = reactive<Draft>({ name: null, price_ar: null, style: 'clair', identity: null, pictures: [], scene_fr: null, offer_lines: [], lines: true, look: null, title: null })
 const tray = ref<Unsaved[]>([]), text = ref(''), reading = ref(false), starting = ref(false), copying = ref(false), typing = ref(false), smallAccepted = ref(false), needsAgreement = ref(false)
 const root = ref<HTMLElement>(), thread = ref<HTMLElement>(), field = ref<HTMLTextAreaElement>(), picker = ref<HTMLInputElement>(), height = ref(0)
 // The read on its way, apart from the text being typed; the ref is the copy that holds when storage fails.
@@ -33,7 +33,6 @@ const mine = (at = token) => !closed && !!owner.value && at === token
 // The /scenes request this card did not send: the tab lost the chat right before it left.
 class Stopped extends Error {}
 
-const roleNames: Record<Role, string> = { product: 'Produit', inspiration: 'Inspiration' }
 const src = (asset: string) => preparedUrl(`/api/assets/${asset}`)
 const price = (value?: number | null) => `${(value ?? 0).toLocaleString('fr-FR')} Ar`
 const products = () => draft.pictures.filter(item => item.role === 'product')
@@ -44,11 +43,18 @@ const intakePictures = computed<Picture[]>(() => [...draft.pictures, ...tray.val
 const recapPictures = computed<Picture[]>(() => state.creation
   ? [...(state.productAssets ?? []).map(asset => ({ asset, role: 'product' as const })), ...(state.styleReference ? [{ asset: state.styleReference, role: 'inspiration' as const }] : [])]
   : intakePictures.value)
+// The seller's kit for a new poster (D-KIT-009): the scene models, the most recently used first, and what the row chose.
+// A style photo of the recap is its scene: no saved look then, and the model's own title by default.
+const chips = computed(() => kitChips(state.looks, state.recent))
+const chosen = computed(() => chosenKit(draft, state.looks, recapPictures.value.some(picture => picture.role === 'inspiration')))
 const needsProduct = (item: Item) => !!state.creation && !state.productAssets?.length && !item.spent && !item.done && item.card?.kind === 'recap'
 const picturesOf = (item: Item) => picturesOfRecap(item, recapPictures.value, state.creation?.id)
 const smallPhoto = computed(() => needsAgreement.value || products().some(item => item.warnings?.includes('low_resolution')))
 // Only the open poster's versions; the one shown is the one selected in its document.
 const versions = computed(() => state.creation ? state.visuals : [])
+// A poster with no version yet has a new poster's recap: its scene, title and shop lines, and the kit passed at every tap,
+// so a « Réessayer » after a failure sends what the recap on screen shows (review t-kit-frontend r1, 1).
+const newPoster = computed(() => !versions.value.length)
 // `looked`: a version chosen in the list of modifications. Looking is free: the document's choice does not move.
 const looked = ref<string | null>(null), listed = ref(false), left = ref<number | null>(null)
 const shown = computed(() => versions.value.find(visual => visual.id === (looked.value ?? state.selected)) ?? versions.value[0])
@@ -60,7 +66,7 @@ const free = (item: Item) => effect(item) === 'free'
 const target = (card: Card) => ((card.effect || card.kind === 'restyle') && card.visual_id) || state.selected || ''
 const numberOf = (visual: Visual) => versions.value.length - versions.value.indexOf(visual)
 const versionOf = (item: Item) => versions.value.find(visual => visual.id === item.card?.visual_id)
-const stateNames = { pending_review: 'à vérifier', approved: 'approuvée', rejected: 'refusée' }
+const stateNames = { pending_review: 'à vérifier', approved: 'confirmée', rejected: 'refusée' }
 const imageJob = computed(() => !!state.job && ['scene', 'refine'].includes(state.job.kind))
 const openCard = () => items.value.find(unresolved)
 // The read on its way belongs to one thread: the one of the poster its body names.
@@ -76,15 +82,37 @@ const held = computed(() => locked.value || !!openCard())
 const elsewhere = computed(() => !!pending.value && !awaited.value)
 const toPending = () => { const id = pending.value && pendingFor(pending.value); window.location.hash = id ? `message-${id}` : 'message' }
 const waitLine = computed(() => reading.value ? 'Je lis votre message…' : copying.value ? 'Je copie l’affiche…'
-  : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: 'Je dessine l’affiche…', receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
+  : imageJob.value ? state.offline ? 'Connexion interrompue. La demande continue.' : ({ queued: 'Je prépare la scène…', running: `Je dessine l’affiche… ${DRAW_TIME}`, receiving: 'Dernières finitions…' } as Record<string, string>)[state.phase ?? ''] ?? ''
   : state.job?.kind === 'render' ? 'Je prépare le fichier…'
+  : state.job?.kind === 'look' ? 'Je lis votre modèle de style…'
   : starting.value ? state.paletteLoading ? 'Je lis les couleurs de la photo…' : 'Je prépare la scène…' : '')
 // Nothing in the thread and no poster: the greeting is the centred welcome (D-REDESIGN-003). A card imported from
 // « Pas à pas » or a stored assistant-only thread is a conversation already.
 const empty = computed(() => !shown.value && !items.value.length)
 const preparedDraft = computed(() => empty.value && !!state.creation && !state.job)
 const greeting = computed(() => state.creation ? 'Voici votre affiche. Dites ce qu’il faut changer.' : 'Ajoutez une photo du produit. Écrivez son nom, sa couleur ou son modèle, et son prix en ariary, puis touchez « Envoyer ».')
-const styleName = (item: Item) => picturesOf(item).some(photo => photo.role === 'inspiration') ? 'comme votre inspiration' : STYLES.find(([id]) => id === (item.spent || item.done ? item.card?.style : draft.style))?.[1] ?? STYLES[0][1]
+// The recap's scene (D-KIT-004): what the draft says while it waits for its tap, what was sent once spent. The owner's
+// words, the style photo read into a model and the kit's saved look and title belong to a new poster only.
+const sceneOf = (item: Item) => {
+  const open = !item.spent && !item.done, photo = picturesOf(item).some(picture => picture.role === 'inspiration')
+  const look = open ? newPoster.value ? chosen.value.look?.name : undefined : item.card?.look
+  return sceneLine(photo ? null : look ?? STYLES.find(([id]) => id === (open ? draft.style : item.card?.style))?.[1] ?? STYLES[0][1],
+    open ? newPoster.value ? draft.scene_fr : null : item.card?.scene_fr, open && newPoster.value)
+}
+const titleOf = (item: Item) => titleLine(!item.spent && !item.done ? newPoster.value ? chosen.value.title : undefined : item.card?.title)
+// A chip of the kit row. A house style is also what the reader is told; a saved look stays on this device.
+function pick(chip: Chip) {
+  if (chip.asset) draft.look = chip.id
+  else { draft.style = chip.id as Style; draft.look = null }
+  save()
+}
+// The shop's lines a new poster's recap draws (D-KIT-005): the profile's, then the new ones the messages asked for, which
+// the tap keeps for the shop first. Drawn only with the recap's switch on and the texts drawn in the image.
+const offered = computed(() => newLines(draft.offer_lines, state.shop.lines))
+const shopLines = computed(() => newPoster.value ? [...(state.shop.lines ?? []), ...offered.value] : [])
+// A `line` card draws every line of the shop once its own are kept, those kept before included (D-KIT-005).
+const lineCardLines = (card: Card) => [...(state.shop.lines ?? []), ...newLines(texts(card.lines), state.shop.lines)]
+const drawsLines = computed(() => draft.lines && state.drawn !== false && shopLines.value.length > 0)
 // While its own first request is on its way, a spent card shows the waiting line, not « Reprendre ».
 const buttonOf = (item: Item) => { const button = cardButton(item, versionOf(item)?.status, state.selected, free(item) ? null : left.value, !free(item) && (state.credit.terms ? 'terms' : state.credit.stop)); return button === 'resume' && starting.value ? null : button }
 const offersSteps = (card: Card) => card.kind === 'steps' || (card.kind === 'unclear' && !!state.creation) || ['read_failed', 'read_limit', 'chat_unavailable'].includes(card.code ?? '')
@@ -138,7 +166,9 @@ function load(id?: string | null) {
   items.value = saved.items; smallAccepted.value = false; needsAgreement.value = false; looked.value = null; listed.value = false; clearTimeout(later)
   // A refusal seen by an earlier view is not this one's: a kept request is offered again with « Reprendre ».
   for (const item of items.value) if (item.spent && item.request && !item.job && !item.done) delete item.card!.error
-  Object.assign(draft, saved.draft, { style: saved.draft.style ?? (STYLES.some(([style]) => style === state.look) ? state.look as Style : 'clair') })
+  // A thread begun here keeps its choices; a new one starts from the kit's last ones (D-KIT-009), a poster's from the
+  // editor's style, as before.
+  Object.assign(draft, saved.draft, saved.draft.style ? {} : kitDraft(state.creation ? undefined : state.kit, state.look))
   // A read left on its way (a reload, or another thread opened meanwhile): « Réessayer » sends the same record.
   if (awaited.value && !items.value.some(item => item.card?.kind === 'failed' && !item.done)) app('L’envoi a été interrompu.', { kind: 'failed', code: 'interrupted', retry: pending.value!.text })
 }
@@ -146,6 +176,9 @@ const add = (item: Partial<Item> & { role: Item['role'] }) => { items.value.push
 const recapDetails = () => ({
   ...(state.offer ? { name: state.offer.title, price_ar: state.offer.price_ar } : {}),
   format: state.format, pictures: [...recapPictures.value], style: draft.style,
+  ...(newPoster.value && draft.scene_fr ? { scene_fr: draft.scene_fr } : {}),
+  // Written again at the tap: a chip may have changed since the recap came.
+  ...(newPoster.value ? { look: chosen.value.look?.name, title: chosen.value.title } : {}),
 })
 const app = (line: string, card?: Card) => add({ role: 'app', text: line, card: card?.kind === 'recap' ? { ...card, ...recapDetails() } : card })
 // A new question or recap replaces the open ones: only the latest may be tapped.
@@ -187,7 +220,7 @@ function attach(event: Event) {
   for (const file of [...(input.files ?? [])]) {
     // On an existing poster every image is a product photo, the copy's (D-TEXT-FIRST-007).
     const role = state.creation ? tray.value.length < PRODUCT_PHOTOS ? 'product' : null : nextRole([...draft.pictures, ...tray.value])
-    if (!role) { state.notice = state.creation ? 'Trois photos du produit au plus.' : 'Trois photos du produit et une image d’inspiration au plus.'; break }
+    if (!role) { state.notice = state.creation ? 'Trois photos du produit au plus.' : 'Trois photos du produit au plus. Pour un modèle de style, touchez l’étiquette d’une photo.'; break }
     tray.value.push({ id: crypto.randomUUID(), role, file, url: URL.createObjectURL(file), status: 'sending', warnings: [], error: '' })
     void sendFile(tray.value[tray.value.length - 1])
   }
@@ -208,10 +241,21 @@ function reuse(asset: string) {
   if (complete(draft)) recap(); else app('Photo ajoutée.')
   save()
 }
+// An amount read in the message, chosen by a tap (D-KIT-002): the owner's own figure, so no read is paid for it; the
+// recap shows it large before any credit. The price is asked before the photo: a missing photo is asked next.
+function pickPrice(item: Item, amount: number) {
+  if (locked.value || item.done) return
+  supersede(items.value)
+  add({ role: 'owner', text: price(amount) }); draft.price_ar = amount
+  if (complete(draft)) recap(); else app('Il me faut une photo du produit.', { kind: 'ask_photo' })
+  save()
+}
+// « Ne pas garder »: that new line is neither kept for the shop nor drawn (a poster draws only the shop's lines).
+function unkeep(line: string) { draft.offer_lines = draft.offer_lines.filter(entry => entry !== line); save() }
 // The server keeps an image under its role: a swapped one is sent again under the other.
 function swap(entry: Unsaved) {
   const next = swapRole(tray.value, entry.id, draft.pictures)
-  if (next === tray.value) { state.notice = 'Trois photos du produit et une image d’inspiration au plus.'; return }
+  if (next === tray.value) { state.notice = 'Trois photos du produit et un modèle de style au plus.'; return }
   for (const [index, item] of tray.value.entries()) if (item.role !== next[index].role) { item.role = next[index].role; void sendFile(item) }
 }
 function drop(entry: Unsaved) { URL.revokeObjectURL(entry.url); tray.value = tray.value.filter(item => item !== entry) }
@@ -283,11 +327,15 @@ async function ask() {
   reading.value = true
   try {
     // Sent in the same turn as the check above: nothing is awaited in between.
-    const answer = await read<{ card: Card & { text_fr: string }; draft: { name: string | null; price_ar: number | null; style: Style | null; identity?: boolean } }>(record)
+    const answer = await read<{ card: Card & { text_fr: string }; draft: { name: string | null; price_ar: number | null; style: Style | null; identity?: boolean; scene_fr?: string | null } }>(record)
     if (!mine(at) || key !== from) return  // closed, taken, or another thread: the record stays, its answer is asked again, unpaid
     clearPending(record.key)
-    Object.assign(draft, { name: answer.draft.name, price_ar: answer.draft.price_ar, style: answer.draft.style ?? draft.style, identity: answer.draft.identity ?? null })
+    // A house style named in this message wins over the kit's saved look (the message first, then the kit).
+    if (answer.draft.style && answer.draft.style !== draft.style) draft.look = null
+    Object.assign(draft, { name: answer.draft.name, price_ar: answer.draft.price_ar, style: answer.draft.style ?? draft.style, identity: answer.draft.identity ?? null, scene_fr: answer.draft.scene_fr || null })
     const { text_fr, ...card } = answer.card
+    // The shop's lines this message asked for replace those offered before; a card without the field leaves them.
+    if (!state.creation && card.offer_lines !== undefined) draft.offer_lines = texts(card.offer_lines)
     if (card.kind !== 'unclear') supersede(items.value)
     app(text_fr, changes(card) ? { ...normal(card), said: record.text } : card)
   } catch (reason) {
@@ -343,8 +391,13 @@ async function create(item: Item) {
   // Its own sentence stays on a card from before: the server's said the price is redrawn.
   if (kind === 'free') return setWords(visual, card.words ?? {}, 'C’est changé sur l’affiche.', Object.assign(item, { text: lineOf(item) }), true)
   if (held.value || needsProduct(item) || !spend(items.value, item.id)) return
-  const style = recapPictures.value.some(photo => photo.role === 'inspiration') ? 'clair' : draft.style ?? 'clair'
-  if (card.kind === 'recap') Object.assign(card, recapDetails(), { style })
+  const photo = recapPictures.value.find(picture => picture.role === 'inspiration')?.asset
+  const style = photo ? 'clair' : draft.style ?? 'clair'
+  // A new poster's scene words, shop lines, saved look and title, as the recap shows them (D-KIT-004, 005, 009), at every
+  // tap until the poster has a version; the card keeps the lines drawn.
+  const drawn = drawsLines.value ? [...shopLines.value] : [], keep = drawn.length ? [...offered.value] : []
+  const kit = card.kind === 'recap' && newPoster.value ? kitOf(draft.scene_fr, chosen.value, drawn, keep) : undefined
+  if (card.kind === 'recap') Object.assign(card, recapDetails(), { style }, drawn.length ? { shop_lines: drawn } : {})
   item.creation = state.creation?.id; looked.value = null
   // Spent and saved before anything leaves (strict send, chat.ts keepRequest): a browser that cannot store the card sends
   // nothing at all, not even the poster or its plan. The poster's id and the job's id are added by the two watchers below.
@@ -352,18 +405,23 @@ async function create(item: Item) {
   // The tap on the recap (photos, name and price in view) is the agreement the form asks with its checkbox.
   if (!state.creation) { sync(); state.intake.confirmed = true }
   starting.value = true
-  let failure: unknown
+  let failure: unknown, made: { look?: string } | undefined
   // Right before the paid request leaves, with nothing awaited until it does: still this tab's chat, and the request kept as sent.
   const owned = () => { if (!mine(at)) throw new Stopped() }
   const sending = (request: SceneRequest) => { owned(); keepRequest(item, request, save) }
   try {
-    await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending, card.identity)
+    made = await (card.kind === 'recap' ? props.adapter.start(item.id, style, smallAccepted.value, sending, card.identity, kit)
       : kind === 'refine' ? props.adapter.change(item.id, visual, card.instruction_fr!, owned, sending)
-      : props.adapter.revise(item.id, visual, card.words ?? {}, smallAccepted.value, owned, sending, card.kind === 'restyle' ? card.style! : undefined))
+      : props.adapter.revise(item.id, visual, card.words ?? {}, smallAccepted.value, owned, sending, card.kind === 'restyle' ? card.style! : undefined, card.kind === 'line' ? texts(card.lines) : undefined)) ?? undefined
   } catch (reason) { failure = reason }
   if (!mine(at)) return  // closed, or the chat was taken (even if taken back since): the tab holding it goes on from what was kept
   starting.value = false
   if (failure) return conclude(item, failure)
+  if (made?.look) {
+    // The style photo is a model of the kit now, and the request has taken it: if the image fails, the next recap names it.
+    draft.look = state.looks?.find(look => look.reference_asset === photo)?.id ?? draft.look
+    app(`Votre modèle de style est gardé dans votre kit : « ${made.look} ».`)
+  }
   if (card.kind === 'recap' && style === 'couleur' && state.look === 'clair') app('Couleurs illisibles : Studio clair à la place.')
   save()
 }
@@ -413,6 +471,11 @@ function conclude(item: Item, failure: unknown) {
   item.done = true
   // The server asks the agreement to a small photo: a new card asks it.
   if (code === 'acknowledgement_required') { item.card!.error = sentence; needsAgreement.value = true; again(item) }
+  // A new line the server refused to keep for the shop, before anything was paid: its sentence, then the recap again,
+  // whose « Ne pas garder » drops it (« Pas à pas » has no lines to correct).
+  else if (code === 'shop_line_refused' && item.card!.kind === 'recap') { item.card!.error = sentence; again(item) }
+  // On a poster the `line` card has no « Ne pas garder »: its sentence, and the way to the shop's lines.
+  else if (code === 'shop_line_refused' && item.card!.kind === 'line') Object.assign(item.card!, { error: sentence, account: true })
   // A rule refused the poster's words: a new attempt cannot change that, the editor can. A card from before sets its
   // price alone, so it is offered again; the server's card would set the refused words again.
   else if (failure instanceof ApiError && failure.status === 422) { Object.assign(item.card!, { error: sentence, fix: true }); if (!item.card!.effect && item.card!.kind === 'change') again(item) }
@@ -526,6 +589,8 @@ if (!lockless) void hold({ ifAvailable: true })
 props.adapter.hasUnsentPhotos = () => !closed && tray.value.length > 0
 props.adapter.discardUnsentPhotos = () => { if (!closed) tray.value.forEach(drop) }
 props.adapter.waiting = () => mine() ? !!openCard() : undefined
+// « Corriger l’affiche » from Message (D-KIT-007): the correction is written here. After the render that ends the review.
+props.adapter.focus = () => { if (!closed) void nextTick(() => field.value?.focus()) }
 // The agreement to a small photo is for one product and its photos.
 watch(() => [draft.name, products().map(item => item.asset).join()], () => { smallAccepted.value = false })
 watch(() => [draft.name, draft.price_ar, draft.pictures.length, tray.value.map(item => `${item.asset}${item.role}`).join()], sync)
@@ -587,21 +652,37 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       </div>
       <div v-else class="bubble bot"><p>{{ greeting }}</p></div>
       <div v-for="item in items" :key="item.id" class="bubble" :class="item.role === 'owner' ? 'me' : 'bot'">
-        <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
-        <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: changes(item.card) }">{{ lineOf(item) }}</p>
+        <div v-if="item.pictures?.length" class="pics"><span v-for="picture in item.pictures" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Modèle de style'" />{{ ROLE_NAMES[picture.role] }}</span></div>
+        <p v-if="item.text && item.card?.kind !== 'result'" :class="{ lines: item.role === 'app' }">{{ textOf(lineOf(item), item.card) }}</p>
         <template v-if="item.card?.kind === 'recap'">
-          <div v-if="picturesOf(item).length" class="pics"><span v-for="picture in picturesOf(item)" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />{{ roleNames[picture.role] }}</span></div>
+          <div v-if="picturesOf(item).length" class="pics"><span v-for="picture in picturesOf(item)" :key="picture.asset" class="pic"><img :src="src(picture.asset)" width="68" height="68" :alt="picture.role === 'product' ? 'Photo du produit' : 'Modèle de style'" />{{ ROLE_NAMES[picture.role] }}</span></div>
           <p v-if="needsProduct(item)" class="why" role="status">
             {{ state.productError || state.productAssets ? 'Les photos du produit sont indisponibles.' : 'Chargement des photos du produit…' }}
             <button v-if="state.productError || state.productAssets" type="button" class="text-button" @click="adapter.reloadProduct()">Recharger le produit</button>
           </p>
-          <p class="recap"><b translate="no">{{ item.card.name }}</b><span v-if="item.card.price_ar != null" class="recap-price">{{ price(item.card.price_ar) }}</span><small v-if="recapFormat(item, state.format)" class="recap-format">{{ recapFormat(item, state.format) }}</small><small>Style : {{ styleName(item) }}</small><small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small></p>
+          <p class="recap"><b translate="no">{{ item.card.name }}</b><span v-if="item.card.price_ar != null" class="recap-price">{{ price(item.card.price_ar) }}</span><small v-if="recapFormat(item, state.format)" class="recap-format">{{ recapFormat(item, state.format) }}</small></p>
+          <small>{{ sceneOf(item) }}</small>
+          <small v-if="titleOf(item)">{{ titleOf(item) }}</small>
+          <!-- The shop's lines (D-KIT-005): a switch while the recap waits for its tap, the lines drawn once spent. -->
+          <template v-if="!item.spent && !item.done && shopLines.length">
+            <label v-if="state.drawn !== false" class="switch"><input type="checkbox" :checked="draft.lines" @change="draft.lines = ($event.target as HTMLInputElement).checked; save()" />{{ linesLine(shopLines) }}</label>
+            <p v-for="line in state.drawn !== false && draft.lines ? offered : []" :key="line" class="recap-offer">« {{ line }} » : nouvelle, gardée pour la boutique.<button type="button" class="text-button" :aria-label="`Ne pas garder « ${line} »`" @click="unkeep(line)">Ne pas garder</button></p>
+            <p v-if="state.drawn === false && offered.length" class="why">Les lignes de la boutique sont dessinées dans l’image : cette affiche n’a pas de textes dessinés.</p>
+          </template>
+          <small v-else-if="item.spent && texts(item.card.shop_lines).length">{{ linesLine(texts(item.card.shop_lines)) }}</small>
+          <small v-if="item.card.identity !== undefined && identityLine(state.shop, item.card.identity)">{{ identityLine(state.shop, item.card.identity) }}</small>
         </template>
+        <small v-if="item.card?.kind === 'line' && !item.spent && !item.done">{{ linesLine(lineCardLines(item.card)) }}</small>
+        <!-- What the message asked that the poster will not use (D-KIT-004): the server's lines, apart, before any button. -->
+        <div v-if="texts(item.card?.unused_fr).length" class="refusal" role="note"><p v-for="line in texts(item.card?.unused_fr)" :key="line" class="why">{{ line }}</p></div>
+        <div v-if="item.card?.kind === 'ask_price' && !item.done && amountsOf(item.card).length" class="acts">
+          <button v-for="amount in amountsOf(item.card)" :key="amount" type="button" class="secondary" :disabled="locked" @click="pickPrice(item, amount)">{{ price(amount) }}</button>
+        </div>
         <template v-for="version in item.card?.kind === 'result' ? [versionOf(item)] : []" :key="item.id">
           <template v-if="version">
             <button type="button" class="chat-poster small" aria-label="Agrandir l’affiche" @click="adapter.review(version)"><img :src="displayUrl(version.image_url)" :alt="`Affiche, version ${numberOf(version)}`" /></button>
             <p>Version {{ numberOf(version) }} prête. {{ item.text }}</p>
-            <p v-if="version.status !== 'pending_review'" class="chat-state" :class="version.status">{{ version.status === 'approved' ? 'Approuvée' : 'Refusée' }}</p>
+            <p v-if="version.status !== 'pending_review'" class="chat-state" :class="version.status">{{ version.status === 'approved' ? 'Confirmée' : 'Refusée' }}</p>
             <small v-if="version.status === 'approved' && version.id !== state.selected">Ce n’est pas la version choisie pour l’affiche.</small>
           </template>
           <p v-else-if="!working">Cette version n’est plus disponible.</p>
@@ -618,10 +699,11 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
           <p v-if="warns(item)" :id="'avertissement-' + item.id" class="why">{{ FEATURES_WARNING }}</p>
           <label v-if="button === 'create' && asksPhoto(item)" class="check"><input v-model="smallAccepted" type="checkbox" />La photo du produit est petite : l’affiche peut manquer de netteté. J’accepte une qualité réduite.</label>
           <div v-if="button || untapped(item) || copies(item) || (item.card && !item.done && offersSteps(item.card))" class="acts">
-            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || needsProduct(item) || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ item.card?.kind === 'recap' ? 'Créer l’affiche' : CHANGE_BUTTONS[effect(item)!] }}</button>
+            <button v-if="button === 'create'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, !free(item) && 'cout-' + item.id].filter(Boolean).join(' ') || undefined" type="button" class="primary" :disabled="held || needsProduct(item) || (asksPhoto(item) && !smallAccepted)" @click="create(item)">{{ createName(item.card!, effect(item)) }}</button>
             <button v-else-if="button === 'conditions'" type="button" class="primary" @click="adapter.conditions()">Lire les conditions</button>
             <button v-else-if="button === 'retry' || button === 'resume'" :aria-describedby="[warns(item) && 'avertissement-' + item.id, 'une-fois-' + item.id].filter(Boolean).join(' ')" type="button" class="primary" :disabled="locked" @click="replay(item)">{{ button === 'retry' ? 'Réessayer' : 'Reprendre' }}</button>
             <button v-else-if="button === 'fix'" type="button" class="primary" @click="emit('steps')">Corriger dans Pas à pas</button>
+            <a v-else-if="button === 'account'" href="#compte" class="primary">Modifier les lignes dans Mon compte</a>
             <button v-else-if="button === 'resend'" type="button" class="primary" :disabled="working || elsewhere" @click="resend(item)">Réessayer</button>
             <button v-else-if="button === 'photo'" type="button" class="primary" @click="picker?.click()">Ajouter une photo</button>
             <button v-else-if="button === 'copy'" :aria-describedby="'copie-' + item.id" type="button" class="primary" :disabled="held || tray.length > 0" @click="copyWith(item)">{{ productsOf(item.card!).length > 1 ? 'Copier avec ces photos' : 'Copier avec cette photo' }}</button>
@@ -640,26 +722,32 @@ onBeforeUnmount(() => { heldAtClose = owner.value === true; closed = true; owner
       <div v-if="waitLine" class="bubble bot chat-wait"><i aria-hidden="true" /><p>{{ waitLine }}</p></div>
     </div>
     <form class="composer" @submit.prevent="send()">
+      <!-- The seller's kit (D-KIT-009), for the first version only: the scene models (a style photo takes their place) and
+           the title's style. -->
+      <div v-if="!state.creation" class="kit-row">
+        <div class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
+          <span v-if="inspiration" class="style-pill plain">Scène : votre modèle de style</span>
+          <button v-for="chip in inspiration ? [] : chips" :key="chip.id" type="button" class="style-pill" :translate="chip.asset ? 'no' : undefined" :aria-pressed="chip.asset ? chosen.look?.id === chip.id : !chosen.look && draft.style === chip.id" @click="pick(chip)"><img :src="chip.asset ? src(chip.asset) : `/styles/${chip.id}.jpg`" width="36" height="36" alt="" />{{ chip.name }}</button>
+        </div>
+        <label class="kit-title">Titre<select :value="chosen.title ?? (chosen.model ? '' : 'moderne')" @change="draft.title = ownTitle(($event.target as HTMLSelectElement).value, chosen.model); adapter.keepTitle?.(draft.title); save()">
+          <option v-if="chosen.model" value="">Celui du modèle</option><option v-for="[id, name] in TITLES" :key="id" :value="id">{{ name }}</option>
+        </select></label>
+      </div>
       <div v-if="tray.length" class="tray">
         <span v-for="entry in tray" :key="entry.id" class="pic" :aria-busy="entry.status === 'sending' || undefined">
-          <img :src="entry.url" width="68" height="68" :alt="entry.role === 'product' ? 'Photo du produit' : 'Image d’inspiration'" />
+          <img :src="entry.url" width="68" height="68" :alt="entry.role === 'product' ? 'Photo du produit' : 'Modèle de style'" />
           <button v-if="entry.status === 'failed'" type="button" class="pic-role" @click="sendFile(entry)">Réessayer</button>
-          <template v-else-if="state.creation">{{ roleNames[entry.role] }}</template>
-          <button v-else type="button" class="pic-role" :class="entry.role" :disabled="entry.status === 'sending'" :aria-label="`${roleNames[entry.role]} : changer le rôle de cette image`" title="Toucher pour changer" @click="swap(entry)">{{ roleNames[entry.role] }}</button>
+          <template v-else-if="state.creation">{{ ROLE_NAMES[entry.role] }}</template>
+          <button v-else type="button" class="pic-role" :class="entry.role" :disabled="entry.status === 'sending'" :aria-label="swapLabel(entry.role)" title="Toucher pour changer" @click="swap(entry)">{{ ROLE_NAMES[entry.role] }}</button>
           <button type="button" class="pic-drop" aria-label="Retirer cette image" @click="drop(entry)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
         </span>
       </div>
       <p v-for="entry in tray.filter(item => item.error)" :key="entry.id" class="why" role="alert">{{ entry.error }}</p>
       <p v-if="elsewhere" class="chat-elsewhere-read" role="status">Un message attend encore sur une autre affiche.<button type="button" class="secondary" @click="toPending">Ouvrir cette affiche</button></p>
-      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Votre message…' : 'Ex. Téléphone noir 128 Go, 899 000 Ar'"
+      <textarea ref="field" v-model="text" rows="1" maxlength="500" enterkeyhint="send" aria-label="Votre message" :placeholder="state.creation ? 'Dites ce qu’il faut corriger.' : 'Ex. Téléphone noir 128 Go, 899 000 Ar'"
         @input="grow" @keydown.enter.exact.prevent="send()" @focus="focused" @blur="blurred" />
       <div class="tools">
         <button type="button" class="ghost attach" :class="{ 'first-photos': !state.creation }" aria-label="Ajouter des photos" :disabled="copying" @click="picker?.click()"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" /></svg><span class="lbl">Photos</span></button>
-        <!-- The style is chosen for the first version only; an inspiration image takes its place. -->
-        <div v-if="!state.creation" class="style-row" :role="inspiration ? undefined : 'group'" :aria-label="inspiration ? undefined : 'Style de l’affiche'">
-          <span v-if="inspiration" class="style-pill plain">Style : comme votre inspiration</span>
-          <button v-for="[id, name] in inspiration ? [] : STYLES" :key="id" type="button" class="style-pill" :aria-pressed="draft.style === id" @click="draft.style = id; save()"><img :src="`/styles/${id}.jpg`" width="26" height="26" alt="" />{{ name }}</button>
-        </div>
         <!-- mousedown is held back so that the tap keeps the focus, and the keyboard, on the field. -->
         <button type="submit" class="send" aria-label="Envoyer" :aria-busy="reading || undefined" :disabled="held || !!pending || tray.some(item => item.status !== 'done') || (!text.trim() && !tray.length)" @mousedown.prevent><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
       </div>

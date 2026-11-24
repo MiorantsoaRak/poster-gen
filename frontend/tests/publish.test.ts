@@ -3,7 +3,7 @@ import { ApiError } from '../src/api'
 import {
   aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe as described, dropIndex, moveTo, placeLine, reorder, SLACK, emptyDraft, faultLine, keptForSending,
   limitLine, move, postLine, publishAction, readDraft, readStored, refusalOf, remove, requestOf, seenOf, takenOut, toggle, whyNot,
-  without, type Candidate, type Draft, type Post,
+  without, helpOnly, putFirst, type Candidate, type Draft, type Post,
 } from '../src/publish'
 
 const [a, b, c, d] = Array.from({ length: 4 }, () => crypto.randomUUID())
@@ -44,6 +44,18 @@ it('adds at the end, takes out, moves earlier and later, and makes another draft
   expect(resolved.stamp).not.toBe(current.stamp)
   const untouched = { ...current, post: d }
   expect(without(untouched, new Set([a, c]))).toBe(untouched)
+})
+
+it('puts the poster brought by « Publier plusieurs affiches » first, added or already there, never over the limit', () => {
+  const two = draft({ post: null })
+  const added = putFirst(two, c, null)
+  expect(added.items).toEqual([c, a, b])
+  expect(added.stamp).not.toBe(two.stamp)
+  expect(added.description).toBe('Texte')
+  expect(putFirst(two, b, null).items).toEqual([b, a])  // already in the draft: moved first, nothing added
+  expect(putFirst(two, a, null)).toBe(two)  // already first: the very same draft, its stamp kept
+  expect(putFirst(two, c, 2)).toBe(two)  // at the limit: not added
+  expect(putFirst(two, b, 2).items).toEqual([b, a])  // at the limit, one already there still goes first
 })
 
 it('slides a dragged row past the neighbours whose middles it crosses, and drops it as one edit only if the order changed', () => {
@@ -216,6 +228,10 @@ it('says what « Publier… » does in each state, in order', () => {
   expect(whyNot('checking', null, '')).toBe('La réponse n’est pas arrivée. Je vérifie…')
   expect(whyNot('stale', null, '')).toBe('Vos affiches n’ont pas pu être relues : touchez « Réessayer ».')
   expect(whyNot('description', null, 'a\u0000')).toBe('La description contient un caractère de contrôle refusé.')
+  // Nothing chosen (an empty draft, as after a post) is help, never a fault in the warning colour (D-KIT-008).
+  expect(whyNot('empty', null, '')).toBe('Choisissez au moins une affiche.')
+  expect(helpOnly('empty')).toBe(true)
+  for (const action of ['terms', 'checking', 'running', 'stale', 'over', 'pending', 'description'] as const) expect(helpOnly(action)).toBe(false)
   expect(faultLine('x'.repeat(2001))).toBe('La description dépasse 2 000 caractères.')
   expect(faultLine('')).toBe('')
   expect(codePoints('😀é\n')).toBe(3)

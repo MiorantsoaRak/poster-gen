@@ -577,10 +577,9 @@ def walk_keyboard(browser, engine, errors, product, model, first):
     expect(page.locator(TERMS)).to_have_count(0)
     page.wait_for_function(FOCUS_IN, arg="[aria-labelledby=review-title]")
     page.unroute("**/looks")
-    approve = review.get_by_role("button", name="Tout est conforme, approuver")
-    approve.focus()
+    # The review takes the keyboard again: it closes from there (a version is approved only with its file, D-KIT-001).
+    review.get_by_role("button", name="Fermer").focus()
     page.keyboard.press("Enter")
-    review.get_by_role("button", name="Revenir aux réglages").click()
     expect(review).to_have_count(0)
 
     # A chat request the server never took, refused (403), kept with its key; its « Réessayer » held. Meanwhile the

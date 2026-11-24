@@ -414,6 +414,16 @@ main { --gutter-l: max(20px, env(safe-area-inset-left)); --gutter-r: max(20px, e
 .swatches span { display: inline-flex; align-items: center; gap: 6px }
 .swatches i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--control) }
 .look-wall small { font-weight: 500 }
+/* « Mon kit » (D-KIT-011): the models' wall, then the three small choices side by side, one column on a phone. Each card
+   is as tall as its own words: stretched to the tallest, the shorter ones were half empty. */
+.kit > h2 { margin-bottom: 2px }
+.kit > .meta { margin-bottom: 12px }
+.kit > .help { margin: 0 0 12px; max-width: 68ch }
+.kit-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); align-items: start; gap: 14px; margin-top: 28px }
+.kit-parts .card { display: flex; flex-direction: column; align-items: stretch; gap: 12px }
+.kit-parts :is(label, p, .points) { margin: 0 }
+.kit-parts .card > button { align-self: flex-start }
+.title-style { margin: 16px 0 6px }
 
 /* Editor: title row, then rail (one group of controls at a time) / stage (the poster and the one main action) / versions */
 .titlerow { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 10px 0 16px }
@@ -885,6 +895,12 @@ main.chatting:has(.chat:not([inert])) > .message { position: static; transform: 
 .chat small { font-size: 13px; line-height: 18px; color: var(--muted) }
 .chat .why { flex-basis: auto; margin: 0; text-align: left }
 .chat label.check { min-height: 0; padding: 0; font-size: 13px; line-height: 18px }
+/* The recap's shop lines (D-KIT-005): the switch row and, for each new line, its « Ne pas garder », in reach of a finger. */
+.chat label.switch { margin: 0; min-height: 44px; font-weight: 500 }
+.chat .recap-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; margin: 0; font-size: 13px; line-height: 18px; color: var(--muted) }
+.chat .recap-offer .text-button { min-height: 44px; font-size: inherit }
+/* What the message asked that the poster will not use (D-KIT-004): a block of its own, in the warning colours. */
+.chat .refusal { display: grid; gap: 6px; margin: 0 }
 .chat-thread { grid-area: thread; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding: 4px 2px }
 .chat-thread:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 18px }
 .chat-thread > :first-child { margin-top: auto }
@@ -960,10 +976,16 @@ main.chatting:has(.chat:not([inert])) > .message { position: static; transform: 
 .tray { padding: 6px 6px 0 }
 .tools { display: flex; align-items: center; gap: 4px }
 .chat .attach { flex: none; gap: 8px; min-height: 44px; padding: 0 10px; color: var(--muted); font-size: 14px; font-weight: 600 }
-.style-row { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px }
-.chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 3px 12px 3px 3px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
-.style-pill img { display: block; width: 26px; height: 26px; border-radius: 50%; object-fit: cover }
-.chat .style-pill[aria-pressed=true] { border-color: var(--text); color: var(--text) }
+/* The seller's kit above the field (D-KIT-009): the scene models scroll sideways in their strip, « Titre » at its right,
+   or on its own line under it on a phone. A model is a 44 px target; the strip clips, so its focus ring is drawn inside. */
+.kit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px }
+.style-row { display: flex; flex: 100 1 240px; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none }
+.chat .style-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 44px; padding: 3px 14px 3px 3px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 18px; font-weight: 600; border-radius: 999px }
+.style-pill img { display: block; width: 36px; height: 36px; border-radius: 50%; object-fit: cover }
+.chat .style-pill[aria-pressed=true] { border-color: var(--hue); background: var(--accent-soft); color: var(--accent-ink) }
+.chat .style-pill:focus-visible { outline-offset: -2px }
+.kit-title { flex: 1 0 auto; flex-direction: row; align-items: center; gap: 8px; margin: 0 }
+.kit-title select { flex: 1 1 auto; width: auto; min-height: 44px; padding: 0 12px }
 .chat .style-pill.plain { padding: 7px 12px }
 .composer textarea { min-height: 44px; max-height: 120px; padding: 10px 10px 4px; border: 0; background: none; resize: none; font-size: 16px; line-height: 22px; outline: none }
 .composer textarea:focus-visible { outline: none }  /* the composer's own edge shows the focus */
@@ -990,8 +1012,8 @@ main.chatting:has(.chat:not([inert])) > .message { position: static; transform: 
   .chat .attach.first-photos { width: auto; padding-inline: 8px; gap: 4px }
   /* The editor's bar stands for the header here: it holds the way back to the chat. */
   .bar .to-chat { display: inline-flex; flex: none }
-  /* The keyboard is open: the style row makes room, the images stay on one line. */
-  .chat.typing .style-row { display: none }
+  /* The keyboard is open: the kit row makes room, the images stay on one line. */
+  .chat.typing .kit-row { display: none }
   .chat.typing .tray { flex-wrap: nowrap; overflow-x: auto }
 }
 @media (max-width: 420px) {

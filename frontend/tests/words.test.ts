@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readWords, staleWords } from '../src/words'
+import { curlQuotes, readWords, staleWords } from '../src/words'
 
 const stored = { on: true, price: false, contact: true, brand_text: true, brand: 'JBL', subtitle: 'CASQUE SANS FIL', accent_word: 'Tune', accent_colour: '#D92B2B', at: 5 }
 
@@ -15,11 +15,27 @@ describe('words read back from the browser', () => {
     expect(readWords('{"accent_word":""}', 'JBL Tune 520')).toEqual({ accent_word: '' })
     expect(readWords('{"accent_word":" Tune 520 "}', 'JBL Tune 520')).toEqual({ accent_word: 'Tune 520' })
   })
+  it('keeps the box of the shop\'s lines (D-KIT-005)', () => {
+    expect(readWords('{"lines":false}', 'JBL')).toEqual({ lines: false })
+    expect(readWords('{"lines":"no"}', 'JBL')).toEqual({})
+  })
   it('drops fields of the wrong type or size', () => {
     expect(readWords(JSON.stringify({ on: 'yes', price: 1, brand: 7, subtitle: 'x'.repeat(61), accent_word: ['Tune'], accent_colour: 'red' }), 'JBL Tune 520')).toEqual({})
     expect(readWords(JSON.stringify({ brand: 'x'.repeat(60), accent_colour: '#12345' }), 'JBL')).toEqual({ brand: 'x'.repeat(60) })
     expect(readWords('{"accent_colour":"#1E6FE0;x"}', 'JBL')).toEqual({})
   })
+})
+
+describe('straight quotes in a title (D-KIT-007)', () => {
+  it.each([
+    ['TV Samsung 55"', 'TV Samsung 55″'],
+    ['Casque "Pro" noir', 'Casque « Pro » noir'],
+    ['Casque " Pro " noir', 'Casque « Pro » noir'],
+    ['"Pro" et "Max"', '« Pro » et « Max »'],
+    ['"Pro" 55"', '« Pro » 55″'],
+    ['Sans guillemet', 'Sans guillemet'],
+    ['Déjà « courbes »', 'Déjà « courbes »'],
+  ])('%s becomes %s', (typed, drawn) => expect(curlQuotes(typed)).toBe(drawn))
 })
 
 describe('the number of posters whose words are kept', () => {

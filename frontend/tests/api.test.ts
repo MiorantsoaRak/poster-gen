@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { api, bind, BUNDLE, clockSkew, mutation, open, read, retained } from '../src/api'
+import { api, bind, BUNDLE, clockSkew, mutation, open, read, retained, shopLines, writeProfile } from '../src/api'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 // The shop's requests leave only once the gate has opened on the bound shop (D-MULTI-SHOP-007): shop 1 here.
@@ -50,6 +50,21 @@ it('keeps the key of a lost answer only: a refusal stored nothing, so the next t
   const keys = fetch.mock.calls.map(call => ((call as unknown as [string, RequestInit])[1].headers as Record<string, string>)['Idempotency-Key'])
   expect(keys[0]).toBe(keys[1])
   expect(new Set(keys.slice(1)).size).toBe(3)  // after the refusal, a new key
+})
+it('sends the shop’s lines only when given: trimmed, the empty fields left out, in the fields’ order (D-KIT-005)', async () => {
+  const fetch = vi.fn(answer())
+  vi.stubGlobal('fetch', fetch)
+  const profile = { revision: 4, name: ' Boutique ', contact: null, logo_asset: null, lines: ['Garantie 6 mois'] }
+  await writeProfile(profile)  // App.vue's save: the lines it holds stay on the server as they are
+  await writeProfile(profile, ['', ' Paiement Mvola ', 'Garantie 6 mois'])
+  await writeProfile(profile, ['', ' ', ''])  // every field emptied: the shop's lines removed
+  const sent = fetch.mock.calls.map(call => (call as unknown as [string, RequestInit])[1])
+  expect(sent.map(request => request.method)).toEqual(['PUT', 'PUT', 'PUT'])
+  expect(sent.map(request => JSON.parse(request.body as string))).toEqual([
+    { name: 'Boutique', contact: null, logo_asset: null },
+    { name: 'Boutique', contact: null, logo_asset: null, lines: ['Paiement Mvola', 'Garantie 6 mois'] },
+    { name: 'Boutique', contact: null, logo_asset: null, lines: [] }])
+  expect(shopLines(['Livraison 24h', '', 'Paiement Mvola'])).toEqual(['Livraison 24h', 'Paiement Mvola'])
 })
 it('reads the server clock from the Date header; a response without one keeps the last reading', async () => {
   vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(answer({ Date: new Date(Date.now() + 30_000).toUTCString() })).mockImplementation(answer()))

@@ -124,7 +124,7 @@ def home(browser, engine, errors):
     step(page, 1)
     page.evaluate("location.hash = 'styles'")
     expect(page.get_by_role('dialog', name=GUIDE, exact=True)).to_have_count(0)
-    expect(page.get_by_role('heading', name='Styles', exact=True)).to_be_visible()
+    expect(page.get_by_role('heading', name='Mon kit', exact=True)).to_be_visible()
     context.close()
 
 
@@ -141,8 +141,12 @@ def creation(browser, errors):
     message = page.get_by_label('Votre message')
     message.fill('Téléphone noir, 180 000 Ar')
     page.locator('.composer input[type=file]').set_input_files([PRODUCT, smoke.ROOT / 'frontend/public/styles/clair.jpg'])
-    expect(page.locator('.tray .pic .pic-role')).to_have_text(['Produit', 'Inspiration'])
+    # Photos are product photos by default; one touch on a label marks a model of style (D-KIT-006).
+    expect(page.locator('.tray .pic .pic-role')).to_have_text(['Produit', 'Produit'])
     expect(page.locator('.tray .pic[aria-busy]')).to_have_count(0)
+    page.locator('.tray .pic .pic-role').nth(1).click()
+    expect(page.locator('.tray .pic .pic-role')).to_have_text(['Produit', 'Modèle de style'])
+    expect(page.get_by_role('button', name='Modèle de style : marquer comme produit')).to_be_visible()
     originals = page.locator('.tray img').evaluate_all('els => els.map(e => e.src)')
     with reading(page):
         menu = page.get_by_role('button', name='Ouvrir le menu')
@@ -178,7 +182,7 @@ def creation(browser, errors):
         page.set_viewport_size({'width': 360, 'height': 640})
         expect(menu).to_be_focused()
     expect(message).to_have_value('Téléphone noir, 180 000 Ar')
-    expect(page.locator('.tray .pic .pic-role')).to_have_text(['Produit', 'Inspiration'])
+    expect(page.locator('.tray .pic .pic-role')).to_have_text(['Produit', 'Modèle de style'])
     assert originals == page.locator('.tray img').evaluate_all('els => els.map(e => e.src)')
     # A fresh tab starts its guide from step one. The original chat keeps its unsent tray.
     guided = context.new_page()

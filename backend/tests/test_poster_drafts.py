@@ -7,17 +7,21 @@ from uuid import uuid4
 
 import pytest
 from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy import exc
 
-from affiche import assets
+from affiche import assets, rehearse
+from affiche.api import ProfileUpdate
+from affiche.config import BACKEND_DIR
 from affiche.db import make_engine, migrate, write_tx
 from affiche.posters import store
 from affiche.posters.models import (
-    MAX_PRICE, CopyCreation, Document, NewCreation, Offer, ProductInput, Profile, format_price, parse_price,
+    MAX_PRICE, CopyCreation, Document, NewCreation, Offer, ProductInput, Profile, canonical, format_price, parse_price,
 )
-from test_db import engine  # noqa: F401
+from test_db import T, engine, migrate_to, pilot_0012, read  # noqa: F401
 
 
 def key():
@@ -144,6 +148,78 @@ def test_every_identity_combination_is_snapshotted(engine, tmp_path, input_id, f
     assert saved["document"]["include"] == include
     roles = {layer["role"] for layer in saved["document"]["formats"]["feed"]["layers"]}
     assert roles == {"title", "price"} | {role for role, enabled in include.items() if enabled}
+
+
+LINES = ["Garantie 6 mois", "Paiement Mvola"]
+
+
+def test_shop_lines_are_kept_checked_and_left_alone_by_older_clients(engine, tmp_path, input_id):
+    """D-KIT-005: the shop's lines are saved with the profile and read back with it. A body without them (a page that
+    does not know them) keeps the hash an older server made of it and leaves them as they are; an empty list removes
+    them. A poster's snapshot never holds them: a line is only ever drawn words."""
+    saved = store.save_profile(engine, tmp_path, 1, key(), ProfileUpdate(name="Boutique", lines=[" Garantie 6 mois ",
+                                                                                                  "Paiement Mvola"]), 1)
+    assert saved[1] == {"revision": 2, "name": "Boutique", "contact": None, "logo_asset": None, "lines": LINES}
+    op, older = key(), Profile(name="Original Phone Mada", contact="034 00 000 00")
+    assert store.save_profile(engine, tmp_path, 1, op, older, 2)[1]["lines"] == LINES
+    with engine.connect() as conn:
+        stored = conn.exec_driver_sql("SELECT payload_sha FROM mutation_keys WHERE key=?", (op,)).scalar_one()
+    assert stored == hashlib.sha256(canonical({"body": older.model_dump(), "revision": 2}).encode()).hexdigest()
+    assert "lines" not in ProfileUpdate(**older.model_dump()).model_dump()  # the same body by the route: the same hash
+    assert store.save_profile(engine, tmp_path, 1, op, ProfileUpdate(**older.model_dump()), 2)[1]["revision"] == 3
+    snapshot = draft(engine, tmp_path, input_id)["document"]["brand_snapshot"]
+    assert snapshot == {"name": "Original Phone Mada", "contact": "034 00 000 00", "logo_asset": None, "profile_revision": 3}
+    assert store.save_profile(engine, tmp_path, 1, key(), ProfileUpdate(lines=[]), 3)[1]["lines"] == []
+    # The rule of a line (plans.screen_shop_line; its rows are in test_plans), three at most, each once.
+    for bad in (["Livraison 5k"], ["Livraison 5 000"], ["-20 %"], ["034 12 345 67"], ["Promo été"], [""],
+                ["Garantie 6 mois", "GARANTIE 6 mois"], ["a", "b", "c", "d"]):
+        with pytest.raises(ValidationError):
+            ProfileUpdate(lines=bad)
+    with engine.connect() as conn:
+        assert store.get_profile(conn, 1)["lines"] == []
+
+
+def test_migration_0021_keeps_every_profile_with_no_line(tmp_path, monkeypatch, capsys):
+    """D-KIT-005, r1 6: the pilot at 0020 (its name, contact and logo, its posters, its ledgers) and a second shop with a
+    limit of images. The rehearsal hashes the shop columns of 0020 and passes; 0021 keeps every row of every table, adds
+    one column, an empty list for every shop, and its CHECK refuses what is not a list."""
+    path = pilot_0012(tmp_path, monkeypatch)
+    module = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini")).get_revision("0021").module
+    engine = make_engine(tmp_path)
+    try:
+        migrate_to(engine, "0020", monkeypatch)
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("INSERT INTO shop_profile (revision,name,contact,updated_at,identifier,state,created_at,"
+                                 f"post_image_limit) VALUES (2,'Boutique Deux','033 00 000 00','{T}','shopdeux','active',"
+                                 f"'{T}',3)")
+        assert rehearse.main(["rehearse", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "pending migrations: 0021 (code head 0021)" in out and out.endswith("REHEARSAL OK\n")
+        assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at,"
+                " terms_version, terms_accepted_at, post_image_limit)") in out
+        assert [line for line in out.splitlines() if line.startswith("0021 ")] == [
+            "0021 ADDED shop_profile: no line yet: as expected"]
+        before, schema_before = read(path, module.PRESERVED)
+        migrate(engine)
+        after, schema = read(path, module.PRESERVED)
+        assert after["tables"] == before["tables"] and after["sums"] == before["sums"]  # every other table: every column
+        assert (before["version"], after["version"], after["foreign_key_check"], after["integrity_check"]) == (
+            "0020", "0021", 0, "ok")
+        assert {name: sql for name, sql in schema.items() if name != "shop_profile"} == {
+            name: sql for name, sql in schema_before.items() if name != "shop_profile"}
+        assert module.STATEMENTS[0].split(" ADD COLUMN ", 1)[1] in schema["shop_profile"]
+        with engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT id, lines_json FROM shop_profile ORDER BY id").all() == [(1, "[]"), (2, "[]")]
+            assert store.get_profile(conn, 1) == {"revision": 3, "name": "Original Phone Mada", "contact": "034 00 000 00",
+                                                  "logo_asset": "a1", "lines": []}
+            assert rehearse.guard_differences(conn.connection.dbapi_connection) == []
+        for refused in ("'{}'", "'\"Garantie 6 mois\"'", "'Garantie 6 mois'", "NULL"):
+            with pytest.raises(exc.IntegrityError), write_tx(engine) as conn:
+                conn.exec_driver_sql(f"UPDATE shop_profile SET lines_json={refused} WHERE id=1")
+        with write_tx(engine) as conn:
+            conn.exec_driver_sql("UPDATE shop_profile SET lines_json='[\"Garantie 6 mois\"]' WHERE id=1")
+    finally:
+        engine.dispose()
 
 
 def test_missing_identity_is_explicit_and_atomic(engine, tmp_path, input_id):

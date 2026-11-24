@@ -36,10 +36,10 @@
       <section>
         <h2>Ce que le service garde, tant que la boutique existe</h2>
         <ul>
-          <li>La boutique : son identifiant, son nom, son logo, son contact, la version des conditions acceptée et sa date. Le mot de passe est gardé sous une forme qui ne permet pas de le relire.</li>
+          <li>La boutique : son identifiant, son nom, son logo, son contact, ses lignes (garantie, livraison, paiement), la version des conditions acceptée et sa date. Le mot de passe est gardé sous une forme qui ne permet pas de le relire.</li>
           <li>Les photos que vous envoyez, telles que vous les envoyez, avec les informations que le téléphone y a mises (parfois le lieu de la prise de vue).</li>
           <li>Les affiches : leurs textes, chaque version faite par l’IA et les fichiers finaux.</li>
-          <li>Chaque demande faite à l’IA et son coût. Une demande d’image garde les textes de l’affiche, le nom et le contact de la boutique quand ils y figurent, et vos demandes d’ajustement mot pour mot.</li>
+          <li>Chaque demande faite à l’IA et son coût. Une demande d’image garde les textes de l’affiche, le nom, le contact et les lignes de la boutique quand ils y figurent, et vos demandes d’ajustement mot pour mot.</li>
           <li>Chaque message lu dans « Par message » : son coût et la réponse de l’application, qui peut reprendre vos mots, jusqu’à votre demande entière.</li>
           <li>Les crédits : chaque crédit reçu, dépensé ou rendu ; pour un paiement, son montant, son moyen et sa référence.</li>
           <li>Si vous connectez une Page Facebook : son nom, son identifiant et l’accès que Facebook a donné pour cette Page. Cet accès reste sur le serveur : il n’est jamais affiché ni envoyé au navigateur. Pendant la connexion, les Pages que vous avez autorisées et sur lesquelles vous pouvez publier sont gardées avec leur accès, pour votre choix, avec une empreinte de votre session et une empreinte du code de vérification de la connexion. Dès que vous choisissez une Page ou que vous déconnectez, les autres sont effacées. Sans choix, elles ne servent plus après dix minutes et sont effacées au nettoyage suivant.</li>
@@ -57,11 +57,11 @@
         <h2>Ce qui part vers d’autres services</h2>
         <p>Les images envoyées sont des copies, sans les informations du téléphone.</p>
         <ul>
-          <li>« Générer l’affiche », « Nouvelle version », « Créer l’affiche » : OpenAI reçoit les photos du produit, l’image d’inspiration s’il y en a une, et une demande écrite : le nom du produit, le style, les textes à dessiner (dont le contact de la boutique s’il est dessiné) et les ajustements de scène demandés avant, s’il y en a.</li>
+          <li>« Générer l’affiche », « Nouvelle version », « Créer l’affiche » : OpenAI reçoit les photos du produit, l’image d’inspiration s’il y en a une, et une demande écrite : le nom du produit, le style, les textes à dessiner (dont le contact et les lignes de la boutique quand ils sont dessinés) et les ajustements de scène demandés avant, s’il y en a.</li>
           <li>« Ajuster la scène », ou un changement de la scène par message : OpenAI reçoit aussi la version de départ et votre demande, mot pour mot.</li>
           <li>« Générer la matière du texte » : OpenAI reçoit la description d’une matière et ses couleurs.</li>
-          <li>Un message dans « Par message » : Anthropic (Claude) reçoit le message, les dernières lignes de la conversation, et le produit, le prix et le style en cours, ou les textes de l’affiche.</li>
-          <li>« Créer un style » : Anthropic reçoit l’affiche modèle.</li>
+          <li>Un message dans « Par message » : Anthropic (Claude) reçoit le message, les dernières lignes de la conversation, et le produit, le prix et le style en cours, ou les textes de l’affiche. Une ligne de la boutique écrite dans un message en fait partie.</li>
+          <li>« Créer un style », une photo marquée « Modèle de style » dans « Par message », ou la scène d’une affiche gardée comme modèle : Anthropic reçoit cette image, pour en décrire le style.</li>
           <li>« Proposer un ajustement » : Anthropic reçoit le texte choisi, son réglage et votre consigne.</li>
           <li>Si la composition est demandée à Claude, Anthropic reçoit aussi les photos du produit et les indications de composition.</li>
           <li>« Publier sur Facebook » (et « Publier sur ma Page », qui l’ouvre pour une seule affiche) : après votre confirmation, Facebook reçoit les fichiers finaux confirmés des affiches choisies, puis la publication qui les réunit dans leur ordre, avec votre description si vous en avez écrit une. Une image reçue par Facebook pour une publication qui n’aboutit pas y reste, invisible sur votre Page ; le service ne la supprime pas. Le service ne lit pas le contenu de votre Page : ni messages, ni audience, ni autres publications. À la connexion, Facebook lui donne le nom et l’identifiant des Pages que vous autorisez, et ce que vous pouvez y faire.</li>

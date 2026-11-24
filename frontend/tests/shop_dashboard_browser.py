@@ -151,7 +151,7 @@ def walk_header(browser):
 
 
 # A poster's state in a list (D-REDESIGN-004): the four states on the first four rows, each row's word and tone.
-STATES = (("draft", "Brouillon", "badge"), ("to_review", "À vérifier", "badge warn"), ("approved", "Approuvée", "badge ok"), ("confirmed", "Confirmée", "badge ok"))
+STATES = (("draft", "Brouillon", "badge"), ("to_review", "À vérifier", "badge warn"), ("approved", "À confirmer", "badge"), ("confirmed", "Confirmée", "badge ok"))
 # A row's title, badge and details in the document's order, with where each is drawn.
 ROW_JS = """row => [...row.querySelectorAll('strong, .badge, .details')].map(e => { const box = e.getBoundingClientRect()
   return { kind: e.matches('strong') ? 'title' : e.matches('.badge') ? 'badge' : 'details', text: e.textContent.trim(), tone: e.className, top: box.top, bottom: box.bottom } })"""
@@ -264,7 +264,7 @@ def walk_frame(browser):
         edges = []
         for name, link, first in (
                 ("Mes affiches", nav.get_by_role("link", name=re.compile("^Mes affiches")), page.locator(".gallery").get_by_role("button", name="Nouvelle affiche")),  # the page's action, then its filter
-                ("Styles", nav.get_by_role("link", name=re.compile("^Styles")), page.locator(".look-card").first),
+                ("Mon kit", nav.get_by_role("link", name=re.compile("^Mon kit")), page.locator(".look-card").first),
                 ("Accueil", nav.get_by_role("link", name="Accueil", exact=True), home.get_by_role("link", name="Créer une affiche")),
                 ("Mes crédits", home.get_by_role("link", name="Voir mes crédits"), page.locator(".shop-credits").get_by_role("link", name="Retour à l’accueil")),
                 ("Mon compte", home.get_by_role("link", name="Mon compte"), page.locator(".shop-account").get_by_role("link", name="Retour à l’accueil"))):
@@ -285,20 +285,20 @@ def walk_frame(browser):
         assert all(right - left == 860 for _, left, right in edges), edges
         assert len({(left, right) for _, left, right in edges}) == 1, edges
         # A mouse arrival: the title has the focus, and nothing shows it.
-        nav.get_by_role("link", name=re.compile("^Styles")).click()
+        nav.get_by_role("link", name=re.compile("^Mon kit")).click()
         expect(title).to_be_focused()
         assert title.evaluate(TITLE_JS)[3:6] == ["none", False, "none"]
         # A page opened directly: until the first tap a browser counts the script's focus as the keyboard's, and the title
         # must still show nothing (every shop opening the app saw its title underlined; found in the after captures).
         page.reload()
-        expect(title).to_have_accessible_name("Styles")
+        expect(title).to_have_accessible_name("Mon kit")
         expect(title).to_be_focused()
         assert title.evaluate(TITLE_JS)[3] == "none" and title.evaluate(TITLE_JS)[5] == "none", title.evaluate(TITLE_JS)
 
         page.set_viewport_size({"width": 360, "height": 740})
         for route, name, loaded in (("accueil", "Accueil", page.get_by_text("Aucune affiche pour le moment.")),
                                     ("affiches", "Mes affiches", page.get_by_text("Vos affiches apparaîtront ici dès la première création.")),
-                                    ("styles", "Styles", page.locator(".look-card").first),
+                                    ("styles", "Mon kit", page.locator(".look-card").first),
                                     ("credits", "Mes crédits", page.get_by_text("Disponibles", exact=True)),
                                     ("compte", "Mon compte", page.get_by_label("Nom de la boutique"))):
             page.goto(f"{smoke.ORIGIN}/#{route}")
@@ -333,7 +333,7 @@ def walk_frame(browser):
                 answers["available"] = available
                 with page.expect_request("**/api/balance"):
                     nav.get_by_role("link", name="Accueil", exact=True).click()
-                items = [("Accueil", "Accueil"), ("Affiches", f"Mes affiches {posters}"), ("Styles", "Styles 3"), ("Compte", "Mon compte")]
+                items = [("Accueil", "Accueil"), ("Affiches", f"Mes affiches {posters}"), ("Mon kit", "Mon kit 3"), ("Compte", "Mon compte")]
                 credits = ("Crédits", "Mes crédits") if available is None else (str(available), f"{available} crédit" + ("" if abs(available) == 1 else "s"))
                 where = f"{posters} affiches, solde {available}"
                 expect(home.get_by_role("button", name="Réessayer le solde")).to_have_count(int(available is None))
@@ -503,7 +503,8 @@ def walk(browser, out):
         expect(home.locator(".home-recent")).not_to_contain_text("Casque de la boutique")
         page.route("**/api/creations?limit=5", four_states)
         home.get_by_role("button", name="Actualiser").click()
-        expect(home.locator(".home-recent .badge.ok")).to_have_count(2)
+        # Only « Confirmée » is green: « À confirmer » (approved, no file for this revision) is plain (D-KIT-001).
+        expect(home.locator(".home-recent .badge.ok")).to_have_count(1)
         check_states(home.locator(".home-recent button"), details=False)
         page.unroute("**/api/creations?limit=5")
         home.get_by_role("button", name="Actualiser").click()
@@ -1076,7 +1077,7 @@ def walk_shell(browser, out):
         # Every control left on the rail, in order, by its full accessible name; each link keeps a title as its tooltip.
         rail = side.locator("a:visible, button:visible")
         expected = [("link", re.compile("^Doka Studio — Accueil$")), ("link", re.compile("^Nouvelle affiche$")), ("link", re.compile("^Accueil$")),
-                    ("link", re.compile("^Mes affiches \\d+$")), ("link", re.compile("^Styles( \\d+)?$")), ("link", re.compile("^(-?\\d+ crédits?|Mes crédits)$")),
+                    ("link", re.compile("^Mes affiches \\d+$")), ("link", re.compile("^Mon kit( \\d+)?$")), ("link", re.compile("^(-?\\d+ crédits?|Mes crédits)$")),
                     ("link", re.compile("^" + re.escape(side.locator("a.account").get_attribute("title").strip()) + "$")), ("button", re.compile("^Aide$")), ("button", re.compile("^Se déconnecter$"))]
         expect(rail).to_have_count(len(expected))
         for control, (role, name) in zip(rail.all(), expected):
@@ -1362,8 +1363,8 @@ def walk_drawer(browser, approved, draft, removed):
             expect(menu).to_be_focused()
             # A destination: its title has the focus; Back with the drawer open closes it first.
             smoke.open_drawer(page)
-            side.get_by_role("link", name=re.compile("^Styles")).click()
-            expect(page.get_by_role("heading", name="Styles", level=1)).to_be_focused()
+            side.get_by_role("link", name=re.compile("^Mon kit")).click()
+            expect(page.get_by_role("heading", name="Mon kit", level=1)).to_be_focused()
             expect(side).to_have_attribute("inert", "")
             smoke.open_drawer(page)
             page.go_back()
@@ -1641,7 +1642,10 @@ def walk_account(browser, out, data):
         assert not accepted
         expect(account.get_by_role("link", name="Vos données")).to_have_attribute("href", "/donnees.html")
         expect(contact).to_have_accessible_description("Ces coordonnées peuvent apparaître sur vos affiches si vous choisissez de les inclure.")
-        support = account.get_by_role("region", name="Assistance Doka Studio")
+        expect(account.get_by_role("group", name="Lignes de la boutique").get_by_label("Ligne 1", exact=True)).to_have_accessible_description(
+            "Vos conditions de vente, écrites une fois : garantie, livraison, paiement. Sans montant, remise ni numéro. "
+            "Elles peuvent être dessinées sur vos affiches si vous choisissez de les inclure.")
+        support =account.get_by_role("region", name="Assistance Doka Studio")
         expect(support.get_by_text(f"Contactez {smoke.SUPPORT}.", exact=True)).to_be_visible()
         def without_operator(route):
             response = route.fetch()
@@ -1756,7 +1760,7 @@ def walk_account(browser, out, data):
         name.fill("Nom déjà enregistré")
         with page.expect_request("**/api/shop-profile"):
             save.click()
-        smoke.go(page, "Styles")
+        smoke.go(page, "Mon kit")
         expect(keep).to_have_count(0)
         lost.pop().abort()
         expect(discard).to_be_visible()
@@ -1769,7 +1773,7 @@ def walk_account(browser, out, data):
         page.unroute("**/api/shop-profile")
         page.unroute("**/api/capabilities")
 
-        # Failed Styles left adjacent #compte entries. Back between them fires only popstate.
+        # Failed « Mon kit » left adjacent #compte entries. Back between them fires only popstate.
         recovered = page.evaluate("history.state.position")
         page.evaluate("history.back()")
         page.wait_for_function("p => location.hash === '#compte' && history.state.position === p - 1", arg=recovered)
@@ -1785,7 +1789,7 @@ def walk_account(browser, out, data):
         clean_position = page.evaluate("history.state.position")
         page.route("**/api/capabilities", lambda route: route.abort())
         with page.expect_request("**/api/capabilities"):
-            smoke.go(page, "Styles")
+            smoke.go(page, "Mon kit")
         page.wait_for_function("p => location.hash === '#compte' && history.state.position === p + 1", arg=clean_position)
         contact.fill("Saisie après retour sur erreur")
         page.evaluate("history.back()")
@@ -1860,9 +1864,13 @@ def walk_account(browser, out, data):
         assert actual["revision"] == original["revision"] + 2
         assert not accepted
 
-        # Two edits to the same field need an explicit choice, including a removed logo versus its replacement.
+        # Two edits to the same field need an explicit choice, including a removed logo versus its replacement, and the
+        # shop's lines, compared as the list sent (D-KIT-005, r1 7).
         name.fill("Mon choix local")
         contact.fill("Mon numéro")
+        line = [account.get_by_label(f"Ligne {index}", exact=True) for index in (1, 2, 3)]
+        line[0].fill("Garantie 6 mois")
+        line[2].fill(" Paiement Mvola ")
         account.get_by_role("button", name="Retirer le logo").click()
         new_logo = page.request.post(smoke.ORIGIN + "/api/assets", headers=headers,
             multipart={"role": "logo", "file": {"name": "logo.jpg", "mimeType": "image/jpeg", "buffer": (smoke.ROOT / "backend/fixtures/examples/phone-bleu.jpg").read_bytes()}})
@@ -1870,17 +1878,19 @@ def walk_account(browser, out, data):
         new_logo_id = new_logo.json()["asset"]
         assert new_logo_id != actual["logo_asset"]
         changed = page.request.put(url, headers={**headers, "If-Match": f'"{actual["revision"]}"', "Idempotency-Key": str(uuid4())},
-                                   data={"name": "Nom de l’autre appareil", "contact": "Autre numéro", "logo_asset": new_logo_id})
+                                   data={"name": "Nom de l’autre appareil", "contact": "Autre numéro", "logo_asset": new_logo_id,
+                                         "lines": ["Livraison gratuite à Tana"]})
         assert changed.ok
         page.unroute("**/api/shop-profile")
         save.click()
         reload_profile.click()
         expect(save).to_be_disabled()
         fields = (
-            ("Nom de la boutique", "Mon choix local", "Nom de l’autre appareil", "Garder ma saisie"),
-            ("Contact de la boutique", "Mon numéro", "Autre numéro", "Garder la version enregistrée"))
+            ("Nom de la boutique modifié", "Mon choix local", "Nom de l’autre appareil", "Garder ma saisie"),
+            ("Contact de la boutique modifié", "Mon numéro", "Autre numéro", "Garder la version enregistrée"),
+            ("Lignes de la boutique modifiées", "Garantie 6 mois · Paiement Mvola", "Livraison gratuite à Tana", "Garder ma saisie"))
         for label, before, after, choice in fields:
-            field = account.get_by_role("group", name=f"{label} modifié sur les deux appareils")
+            field = account.get_by_role("group", name=f"{label} sur les deux appareils")
             expect(field.get_by_text(before, exact=True)).to_be_visible()
             expect(field.get_by_text(after, exact=True)).to_be_visible()
             field.get_by_role("button", name=choice).click()
@@ -1894,7 +1904,18 @@ def walk_account(browser, out, data):
         expect(account.get_by_alt_text("Logo de la boutique")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
         save.click()
         expect(account.get_by_text("Profil enregistré.", exact=True)).to_be_visible()
-        assert page.request.get(url).json()["name"] == "Mon choix local"
+        saved = page.request.get(url).json()
+        assert saved["name"] == "Mon choix local" and saved["lines"] == ["Garantie 6 mois", "Paiement Mvola"], saved
+        # A refused line: the server's sentence at the three fields, not under the button; nothing saved.
+        line[2].fill("Livraison 5 000")
+        save.click()
+        refusal = account.get_by_role("group", name="Lignes de la boutique").get_by_role("alert")
+        expect(refusal).to_have_text(re.compile(r"^Une ligne de la boutique : 40 caractères au plus"))
+        expect(line[2]).to_have_attribute("aria-invalid", "true")
+        expect(account.get_by_text(re.compile(r"^Une ligne de la boutique"))).to_have_count(1)
+        assert page.request.get(url).json()["lines"] == ["Garantie 6 mois", "Paiement Mvola"]
+        line[2].fill("")
+        expect(save).to_be_disabled()
         # The last edit's control gone with the logo, a cancelled departure gives the focus back to « Ma boutique »: a section
         # title, it keeps its ring (D-POLISH-003). Leaving without the edit brings the saved logo back.
         account.get_by_role("button", name="Retirer le logo").click()
@@ -1909,8 +1930,8 @@ def walk_account(browser, out, data):
         expect(page.get_by_role("heading", name="Accueil", exact=True)).to_be_visible()
         home_account(page)
         expect(account.get_by_alt_text("Logo de la boutique")).to_have_attribute("src", f"/api/assets/{new_logo_id}")
-        # The transparent file input on the French picker remains keyboard accessible.
-        contact.focus()
+        # The transparent file input on the French picker remains keyboard accessible: after the shop's last line.
+        line[2].focus()
         page.keyboard.press("Tab")
         expect(account.locator("input[type=file]")).to_be_focused()
 

@@ -1,3 +1,4 @@
+import { api } from './api'
 import type { Post } from './publish'
 
 // The « Page Facebook » card of « Mon compte » (D-FB-PUBLISH-004): GET /api/facebook's answer, and the form it gives the
@@ -43,6 +44,22 @@ export function takeFacebookOrigin(shop: number): string | null {
     const record = JSON.parse(raw)
     return Number.isSafeInteger(shop) && shop > 0 && record?.shop === shop && isPublishOrigin(record.origin) ? record.origin : null
   } catch { return null } // Missing access or malformed record: keep the normal account navigation.
+}
+
+/** Said when this tab cannot keep the return: where to go back after Facebook. */
+export const manualReturnLine = (origin: string | null) => 'Ce navigateur ne peut pas mémoriser le retour. Après Facebook, '
+  + (origin === 'publier' ? 'ouvrez « Publier » depuis le menu.' : 'ouvrez « Mes affiches », puis l’affiche à publier.')
+
+/** Facebook's dialog, from « Mon compte » or from « Publier » (D-KIT-008): the server gives its address, the publish
+ *  origin is kept in this tab, then the tab leaves. A failed request throws and keeps nothing. `still`: the page that
+ *  asked is still there once the answer is in ('stopped' otherwise, nothing kept). 'unkept': this tab cannot keep the
+ *  return and nothing left; the caller says so, and its next tap passes `unkept` to leave without it. */
+export async function startFacebook(shop: number, origin: string | null, { still = () => true, unkept = false }: { still?: () => boolean; unkept?: boolean } = {}) {
+  const answer = await api<{ url: string }>('/api/facebook/connect', { method: 'POST', timeout: 20_000 })
+  if (!still()) return 'stopped'
+  if (origin && !keepFacebookOrigin(shop, origin) && !unkept) return 'unkept'
+  try { location.assign(answer.url) } catch (reason) { clearFacebookOrigin(); throw reason }
+  return 'left'
 }
 
 /** The final panel's read of the posts that hold its poster: the first page, or the one after the last post shown. */

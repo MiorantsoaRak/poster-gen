@@ -15,12 +15,12 @@ import ShopPublish from './ShopPublish.vue'
 import signalHorizontal from './assets/doka-horizontal.svg'
 import signalReverse from './assets/doka-horizontal-reverse.svg'
 import { sectionRead, stateBadges, stateNames, type LibraryItem, type Listing } from './dashboard'
-import { asksText, credit, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
+import { asksText, credit, DRAW_TIME, elapsedLabel, ended, FEATURES_WARNING, localTime, ONCE, overdue, phase, retryDelay, termsDate, type Balance, type Charged, type Phase } from './generation'
 import { POSTER_STRIP, posterHeight } from './viewport'
-import { readWords, staleWords, wordsPrefix } from './words'
+import { curlQuotes, readWords, staleWords, wordsPrefix } from './words'
 import { brandInTitle, logoPlacementStale, placeLogo } from './composition'
 import { colourPalette, samplePhoto, validColour, type Palette } from './palette'
-import { GONE, staleOf, waitingIn, type ChatAdapter, type SceneRequest, type Words } from './chat'
+import { GONE, linesLine, ownTitle, staleOf, STYLES, texts, TITLES, waitingIn, type ChatAdapter, type SceneRequest, type Title, type Words } from './chat'
 
 interface Capabilities { image_mode: string; planner_mode: string; planner_available: boolean; chat_available?: boolean; formats_enabled?: Format[]; facebook?: boolean }
 interface Job { id: string; kind: string; status: string; result_ref: string | null; error_code: string | null; created_at?: string; started_at?: string | null; finished_at?: string | null; credit?: string | null }
@@ -60,7 +60,7 @@ const publishOn = computed(() => !!(caps.value ?? facebookCaps.data.value)?.face
 const publishFor = ref<string | null>(null)
 const accountOrigin = ref<string | null>(null)
 const repairOrigin = shallowRef<{ shop: number; destination: string; poster: string } | null>(null)
-const addPoster = shallowRef<{ id: string; download_url: string } | null>(null)
+const addPoster = shallowRef<{ id: string; download_url: string; first?: boolean } | null>(null)
 const profile = reactive<Profile>({ revision: 1, name: null, contact: null, logo_asset: null })
 let profileSaved = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
 // A notice leaves by itself; an error stays until it is closed or the next action starts.
@@ -80,10 +80,14 @@ const enteredTitle = computed({
     if (unfinishedTitle.value === null) edit(document => { document.offer.title = value }, 'title')
   },
 })
+// A straight quote is replaced, not refused (D-KIT-007): when the title field is left, and before a scene is asked.
+function curlTitle() { const title = doc.value?.offer.title ?? ''; if (curlQuotes(title) !== title) edit(document => { document.offer.title = curlQuotes(title) }, 'title') }
 const visuals = ref<Visual[]>([]), direction = ref('Studio clair et épuré, dégradé doux, grandes courbes discrètes derrière le produit.'), plannerMode = ref<'fixed' | 'claude'>('fixed')
 const styleReference = ref<string | null>(null)
 // The title and exact offer price are drawn together; changes need another reviewed version.
-const blankHeadline = () => ({ on: true, price: true, contact: true, brand_text: false, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0' })
+// lines: the shop's own lines (D-KIT-005), drawn when the shop has some, as the chat's recap offers them.
+// title_style: the title's style for the next scene (D-KIT-012); null: the scene's default (Moderne, or the model's own).
+const blankHeadline = () => ({ on: true, price: true, contact: true, brand_text: false, lines: true, brand: '', subtitle: '', accent_word: '', accent_colour: '#1E6FE0', title_style: null as Title | null })
 const headline = ref(blankHeadline())
 const profileValue = (role: 'shop_name' | 'contact') => doc.value?.include[role] ? (role === 'shop_name' ? doc.value.brand_snapshot.name : doc.value.brand_snapshot.contact) ?? undefined : undefined
 // Looks measured on real shop products (docs/project/reviews/style-study-2026-11-11.md): the owner picks a picture, not a prompt.
@@ -192,6 +196,7 @@ function chooseLook(id: string) {
   const proposed = headline.value.accent_colour.toLowerCase()
   styleAccent.value = ''
   if (accentPicked.value && proposed !== mine.toLowerCase()) { headline.value.accent_colour = mine; styleAccent.value = proposed }
+  rememberStyle()  // the seller's pick: the next poster's look
   const saved = savedLooks.value.find(item => item.id === id)
   if (saved) askFormat('look', saved.reference_asset, saved.reference_width, saved.reference_height)
   else if (formatAsk.value?.where === 'look') formatAsk.value = null  // a built-in style has no model
@@ -218,7 +223,8 @@ async function restoreHeadline(owned?: () => void, look = true) {
     keptLook.value = kept
   } else if (owned) pickLook('libre')  // also leaves « Aux couleurs du produit », which would replace the version's accent
   Object.assign(headline.value, { on: true, brand: drawn.brand ?? '', subtitle: drawn.subtitle ?? '', accent_word: drawn.accent_word ?? '',
-    price: drawn.price_ar !== undefined, contact: drawn.shop_name !== undefined || drawn.contact !== undefined, brand_text: !!drawn.brand_text })
+    price: drawn.price_ar !== undefined, contact: drawn.shop_name !== undefined || drawn.contact !== undefined, brand_text: !!drawn.brand_text, lines: !!drawn.shop_lines?.length,
+    title_style: ownTitle(drawn.title_style, true) })
   if (/^#[0-9A-Fa-f]{6}$/.test(drawn.accent_colour ?? '')) headline.value.accent_colour = drawn.accent_colour.toLowerCase()
 }
 async function chooseLookReference(event: Event) {
@@ -302,11 +308,42 @@ async function createLook() {
   const result = await mutation<any>(`/api/creations/${creation.value!.id}/looks`, { name: lookName.value.trim() || `Style ${savedLooks.value.length + 1}`, reference_asset: lookReference.value }, saver!.revision)
   follow({ id: result.job_id, kind: 'look', status: 'queued', result_ref: null, error_code: null })
 }
+// « Garder cette scène comme modèle » (D-KIT-010): the confirmed file's scene becomes one of the shop's models, no credit
+// (the brief is the planner's), no dialog. A scene kept already answers the job that made its model, finished: followed the
+// same way, it makes no second model.
+let keptModel = ''
+async function keepModel() {
+  await flush()
+  const name = [...`Modèle ${doc.value!.offer.title.trim()}`].slice(0, 40).join('').trim()
+  const result = await mutation<{ job_id: string }>(`/api/creations/${creation.value!.id}/looks`, { name, visual_id: fileVisual.value!.id }, saver!.revision)
+  keptModel = result.job_id
+  follow({ id: result.job_id, kind: 'look', status: 'queued', result_ref: null, error_code: null })
+}
 // The owner's last look and colour come back on the next poster ("same style as last time"); never its words. The shop's
 // own: read once its gate has opened (readStyle).
-const styleKey = () => shopKey('style')
-function rememberStyle() {
-  try { shopStorage.setItem(styleKey(), JSON.stringify({ look: look.value, accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })) } catch { /* convenience only */ }
+const styleKey = () => shopKey('style'), recentKey = () => shopKey('kit.recent')
+// Each caller writes only its own fields of the entry (« Mon kit » writes the title alone).
+function keepStyle(fields: object) {
+  let kept: unknown = null
+  try { kept = JSON.parse(localStorage.getItem(styleKey()) ?? 'null') } catch { /* damaged or refused: written anew */ }
+  try { shopStorage.setItem(styleKey(), JSON.stringify({ ...(kept instanceof Object ? kept : {}), ...fields })) } catch { /* convenience only */ }
+}
+// `withLook` false: the colour and the contact's place only, the remembered look stays (a scene asked on a version's own).
+function rememberStyle(withLook = true) {
+  if (withLook) lastLook.value = look.value
+  keepStyle({ ...(withLook ? { look: look.value } : {}), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, contact_align: rememberedAlign.value })
+}
+// The seller's kit on this device (D-KIT-009, 012): the scene model and the title style of the last scene asked (or the title
+// kept in « Mon kit »), and the scene models, the most recently used first. A saved look counts once the looks are read.
+const lastLook = ref<string | null>(null), kitTitle = ref<Title | null>(null), recentLooks = ref<string[]>([])
+const isHouse = (id: unknown) => STYLES.some(([style]) => style === id)
+const lastKit = computed(() => ({ ...(savedLooks.value.some(item => item.id === lastLook.value) ? { look: lastLook.value! } : isHouse(lastLook.value) ? { style: lastLook.value! } : {}),
+  ...(kitTitle.value ? { title: kitTitle.value } : {}) }))
+function rememberTitle(title: Title | null) { kitTitle.value = title; keepStyle({ title }) }
+// An id that names no house style and no saved look (« Décrire moi-même », a removed look) is dropped.
+function rememberRecent(id: string) {
+  recentLooks.value = [id, ...recentLooks.value.filter(item => item !== id)].filter(item => isHouse(item) || savedLooks.value.some(saved => saved.id === item))
+  try { shopStorage.setItem(recentKey(), JSON.stringify(recentLooks.value)) } catch { /* convenience only */ }
 }
 // By default the image model draws the contact as one compact line, so it composes it with the price
 // (ADR-055). Unticked, or when it cannot be drawn, it is the same line written by the renderer as a layer.
@@ -322,7 +359,10 @@ function readStyle() {
     }
     if (['left', 'center', 'right'].includes(saved?.contact_align)) rememberedAlign.value = saved.contact_align
     headline.value.brand_text = saved?.brand_text === true
+    lastLook.value = typeof saved?.look === 'string' ? saved.look : null
+    kitTitle.value = TITLES.some(([id]) => id === saved?.title) ? saved.title : null
   } catch { /* private mode or damaged entry: start from the defaults */ }
+  try { recentLooks.value = texts(JSON.parse(localStorage.getItem(recentKey()) ?? '[]')) } catch { /* the house order */ }
 }
 const defaultAlign = (document: PosterDocument): Align => rememberedAlign.value ?? (document.include.logo ? 'right' : 'center')
 function compactContact(document: PosterDocument, align: Align) {
@@ -381,11 +421,26 @@ function stylePill() {
 const accentWord = computed(() => (doc.value?.offer.title ?? '').includes(headline.value.accent_word.trim()) ? headline.value.accent_word.trim() : '')
 const accentWords = computed(() => [...new Set([...(doc.value?.offer.title ?? '').split(/\s+/).filter(Boolean), ...(accentWord.value ? [accentWord.value] : [])])])
 const ACCENTS = [['#1e6fe0', 'Bleu'], ['#1f3250', 'Bleu nuit'], ['#d92b2b', 'Rouge'], ['#f08a1c', 'Orange'], ['#c8a45a', 'Or']] as const
-const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : keptAlign ?? (chosenAlign.value === 'center' ? 'centre' : chosenAlign.value), ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}) } } : {}
+const headlineBody = () => headline.value.on ? { headline: { brand: headline.value.brand.trim() || null, ...(headline.value.brand.trim() && headline.value.brand_text ? { brand_text: true } : {}), subtitle: headline.value.subtitle.trim() || null, accent_word: accentWord.value || null, accent_colour: accentWord.value ? sceneAccent.value.toUpperCase() : null, price: headline.value.price, ...(drawContact.value ? { signature: true, signature_align: sealOn.value ? 'right' : keptAlign ?? (chosenAlign.value === 'center' ? 'centre' : chosenAlign.value), ...(sealOn.value ? { logo_seal: true } : {}) } : {}), ...(savedLook.value ? { look_id: savedLook.value.id } : {}), ...(linesOn.value ? { lines: [...profile.lines!] } : {}), ...(headline.value.title_style ? { title_style: headline.value.title_style } : {}) } } : {}
+// The shop's lines exactly as this page holds them: the server draws them only if they are still the shop's (D-KIT-005).
+const linesOn = computed(() => headline.value.on && headline.value.lines && !!profile.lines?.length)
 // The contact's place in the version a chat card redraws (ADR-100); null: the editor's own choice.
 let keptAlign: 'left' | 'centre' | 'right' | null = null
 // The version a chat card redraws: the server keeps the scene adjustments asked on it by message (ADR-101).
 let keptFrom: string | null = null
+// The owner's scene words from the chat's recap (D-KIT-003), set by each of its taps and sent with that scene request; the
+// server then keeps them with the poster's scenes. Dropped once the request has been taken.
+let ownerScene: string | null = null
+// The title style's font, for a title that is a layer (D-KIT-012 v2 point 8): the three fonts the renderer has.
+const TITLE_FONTS: Record<Title, [FontId, 700 | 900]> = { moderne: ['noto-sans', 700], condense: ['noto-sans', 700], sport: ['montserrat-black-italic', 900], serif: ['noto-serif', 700] }
+// « Style du titre » in « Style »: the next scene's lettering, and the font of a title drawn by the renderer (texts off).
+function chooseTitle(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  headline.value.title_style = ownTitle(value, !!savedLook.value)
+  rememberTitle(headline.value.title_style)  // the seller's choice: the next poster's default
+  const font = TITLE_FONTS[value as Title], title = layout.value?.layers.find(layer => layer.role === 'title')
+  if (font && !headline.value.on && title?.kind === 'text') patchLayer(title.id, { font_id: font[0], weight: font[1] })
+}
 let savedPlanSnapshot = ''
 const plan = ref<any>(null), job = ref<Job | null>(null), priceText = ref(''), refinement = ref('')
 // The final panel's preview: one render's metadata (its id, source revision, image, confirmed `download_url` or null) and
@@ -446,6 +501,9 @@ const whyNoDrawnContact = computed(() => {
   return value.length > Math.floor((room - 50) / 23) ? 'Ce contact est trop long pour une seule ligne dessinée : il reste un texte ajouté sur l’affiche.' : ''
 })
 const drawContact = computed(() => headline.value.on && headline.value.contact && !!doc.value?.include.contact && !!doc.value.brand_snapshot.contact && !whyNoDrawnContact.value)
+// One box for the drawn title and the drawn contact (D-KIT-012): a drawn title with the contact as a layer is no longer
+// chosen here. A restored version keeps its own pair until the box is touched.
+function drawTexts(event: Event) { const on = (event.target as HTMLInputElement).checked; Object.assign(headline.value, { on, contact: on }) }
 const sealLayer = computed(() => layout.value?.layers.find(layer => layer.kind === 'logo' && layer.shape === 'circle'))
 const logoLayer = computed(() => layout.value?.layers.find(layer => layer.kind === 'logo'))
 // The seal is offered only for the footer the design vouches for, and is chosen before the first version.
@@ -601,7 +659,7 @@ watch(canvasHost, host => {
   if (host) { observer = new ResizeObserver(entries => { if (entries[0].contentRect.width > 0) canvasWidth.value = entries[0].contentRect.width }); observer.observe(host) }
 }, { flush: 'post' })
 watch([bar, pin, toolsRow], () => { if (doc.value) watchSticky() }, { flush: 'post' })
-const versionStates = { approved: 'approuvée', pending_review: 'à vérifier', rejected: 'refusée' }
+const versionStates = { approved: 'confirmée', pending_review: 'à vérifier', rejected: 'refusée' }
 const versionNumber = computed(() => currentVisual.value ? visuals.value.length - visuals.value.indexOf(currentVisual.value) : 0)
 let peekFrom: HTMLElement | null = null
 function setPeek(on: boolean) {
@@ -612,7 +670,8 @@ function setPeek(on: boolean) {
 // A refusal that names a field, or whose only fix is in one group, opens that group and is written there, not in
 // the general message.
 const REFUSAL_GROUP: Record<string, Group> = { 'offer.title': 'textes', 'offer.price_ar': 'textes', title_missing: 'textes', price_stale: 'textes',
-  contact: 'boutique', shop_name: 'boutique', logo: 'boutique', signature_missing: 'boutique', logo_disc_uncovered: 'boutique', layout_not_plannable: 'boutique', unsupported_font: 'reglages' }
+  contact: 'boutique', shop_name: 'boutique', logo: 'boutique', signature_missing: 'boutique', logo_disc_uncovered: 'boutique', layout_not_plannable: 'boutique', unsupported_font: 'reglages',
+  shop_lines_changed: 'boutique', shop_lines_missing: 'boutique' }
 const refusalGroup = (reason: ApiError) => REFUSAL_GROUP[reason.field ?? ''] ?? (reason.field?.startsWith('body.headline') ? 'textes' : REFUSAL_GROUP[reason.code])
 const fieldError = ref<{ group: Group; text: string } | null>(null)
 // The brand and the subtitle do not go through edit(): correcting them also clears a refusal written about them.
@@ -938,7 +997,8 @@ function askScene() {
   if (whyNoHeadline.value) { error.value = whyNoHeadline.value; if (mainFix.value) openMainFix(mainFix.value); return }  // also for « Nouvelle version »
   void readBalance()
   paid.value = { title: visuals.value.length ? 'Créer une nouvelle version ?' : 'Générer l’affiche ?', label: 'Lancer la génération', cost: '', charged: 'scene', again: unanswered('scenes'),
-    text: visuals.value.length ? 'Une nouvelle image avec vos textes et réglages actuels. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.', run: createScene }
+    // The shop's lines are drawn with the box of « Boutique » on: named before any credit, as the chat's recap names them.
+    text: `${visuals.value.length ? 'Une nouvelle image avec vos textes et réglages actuels. Vos autres versions sont conservées et vous choisissez celle à exporter.' : 'L’IA compose l’affiche à partir de votre photo, de vos textes et du style choisi. La durée varie selon l’affiche.'}${linesOn.value ? ` ${linesLine(profile.lines!)}.` : ''}`, run: createScene }
 }
 function askLook() {
   paid.value = { title: 'Créer un style depuis cette affiche ?', label: 'Créer le style', cost: 'Sans crédit.',
@@ -1098,7 +1158,8 @@ const headlineFaults = computed(() => {
   if (!headline.value.on || !doc.value) return { title: '', brand: '', subtitle: '' }
   const check = (label: string, value: string) => value.length > 60 ? `${label} dépasse 60 caractères (${value.length}) : l’IA ne peut pas le dessiner dans l’image. Raccourcissez-le.`
     : /["\r\n]/.test(value) ? `${label} contient un guillemet droit (") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».` : ''
-  return { title: check('Le titre', doc.value.offer.title.trim()), brand: check('La marque', headline.value.brand.trim()), subtitle: check('Le sous-titre', headline.value.subtitle.trim()) }
+  // A straight quote in the title is curled before a scene (D-KIT-007): what is checked is what will be drawn.
+  return { title: check('Le titre', curlQuotes(doc.value.offer.title.trim())), brand: check('La marque', headline.value.brand.trim()), subtitle: check('Le sous-titre', headline.value.subtitle.trim()) }
 })
 const styleIssue = computed(() => paletteBlocked.value || (!direction.value.trim() ? 'Décrivez l’ambiance souhaitée ou choisissez un style.' : ''))
 const saveIssue = computed(() => saveState.value === 'conflict' ? 'Résolvez le conflit d’enregistrement avant de générer.' : saveState.value === 'failed' ? 'Enregistrez vos modifications avant de générer.' : '')
@@ -1136,6 +1197,7 @@ const textChecks = computed(() => {
   const items = [{ key: 'text_title', label: drawn.brand ? 'Marque, titre et sous-titre' : 'Titre et sous-titre', value: [drawn.brand_in_title ? null : drawn.brand, drawn.title, drawn.subtitle].filter(Boolean).join(' · ') }]
   if (drawn.price_ar !== undefined) items.push({ key: 'text_price', label: 'Prix', value: `${Number(drawn.price_ar).toLocaleString('fr-FR')}\u00a0AR` })
   if (drawn.shop_name !== undefined || drawn.contact !== undefined) items.push({ key: 'text_signature', label: drawn.shop_name !== undefined ? 'Boutique et contact' : 'Contact', value: [drawn.shop_name, drawn.contact].filter(Boolean).join(' · ') })
+  if (drawn.shop_lines?.length) items.push({ key: 'text_lines', label: 'Lignes de la boutique', value: drawn.shop_lines.join(' · ') })
   return items
 })
 const reviewKeys = computed(() => [...Object.keys(checkNames), ...textChecks.value.map(item => item.key)])
@@ -1283,6 +1345,49 @@ async function saveProfile() {
   if (JSON.stringify(profile) === profileSaved) return
   adoptProfile(await writeProfile(profile))
 }
+// The shop's lines a chat card asks to keep (D-KIT-005) join the profile's before anything is paid: read, then written at
+// that revision, once more after another device's save. A refusal stops the card with the server's sentence.
+const sameLine = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+async function keepLines(lines: readonly string[]) {
+  await saveProfile()  // this page's unsaved edits first: adopting the answer below then loses none
+  for (let tries = 2; ; tries--) {
+    const saved = await api<Profile>('/api/shop-profile'), had = saved.lines ?? []
+    const added = lines.filter(line => !had.some(item => sameLine(item, line)))
+    if (!added.length) return adoptProfile(saved)
+    try { return adoptProfile(await writeProfile(saved, [...had, ...added])) }
+    catch (reason) { if (tries === 1 || !(reason instanceof ApiError && reason.code === 'revision_conflict')) throw reason }
+  }
+}
+// A style photo of the chat becomes one of the shop's looks before the scene (D-KIT-006); a look already made from the same
+// image is taken again, with no new brief. Its job is kept per image for this page, so that « Réessayer » after the time
+// limit waits on it again instead of asking a second brief (r1 fix 18). No credit: the brief is the planner's.
+const lookJobs = new Map<string, string>()
+let modelWait = ''
+async function readModel(asset: string) {
+  const known = savedLooks.value.find(item => item.reference_asset === asset)
+  if (known) return known
+  let id = lookJobs.get(asset)
+  if (!id) {
+    await flush()
+    id = (await mutation<{ job_id: string }>(`/api/creations/${creation.value!.id}/looks`, { name: `Style ${savedLooks.value.length + 1}`, reference_asset: asset }, saver!.revision)).job_id
+    lookJobs.set(asset, id)
+  }
+  job.value = { id, kind: 'look', status: 'queued', result_ref: null, error_code: null }; modelWait = id
+  try {
+    for (const until = Date.now() + 90_000; ; await new Promise(done => setTimeout(done, 1500))) {
+      if (job.value?.id !== id) throw new Shown()  // the poster was left meanwhile: nothing was sent for the scene
+      const row = await api<Job>(`/api/jobs/${id}`, { quiet: true })
+      if (row.status === 'succeeded') {
+        const made = await api<SavedLook>(`/api/looks/${row.result_ref}`)
+        lookJobs.delete(asset)
+        savedLooks.value = [made, ...savedLooks.value.filter(item => item.id !== made.id)]
+        return made
+      }
+      if (!['queued', 'running'].includes(row.status)) { lookJobs.delete(asset); throw new Error(ended(row)) }
+      if (Date.now() >= until) throw new Error('La lecture du modèle a pris trop de temps : réessayez.')
+    }
+  } finally { if (job.value?.id === id) job.value = null; modelWait = '' }
+}
 async function choosePhotos(event: Event) {
   const files = [...((event.target as HTMLInputElement).files ?? [])]
   if (!files.length || files.length > 3) throw new Error('Choisissez une à trois photos du même produit.')
@@ -1320,9 +1425,9 @@ async function createPoster() {
 // or a later visit on the same device does not lose them (ADR-083). Without storage (private mode) nothing is kept, as before.
 function forgetWords(id: string) { try { shopStorage.removeItem(wordsPrefix() + id) } catch { /* convenience only */ } }
 function keepWords(id: string) {
-  const { on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour } = headline.value
+  const { on, price, contact, brand_text, lines, brand, subtitle, accent_word, accent_colour } = headline.value
   try {
-    shopStorage.setItem(wordsPrefix() + id, JSON.stringify({ on, price, contact, brand_text, brand, subtitle, accent_word, accent_colour, at: Date.now() }))
+    shopStorage.setItem(wordsPrefix() + id, JSON.stringify({ on, price, contact, brand_text, lines, brand, subtitle, accent_word, accent_colour, at: Date.now() }))
     const kept = Object.keys(localStorage).filter(key => key.startsWith(wordsPrefix()))
     for (const key of staleWords(kept.map(key => [key, localStorage.getItem(key)]))) shopStorage.removeItem(key)
   } catch { /* convenience only: the words hold for this visit */ }
@@ -1349,7 +1454,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
   // (user, 2026-11-14), and its instructions sent with it. The accent colour (it goes with the look) and the plain-brand
   // choice are style and stay. A copy of the same product keeps its words; a poster with a version gets its own back below.
   if (opening && doc.value?.input_id !== result.document.input_id) {
-    headline.value = { ...blankHeadline(), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text }
+    headline.value = { ...blankHeadline(), accent_colour: headline.value.accent_colour, brand_text: headline.value.brand_text, title_style: kitTitle.value }
     refinement.value = ''; polish.value = ''
   }
   if (opening) { group.value = known.some(item => item.status !== 'rejected') ? 'textes' : 'style'; peek.value = false; fieldError.value = null; styleAccent.value = ''; accentPicked.value = false; asked.value = false; formatAsk.value = null }
@@ -1363,7 +1468,7 @@ async function adopt(result: Creation, origin?: string, asChat = chatting.value,
     try { stored = localStorage.getItem(wordsPrefix() + result.id) } catch { /* private mode: nothing was kept */ }
     Object.assign(headline.value, readWords(stored, result.document.offer.title))
   }
-  history = new History(); plan.value = null; styleReference.value = null
+  history = new History(); plan.value = null; styleReference.value = null; ownerScene = null
   saver = new DraftSaver(result.revision, request => mutation<Creation>(`/api/creations/${result.id}`, request.document, request.revision, request.key, 'PUT', true).catch(reason => {
     if (reason instanceof ApiError && reason.code === 'format_locked') reloadRefusedFormat(result.id, reason.message)
     throw reason
@@ -1486,7 +1591,7 @@ function askRemove(item: LibraryItem) {
       await nextTick(focusLibraryAfterRemoval)
     } }
 }
-async function fresh() { await flush(); review.value = null; repairOrigin.value = null; keptLook.value = null; finalPreview.value = null; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
+async function fresh() { await flush(); review.value = null; repairOrigin.value = null; keptLook.value = null; finalPreview.value = null; saver?.dispose(); doc.value = null; creation.value = null; visuals.value = []; plan.value = null; ownerScene = null; clearTimeout(pollTimer); job.value = null; creatorReady = false }
 async function refreshVisuals(quiet = false) {
   const id = creation.value?.id
   if (!id) return
@@ -1577,7 +1682,7 @@ let planSignature = ''
 // owned: the chat's check that this tab still holds it, run after each wait and before anything is changed or sent.
 async function createScene(key?: string, sending?: (request: SceneRequest) => void, owned?: () => void) {
   if (paletteBlocked.value) throw new Error(paletteBlocked.value)
-  stylePill()
+  curlTitle(); stylePill()
   // A seal whose footer conditions are not met cannot be asked for: it becomes a plain logo before the plan is made,
   // so that the plan keeps a place for it.
   if (sealLayer.value && !sealOn.value && !layout.value?.scene.visual_id) edit(document => {
@@ -1587,7 +1692,10 @@ async function createScene(key?: string, sending?: (request: SceneRequest) => vo
   await flush(); owned?.()
   const signature = JSON.stringify([creation.value!.id, saver!.revision, direction.value, look.value, sceneAccent.value, productPalette.value, format.value])
   if (!plan.value || planSignature !== signature) { await prepareScene(owned); owned?.(); planSignature = signature }
-  rememberStyle()
+  // The look of a poster's first scene is the next default; a later scene may carry a version's own look, which becomes the
+  // default only when the seller picks it (chooseLook, a style asked by message). The title's default is only ever his
+  // choice (chooseTitle, the chat's kit row, « Mon kit »): never a scene's.
+  rememberStyle(!visuals.value.length); rememberRecent(look.value)
   await generateScene(key, sending, owned)
 }
 function acceptPlan(value: any) { plan.value = value; savedPlanSnapshot = JSON.stringify(value.plan) }
@@ -1599,19 +1707,27 @@ async function savePlan(owned?: () => void) {
   owned?.(); acceptPlan(revised)
 }
 async function generateScene(key?: string, sending?: (request: SceneRequest) => void, owned?: () => void) {
+  curlTitle()
   await savePlan(owned)
   const path = `/api/creations/${creation.value!.id}/scenes`, revision = saver!.revision
-  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), ...(keptFrom ? { keep_adjustments_of: keptFrom } : {}), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
+  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), ...(keptFrom ? { keep_adjustments_of: keptFrom } : {}), ...(ownerScene ? { adjustment_fr: ownerScene } : {}), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
   // The chat's last word before the paid request leaves (it may stop it, and keeps it as sent); nothing is awaited between.
   sending?.({ path, body, revision })
   let result: any
   try { result = await mutation<any>(path, body, revision, key) }
   catch (reason) {
+    // The lines sent are no longer the shop's (changed elsewhere, or removed): nothing was spent. The screen reads them
+    // again, and the server's sentence is said (D-KIT-005).
+    if (reason instanceof ApiError && ['shop_lines_changed', 'shop_lines_missing'].includes(reason.code)) {
+      adoptProfile(await api<Profile>('/api/shop-profile'))
+      throw reason
+    }
     // A reopened poster does not know its photo is small until the server says so: ask in the same dialog.
     // In the chat the card asks it: the editor's paid dialog never opens there.
     if (!(reason instanceof ApiError && reason.code === 'acknowledgement_required') || chatting.value) throw reason
     smallPhotoOf.value = creation.value!.id; askScene(); throw new Shown()
   }
+  ownerScene = null
   follow({ id: result.job_id, kind: 'scene', status: 'queued', result_ref: null, error_code: null })
 }
 // A product photo under the server's minimum needs an explicit agreement before a paid generation. Both flags
@@ -1640,7 +1756,7 @@ const waitPhase = computed(() => waitJob.value ? phase(waitJob.value, decoded.va
 const waitLong = computed(() => !!waitPhase.value && runningSince.value !== null && overdue(waitPhase.value, now.value - runningSince.value))
 const WAIT_WORDS: Record<Phase, [string, string]> = {
   queued: ['Votre demande est en attente.', 'La création va démarrer. Vous pouvez encore annuler cette demande.'],
-  running: ['Votre affiche prend forme.', 'L’IA compose une nouvelle version. La durée varie selon l’affiche.'],
+  running: ['Votre affiche prend forme.', `L’IA compose une nouvelle version. ${DRAW_TIME}`],
   receiving: ['Réception de votre affiche…', 'La création est terminée. L’image se charge avant de vous être présentée.'],
   ready: ['Votre affiche est prête à vérifier.', 'Prenez un instant pour vérifier le produit, les textes et chaque chiffre du prix.'],
   failed: ['Cette version n’a pas abouti.', 'Aucune nouvelle version n’a été ajoutée.'],
@@ -1660,7 +1776,7 @@ function onVisibility() {
   if (!visible.value) return close()
   void ask()
   if (loaded.value && (doc.value || view.value !== 'accueil')) void readBalance()  // another tab or device may have spent credits meanwhile
-  if (job.value && !polling) { clearTimeout(pollTimer); poll() }
+  if (job.value && !polling && job.value.id !== modelWait) { clearTimeout(pollTimer); poll() }  // the chat's look is read by readModel
 }
 // A job this editor started is timed from now; one found active on opening, from the server's creation time.
 type ReviewedRender = { format: Format; revision: number; active: () => boolean }
@@ -1735,8 +1851,12 @@ async function poll() {
         const made = await api<SavedLook>(`/api/looks/${completed.result_ref}`, { quiet: true })
         if (stale()) return
         savedLooks.value = [made, ...savedLooks.value.filter(item => item.id !== made.id)]
-        chooseLook(made.id); lookName.value = ''; lookReference.value = null
-        notice.value = `Style « ${made.name} » enregistré. Il est sélectionné et restera disponible pour vos prochaines affiches.`
+        // A kept scene leaves the poster's own style as it is: the model is offered for the next posters.
+        if (completed.id === keptModel) notice.value = `Le modèle « ${made.name} » est dans votre kit.`
+        else {
+          chooseLook(made.id); lookName.value = ''; lookReference.value = null
+          notice.value = `Style « ${made.name} » enregistré. Il est sélectionné et restera disponible pour vos prochaines affiches.`
+        }
       }
       else if (completed.kind === 'plan') {
         const result = await api(`/api/plans/${completed.result_ref}`, { quiet: true })
@@ -2024,11 +2144,10 @@ async function returnToPost(useFile = false) {
   }
   leave(origin.destination)
 }
-function connectForPost() {
-  const from = here()
-  if (!shown.value || view.value !== 'publier' || location.hash !== '#' + from || !isPublishOrigin(from)) return
-  accountOrigin.value = from
-  leave('compte')
+// « Publier plusieurs affiches » (D-KIT-008): the page's poster goes first in the post of several.
+function publishSeveral(poster: { id: string; download_url: string }) {
+  addPoster.value = { ...poster, first: true }
+  leave('publier')
 }
 watch(view, (to, from) => {
   if (from === 'compte' && to !== 'compte') { accountOrigin.value = null; clearFacebookOrigin() }
@@ -2149,10 +2268,12 @@ async function acceptFile(destination: 'library' | 'download' | 'facebook' | 'ba
   else if (shareDetails.value) { shareDetails.value.open = true; shareDetails.value.querySelector('summary')?.focus() }
 }
 const downloadLink = ref<HTMLAnchorElement | null>(null), shareDetails = ref<HTMLDetailsElement | null>(null)
+// From Message the correction is asked there (D-KIT-007): the review closes on the poster's thread and its field takes
+// the cursor (after the closing panel gives back its own focus: the chat's focus waits for the next render).
 function correctFile() {
   finalPreview.value = null
   review.value = null
-  if (chatting.value && creation.value) leave(creation.value.id)
+  if (chatting.value) chat.focus?.()
 }
 async function rejectFile() {
   const visual = fileVisual.value, preview = finalPreview.value
@@ -2205,14 +2326,13 @@ function sameReview() {
   return () => visit === reviewVisit && shown.value && bound.value === shop && creation.value?.id === poster
     && review.value?.id === visual && format.value === target && location.hash === address
 }
-async function decide(action: 'approve' | 'reject') {
+// A version is approved only with the confirmation of its file (D-KIT-001, r1 5): the review refuses one, nothing else.
+async function rejectVersion() {
   const still = sameReview(), poster = creation.value?.id, shop = bound.value
-  const decision = await mutation<Visual>(`/api/visuals/${review.value!.id}/decision`, action === 'approve' ? { action, checks: Object.fromEntries(reviewKeys.value.map(key => [key, true])) } : { action, note: rejection.value })
+  await mutation<Visual>(`/api/visuals/${review.value!.id}/decision`, { action: 'reject', note: rejection.value })
   if (creation.value?.id !== poster || bound.value !== shop || state.value === 'out') return
   await refreshVisuals()
-  if (!still()) return
-  review.value = action === 'approve' ? decision : null
-  if (review.value) await nextTick(() => document.getElementById('review-title')?.focus())
+  if (still()) review.value = null
 }
 const reviewFileBlock = computed(() => job.value ? job.value.kind === 'render' ? 'Préparation du fichier final…' : waiting : whyNoExport.value)
 const reviewingSelected = computed(() => !!review.value && review.value.id === currentVisual.value?.id && review.value.status !== 'rejected')
@@ -2297,50 +2417,82 @@ function setWords(words: Words) {
 let copyInput: { signature: string; id: string } | null = null  // kept only for a retry of this copy
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, format, productAssets: computed(() => offerSource.value?.photo_assets), productError: offerSourceError, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
-    shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact })),
+    shop: computed(() => ({ logo: !!profile.logo_asset, contact: !!profile.contact?.trim(), ticked: include.logo || include.contact, lines: profile.lines ?? [] })),
+    drawn: computed(() => !creation.value || headline.value.on),  // a new poster starts with its texts drawn (adopt)
+    looks: savedLooks, recent: recentLooks, kit: lastKit,
     busy, credit: computed(() => credit(balance.value, 'scene')) }),  // a recap is a scene, a change a scene or a refinement
   attach: (file, role) => upload(file, role === 'inspiration' ? 'style' : 'original'),
-  start: (key, style, smallPhotoAccepted, sending, identity) => told(async () => {
-    pickLook(style)
-    const reference = styleReference.value  // adopt() empties it for the new poster
-    if (!creation.value) {
-      // The shop's logo and contact, as the message said (D-TEXT-FIRST-006), through the form's own selection: asked
-      // for, what the profile holds; asked off, neither; not said, the form's ticks as they are. After a failure the
-      // form has its own ticks again; a success empties it, as always.
-      const ticked = { ...include }, { logo, contact } = chat.state.shop
-      if (identity !== undefined) Object.assign(include, identity ? { logo, contact } : { logo: false, contact: false })
-      try { await createPoster() } catch (reason) { Object.assign(include, ticked); throw reason }
-    }
-    styleReference.value = reference
-    if (smallPhotoAccepted) lowResAccepted.value = true
-    // « Couleurs du produit » reads the photo once the poster exists; colours that cannot be read give « Studio clair ».
-    if (paletteLoading.value) await new Promise<void>(done => { const stop = watch(paletteLoading, on => { if (!on) { stop(); done() } }) })
-    if (paletteBlocked.value) pickLook('clair')
-    await createScene(key, sending)
-  }),
+  keepTitle: rememberTitle,
+  start: async (key, style, smallPhotoAccepted, sending, identity, kit) => {
+    let model: string | undefined
+    await told(async () => {
+      pickLook(style)
+      const reference = styleReference.value  // adopt() empties it for the new poster
+      // `kit` comes with every tap of a new poster's recap, also once the poster exists without a version: what the request
+      // carries is what that recap shows, never what an earlier tap left here (review t-kit-frontend r1, 1).
+      // The recap's new shop lines are kept first, and the shop's lines are read again: the lines drawn are exactly those it
+      // showed (D-KIT-005). A refusal, or lines changed on another device, stops the tap before anything is made or paid.
+      const shown = kit?.lines?.filter((line, at, all) => all.findIndex(other => sameLine(other, line)) === at)
+      if (shown) await keepLines(kit!.keep ?? [])
+      if (shown && JSON.stringify(shown) !== JSON.stringify(profile.lines ?? [])) throw new Error('Les lignes de la boutique ont changé : relisez le récapitulatif.')
+      if (!creation.value) {
+        // The shop's logo and contact, as the message said (D-TEXT-FIRST-006), through the form's own selection: asked
+        // for, what the profile holds; asked off, neither; not said, the form's ticks as they are. After a failure the
+        // form has its own ticks again; a success empties it, as always.
+        const ticked = { ...include }, { logo, contact } = chat.state.shop
+        if (identity !== undefined) Object.assign(include, identity ? { logo, contact } : { logo: false, contact: false })
+        try { await createPoster() } catch (reason) { Object.assign(include, ticked); throw reason }
+      }
+      // The recap's switch decides whether the lines are drawn, never the editor's box (whose default draws them); the scene
+      // words (D-KIT-003), the kit row's title style and saved look (D-KIT-009) go with this request. No kit: none of them.
+      ownerScene = kit?.scene ?? null
+      if (kit) Object.assign(headline.value, { lines: !!shown?.length, title_style: kit.title ?? null })
+      if (kit?.look && savedLooks.value.some(item => item.id === kit.look)) pickLook(kit.look)  // after the house style; an unknown look is not used
+      styleReference.value = reference
+      if (smallPhotoAccepted) lowResAccepted.value = true
+      // « Couleurs du produit » reads the photo once the poster exists; colours that cannot be read give « Studio clair ».
+      if (paletteLoading.value) await new Promise<void>(done => { const stop = watch(paletteLoading, on => { if (!on) { stop(); done() } }) })
+      if (paletteBlocked.value) pickLook('clair')
+      // The scene names the look read from the style photo, never the raw image (D-KIT-006). Refused before the request
+      // has been taken, the photo is given back: « Réessayer » takes the same look again, with no new brief.
+      if (reference) { const made = await readModel(reference); pickLook(made.id); styleReference.value = null; model = made.name }
+      try { await createScene(key, sending) } catch (reason) { styleReference.value = reference; throw reason }
+    })
+    return model ? { look: model } : undefined
+  },
   change: (key, visual, instruction, owned, sending) => told(async () => {
     await pickVersion(visual, owned); owned()  // again after the selection's save
     refinement.value = instruction  // the editor's own field: the request is the one of « Ajuster la scène »
     await refineScene(key, sending)
   }),
-  revise: (key, visual, words, smallPhotoAccepted, owned, sending, style) => told(async () => {
+  revise: (key, visual, words, smallPhotoAccepted, owned, sending, style, lines) => told(async () => {
     await pickVersion(visual, owned)
     // Without drawn texts the request would not carry the words the card lists. Asked before the version's settings
     // are restored below: the owner switched them off on purpose, and a card does not switch them back on.
     if (!headline.value.on) throw new Error('Les textes dessinés sont désactivés pour cette affiche : réglez-les dans Pas à pas.')
     // Earlier saves first: the words are queued only by the tab that still holds the chat, and leave at once.
     await flush(); owned()
+    // A `line` card (D-KIT-005): its lines join the shop's first; nothing is paid when that fails. The card showed the
+    // shop's lines as this page holds them, its own added (ChatView): lines changed on another device stop it, said with
+    // the server's sentence, and the card comes again with the lines read now.
+    if (lines) {
+      const had = profile.lines ?? [], shown = [...had, ...lines.filter(line => !had.some(kept => sameLine(kept, line)))]
+      await keepLines(lines); owned()
+      if (JSON.stringify(shown) !== JSON.stringify(profile.lines ?? [])) throw new Error('Les lignes de la boutique ont changé : vérifiez-les, puis relancez.')
+    }
     // The new image keeps the version's style (ADR-100): its drawn settings, its model image and its plan, which
     // holds the direction, the colours and the light. The editor's current style is not used.
     const base = currentVisual.value!
     await restoreHeadline(owned, !style)
+    if (lines) headline.value.lines = true  // the shop's lines as the profile now holds them, the kept ones among them
     styleReference.value = base.style_reference_asset ?? null
     setWords(words)
     if (smallPhotoAccepted) lowResAccepted.value = true
     if (style) {
       // Another style (D-TEXT-FIRST-006): a fresh plan. The version's model image and its kept adjustments would win
-      // over the new style (ADR-101), so neither is carried; its drawn settings are, restored above.
-      pickLook(style)
+      // over the new style (ADR-101), so neither is carried; its drawn settings are, restored above. The style the
+      // message asked is the seller's pick: the next poster's too.
+      pickLook(style); rememberStyle()
       if (paletteLoading.value) { await new Promise<void>(done => { const stop = watch(paletteLoading, on => { if (!on) { stop(); done() } }) }); owned() }
       if (paletteBlocked.value) throw new Error(paletteBlocked.value)
       styleReference.value = null
@@ -2684,7 +2836,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <button ref="sideClose" class="ghost icon side-close" type="button" aria-label="Fermer le menu" @click="closeDrawer"><Icon n="close" /></button>
     <a href="#accueil" class="brand" aria-label="Doka Studio — Accueil" title="Accueil" translate="no"><img class="lockup" :src="theme === 'clair' ? signalHorizontal : signalReverse" width="220" height="79" alt=""><img class="signal-symbol" src="./assets/doka-symbol-small.svg" width="40" height="40" alt=""></a>
     <a href="#creer" class="primary new" title="Nouvelle affiche"><Icon n="plus" /><span class="label">Nouvelle affiche</span></a>
-    <nav class="nav" aria-label="Navigation"><a href="#accueil" title="Accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span class="label">Accueil</span></a><a href="#affiches" title="Mes affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="label">Mes affiches</span> <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></a><a v-if="publishOn" href="#publier" title="Publier" :aria-current="!doc && view === 'publier' ? 'page' : undefined"><Icon n="share" /><span class="label">Publier</span></a><a href="#styles" title="Styles" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span class="label">Styles</span> <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
+    <nav class="nav" aria-label="Navigation"><a href="#accueil" title="Accueil" :aria-current="!doc && view === 'accueil' ? 'page' : undefined"><Icon n="store" /><span class="label">Accueil</span></a><a href="#affiches" title="Mes affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="label">Mes affiches</span> <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></a><a v-if="publishOn" href="#publier" title="Publier" :aria-current="!doc && view === 'publier' ? 'page' : undefined"><Icon n="share" /><span class="label">Publier</span></a><a href="#styles" title="Mon kit" :aria-current="!doc && view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span class="label">Mon kit</span> <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></a></nav>
     <div v-if="recentItems.length" class="recent"><h2>Affiches récentes</h2><ul>
       <li v-for="item in recentItems" :key="item.id"><a :href="posterAddress(item.id)" :title="item.title" :aria-current="creation?.id === item.id ? 'page' : undefined"><img v-if="item.thumbnail_url" :src="item.thumbnail_url" width="32" height="40" alt="" loading="lazy" /><span v-else class="blank-poster" /><span><b translate="no">{{ item.title }}</b><span>{{ stateNames[item.state] }}</span></span></a></li>
     </ul></div>
@@ -2721,7 +2873,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <div v-if="notice" class="message notice" role="status">{{ notice }}<button class="text-button" type="button" @click="notice = ''; focusChatComposer()">Fermer</button></div>
     <div v-if="caps?.image_mode === 'stub'" class="demo-notice">Mode de démonstration : les images sont simulées, sans dépense.</div>
     <ShopHome v-if="shown && !doc && view === 'accueil'" ref="home" @guide="openGuide($event)" :inert="modalOpen" :funds="funds" :recent="recent" :busy="busy" :publish="publishOn" @poster="id => perform(() => openFromList(id))" @review="id => perform(() => openFromList(id, undefined, 'review'))" @terms="readConditions" />
-    <ShopPublish v-if="shown && !doc && view === 'publier'" ref="publisher" @guide="openGuide($event, 3)" :poster="publishFor" :add-poster="addPoster" @consumed="addPoster = null" @account="connectForPost" :terms="terms" :handed="handed" :inert="modalOpen && !publisher?.modal"
+    <ShopPublish v-if="shown && !doc && view === 'publier'" ref="publisher" @guide="openGuide($event, 3)" :poster="publishFor" :add-poster="addPoster" @consumed="addPoster = null" @several="publishSeveral" :terms="terms" :handed="handed" :inert="modalOpen && !publisher?.modal"
       @terms="readConditions" @poster="id => perform(() => openFromList(id))" @repair="(id, mayLeave) => perform(() => openFromList(id, mayLeave))" @handed="handed = null" />
     <ShopAccount :key="accountVisit" ref="account" @click="accountLink" v-if="!doc && view === 'compte'" :inert="modalOpen || busy" :terms="terms" :terms-unavailable="termsUnavailable"
       :support="support" :publish-origin="accountOrigin" :interactive="shown && !modalOpen && !busy" @saved="adoptProfile" @terms="readConditions" @sign-out="perform(askSignOut)" />
@@ -2782,10 +2934,26 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       </div></div>
       <p v-if="hasLibrary && libraryNext" class="more"><button type="button" :disabled="busy" @click="perform(moreLibrary)">Voir plus ({{ shownTotal - library.length }} de plus)</button></p>
     </section>
-    <section v-if="!doc && view === 'styles'" class="gallery" aria-labelledby="titre-styles" :inert="termsOpen">
-      <div class="titlerow"><div class="what"><h1 id="titre-styles" class="page-title" tabindex="-1">Styles</h1><p class="meta">{{ LOOKS.length - 1 }} styles fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches modèles</p></div></div>
+    <!-- « Mon kit » (D-KIT-011): the shop's scene models, then the device's default title, the shop's lines and identity as
+         words, each changed where it lives. No model is made here (v2): the page says the two ways. -->
+    <section v-if="!doc && view === 'styles'" class="gallery kit" aria-labelledby="titre-styles" :inert="termsOpen">
+      <div class="titlerow"><div class="what"><h1 id="titre-styles" class="page-title" tabindex="-1">Mon kit</h1><p class="meta">Les choix repris sur vos prochaines affiches.</p></div></div>
+      <h2 id="titre-modeles">Modèles de scène</h2><p class="meta">{{ LOOKS.length - 1 }} fournis · {{ savedLooks.length }} {{ savedLooks.length > 1 ? 'créés' : 'créé' }} depuis vos affiches</p>
       <div class="look-wall"><button v-for="item in LOOKS.filter(item => item.image)" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="item.image!" width="180" height="180" alt="" loading="lazy" /><span>{{ item.label }}<small>Fourni</small></span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look-card" @click="openLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="180" height="180" alt="" loading="lazy" /><span translate="no">{{ item.name }}<small translate="yes">Créé depuis une affiche</small></span></button></div>
-      <p class="help">Ouvrez un style pour voir sa description. Pour créer un style, ouvrez une affiche puis « Créer un style depuis une affiche » dans « Style ».</p>
+      <p class="help">Pour ajouter un modèle&nbsp;: dans un message, joignez une affiche que vous aimez et touchez son étiquette «&nbsp;Modèle de style&nbsp;»&nbsp;; ou, sur une affiche finie, «&nbsp;Garder cette scène comme modèle&nbsp;».</p>
+      <button class="secondary" @click="leave('creer')"><Icon n="plus" />Nouvelle affiche</button>
+      <div class="kit-parts">
+        <section class="card" aria-labelledby="titre-titre-defaut"><h2 id="titre-titre-defaut">Titre par défaut</h2>
+          <label>Style du titre<select :value="kitTitle ?? 'moderne'" aria-label="Style du titre" aria-describedby="aide-titre-defaut" @change="rememberTitle(ownTitle(($event.target as HTMLSelectElement).value, false))"><option v-for="[id, name] in TITLES" :key="id" :value="id">{{ name }}</option></select></label>
+          <p id="aide-titre-defaut" class="help">Pour vos prochaines affiches, sur cet appareil. Avec «&nbsp;Moderne&nbsp;», un modèle de scène garde le titre de son affiche.</p></section>
+        <section class="card" aria-labelledby="titre-lignes"><h2 id="titre-lignes">Lignes de la boutique</h2>
+          <ul v-if="profile.lines?.length" class="points" translate="no"><li v-for="line in profile.lines" :key="line">{{ line }}</li></ul><p v-else>Aucune ligne</p>
+          <p class="help">Garantie, livraison, paiement : dessinées sur vos affiches quand vous les incluez.</p>
+          <button class="secondary" @click="leave('compte')">Modifier dans Mon compte</button></section>
+        <section class="card" aria-labelledby="titre-identite"><h2 id="titre-identite">Nom, contact et logo</h2>
+          <ul class="points"><li>Nom<small translate="no">{{ profile.name || 'Aucun' }}</small></li><li>Contact<small translate="no">{{ profile.contact || 'Aucun' }}</small></li><li>Logo<small>{{ profile.logo_asset ? 'Enregistré' : 'Aucun' }}</small></li></ul>
+          <button class="secondary" @click="leave('compte')">Ouvrir Mon compte</button></section>
+      </div>
     </section>
     <button v-if="activeRepair && !modalOpen" class="secondary" :disabled="busy" @click="perform(returnToPost)">Revenir à ma publication</button>
     <div v-if="editing && doc" class="editor" :class="{ stepping, typing: typing && pinned, 'preview-hidden': !previewVisible, 'versions-open': versionsOpen }" :style="{ '--poster-ratio': FORMATS[format][0] / FORMATS[format][1] }" :inert="modalOpen">
@@ -2828,7 +2996,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p v-if="fieldError?.group === group" class="why refusal" role="alert">{{ fieldError.text }}</p>
             <template v-if="group === 'textes'">
             <p class="help lead">Les mots de l’affiche. Seuls le titre et le prix sont obligatoires.</p>
-            <label>Titre<textarea v-model="enteredTitle" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" /></label>
+            <label>Titre<textarea v-model="enteredTitle" name="title" autocomplete="off" maxlength="240" rows="2" :disabled="drawingTexts" @blur="curlTitle" aria-describedby="limite-titre erreur-titre next-version-words" :aria-invalid="!!headlineFaults.title || undefined" /></label>
             <p v-if="headline.on" id="limite-titre" class="help">{{ enteredTitle.length }} / 60 caractères pour un titre dessiné.</p><p v-if="headlineFaults.title" id="erreur-titre" class="why" role="status">{{ headlineFaults.title }}</p>
             <p v-if="staleTitle && currentVisual" class="why" role="status">Le titre est dessiné dans l’image<template v-if="currentVisual?.headline"> (« {{ currentVisual.headline.title }} »)</template>. Pour le changer, générez une nouvelle version, ou remettez l’ancien titre.</p>
             <label>Prix en ariary<span class="unit"><input id="champ-prix" v-model="priceText" name="price" autocomplete="off" inputmode="numeric" :disabled="drawingTexts && headline.price" :aria-invalid="!!priceError || undefined" aria-describedby="erreur-prix" @input="changePrice" @blur="tidyPrice" /></span></label>
@@ -2837,9 +3005,11 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p v-if="stalePrice && currentVisual" class="why" role="status">Le prix est dessiné dans l’image<template v-if="currentVisual?.headline?.price_ar !== undefined"> ({{ currentVisual.headline.price_ar.toLocaleString('fr-FR') }} AR)</template>. Pour le changer, générez une nouvelle version.</p>
             <template v-if="headline.on"><label>Marque (facultative)<input v-model="headline.brand" name="brand" autocomplete="off" spellcheck="false" maxlength="60" placeholder="JBL…" :disabled="busy || !!job" aria-describedby="erreur-marque aide-marque" :aria-invalid="!!headlineFaults.brand || undefined" /></label><p id="aide-marque" class="help">60 caractères maximum.<template v-if="duplicateBrand"> La marque est déjà dans le titre : elle ne sera pas répétée au-dessus.</template></p><p v-if="headlineFaults.brand" id="erreur-marque" class="why" role="status">{{ headlineFaults.brand }}</p><label>Sous-titre (facultatif)<input v-model="headline.subtitle" name="subtitle" autocomplete="off" maxlength="60" placeholder="CASQUE SANS FIL…" :disabled="busy || !!job" aria-describedby="erreur-sous-titre aide-sous-titre" :aria-invalid="!!headlineFaults.subtitle || undefined" /></label><p id="aide-sous-titre" class="help">60 caractères maximum.</p><p v-if="headlineFaults.subtitle" id="erreur-sous-titre" class="why" role="status">{{ headlineFaults.subtitle }}</p><div class="choice"><span id="accent-word-label">Mot du titre en couleur</span><div class="chips" role="group" aria-labelledby="accent-word-label"><button v-for="word in accentWords" :key="word" type="button" class="chip" translate="no" :aria-pressed="accentWord === word" :disabled="busy || !!job" @click="headline.accent_word = word">{{ word }}</button><button type="button" class="chip" :aria-pressed="!accentWord" :disabled="busy || !!job" @click="headline.accent_word = ''">Aucun</button></div></div></template>
             <div class="choice"><span id="accent-colour-label">Couleur d’accent</span><div class="chips" role="group" aria-labelledby="accent-colour-label"><button v-for="[value, name] in ACCENTS" :key="value" type="button" class="sw" :style="{ background: value }" :aria-label="name" :title="name" :aria-pressed="sceneAccent.toLowerCase() === value" :disabled="busy || !!job" @click="pickAccent(value)" /><label class="other" :class="{ on: !ACCENTS.some(([value]) => value === sceneAccent.toLowerCase()) }">Autre…<input :value="sceneAccent" type="color" aria-label="Autre couleur d’accent" @input="pickAccent(($event.target as HTMLInputElement).value)" :disabled="busy || !!job" /></label></div></div>
-            <p class="sub">Pour la prochaine version</p><p class="help">Par défaut, l’IA compose le titre et le prix avec la scène, comme sur une affiche de marque. Vérifiez chaque mot et chaque chiffre avant d’approuver la version ; pour corriger, générez une nouvelle version.</p>
-            <label class="check"><input v-model="headline.on" type="checkbox" :disabled="busy || !!job" /> Laisser l’IA composer le titre dans l’image</label>
-            <label v-if="headline.on" class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" /> Dessiner aussi le prix dans l’image</label>
+            <p class="sub">Pour la prochaine version</p>
+            <label class="check"><input :checked="headline.on" type="checkbox" :disabled="busy || !!job" aria-describedby="aide-dessin" @change="drawTexts" /> Dessiner les textes dans l’image</label>
+            <label v-if="headline.on" class="check"><input v-model="headline.price" type="checkbox" :disabled="busy || !!job" aria-describedby="aide-dessin" /> Dessiner aussi le prix dans l’image</label>
+            <p id="aide-dessin" class="help">Un texte dessiné fait partie de l’image : le changer demande une nouvelle image (1 crédit) ; un prix non dessiné se change sans crédit.</p>
+            <p v-if="headline.on && doc.include.contact && whyNoDrawnContact" class="why" role="status">{{ whyNoDrawnContact }}</p>
             <label v-if="headline.on && headline.brand.trim()" class="check"><input v-model="headline.brand_text" type="checkbox" :disabled="busy || !!job" />Écrire la marque en texte simple (si l’IA ne connaît pas son logo)</label>
             </template>
             <template v-else-if="group === 'boutique'">
@@ -2853,11 +3023,15 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p v-if="doc.include.contact && sealOn" class="help">Avec le sceau, le contact est à droite.</p>
             <p v-else-if="doc.include.contact && drawnContact" class="help">Le contact est dessiné dans l’image : la position s’applique à la prochaine version.<template v-if="logoShown && !sealLayer"> Gardez le logo à l’écart du contact, ou générez une nouvelle version.</template></p>
             <p v-else-if="doc.include.contact && doc.include.logo && !sealLayer" class="help">Le contact reste dans le pied de l’affiche, séparé du logo.</p>
-            <p v-if="(doc.include.logo && logoLayer) || (headline.on && doc.include.contact)" class="sub">Pour la prochaine version</p>
+            <p class="sub">Pour la prochaine version</p>
             <label v-if="doc.include.logo && logoLayer" class="check"><input type="checkbox" :checked="layout?.scene.visual_id ? !!sealLayer : sealOn" :disabled="busy || !!job || !!whyNoSeal" @change="setSeal" />Logo en sceau rond dans l’image</label>
             <p v-if="doc.include.logo && whyNoSeal" class="why" role="status">{{ whyNoSeal }} <button v-if="sealNeedsTexts" type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p>
             <p v-else-if="sealLayer" class="help">L’image prévoit un disque blanc vide et votre logo y est imprimé tel quel, découpé en rond.</p>
-            <template v-if="headline.on && doc.include.contact"><label class="check"><input v-model="headline.contact" type="checkbox" :disabled="busy || !!job || !!whyNoDrawnContact" /> Dessiner aussi le contact dans l’image</label><p v-if="whyNoDrawnContact" class="why" role="status">{{ whyNoDrawnContact }}</p><p v-else class="help">Dessiné par l’IA, le contact est composé avec le prix. Décoché, il est écrit par-dessus l’image, tel que vous l’avez saisi.</p></template>
+            <p v-if="headline.on && doc.include.contact && whyNoDrawnContact" class="why" role="status">{{ whyNoDrawnContact }}</p>
+            <label class="check"><input type="checkbox" :checked="linesOn" :disabled="busy || !!job || !headline.on || !profile.lines?.length" @change="event => headline.lines = (event.target as HTMLInputElement).checked" />Afficher les lignes de la boutique</label>
+            <p v-if="!headline.on" class="help">Les lignes de la boutique sont dessinées dans l’image avec le titre : activez « Dessiner les textes dans l’image ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p>
+            <p v-else-if="!profile.lines?.length" class="help">Votre boutique n’a pas encore de lignes (garantie, livraison, paiement). <button type="button" class="text-button" @click="leave('compte')">Les ajouter dans « Mon compte »</button></p>
+            <p v-else class="help">Dessinées par l’IA telles que saisies dans « Mon compte » : <span translate="no">{{ profile.lines.join(' · ') }}</span>.</p>
             </template>
             <template v-else-if="group === 'style'">
             <p class="help lead">L’allure de l’affiche : choisissez un style, ou décrivez l’ambiance vous-même.</p>
@@ -2868,11 +3042,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <template v-else><strong>{{ FORMAT_NAMES[format][0] }}</strong> permet de télécharger votre affiche en PNG.<template v-if="publishOn && formatsShown.includes('feed')"> Pour publier directement sur votre Page Facebook, utilisez le format Publication.</template></template>
             </p>
             <div class="look-grid"><button v-for="item in LOOKS" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img v-if="item.image" :src="item.image" width="96" height="96" alt="" /><span v-else class="add"><Icon n="pen" /></span><span>{{ item.label }}</span></button><button v-for="item in savedLooks" :key="item.id" type="button" class="look" :class="{ selected: look === item.id }" :aria-pressed="look === item.id" :disabled="busy || !!job" @click="chooseLook(item.id)"><img :src="preparedUrl(`/api/assets/${item.reference_asset}`)" width="96" height="96" alt="" /><span translate="no">{{ item.name }}</span></button></div>
-            <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="group" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :aria-invalid="!!paletteBlocked || undefined" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
+            <div v-if="look === 'couleur'" class="product-palette"><p class="help">Couleurs proposées depuis votre photo. Vérifiez-les : un arrière-plan chargé peut influencer la suggestion.</p><div v-if="productPalette" class="swatches" role="img" aria-label="Palette de la prochaine version"><span v-for="colour in productPalette" :key="colour"><i :style="{ background: colour }" /></span></div><p v-if="paletteLoading" role="status">Analyse des couleurs…</p><p v-if="paletteFailure" class="why" role="alert">{{ paletteFailure }}</p><label class="palette-manual">Corriger la couleur principale<input type="color" :aria-invalid="!!paletteBlocked || undefined" :value="productPalette?.[2] ?? '#555555'" :disabled="busy || !!job" @input="setProductColour(($event.target as HTMLInputElement).value)" /></label><button type="button" class="text-button" :disabled="busy || !!job || paletteLoading" @click="loadProductPalette(true)">Reprendre les couleurs de la photo</button></div>
             <div v-if="formatQuestion?.where === 'look'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div>
             <p v-if="look === 'couleur' && !styleAccent" class="help">Ce style est teinté de la couleur d’accent choisie dans « Textes ». <button type="button" class="text-button" @click="go('textes')">Ouvrir « Textes »</button></p><p v-if="styleAccent" class="help" role="status">Ce style propose sa couleur d’accent ; la vôtre est conservée. <button type="button" class="text-button" @click="useStyleAccent">Utiliser la couleur du style</button></p>
             <p v-if="keptLook && look === 'libre'" class="help">Le style « <span translate="no">{{ keptLook.name }}</span> » a été retiré : cette affiche le garde tant que vous ne changez pas l’ambiance ni le style.</p>
             <label class="ambiance">{{ look === 'libre' ? 'Ambiance souhaitée' : 'Ambiance (modifiable)' }}<textarea v-model="direction" name="direction" autocomplete="off" :aria-invalid="!direction.trim() || undefined" rows="3" maxlength="400" @input="look = 'libre'; keptLook = null" /></label>
+            <label class="title-style">Style du titre<select :value="headline.title_style ?? (savedLook ? '' : 'moderne')" :disabled="busy || !!job" aria-label="Style du titre" aria-describedby="aide-style-titre" @change="chooseTitle"><option v-if="savedLook" value="">Celui du modèle</option><option v-for="[id, name] in TITLES" :key="id" :value="id">{{ name }}</option></select></label>
+            <p id="aide-style-titre" class="help">{{ headline.on ? 'L’IA dessine le titre dans ce style à la prochaine version.' : 'Le titre écrit sur l’affiche prend la police de ce style.' }}</p>
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="preparedUrl(`/api/assets/${lookReference}`)" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             </template>
             <template v-else>
@@ -2880,8 +3056,12 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div class="layer-list" role="group" aria-label="Élément à régler"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}</button></div>
             <div class="checks-row switches"><label class="check switch"><input v-model="dragEnabled" type="checkbox" />Déplacer les éléments</label></div>
             <div v-if="chosen" class="layer-properties">
-              <template v-if="chosen.kind === 'text'"><p class="sub">Typographie</p><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label></div><div class="form-row"><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: capsuleFill(), border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><div class="checks-row switches"><label class="check switch"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check switch"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div><button v-if="chosen.texture_effect_id" class="quiet" @click="patchLayer(chosen.id, { texture_effect_id: null })">Retirer la matière du texte</button></template>
-              <p class="sub">Position et dimensions</p><div class="form-row" v-for="pair in ([['x','y'],['width','height']] as const)" :key="pair[0]"><label v-for="field in pair" :key="field">{{ { x:'Position X', y:'Position Y', width:'Largeur', height:'Hauteur' }[field] }}<input type="number" :value="Math.round(chosen[field])" @change="numeric(field, $event)" /></label></div>
+              <template v-if="chosen.kind === 'text'"><p class="sub">Typographie</p><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: capsuleFill(), border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><button v-if="chosen.texture_effect_id" class="quiet" @click="patchLayer(chosen.id, { texture_effect_id: null })">Retirer la matière du texte</button></template>
+              <!-- The choices few sellers need, closed (D-KIT-012): nothing is removed, all stay usable once opened. -->
+              <details><summary>Réglages avancés</summary>
+                <template v-if="chosen.kind === 'text'"><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label></div><div class="checks-row switches"><label class="check switch"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check switch"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div></template>
+                <p class="sub">Position et dimensions</p><div class="form-row" v-for="pair in ([['x','y'],['width','height']] as const)" :key="pair[0]"><label v-for="field in pair" :key="field">{{ { x:'Position X', y:'Position Y', width:'Largeur', height:'Hauteur' }[field] }}<input type="number" :value="Math.round(chosen[field])" @change="numeric(field, $event)" /></label></div>
+              </details>
               <template v-if="chosen.kind === 'text' && ['title','price'].includes(chosen.role)"><p class="sub">Ajuster ce texte avec une consigne</p><p class="help">Seul le {{ chosen.role === 'price' ? 'prix' : 'titre' }} sélectionné sera ajusté. La scène reste intacte.</p><label>Votre consigne<textarea v-model="polish" name="polish" autocomplete="off" maxlength="500" rows="3" placeholder="Ex. Un titre doré avec une ombre légère…" /></label><button :disabled="busy || !!job || !polish.trim() || !caps?.planner_available" @click="askText">Proposer un ajustement</button><small v-if="caps?.planner_available">Sans crédit.</small><p v-else class="help">Les consignes ne sont pas encore disponibles. Les réglages manuels restent disponibles.</p>
               <p v-if="caps?.planner_available && whyNoText" class="why" role="status">{{ whyNoText }}</p>
               <div v-if="proposal && proposal.layer_id === selected" class="plan"><p>{{ proposal.patch.summary_fr }}</p><template v-if="proposal.status === 'pending'"><div v-if="proposal.patch.content_change"><p><strong>Contenu partagé modifié</strong> · Toutes les tailles de cette affiche sont concernées.</p><p>Avant : {{ proposal.before.offer[proposal.patch.content_change.field] }}<br />Après : {{ proposal.patch.content_change.value }}</p><label class="check"><input v-model="acknowledgeContent" type="checkbox" />Je confirme ce nouveau contenu.</label></div><button :disabled="busy || (!!proposal.patch.content_change && !acknowledgeContent)" @click="perform(applyProposal)">Appliquer au texte</button><button class="quiet" :disabled="busy" @click="perform(rejectProposal)">Refuser l’ajustement</button></template><template v-else-if="proposal.status === 'applied' && proposal.patch.texture_request"><p>Matière proposée : {{ proposal.patch.texture_request.description }}</p><button :disabled="busy || !!job" @click="askEffect">Générer la matière du texte</button><small>{{ credit(balance, 'text_texture').text }}</small></template></div>
@@ -2941,14 +3121,14 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div v-if="proposal?.status === 'pending' || effect?.status === 'proposed'" class="polish-preview"><strong>Ajustement à vérifier</strong><label class="check"><input v-model="previewPolish" type="checkbox" />Voir la proposition sur l’affiche</label><button v-if="!stepping" type="button" class="text-button" @click="selected = (effect?.status === 'proposed' ? effect : proposal).layer_id; go('reglages')">Ouvrir l’ajustement</button></div>
           <div v-if="saveState === 'failed' || saveState === 'conflict'" class="save-recovery"><button v-if="saveState === 'failed'" @click="perform(flush)">Réessayer l’enregistrement</button><template v-else><button @click="perform(conflictCopy)">Conserver mes modifications dans une copie</button><button class="quiet" @click="askDiscard">Abandonner mes modifications et recharger</button></template></div>
           <ul v-if="issues.length" class="issues"><li v-for="issue in issues" :key="issue.id" :class="{ blocking: issue.blocking }"><button class="text-button" @click="pick(issue.layer_id)">{{ issue.message }}</button></li></ul>
-          <p v-if="currentVisual" class="help">{{ currentVisual.status === 'approved' ? 'Fidélité du produit approuvée.' : currentVisual.status === 'rejected' ? 'Cette version a été refusée. Choisissez une autre version ou générez-en une nouvelle.' : 'Comparez le produit à votre photo sur l’aperçu final.' }}</p>
+          <p v-if="currentVisual" class="help">{{ currentVisual.status === 'approved' ? 'Version confirmée.' : currentVisual.status === 'rejected' ? 'Cette version a été refusée. Choisissez une autre version ou générez-en une nouvelle.' : 'Comparez le produit à votre photo sur l’aperçu final.' }}</p>
         </section>
         <aside id="poster-versions" class="versions" aria-labelledby="titre-versions" :inert="peeking">
           <h2 id="titre-versions">Versions <span class="count">{{ visuals.length }} sur 12</span></h2>
           <p v-if="!visuals.length" class="help">Chaque génération crée une version. Vous choisirez celle à exporter.</p>
           <article v-for="(visual, index) in visuals" :key="visual.id" class="version" :class="{ selected: currentVisual?.id === visual.id }">
             <button type="button" class="thumb" :aria-pressed="currentVisual?.id === visual.id" :aria-busy="choosing === visual.id || undefined" :aria-label="`Choisir la version ${visuals.length - index} (${versionStates[visual.status]})`" @click="chooseVisual(visual)"><img :src="thumbnailUrl(visual.image_url)" width="104" :height="Math.round(104 * FORMATS[format][1] / FORMATS[format][0])" loading="lazy" alt="Version générée de la scène" /></button>
-            <strong class="version-number">Version {{ visuals.length - index }}</strong><span class="state" :class="visual.status">{{ { approved:'Approuvée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
+            <strong class="version-number">Version {{ visuals.length - index }}</strong><span class="state" :class="visual.status">{{ { approved:'Confirmée', pending_review:'À vérifier', rejected:'Refusée' }[visual.status] }}</span>
             <strong v-if="currentVisual?.id === visual.id" class="pick">Choisie pour l’export</strong>
             <button class="text-button" :disabled="busy && currentVisual?.id === visual.id && visual.status !== 'rejected'" :aria-label="`Comparer la version ${visuals.length - index}`" @click="compareVisual(visual)">Comparer</button>
           </article>
@@ -3068,6 +3248,10 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <button class="secondary" @click="changePriceLater">Changer le prix</button>
               <p class="help">{{ priceChangeHelp }}</p>
             </div>
+            <div v-if="!earlier && finalPreview.download_url && fileVisual && caps?.planner_available" class="after">
+              <button class="secondary" :disabled="busy || !!job" @click="perform(keepModel)">Garder cette scène comme modèle</button>
+              <p class="help">Sans crédit.</p>
+            </div>
             <section v-if="facebookOn && (historyPosts.length || postsAfter)" class="publications" aria-labelledby="titre-publications">
               <h3 id="titre-publications">Publications sur Facebook</h3>
               <ul class="points"><li v-for="line in historyPosts" :key="line.post.id">
@@ -3085,14 +3269,14 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
       <div class="final-grid">
         <div class="shot"><img :src="opened.image" alt="Affiche modèle de ce style" /></div>
         <div class="stack">
-          <div class="group"><h3><Icon n="palette" />Description</h3><ul class="points"><li>Ambiance<small>{{ opened.direction }}</small></li><template v-if="opened.brief"><li>Surface<small>{{ opened.brief.surface_fr }}</small></li><li>Couleurs<small class="swatches"><span v-for="colour in opened.brief.palette" :key="colour"><i :style="{ background: colour }" />{{ colour }}</span></small></li><li>Titre et prix<small>{{ opened.brief.alignment === 'left' ? 'Alignés à gauche' : 'Centrés' }}</small></li></template></ul></div>
+          <div class="group"><h3><Icon n="palette" />Description</h3><ul class="points"><li>Ambiance<small>{{ opened.direction }}</small></li><template v-if="opened.brief"><li>Surface<small>{{ opened.brief.surface_fr }}</small></li><li aria-hidden="true">Couleurs<small class="swatches"><span v-for="colour in opened.brief.palette" :key="colour"><i :style="{ background: colour }" /></span></small></li><li>Titre<small>Comme sur l’affiche modèle</small></li><li>Titre et prix<small>{{ opened.brief.alignment === 'left' ? 'Alignés à gauche' : 'Centrés' }}</small></li></template></ul></div>
           <div v-if="opened.own" class="group"><label>Nom du style<input v-model="renameText" name="look-name" autocomplete="off" maxlength="40" :aria-invalid="!!renameError || undefined" aria-describedby="erreur-nom-style" @keydown.enter="perform(renameLook)" /></label><p v-if="renameError" id="erreur-nom-style" class="why" role="alert">{{ renameError }}</p><button :disabled="busy || !renameText.trim() || renameText.trim() === opened.name" @click="perform(renameLook)">Renommer</button></div>
           <div class="after"><button class="primary" @click="useLook(opened.id)"><Icon n="plus" />Créer une affiche avec ce style</button><button v-if="opened.own" :disabled="busy" @click="askRemoveLook">Retirer ce style</button></div>
         </div>
       </div>
     </section>
     <section v-if="review" v-modal class="review-panel" role="dialog" aria-modal="true" aria-labelledby="review-title" :inert="!!paid || termsOpen" @keydown.esc="review = null" @keydown.tab="keepTab">
-      <div class="section-heading"><div><h2 id="review-title" tabindex="-1">{{ reviewingSelected ? 'Préparation de l’aperçu' : review.status === 'approved' ? 'Fidélité approuvée' : 'Vérifier la fidélité du produit' }}</h2><p v-if="!reviewingSelected && review.status !== 'approved'" class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
+      <div class="section-heading"><div><h2 id="review-title" tabindex="-1">{{ reviewingSelected ? 'Préparation de l’aperçu' : review.status === 'approved' ? 'Version confirmée' : 'Vérifier la fidélité du produit' }}</h2><p v-if="!reviewingSelected && review.status !== 'approved'" class="lede">Comparez la version à votre photo et relisez chaque texte que l’IA a dessiné. Au moindre écart, signalez un problème.</p></div><button class="ghost" @click="review = null"><Icon n="close" />Fermer</button></div>
       <div v-if="reviewingSelected">
         <p role="status">{{ reviewFileBlock || (busy ? 'Préparation de votre affiche…' : error || 'Vérifiez le fichier de cette affiche.') }}</p>
         <button v-if="!job && !busy && !reviewFileBlock" class="primary" @click="perform(checkReviewedFile)">Réessayer</button>
@@ -3115,8 +3299,8 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
           <div v-if="textChecks.length" class="group"><h3><Icon n="text" />Les textes dessinés</h3><p class="help">Ce que vous avez saisi, à retrouver lettre pour lettre.</p><ul class="points"><li v-for="item in textChecks" :key="item.key">{{ item.label }}<small translate="no">{{ item.value }}</small></li><li>Aucun autre texte, sauf ceux que vous avez demandés à l’IA</li></ul></div>
           <div class="group"><h3><Icon n="image" />L’image</h3><p class="help">L’ensemble de la scène.</p><ul class="points"><li v-for="check in (['extras_text', 'integration'] as const)" :key="check">{{ checkNames[check] }}</li><li v-if="review.logo_disc">Un disque blanc vide est prévu pour le logo : rien ne doit être dessiné dedans</li><li v-if="review.logo_disc === null" class="warn">Le disque du logo n’a pas été trouvé dans l’image : le logo a été retiré de cette affiche. Activez « Logo » dans « Boutique » pour le placer vous-même, ou générez une nouvelle version.</li></ul></div>
         </div>
-        <div class="actions"><span class="count">Choisir cette version ouvre l’affiche finale. Vous pouvez aussi approuver cette variante pour plus tard.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="secondary" :disabled="busy" @click="perform(() => decide('approve'))">Tout est conforme, approuver</button><button class="primary" :disabled="busy || !!job" @click="chooseVisual(review); perform(checkReviewedFile)">Choisir cette version</button></div>
-        <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" name="rejection" autocomplete="off" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(() => decide('reject'))">Refuser cette version</button><p v-if="!rejection.trim()" class="why" role="status">Décrivez d’abord ce qui doit être corrigé.</p></div>
+        <div class="actions"><span class="count">Choisir cette version ouvre l’affiche finale.</span><button class="secondary" :disabled="busy" @click="rejecting = !rejecting">Signaler un problème</button><button class="primary" :disabled="busy || !!job" @click="chooseVisual(review); perform(checkReviewedFile)">Choisir cette version</button></div>
+        <div v-if="rejecting" class="group"><label>Ce qui doit être corrigé<textarea v-model="rejection" name="rejection" autocomplete="off" rows="2" maxlength="500" /></label><button class="secondary" :disabled="busy || !rejection.trim()" @click="perform(rejectVersion)">Refuser cette version</button><p v-if="!rejection.trim()" class="why" role="status">Décrivez d’abord ce qui doit être corrigé.</p></div>
       </template>
       <p v-else-if="review.status === 'rejected'">Cette version a été refusée.</p>
       </template>
@@ -3129,7 +3313,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
     <a href="#affiches" :aria-current="!doc && view === 'posters' ? 'page' : undefined"><Icon n="grid" /><span class="long">Mes affiches <span v-if="posterCount !== undefined" class="count">{{ posterCount }}</span></span><span aria-hidden="true">Affiches</span></a>
     <a href="#creer" class="make"><Icon n="plus" /><span>Créer</span></a>
     <a v-if="publishOn" href="#publier" :aria-current="view === 'publier' ? 'page' : undefined"><Icon n="share" /><span>Publier</span></a>
-    <a v-else href="#styles" :aria-current="view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Styles <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a>
+    <a v-else href="#styles" :aria-current="view === 'styles' ? 'page' : undefined"><Icon n="palette" /><span>Mon kit <span v-if="caps" class="count">{{ LOOKS.length - 1 + savedLooks.length }}</span></span></a>
     <a href="#compte" :aria-current="!doc && view === 'compte' ? 'page' : undefined"><Icon n="user" /><span class="long">Mon compte</span><span aria-hidden="true">Compte</span></a>
   </nav>
 </template>

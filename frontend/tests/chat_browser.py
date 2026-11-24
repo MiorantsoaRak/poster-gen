@@ -29,8 +29,16 @@ UNLISTED = "La nouvelle version est faite, mais elle n’apparaît pas dans cett
 # What a card that pays for an image says (D-BALANCE-006): its credit and what is left (the smokes' shop has 100), and under
 # « Reprendre » or « Réessayer » that the kept request is paid once.
 COST, ONCE = re.compile(r"1 crédit · il vous en reste \d+"), "1 crédit, une seule fois pour cette demande"
+# Whether an element is wholly inside the visible viewport, and is what a tap at its centre reaches.
+REACH_JS = r"""e => { const b = e.getBoundingClientRect(), v = visualViewport
+  return { inside: b.left >= v.offsetLeft - .5 && b.top >= v.offsetTop - .5 && b.right <= v.offsetLeft + v.width + .5 && b.bottom <= v.offsetTop + v.height + .5,
+    hit: e.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)), box: [b.x, b.y, b.width, b.height].map(Math.round) } }"""
 # Above the button of every scene adjustment still to be had, whatever brought the card (D-TERMS-005, generation.ts).
 WARNING = "Vous demandez des caractéristiques sans les lister ? L’IA choisira les caractéristiques : vérifiez-les avant de publier."
+# The price question of a message with no amount read in it (D-KIT-002).
+NO_PRICE = "Je ne vois pas de prix dans votre message. Écrivez-le en chiffres, par exemple 250 000 Ar."
+# The last line of a card whose words are drawn again in a whole new image (D-KIT-007).
+REDRAW = "Le texte est dessiné dans l’image : cette correction refait toute l’image, pour 1 crédit."
 
 
 def sign_in(page):
@@ -156,18 +164,18 @@ def walk_late_401(browser, errors, session):
 
 
 def walk_desktop(browser, errors, product, inspiration):
-    held = {"on": False}
-    reads, scenes, fonts = [], [], []
+    held = {"on": False, "look": False}
+    reads, scenes, fonts, looks = [], [], [], []
 
     # The stub makes a scene in about a second: its state is held at « running » in the answers (one job, and the
-    # poster's list of jobs read at a reload) while the real job ends behind.
+    # poster's list of jobs read at a reload) while the real job ends behind. The style model's reading too.
     def hold_job(route):
-        if not held["on"]:
+        if not held["on"] and not held["look"]:
             return route.continue_()
         response = route.fetch()
         body = response.json()
         for job in body.get("items", [body]):
-            if job["kind"] == "scene":
+            if (job["kind"] == "scene" and held["on"]) or (job["kind"] == "look" and held["look"]):
                 job.update(status="running", result_ref=None, error_code=None, finished_at=None)
         route.fulfill(response=response, json=body)
 
@@ -176,6 +184,8 @@ def walk_desktop(browser, errors, product, inspiration):
             reads.append(request.headers["idempotency-key"])
         if request.method == "POST" and request.url.endswith("/scenes"):
             scenes.append(request.headers["idempotency-key"])
+        if request.method == "POST" and request.url.endswith("/looks"):
+            looks.append(request.post_data_json)
         if POSTER_FONTS.search(request.url) or "PosterCanvas" in request.url:  # a font file, or the canvas's code (the dev server's module here)
             fonts.append(request.url)
 
@@ -227,22 +237,27 @@ def walk_desktop(browser, errors, product, inspiration):
     field.fill("Sony WH-1000XM6 noir, 700 000 Ar")
     page.reload()
     expect(field).to_have_value("Sony WH-1000XM6 noir, 700 000 Ar")
-    # Two images: the first is the product, the second the inspiration; each is uploaded at once; a label swaps the roles.
+    # Two images: both are product photos, never a style model by their position (D-KIT-006); each is uploaded at once.
+    # One touch on a label makes that photo the style model; one on another moves the model there; one on the model
+    # makes it a product photo again.
     page.locator(".composer input[type=file]").set_input_files([product, inspiration])
     pics = page.locator(".tray .pic")
+    roles = pics.locator(".pic-role")
     expect(pics).to_have_count(2)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    expect(pics.nth(0).locator(".pic-role")).to_have_text("Produit")
-    expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
-    expect(page.locator(".style-row")).to_have_text("Style : comme votre inspiration")
-    pics.nth(0).locator(".pic-role").click()
-    expect(pics.nth(0).locator(".pic-role")).to_have_text("Inspiration")
-    expect(pics.nth(1).locator(".pic-role")).to_have_text("Produit")
-    pics.nth(0).locator(".pic-role").click()
-    expect(pics.nth(0).locator(".pic-role")).to_have_text("Produit")
-    expect(pics.nth(1).locator(".pic-role")).to_have_text("Produit")
-    pics.nth(1).locator(".pic-role").click()
-    expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
+    expect(roles).to_have_text(["Produit", "Produit"])
+    expect(roles.nth(1)).to_have_accessible_name("Produit : marquer comme modèle de style")
+    expect(page.get_by_role("group", name="Style de l’affiche").get_by_role("button")).to_have_count(3)
+    roles.nth(0).click()
+    expect(roles).to_have_text(["Modèle de style", "Produit"])
+    expect(roles.nth(0)).to_have_accessible_name("Modèle de style : marquer comme produit")
+    expect(page.locator(".style-row")).to_have_text("Scène : votre modèle de style")
+    roles.nth(1).click()
+    expect(roles).to_have_text(["Produit", "Modèle de style"])
+    roles.nth(1).click()
+    expect(roles).to_have_text(["Produit", "Produit"])
+    roles.nth(1).click()
+    expect(roles).to_have_text(["Produit", "Modèle de style"])
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
     for label in ("Ajouter des photos", "Envoyer", "Retirer cette image"):
         expect(page.get_by_role("button", name=label).first).to_be_visible()
@@ -253,9 +268,9 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(recap.locator(".recap b")).to_have_text("Sony WH-1000XM6 noir")
     expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^700\s000 Ar$"))
     expect(recap.locator(".recap-format")).to_have_text("Publication 4:5")
-    expect(recap).to_contain_text("Style : comme votre inspiration")
+    expect(recap).to_contain_text("Scène : votre modèle de style (lu, puis gardé dans votre kit)")
     expect(recap).to_contain_text(COST)
-    expect(recap.locator(".pic")).to_have_text(["Produit", "Inspiration"])
+    expect(recap.locator(".pic")).to_have_text(["Produit", "Modèle de style"])
     expect(thread.locator(".bubble.me")).to_contain_text("Sony WH-1000XM6 noir, 700 000 Ar")
     expect(field).to_be_focused()
     expect(field).to_have_value("")
@@ -263,14 +278,23 @@ def walk_desktop(browser, errors, product, inspiration):
     assert len(reads) == 1, reads
     both_themes(page, "recap, desktop", "chat-recap-1366")
 
-    # One tap: the card is spent before the request leaves, and its id is the paid request's key.
-    held["on"] = True
+    # One tap: the card is spent before the request leaves, and its id is the paid request's key. The style photo is read
+    # into one of the shop's looks first (D-KIT-006): one brief, no credit, and nothing paid has left while it is read.
+    held["on"] = held["look"] = True
     create = page.get_by_role("button", name="Créer l’affiche")
     create.click()
     page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
     poster = page.url.split("#message-")[1]
     wait = thread.locator(".chat-wait")
-    expect(wait).to_contain_text("Je dessine l’affiche…")
+    expect(wait).to_have_text("Je lis votre modèle de style…")
+    tapped = next(item for item in page.evaluate(THREAD, poster)["items"] if item.get("spent"))
+    style_asset = next(picture["asset"] for picture in tapped["card"]["pictures"] if picture["role"] == "inspiration")
+    assert scenes == [] and looks == [{"name": "Style 1", "reference_asset": style_asset}], (scenes, looks)
+    held["look"] = False
+    expect(wait).to_contain_text("Je dessine l’affiche… En général 1 à 2 minutes.")
+    expect(thread).to_contain_text("Votre modèle de style est gardé dans votre kit : « Style 1 ».")
+    model = page.request.get(smoke.ORIGIN + "/api/looks").json()["items"]
+    assert [(item["name"], item["reference_asset"]) for item in model] == [("Style 1", style_asset)], model
     expect(create).to_have_count(0)
     field.fill("fond plus sombre")  # typing stays possible; « Envoyer » waits
     expect(send).to_be_disabled()
@@ -292,8 +316,13 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(verify).to_be_visible(timeout=30000)
     expect(page.get_by_role("heading", name=FINAL)).to_have_count(0)
     expect(thread).to_contain_text("Version 1 prête.")
-    assert spent[0]["request"]["body"]["format"] == "feed"
+    body = spent[0]["request"]["body"]
+    assert body["format"] == "feed"
+    # The scene names the look read from the style photo, never the raw image; one brief was asked for this poster.
+    assert body["headline"]["look_id"] == model[0]["id"] and "style_reference_asset" not in body, body
+    assert [job["kind"] for job in page.request.get(f"{smoke.ORIGIN}/api/creations/{poster}/jobs").json()["items"]].count("look") == 1
     expect(recap.locator(".recap-format")).to_have_text("Publication 4:5")
+    expect(recap).to_contain_text("Scène : votre modèle de style")
     assert scenes == [spent[0]["id"]], scenes
     side = page.locator(".chat-side")
     expect(side).to_contain_text("Version 1 · à vérifier")
@@ -313,7 +342,13 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(panel).to_contain_text("Chaque texte ou caractéristique ajouté par l’IA doit être exact")
     expect(panel).to_contain_text(re.compile(r"700\s000 Ar"))
     assert page.request.get(address).json()["confirmation"] is None
-    panel.get_by_role("button", name="Fermer").click()
+    # « Corriger l’affiche » from Message (D-KIT-007): the review closes on the poster's thread, whose field takes the
+    # cursor for the correction.
+    panel.get_by_role("button", name="Corriger l’affiche").click()
+    expect(panel).to_have_count(0)
+    assert page.url.endswith(f"#message-{poster}"), page.url
+    expect(field).to_be_focused()
+    expect(field).to_have_attribute("placeholder", "Dites ce qu’il faut corriger.")
     assert page.request.get(address + "/visuals").json()["items"][0]["status"] == "pending_review"
     verify.click()
     smoke.download_review(page)
@@ -323,13 +358,17 @@ def walk_desktop(browser, errors, product, inspiration):
     assert (after_render["available"], after_render["pending"]) == (before_review["available"], before_review["pending"])
     page.screenshot(path=str(OUT / "chat-confirmed-1366.png"))
     page.get_by_role("button", name="Fermer").click()
-    expect(thread.locator(".chat-state")).to_have_text("Approuvée")
+    expect(thread.locator(".chat-state")).to_have_text("Confirmée")
     expect(verify).to_have_count(0)
     # The chat never mounted the canvas, nor loaded its code (Konva and the fonts' module) or a poster font.
     expect(page.locator(".poster-canvas, .konvajs-content")).to_have_count(0)
     assert not fonts, fonts
     assert len(reads) == 1, reads
 
+    # The style model is one of the shop's models in « Mon kit » from now on (D-KIT-006, 011).
+    smoke.go(page, "Mon kit")
+    expect(page.get_by_role("heading", name="Mon kit", exact=True)).to_be_visible()
+    expect(page.locator(".look-card", has_text="Style 1")).to_have_count(1)
     # « Mes affiches » opens a poster in the chat when the chat is the start view; the switch shows the same poster in the editor.
     smoke.go(page, "Mes affiches")
     page.get_by_role("button", name=re.compile("Sony WH-1000XM6 noir")).first.click()
@@ -367,8 +406,8 @@ def walk_desktop(browser, errors, product, inspiration):
     expect(thread.locator(".bubble.me")).to_have_text("Casque JBL Tune")
     context.unroute("**/api/reads")
     thread.get_by_role("button", name="Réessayer").click()
-    # No price: asked. No photo: asked, with its button.
-    expect(thread).to_contain_text("Quel est le prix ?")
+    # No price: asked, with how to write it (D-KIT-002). No photo: asked, with its button.
+    expect(thread).to_contain_text(NO_PRICE)
     assert len(reads) == 3 and reads[1] == reads[2] != reads[0], reads
     assert page.evaluate("localStorage.getItem('affiche.shop1.chat.pending')") is None
     send.click()
@@ -379,16 +418,18 @@ def walk_desktop(browser, errors, product, inspiration):
     chooser.value.set_files(product)
     expect(page.locator(".tray .pic .pic-role")).to_have_text("Produit")
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    # Without an inspiration the three styles are offered, the last used one chosen.
+    # Without an inspiration the house styles and the shop's model are offered (D-KIT-009): the last one used first, and
+    # chosen for this new poster.
     styles = page.get_by_role("group", name="Style de l’affiche").get_by_role("button")
-    expect(styles).to_have_text(["Studio clair", "Couleurs du produit", "Luxe sombre"])
+    expect(styles).to_have_text(["Style 1", "Studio clair", "Couleurs du produit", "Luxe sombre"])
     expect(styles.nth(0)).to_have_attribute("aria-pressed", "true")
     send.click()
     expect(ask.get_by_role("button", name="Ajouter une photo")).to_have_count(0)
     expect(recap.last.locator(".recap b")).to_have_text("Casque JBL Tune")
     expect(recap.last.locator(".recap-price")).to_have_text(re.compile(r"^250\s000 Ar$"))
-    styles.nth(2).click()
-    expect(recap.last).to_contain_text("Style : Luxe sombre")
+    expect(recap.last).to_contain_text("Scène : Style 1")
+    styles.filter(has_text="Luxe sombre").click()
+    expect(recap.last).to_contain_text("Scène : Luxe sombre")
     assert len(reads) == 4, reads
     # A correction replaces the recap: only the latest can be tapped.
     say(page, "260 000 Ar")
@@ -629,19 +670,14 @@ def walk_changes(browser, errors, session, data):
     def arrived(number):
         expect(thread).to_contain_text(f"Version {number} prête.", timeout=30000)
 
-    def approve():  # every version still to check, the newest first
-        while verify.count():
-            left = verify.count()
-            verify.last.click()
-            title = page.get_by_role("heading", name=REVIEW).or_(page.get_by_role("heading", name=FINAL))
-            expect(title).to_be_visible(timeout=30000)
-            if title.inner_text() == FINAL:
-                smoke.download_review(page)
-                page.locator(".final-preview").get_by_role("button", name="Fermer").click()
-            else:
-                page.get_by_role("button", name="Tout est conforme, approuver").click()
-                page.get_by_role("dialog", name="Fidélité approuvée").get_by_role("button", name="Fermer").click()
-            expect(verify).to_have_count(left - 1)
+    def approve():  # the newest version, the poster's: confirmed with its file. A version is approved only that way
+        # (D-KIT-001): an older one still to check keeps its « Vérifier », and no longer speaks for the poster.
+        left = verify.count()
+        verify.last.click()
+        expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+        smoke.download_review(page)
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+        expect(verify).to_have_count(left - 1)
         expect(download.last).to_be_visible()  # on the selected version only
 
     expect(thread).to_contain_text("Dites ce qu’il faut changer")
@@ -709,7 +745,7 @@ def walk_changes(browser, errors, session, data):
     expect(mods).to_have_text([re.compile(r"^V2\s*fond plus sombre\s*À vérifier$"), re.compile(r"^V1\s*Première affiche\s*Confirmée$")])
     # A line of the list shows its version. Looking is free: the poster's choice does not move.
     mods.nth(1).click()
-    expect(side).to_contain_text("Version 1 · approuvée")
+    expect(side).to_contain_text("Version 1 · confirmée")
     expect(mods.nth(1)).to_have_attribute("aria-current", "true")
     page.wait_for_timeout(1500)
     assert creation()["document"]["formats"]["feed"]["scene"]["visual_id"] == second["id"]
@@ -723,7 +759,7 @@ def walk_changes(browser, errors, session, data):
     # the poster's. Its price is drawn in the image: a whole new image, with its cost. At the tap that version becomes
     # the poster's, the card's words are set in the editor, and the new scene has the card's key.
     mods.nth(1).click()
-    expect(side).to_contain_text("Version 1 · approuvée")
+    expect(side).to_contain_text("Version 1 · confirmée")
     say(page, "prix 650 000 Ar")
     card = thread.locator(".bubble.bot").last
     expect(card).to_contain_text(re.compile(r"Prix : 650\s000 Ar"))
@@ -747,7 +783,7 @@ def walk_changes(browser, errors, session, data):
     say(page, "marque Sony")
     card = thread.locator(".bubble.bot").last
     lines = card.locator("p.lines")
-    expect(lines).to_have_text(re.compile(r"^Titre : WH-1000XM6 noir\s+Marque : Sony$"))
+    expect(lines).to_have_text(re.compile(r"^Titre : WH-1000XM6 noir\s+Marque : Sony\s+" + re.escape(REDRAW) + "$"))
     assert lines.evaluate("e => getComputedStyle(e).whiteSpace") == "pre-line" and "\n" in lines.evaluate("e => e.textContent")
     assert bodies[-1]["visual_id"] == third["id"], bodies[-1]
     looks_right(page, "words card, desktop", "chat-words-1366.png")
@@ -765,18 +801,21 @@ def walk_changes(browser, errors, session, data):
     selected(fourth["id"])
     expect(side).to_contain_text(re.compile(r"Version 4 · à vérifier\s*WH-1000XM6 noir · 650\s000 Ar"))
     expect(mods.first).to_have_text(re.compile(r"^V4\s*Titre : WH-1000XM6 noir · Marque : Sony\s*À vérifier$"))
-    # Reviewing the earlier V3 changes its fidelity decision only. V4 is still the export selection.
+    # The earlier V3 still to check: its review chooses it or refuses it, and never approves it apart from its file
+    # (D-KIT-001). Closed, it changes nothing: V4 is still the export selection, and nothing is rendered.
     expect(verify).to_have_count(2)
     renders = len(made("render"))
     verify.first.click()
-    page.get_by_role("button", name="Tout est conforme, approuver").click()
-    historical = page.get_by_role("dialog", name="Fidélité approuvée")
+    historical = page.get_by_role("dialog", name=REVIEW)
     expect(historical.get_by_role("button", name="Choisir cette version")).to_be_visible()
-    expect(historical.get_by_role("button", name="Vérifier le fichier final")).to_have_count(0)
-    selected(fourth["id"])
+    expect(historical.get_by_role("button", name="Signaler un problème")).to_be_visible()
+    expect(historical.get_by_role("button", name="Tout est conforme, approuver")).to_have_count(0)
     historical.get_by_role("button", name="Fermer").click()
+    expect(historical).to_have_count(0)
+    selected(fourth["id"])
     assert len(made("render")) == renders
     approve()
+    expect(verify).to_have_count(1)  # V3's, left to check
 
     # The card's words are saved in the document before the scene is asked. A reload between the two: nothing paid
     # left, a new card is offered, and the chat says what the image still shows, from the editor's own comparison.
@@ -784,7 +823,7 @@ def walk_changes(browser, errors, session, data):
     held_plans = []  # the version's plan, saved again at the new revision (ADR-100): held, so the scene never leaves
     context.route("**/plans/*/revisions", lambda route: held_plans.append(route))
     say(page, "titre WH-1000XM6 Pro")
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Titre : WH-1000XM6 Pro")
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(f"Titre : WH-1000XM6 Pro {REDRAW}")
     expect(still).to_have_count(0)
     redo.click()
     for _ in range(100):
@@ -816,7 +855,7 @@ def walk_changes(browser, errors, session, data):
     # A later price card: the document then holds a title and a price that the image does not show. The line and
     # « Remettre les textes de l’image » are still there, on the newest card, whatever the cards before remembered.
     say(page, "prix 600 000 Ar")
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(re.compile(r"^Titre : WH-1000XM6 Pro\s+Prix : 600\s000 Ar$"))
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(re.compile(r"^Titre : WH-1000XM6 Pro\s+Prix : 600\s000 Ar\s+" + re.escape(REDRAW) + "$"))
     expect(still).to_have_text("L’affiche montre encore : « WH-1000XM6 noir ».")
     redo.click()
     expect(still).to_have_text(re.compile(r"^L’affiche montre encore : « WH-1000XM6 noir », 650\s000 Ar\.$"))
@@ -886,7 +925,7 @@ def walk_changes(browser, errors, session, data):
     expect(field).to_be_focused()
     send.click()
     # The card is read against the saved poster: the price typed in « Pas à pas » is one of its lines.
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(re.compile(r"^Titre : WH-1000XM6 Max\s+Prix : 590\s000 Ar$"))
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(re.compile(r"^Titre : WH-1000XM6 Max\s+Prix : 590\s000 Ar\s+" + re.escape(REDRAW) + "$"))
     assert len(reads) == count + 1 and creation()["document"]["offer"]["price_ar"] == 590000, reads
     # The image is asked with the card's words only: the subtitle typed in « Pas à pas » is not in the request.
     redo.click()
@@ -895,7 +934,7 @@ def walk_changes(browser, errors, session, data):
     selected(versions()[0]["id"])
     approve()
     say(page, "sous-titre Casque sans fil")
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : Casque sans fil")
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(f"Sous-titre : Casque sans fil {REDRAW}")
     redo.click()
     arrived(7)
     seventh = versions()[0]
@@ -950,12 +989,12 @@ def walk_changes(browser, errors, session, data):
     def texts(on):
         switch.get_by_role("button", name="Pas à pas").click()
         page.wait_for_url(f"**/#{poster}")
-        page.get_by_label("Laisser l’IA composer le titre dans l’image").set_checked(on)
+        page.get_by_label("Dessiner les textes dans l’image").set_checked(on)
         switch.get_by_role("button", name="Message").click()
         page.wait_for_url(f"**/#message-{poster}")
     texts(False)
     say(page, "sans sous-titre")
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : retiré")
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(f"Sous-titre : retiré {REDRAW}")
     count = len(sent["scenes"])
     redo.click()
     expect(thread).to_contain_text("Les textes dessinés sont désactivés pour cette affiche : réglez-les dans Pas à pas.")
@@ -1063,7 +1102,7 @@ def walk_changes(browser, errors, session, data):
     context.unroute("**/refinements")
     page.get_by_role("button", name="Fermer").click()
     expect(resume).to_be_enabled()
-    verify.click()  # the eighth version, still to check
+    verify.last.click()  # the eighth version, still to check (V3's is still there, D-KIT-001)
     expect(page.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
     page.get_by_role("button", name="Signaler un problème").click()
     page.locator("textarea[name=rejection]").fill("Le fond ne va pas")
@@ -1243,7 +1282,7 @@ def walk_changes(browser, errors, session, data):
     box = mods.nth(7).bounding_box()
     assert box["height"] >= 44 and box["x"] >= 0 and box["x"] + box["width"] <= 360, box
     mods.nth(7).tap()
-    expect(side).to_contain_text("Version 2 · approuvée")
+    expect(side).to_contain_text("Version 2 · confirmée")
     expect(mods.nth(7)).to_have_attribute("aria-current", "true")
     # No bottom bar in the chat (D-REDESIGN-002): the composer ends inside the visible screen with the list open.
     expect(page.locator(".phone-bar")).to_have_count(0)
@@ -1273,18 +1312,23 @@ def walk_uploads(browser, errors, session, small, broken, animated):
         page.get_by_role("button", name="Retirer cette image").click()
         expect(pics).to_have_count(0)
         expect(alert).to_have_count(0)
-    # A fifth image is not taken, and a role that has no room is not given: both are said.
+    # A fourth product photo is not taken, and a role that has no room is not given: both are said (D-KIT-006).
     picker.set_input_files(small)
-    expect(pics).to_have_count(4)
+    expect(pics).to_have_count(3)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
-    expect(notice).to_contain_text("Trois photos du produit et une image d’inspiration au plus.")
-    looks_right(page, "fifth image refused", "chat-fifth-image-1366.png")
+    expect(notice).to_contain_text("Trois photos du produit au plus. Pour un modèle de style, touchez l’étiquette d’une photo.")
+    looks_right(page, "fourth product photo refused", "chat-fourth-photo-1366.png")
     # The notice can expire during screenshot capture. Clear it before testing the next refusal.
     notice.get_by_role("button", name="Fermer").evaluate_all("buttons => buttons[0]?.click()")
     expect(notice).to_have_count(0)
-    pics.nth(1).locator(".pic-role").click()  # the inspiration as a fourth product photo
-    expect(pics.nth(1).locator(".pic-role")).to_have_text("Inspiration")
-    expect(notice).to_be_visible()
+    pics.nth(2).locator(".pic-role").click()  # one of them as the style model: room for one more product photo
+    expect(pics.locator(".pic-role")).to_have_text(["Produit", "Produit", "Modèle de style"])
+    picker.set_input_files(small[3])
+    expect(pics).to_have_count(4)
+    expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+    pics.nth(2).locator(".pic-role").click()  # the style model as a fourth product photo
+    expect(pics.nth(2).locator(".pic-role")).to_have_text("Modèle de style")
+    expect(notice).to_contain_text("Trois photos du produit et un modèle de style au plus.")
     notice.get_by_role("button", name="Fermer").click()
     for _ in range(3):
         page.get_by_role("button", name="Retirer cette image").last.click()
@@ -1337,7 +1381,7 @@ def walk_phone(browser, errors, session):
     page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
     page.get_by_role("button", name="Fermer", exact=True).tap()  # not « Fermer le menu », whose drawer is closing
     side, thread = page.locator(".chat-side"), page.get_by_role("log")
-    expect(side).to_contain_text("Version 1 · approuvée")
+    expect(side).to_contain_text("Version 1 · confirmée")
     assert side.bounding_box()["y"] + side.bounding_box()["height"] <= thread.bounding_box()["y"], "phone: the strip is above the thread"
     both_themes(page, "poster in the chat, 360 px", "chat-poster-360")
     # In « Pas à pas » the phone's editor bar stands for the header: it holds the way back to the chat.
@@ -1405,12 +1449,13 @@ def walk_layout(browser, errors, session, product):
         composer inside what is seen."""
         width = page.evaluate("document.documentElement.scrollWidth")
         assert width <= 361, f"the page is {width} px wide at 360 px, {where}"
-        assert page.locator(".composer").evaluate(smoke.REACH_JS)["inside"], f"the composer is not in view, {where}"
+        assert page.locator(".composer").evaluate(REACH_JS)["inside"], f"the composer is not in view, {where}"
 
-    # 1440 px: the question and the composer are one group in the middle half of the column; then the composer goes down.
+    # 1440 px: the question and the composer are one group in the middle of the column; then the composer goes down. The
+    # composer holds the kit row since D-KIT-009 (154 px tall): its foot may reach 4/5 of the column, no longer 3/4.
     context, page = open_chat(1440, 900)
     chat, question, composer = box(page, ".chat"), box(page, ".hello-q"), box(page, ".composer")
-    assert question["y"] >= chat["y"] + chat["height"] / 4 and bottom(composer) <= chat["y"] + chat["height"] * 3 / 4, (chat, question, composer)
+    assert question["y"] >= chat["y"] + chat["height"] / 4 and bottom(composer) <= chat["y"] + chat["height"] * 4 / 5, (chat, question, composer)
     both_themes(page, "empty chat, 1440 px", "chat-empty-1440", placeholders=(".composer textarea",))
     card = first_message(page, "Sony WH-1000XM6 noir, 700 000 Ar")
     chat, composer = box(page, ".chat"), box(page, ".composer")
@@ -1450,11 +1495,13 @@ def walk_layout(browser, errors, session, product):
     last = page.locator(".style-row .style-pill").last
     last.evaluate("e => e.scrollIntoView({ inline: 'end', block: 'nearest', behavior: 'instant' })")
     assert page.locator(".style-row").evaluate("e => e.scrollLeft > 0"), "the style strip did not scroll"
-    reach = last.evaluate(smoke.REACH_JS)
+    reach = last.evaluate(REACH_JS)
     assert reach["inside"] and reach["hit"], f"the last style is not reachable: {reach}"
     assert smoke.same_boxes([attach, send], [box(page, ".chat .attach"), box(page, ".chat .send")]), "attach or send moved with the strip"
     both_themes(page, "empty chat, 360 px", "chat-empty-360", placeholders=(".composer textarea",))
-    card = first_message(page, "Casque Bluetooth Sony WH-1000XM6 noir à réduction de bruit, 12 500 000 Ar")  # 58 characters, the title's limit is 60
+    # 58 characters, the title's limit is 60. The price in one run of digits: written « 12 500 000 », it also reads
+    # « 500 000 », and two amounts are asked with their buttons (D-KIT-002).
+    card = first_message(page, "Casque Bluetooth Sony WH-1000XM6 noir à réduction de bruit, 12.500.000 Ar")
     chat, composer = box(page, ".chat"), box(page, ".composer")
     assert abs(bottom(composer) - bottom(chat)) <= 1, (chat, composer)
     on_phone(page, "recap")
@@ -1462,7 +1509,7 @@ def walk_layout(browser, errors, session, product):
     create, cost = card.get_by_role("button", name="Créer l’affiche"), cost_said(card)
     seen = box(page, ".chat-thread")
     for part in (create, cost):
-        reach, b = part.evaluate(smoke.REACH_JS), part.bounding_box()
+        reach, b = part.evaluate(REACH_JS), part.bounding_box()
         assert reach["inside"] and b["y"] >= seen["y"] - .5 and bottom(b) <= bottom(seen) + .5, (reach, b, seen)
     assert cost.get_attribute("id") in create.get_attribute("aria-describedby").split()
     expect(create).to_have_accessible_description(COST)
@@ -1594,7 +1641,7 @@ def walk_guards(browser, errors, session):
     context.route("**/api/looks/*", no_look)
     listed(lambda found: [item | {"headline": item["headline"] | {"look_id": gone}} for item in found])
     say(page, "sous-titre Sans fil")
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : Sans fil")
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(f"Sous-titre : Sans fil {REDRAW}")
     asked = len(looks)
     redo.click()
     expect(thread).to_contain_text(unread)
@@ -1617,9 +1664,10 @@ def walk_guards(browser, errors, session):
     page.wait_for_url(f"**/#{poster}")
     page.get_by_role("tab", name="Style").click()
     page.get_by_role("button", name="Aux couleurs du produit", exact=True).click()
-    swatches = page.get_by_role("group", name="Palette de la prochaine version").locator("span")
+    # No colour code is written (D-KIT-012): the swatch's own colour is read.
+    swatches = page.get_by_role("img", name="Palette de la prochaine version").locator("i")
     expect(swatches).to_have_count(3)
-    photo_colour = swatches.nth(2).inner_text().strip().upper()
+    photo_colour = swatches.nth(2).evaluate("e => '#' + getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0, 3).map(n => (+n).toString(16).padStart(2, '0')).join('')").upper()
     assert re.fullmatch(r"#[0-9A-F]{6}", photo_colour) and photo_colour != accent["accent_colour"], photo_colour
     switch.get_by_role("button", name="Message").click()
     page.wait_for_url(f"**/#message-{poster}")
@@ -1695,7 +1743,7 @@ def walk_guards(browser, errors, session):
     expect(card.locator(".why")).to_have_text(INVALID_PLAN)
     context.unroute("**/plans/*/revisions")
     expect(card.get_by_role("button")).to_have_text(["Corriger dans Pas à pas"])
-    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text("Sous-titre : Nomade")  # no card after it
+    expect(thread.locator(".bubble.bot").last.locator("p.lines")).to_have_text(f"Sous-titre : Nomade {REDRAW}")  # no card after it
     expect(redo).to_have_count(0)
     refused = spent()
     assert refused.get("done") and refused["card"].get("fix") and "request" not in refused and "job" not in refused, refused
@@ -1860,7 +1908,7 @@ def walk_slow_read(browser, errors, session):
     expect(thread).to_contain_text("L’envoi a été interrompu.")
     hold["on"] = False
     thread.get_by_role("button", name="Réessayer").click()  # the same record: the server answers what it stored
-    expect(thread).to_contain_text("Quel est le prix ?")
+    expect(thread).to_contain_text(NO_PRICE)
     assert keys == [first, first] and page.evaluate(PENDING) is None, (keys, first)
     hold["on"] = True
     say(page, "300 000 Ar")
@@ -2170,7 +2218,7 @@ def walk_rest(browser, errors, product, inspiration):
     asked off against the form's ticks), a change of style, a tab of an older bundle refused by the server, the two
     sentences to « Pas à pas », a card kind this bundle does not know. Its own session and browser storage; the shop's
     profile is empty until this walk fills it, at its end."""
-    bodies, sent, drafts = [], {"scenes": [], "plans": [], "revisions": []}, []
+    bodies, sent, drafts = [], {"scenes": [], "plans": [], "revisions": [], "looks": []}, []
 
     def seen(request):
         if request.method != "POST":
@@ -2203,14 +2251,22 @@ def walk_rest(browser, errors, product, inspiration):
     with_identity = "avec le logo et le contact de la boutique"
 
     def new_poster(message, line, *files):
-        """One message with its images to the first version. Returns the poster's id."""
+        """One message with its images to the first version; the inspiration, when given, marked as the style model by
+        one touch (D-KIT-006). Returns the poster's id."""
         page.goto(f"{smoke.ORIGIN}/#message")
         expect(thread).to_contain_text("Ajoutez une photo du produit.")
         page.locator(".composer input[type=file]").set_input_files(list(files))
         expect(page.locator(".tray .pic")).to_have_count(len(files))
         expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+        if inspiration in files:
+            role = page.locator(".tray .pic").nth(files.index(inspiration)).locator(".pic-role")
+            role.click()
+            expect(role).to_have_text("Modèle de style")
         say(page, message)
-        expect(recap.locator(".recap small")).to_have_text(["Publication 4:5", re.compile("^Style : "), line])
+        # The recap's box holds the format; the scene and the shop's identity are the lines under it.
+        expect(recap.locator(".recap small")).to_have_text(["Publication 4:5"])
+        expect(recap.locator(":scope > small").nth(0)).to_have_text(re.compile("^Scène : "))
+        expect(recap.locator(":scope > small").nth(1)).to_have_text(line)
         assert "identity" not in bodies[-1]["draft"], bodies[-1]  # asked in this message: the draft sent is the old shape
         first_tap.click()
         page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
@@ -2235,17 +2291,22 @@ def walk_rest(browser, errors, product, inspiration):
     nothing = {"logo": False, "shop_name": False, "contact": False}
     assert drafts[-1]["offer"]["title"] == "Casque Bose QC45" and drafts[-1]["brand_selection"] == nothing, drafts[-1]
     assert get(f"creations/{poster}")["document"]["include"] == nothing
+    # The style model is a look the shop already has from the same image (walk_desktop's « Style 1 »): taken again, with
+    # no second brief (D-KIT-006).
+    expect(thread).to_contain_text("Votre modèle de style est gardé dans votre kit : « Style 1 ».")
+    model = get("looks")["items"]
+    assert not sent["looks"] and len(model) == 1 and spent()["request"]["body"]["headline"]["look_id"] == model[0]["id"], (sent, model)
     looks_right(page, "recap, empty shop profile")
 
-    # A change of style. The version has a model image (the inspiration) and a scene adjustment asked by message: the
-    # card says that neither is carried, and is paid as a whole new image.
+    # A change of style. The version follows the style model (a look, not a raw model image) and a scene adjustment
+    # asked by message: the card says the adjustment is not carried, and is paid as a whole new image.
     say(page, "fond bleu nuit")
     create.click()
     expect(thread).to_contain_text("Version 2 prête.", timeout=30000)
     second = versions()[0]
-    assert second["instruction_fr"] == "fond bleu nuit" and second["style_reference_asset"], second
+    assert second["instruction_fr"] == "fond bleu nuit" and not second["style_reference_asset"], second
     say(page, "mets le style luxe sombre")
-    expect(last.locator("p.lines")).to_have_text("Style : Luxe sombre L’affiche modèle n’est plus suivie. Les ajustements de scène demandés avant ne sont pas repris.")
+    expect(last.locator("p.lines")).to_have_text("Style : Luxe sombre Les ajustements de scène demandés avant ne sont pas repris.")
     expect(last.get_by_role("button")).to_have_text(["Refaire l’affiche", "Annuler"])
     expect(last).to_contain_text(COST)
     assert bodies[-1]["visual_id"] == second["id"], bodies[-1]
@@ -2265,6 +2326,7 @@ def walk_rest(browser, errors, product, inspiration):
     # (The editor saves a fresh plan again at the document's revision before the scene, as for a first poster.)
     assert paid() | {"revisions": 0} == before | {"plans": before["plans"] + 1, "scenes": before["scenes"] + 1, "revisions": 0}, (sent, before)
     assert request["path"].endswith("/scenes") and not {"style_reference_asset", "keep_adjustments_of"} & request["body"].keys(), request
+    assert "look_id" not in request["body"]["headline"], request  # the new style replaces the model
     assert request["body"]["plan_id"] == third["plan_id"] and not set(lineage(third)) & set(lineage(second)), (lineage(third), lineage(second))
     assert plan_of(third)["plan"]["palette"] != plan_of(second)["plan"]["palette"], plan_of(third)["plan"]["palette"]
     assert third["style_reference_asset"] is None and third["replaces_visual_id"] is None and third["headline"]["title"] == "Casque Bose QC45", third
@@ -2391,10 +2453,10 @@ def walk_rest(browser, errors, product, inspiration):
     page.locator(".composer input[type=file]").set_input_files(product)
     expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
     say(page, f"Enceinte Bose Micro, 150 000 Ar, {with_identity}")
-    expect(recap.locator(".recap small").last).to_have_text("Avec le logo et le contact de la boutique")
+    expect(recap.locator(":scope > small").nth(1)).to_have_text("Avec le logo et le contact de la boutique")
     say(page, "140 000 Ar")
     expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^140\s000 Ar$"))
-    expect(recap.locator(".recap small").last).to_have_text("Avec le logo et le contact de la boutique")
+    expect(recap.locator(":scope > small").nth(1)).to_have_text("Avec le logo et le contact de la boutique")
     assert bodies[-1]["draft"]["identity"] is True, bodies[-1]
     context.close()
 
@@ -2575,6 +2637,366 @@ def walk_choice_phone(browser, errors):
     context.close()
 
 
+LINE_REFUSED = ("Une ligne de la boutique : 40 caractères au plus, sans guillemet droit, sans montant, remise ni numéro (le prix et "
+                "le contact ont leurs champs). Trois lignes au plus, toutes différentes.")
+LOOK_LIMIT = "Vous avez déjà enregistré le nombre maximal de styles."
+NETWORK = "Connexion interrompue. Vos modifications restent dans cet onglet."
+
+
+def walk_kit(browser, errors, product, data, app):
+    """The seller's kit in Message (D-KIT-002 … 006): prices as sellers write them, the owner's scene words and the shop's
+    lines in the first message, the recap's switch, a line asked on an existing poster, and the steps before a paid scene
+    that can fail (keeping a line, reading a style model) with nothing paid; after any failure the recap shows what the
+    retry sends. Its own session; it adds lines to the shop's profile, so it is the last walk of this server. `app`: the
+    server's, whose image service is made to refuse one scene."""
+    reads, scenes, profiles, looks = [], [], [], []
+
+    def seen(request):
+        if request.method == "POST" and request.url.endswith("/api/reads"):
+            reads.append(request.headers["idempotency-key"])
+        if request.method == "POST" and request.url.endswith("/scenes"):
+            scenes.append(request.post_data_json)
+        if request.method == "POST" and request.url.endswith("/looks"):
+            looks.append(request.post_data_json)
+        if request.method == "PUT" and request.url.endswith("/api/shop-profile"):
+            profiles.append(request.post_data_json)
+
+    context = browser.new_context(viewport={"width": 1366, "height": 768}, color_scheme="light")
+    context.on("request", seen)
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: print(f"HTTP {response.status} {response.url}", flush=True) if response.status >= 400 else None)
+    sign_in(page)
+    page.get_by_role("link", name="Créer une affiche").click()
+    page.wait_for_url("**/#message")
+    thread = page.get_by_role("log")
+    recap, last = thread.locator(".bubble.bot", has=page.locator(".recap")).last, thread.locator(".bubble.bot").last
+    create = thread.get_by_role("button", name="Créer l’affiche")
+    get = lambda path: page.request.get(f"{smoke.ORIGIN}/api/{path}").json()
+    credits = lambda: get("balance")["available"]
+
+    def prompts(poster):  # the scene prompts of a poster as the image model gets them: its jobs, in the temporary database
+        with sqlite3.connect(Path(data) / "affiche.db", timeout=10) as store:
+            rows = store.execute("SELECT input_json FROM poster_jobs WHERE creation_id=? AND kind='scene' ORDER BY created_at", (poster,))
+            return [json.loads(row[0])["prompt"] for row in rows]
+
+    def attach(*files):
+        page.locator(".composer input[type=file]").set_input_files(list(files))
+        expect(page.locator(".tray .pic")).to_have_count(len(files))
+        expect(page.locator(".tray .pic[aria-busy]")).to_have_count(0)
+
+    assert get("shop-profile")["lines"] == []
+    attach(product)
+    # Two amounts read (D-KIT-002): never guessed, one button each. A tap is the owner's own figure: the recap comes with
+    # no second read.
+    say(page, "Redmi Note 13 700 000")
+    expect(last).to_contain_text(re.compile(r"J’ai lu 13\s700\s000 Ar ou 700\s000 Ar : lequel est le prix \?"))
+    expect(last.get_by_role("button")).to_have_text([re.compile(r"^13\s700\s000 Ar$"), re.compile(r"^700\s000 Ar$")])
+    last.get_by_role("button", name=re.compile(r"^700\s000 Ar$")).click()
+    expect(recap.locator(".recap b")).to_have_text("Redmi Note")
+    expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^700\s000 Ar$"))
+    assert len(reads) == 1, reads
+    # « 250k » is a price.
+    say(page, "250k")
+    expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^250\s000 Ar$"))
+    # The owner's scene words, a line of the shop and a part the poster cannot use, in one message (D-KIT-003 … 005): the
+    # recap says what will be used, the new line is offered to keep, the unused part is said apart.
+    say(page, "scène : fond rouge, lumière douce ligne : Garantie 6 mois pas utilisé : livraison demain")
+    expect(recap).to_contain_text("Scène : Studio clair, avec vos mots : « fond rouge, lumière douce »")
+    lines = recap.get_by_role("checkbox", name=re.compile("^Lignes de la boutique : "))
+    expect(lines).to_have_accessible_name("Lignes de la boutique : Garantie 6 mois")
+    expect(lines).to_be_checked()
+    expect(recap.locator(".recap-offer")).to_contain_text("« Garantie 6 mois » : nouvelle, gardée pour la boutique.")
+    expect(recap.locator(".refusal")).to_have_text("« livraison demain » : je ne sais pas le mettre sur l’affiche. Dites-le autrement.")
+    assert len(reads) == 3, reads
+    # The line is kept before anything else: refused there (here the server's own refusal, put in its way), the tap stops
+    # with the server's sentence, and the recap comes again with « Ne pas garder » (« Pas à pas » has no lines to
+    # correct). No poster, nothing paid; dropped, the line leaves the recap; the next message offers it again.
+    before = credits()
+    context.route("**/api/shop-profile", lambda route: route.fulfill(status=422, json={"error": {"code": "shop_line_refused", "message_fr": LINE_REFUSED, "field": "lines"}})
+                  if route.request.method == "PUT" else route.continue_())
+    create.click()
+    expect(thread.get_by_role("alert")).to_have_text(LINE_REFUSED)
+    context.unroute("**/api/shop-profile")
+    drop = recap.get_by_role("button", name="Ne pas garder « Garantie 6 mois »")
+    expect(drop).to_be_visible()
+    expect(recap).to_contain_text("Scène : Studio clair, avec vos mots : « fond rouge, lumière douce »")
+    expect(recap.get_by_role("button", name="Créer l’affiche")).to_be_visible()
+    expect(thread.get_by_role("button", name="Corriger dans Pas à pas")).to_have_count(0)
+    assert page.url.endswith("#message") and not scenes and credits() == before and get("shop-profile")["lines"] == [], (page.url, scenes)
+    drop.click()
+    expect(recap.locator(".recap-offer")).to_have_count(0)
+    expect(lines).to_have_count(0)
+    expect(recap.get_by_role("button", name="Créer l’affiche")).to_be_visible()
+    say(page, "scène : fond rouge, lumière douce ligne : Garantie 6 mois")
+    expect(recap).to_contain_text("Scène : Studio clair, avec vos mots : « fond rouge, lumière douce »")
+    expect(lines).to_be_checked()
+    create.click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    poster = page.url.split("#message-")[1]
+    expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+    # Kept for the shop, then drawn: exactly the lines the recap showed, and the owner's words as the scene's adjustment.
+    assert get("shop-profile")["lines"] == ["Garantie 6 mois"] and profiles[-1]["lines"] == ["Garantie 6 mois"], profiles
+    assert len(scenes) == 1 and scenes[0]["headline"]["lines"] == ["Garantie 6 mois"] and scenes[0]["adjustment_fr"] == "fond rouge, lumière douce", scenes
+    [made] = prompts(poster)
+    assert "Garantie 6 mois" in made and "fond rouge, lumière douce" in made, made
+    assert get(f"creations/{poster}/visuals")["items"][0]["headline"]["shop_lines"] == ["Garantie 6 mois"]
+    # The review lists the line among the texts to check, and the file is confirmed with it.
+    thread.get_by_role("button", name="Vérifier", exact=True).click()
+    panel = page.locator(".final-preview")
+    expect(panel.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    panel.get_by_text("Détails à vérifier", exact=True).click()
+    expect(panel.locator("li", has_text="Lignes de la boutique")).to_have_text("Lignes de la boutique Garantie 6 mois")
+    smoke.download_review(page)
+    panel.get_by_role("button", name="Fermer").click()
+
+    # Digits after the name are its price, with no unit (D-KIT-002). The shop's line is in the recap, its switch on by
+    # default; switched off, no line is drawn on this poster, whatever the editor's own box says.
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(thread).to_contain_text("Ajoutez une photo du produit.")
+    attach(product)
+    say(page, "casque sony wh-ch720n noir 250000")
+    expect(recap.locator(".recap b")).to_have_text("casque sony wh-ch720n noir")
+    expect(recap.locator(".recap-price")).to_have_text(re.compile(r"^250\s000 Ar$"))
+    expect(lines).to_be_checked()
+    expect(recap.locator(".recap-offer")).to_have_count(0)
+    lines.uncheck()
+    # The poster is made, then its scene cannot be prepared (its plan lost on the way): nothing paid. After a reload the
+    # recap is a new poster's again, its switch as the owner left it, and the tap draws no line, whatever the editor's
+    # box (whose default draws them) holds for this poster (review t-kit-frontend r1, 1).
+    before = credits()
+    context.route("**/plans", lambda route: route.abort("failed") if route.request.method == "POST" else route.continue_())
+    create.click()
+    page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+    second = page.url.split("#message-")[1]
+    expect(thread).to_contain_text(NETWORK)
+    context.unroute("**/plans")
+    assert len(scenes) == 1 and credits() == before, scenes
+    page.reload()
+    expect(lines).to_have_accessible_name("Lignes de la boutique : Garantie 6 mois")
+    expect(lines).not_to_be_checked()
+    expect(recap).to_contain_text("Scène : Studio clair")
+    create.click()
+    expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+    assert len(scenes) == 2 and "lines" not in scenes[1]["headline"] and "adjustment_fr" not in scenes[1], scenes[1]
+    assert "Garantie 6 mois" not in prompts(second)[0]
+    # On a poster, a line asked by message is a card of its own (D-KIT-005), paid as a new image: the tap keeps the line
+    # for the shop first, then one scene draws the shop's lines.
+    say(page, "ligne : Livraison gratuite")
+    expect(last).to_contain_text("Je garde « Livraison gratuite » dans les lignes de la boutique et je refais l’affiche avec.")
+    expect(last).to_contain_text(REDRAW)
+    expect(last).to_contain_text(COST)
+    # Every line the new image draws, the one kept before included (review t-kit-frontend r1, 3).
+    expect(last).to_contain_text("Lignes de la boutique : Garantie 6 mois · Livraison gratuite")
+    # The line refused when kept (the server's own refusal, put in its way): its sentence, and the way to « Mon compte »
+    # where the shop's lines are; never « Corriger dans Pas à pas », which has none. Nothing kept, nothing paid.
+    before = credits()
+    context.route("**/api/shop-profile", lambda route: route.fulfill(status=422, json={"error": {"code": "shop_line_refused", "message_fr": LINE_REFUSED, "field": "lines"}})
+                  if route.request.method == "PUT" else route.continue_())
+    last.get_by_role("button", name="Garder et refaire l’affiche").click()
+    expect(last.get_by_role("alert")).to_have_text(LINE_REFUSED)
+    context.unroute("**/api/shop-profile")
+    account = last.get_by_role("link", name="Modifier les lignes dans Mon compte")
+    expect(account).to_be_visible()
+    expect(last.get_by_role("button")).to_have_count(0)
+    assert len(scenes) == 2 and credits() == before and get("shop-profile")["lines"] == ["Garantie 6 mois"], scenes
+    account.click()
+    page.wait_for_url("**/#compte")
+    expect(page.locator(".shop-account").get_by_label("Ligne 1", exact=True)).to_have_value("Garantie 6 mois")
+    page.goto(f"{smoke.ORIGIN}/#message-{second}")
+    expect(account).to_be_visible()  # the card as it was left
+    say(page, "ligne : Livraison gratuite")
+    expect(last).to_contain_text("Je garde « Livraison gratuite » dans les lignes de la boutique et je refais l’affiche avec.")
+    last.get_by_role("button", name="Garder et refaire l’affiche").click()
+    expect(thread).to_contain_text("Version 2 prête.", timeout=30000)
+    kept = ["Garantie 6 mois", "Livraison gratuite"]
+    assert get("shop-profile")["lines"] == kept and profiles[-1]["lines"] == kept, profiles
+    assert len(scenes) == 3 and scenes[2]["headline"]["lines"] == kept, scenes[2]
+    assert len(prompts(second)) == 2 and all(line in prompts(second)[1] for line in kept)
+
+    # A style model that cannot be read yet (D-KIT-006): the shop's limit of styles (put in its way), then a lost answer
+    # while its brief is read. Each time the card says why, no scene is asked and nothing is paid; « Réessayer » (the
+    # recap offered again) waits on the same brief, never a second one. That recap is a new poster's again, the poster
+    # made: the scene words and the shop's lines it shows are what the tap sends (review t-kit-frontend r1, 1).
+    model = OUT / "style-model.png"
+    picture = Image.new("RGB", (1000, 1250), "#14213d")
+    ImageDraw.Draw(picture).ellipse((200, 300, 800, 900), fill="#fca311")
+    picture.save(model)
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(thread).to_contain_text("Ajoutez une photo du produit.")
+    attach(product, model)
+    page.locator(".tray .pic").nth(1).locator(".pic-role").click()
+    say(page, "Enceinte JBL Go 4, 150 000 Ar")
+    say(page, "scène : fond bleu nuit")
+    shown = "Lignes de la boutique : Garantie 6 mois · Livraison gratuite"
+
+    def same_recap():
+        expect(recap).to_contain_text("Scène : votre modèle de style (lu, puis gardé dans votre kit), avec vos mots : « fond bleu nuit »")
+        expect(lines).to_have_accessible_name(shown)
+        expect(lines).to_be_checked()
+    same_recap()
+    before, asked = credits(), len(scenes)
+    context.route("**/looks", lambda route: route.fulfill(status=409, json={"error": {"code": "look_limit", "message_fr": LOOK_LIMIT}})
+                  if route.request.method == "POST" else route.continue_())
+    create.click()
+    expect(thread).to_contain_text(LOOK_LIMIT)
+    context.unroute("**/looks")
+    third = page.url.split("#message-")[1]
+    expect(create).to_have_count(1)
+    same_recap()
+    assert len(scenes) == asked and credits() == before and len(looks) == 1, (scenes, looks)
+    context.route("**/api/jobs/*", lambda route: route.abort("failed"))
+    create.click()
+    expect(thread).to_contain_text(NETWORK)
+    context.unroute("**/api/jobs/*")
+    expect(create).to_have_count(1)
+    same_recap()
+    assert len(scenes) == asked and credits() == before and len(looks) == 2, (scenes, looks)
+    create.click()
+    expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+    assert len(looks) == 2, looks  # the brief asked before, waited on again
+    made = [item for item in get("looks")["items"] if item["reference_asset"] == looks[-1]["reference_asset"]]
+    assert len(made) == 1 and scenes[-1]["headline"]["look_id"] == made[0]["id"] and "style_reference_asset" not in scenes[-1], (made, scenes[-1])
+    assert scenes[-1]["headline"]["lines"] == kept and scenes[-1]["adjustment_fr"] == "fond bleu nuit", scenes[-1]
+    expect(thread).to_contain_text(f"Votre modèle de style est gardé dans votre kit : « {made[0]['name']} ».")
+    assert [job["kind"] for job in get(f"creations/{third}/jobs")["items"]].count("look") == 1
+
+    # The kit row (D-KIT-009, 012). A new poster starts from the last choices: the model just read, chosen and first, the
+    # model's own title. Another of the shop's models chosen as a chip and a title style are what the scene asks, and the
+    # poster after starts with them.
+    chips = page.get_by_role("group", name="Style de l’affiche").get_by_role("button")
+    title = page.locator(".composer .kit-title select")  # its label's name holds the option shown
+    chip = lambda name: chips.filter(has_text=re.compile("^" + re.escape(name) + "$"))
+    other = next(item for item in get("looks")["items"] if item["id"] != made[0]["id"])
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(thread).to_contain_text("Ajoutez une photo du produit.")
+    expect(chips.first).to_have_text(made[0]["name"])
+    expect(chips.first).to_have_attribute("aria-pressed", "true")
+    expect(title).to_have_value("")  # « Celui du modèle »
+    attach(product)
+    chip(other["name"]).click()
+    title.select_option("condense")
+    say(page, "Enceinte JBL Flip 6, 200 000 Ar")
+
+    def kit_recap():
+        expect(recap).to_contain_text(f"Scène : {other['name']}")
+        expect(recap).to_contain_text("Titre : Gras condensé")
+        expect(lines).to_have_accessible_name(shown)
+        expect(lines).to_be_checked()
+    kit_recap()
+    # The image service refuses this scene (a stub that fails once): its credit comes back, and the recap after it is a new
+    # poster's again, with the saved look, the title and the lines the retry sends (review t-kit-frontend r1, 1).
+    service, before = app.state.poster_service, credits()
+    kept_provider, service.provider = service.provider, smoke.StubProvider(["refused"])
+    try:
+        create.click()
+        page.wait_for_url(re.compile(r"#message-[a-f0-9-]{36}$"))
+        fourth = page.url.split("#message-")[1]
+        expect(thread).to_contain_text("Le service d’images a refusé cette demande", timeout=30000)
+    finally:
+        service.provider = kept_provider
+    expect(thread).to_contain_text("Votre crédit vous a été rendu.")
+    expect(create).to_have_count(1)
+    kit_recap()
+    failed = scenes[-1]
+    assert credits() == before and [job["status"] for job in get(f"creations/{fourth}/jobs")["items"] if job["kind"] == "scene"] == ["failed"]
+    create.click()
+    expect(thread).to_contain_text("Version 1 prête.", timeout=30000)
+    assert len(scenes) >= 2 and scenes[-1] is not failed
+    for sent in (failed, scenes[-1]):
+        assert sent["headline"]["look_id"] == other["id"] and sent["headline"]["title_style"] == "condense" and sent["headline"]["lines"] == kept, sent
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(chips.first).to_have_text(other["name"])
+    expect(chips.first).to_have_attribute("aria-pressed", "true")
+    expect(title).to_have_value("condense")
+
+    # « Garder cette scène comme modèle » (D-KIT-010) in the final panel Message shares with « Pas à pas »: no dialog, no
+    # credit. The model is in « Mon kit » and offered as a chip; asked again on the same scene, it makes no second model.
+    page.goto(f"{smoke.ORIGIN}/#message-{fourth}")
+    thread.get_by_role("button", name="Vérifier", exact=True).click()
+    panel = page.locator(".final-preview")
+    expect(panel.get_by_role("heading", name=FINAL)).to_be_visible(timeout=30000)
+    smoke.download_review(page)
+    name = ("Modèle " + get(f"creations/{fourth}")["document"]["offer"]["title"])[:40].strip()
+    scene = get(f"creations/{fourth}")["document"]["formats"]["feed"]["scene"]["visual_id"]
+    before, count, notice = credits(), len(get("looks")["items"]), page.locator(".message.notice")
+    panel.get_by_text("Autres actions", exact=True).click()
+    keep = panel.get_by_role("button", name="Garder cette scène comme modèle")
+    expect(keep.locator("xpath=following-sibling::p[1]")).to_have_text("Sans crédit.")
+    for status in (202, 200):
+        with page.expect_response(lambda response: response.url.endswith(f"/creations/{fourth}/looks")) as answer:
+            keep.click()
+        assert answer.value.status == status and answer.value.json().get("reused") is (True if status == 200 else None), answer.value.json()
+        expect(notice).to_contain_text(f"Le modèle « {name} » est dans votre kit.")
+        expect(page.locator(".confirm")).to_have_count(0)
+        assert looks[-1] == {"name": name, "visual_id": scene}, looks[-1]
+        assert len(get("looks")["items"]) == count + 1 and credits() == before
+    panel.get_by_role("button", name="Fermer").click()
+    smoke.go(page, "Mon kit")
+    expect(page.locator(".look-card", has_text=name)).to_have_count(1)
+    page.locator(".look-card", has_text=name).click()
+    lettering = page.get_by_role("dialog", name=name).locator("li", has_text="Comme sur l’affiche modèle")
+    expect(lettering).to_have_text("TitreComme sur l’affiche modèle")  # never the brief's English
+    page.keyboard.press("Escape")
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(chip(name)).to_have_count(1)
+
+    # The title style in « Pas à pas » (D-KIT-012): the version's own is shown, another one is what the next scene asks.
+    # « Mon kit » keeps a default on this device, which a version's own title never hides. With the texts written by the
+    # renderer, the style is the title's font (v2 point 8).
+    tab = lambda label: page.get_by_role("tab", name=label, exact=True)
+    styled = page.get_by_label("Style du titre", exact=True)
+
+    def open_steps():  # a confirmed poster opens on its file in the editor too: closed, to reach « Style »
+        page.goto(f"{smoke.ORIGIN}/#{fourth}")
+        expect(page.get_by_role("link", name="Télécharger le PNG")).to_be_visible()
+        page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+        tab("Style").click()
+
+    open_steps()
+    expect(styled).to_have_value("condense")
+    styled.select_option("sport")
+    page.get_by_role("button", name=re.compile("^Nouvelle version")).click()
+    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/scenes")) as sent:
+        page.get_by_role("button", name="Lancer la génération").click()
+    assert sent.value.post_data_json["headline"]["title_style"] == "sport" and sent.value.post_data_json["headline"]["look_id"] == other["id"], sent.value.post_data_json
+    made_job = sent.value.response().json()["job_id"]
+
+    def until(holds, what):  # the server asked again until it says so (a fetch in wait_for_function resolves at once)
+        for _ in range(120):
+            if holds():
+                return
+            page.wait_for_timeout(250)
+        raise AssertionError(what)
+
+    until(lambda: get(f"jobs/{made_job}")["status"] == "succeeded", "the new version was not made")
+    page.goto(f"{smoke.ORIGIN}/#styles")  # the version's review may be opening: the address leaves it
+    default = page.get_by_label("Style du titre", exact=True)
+    expect(default).to_have_value("sport")  # the last one chosen, in « Pas à pas »
+    default.select_option("serif")
+    open_steps()
+    selected = get(f"creations/{fourth}")["document"]["formats"]["feed"]["scene"]["visual_id"]
+    drawn = next(item for item in get(f"creations/{fourth}/visuals")["items"] if item["id"] == selected)["headline"]["title_style"]
+    expect(styled).to_have_value(drawn)
+    # Opening a version shows its own title and leaves the default as chosen: only the seller's choice changes it (the
+    # lead's decision on review t-kit-frontend r1, 7).
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(title).to_have_value("serif")  # « Mon kit »'s default
+    open_steps()
+    tab("Textes").click()
+    page.get_by_label("Dessiner les textes dans l’image").uncheck()
+    tab("Style").click()
+    expect(page.locator("#aide-style-titre")).to_have_text("Le titre écrit sur l’affiche prend la police de ce style.")
+    font = lambda: next((layer["font_id"], layer["weight"]) for layer in get(f"creations/{fourth}")["document"]["formats"]["feed"]["layers"] if layer["role"] == "title")
+    for style, saved in (("serif", ("noto-serif", 700)), ("sport", ("montserrat-black-italic", 900)), ("moderne", ("noto-sans", 700))):
+        styled.select_option(style)
+        until(lambda: font() == saved, f"the title layer did not take {saved} for {style}: {font()}")
+    page.goto(f"{smoke.ORIGIN}/#message")
+    expect(title).to_have_value("moderne")  # the last one chosen, in « Pas à pas »
+    context.close()
+
+
 def run():
     OUT.mkdir(parents=True, exist_ok=True)
     product = OUT / "product.png"
@@ -2618,12 +3040,13 @@ def run():
                         walk_photo(browser, errors, product, other)
                         walk_choice_phone(browser, errors)
                         walk_sign_out(browser, errors, product)
+                        walk_kit(browser, errors, product, data, server[0].config.app)  # last of this server: it gives the shop its lines
                         smoke.stop(*server)
                         server = smoke.serve(failing, stub_fail="provider_error")
                         walk_failed(browser, errors, product)
                         assert not errors, errors
                         print("Chat smoke passed: choice and remembered start view, one message with two images to a confirmed download, "
-                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, sign-out with a waiting paid card (asked first, from the chat, the editor or another tab; nothing of the shop left; signed in again, the poster's one job and its version to review), a request admitted before another tab's sign-out answering late or after a failed check (nothing written back), one arriving after it (401, no job), a paid request sent only once stored (refused at the tap or at sending, kept despite threads dated ahead), a failed image job, a style change on a fresh plan, the shop's identity asked in the first message, read failed, 360 px and desktop, both themes, zero spend.")
+                              "reload in the middle and before the job is known (kept request sent again), stale kept request refused, « Reprendre » never automatic, transient refusal keeps the request, one chat per device (lock lost and taken back before /scenes), no Web Locks, late read after close, no photo, no price, lost answer, form to chat and recap refresh, editor remount measured, a scene change (« Annuler », reload with the answer lost, one refine job), a change asked on an older version shown (drawn price, whole new image), a brand set apart from the title on a version still to check with its list line, a reload between the saved words and the request, a refused scene then a later price card with « Remettre les textes de l’image » still offered and used, a failed save keeps the message unread, an unsaved step edit read after its save, a subtitle typed in steps kept out of the request, a subtitle added and removed, a kept old price card replayed as it left, old stored answers converted, drawn texts switched off refused with nothing sent, the chat taken during a selection and during the save of a card's words, no second paid card while one waits, a removed style that cannot be read stops a card, a version's accent kept under « Aux couleurs du produit », a late plan and a late plan revision after the chat was taken, a kept plan refused with the way to the steps, a version made but not listed, a pending read never replaced from another poster, a free title change and an old free price card on a poster without drawn words, the way to the steps for a brand there, the list of modifications folded at 360 px and open on desktop, photos already used, refused images and a fifth one, the small-photo agreement, a refused download said in the chat, the version limit at 10, 11 and 12, the session ended, the folded list by keyboard, sign-out with a waiting paid card (asked first, from the chat, the editor or another tab; nothing of the shop left; signed in again, the poster's one job and its version to review), a request admitted before another tab's sign-out answering late or after a failed check (nothing written back), one arriving after it (401, no job), a paid request sent only once stored (refused at the tap or at sending, kept despite threads dated ahead), a failed image job, a style change on a fresh plan, the shop's identity asked in the first message, the seller's kit (a style photo read into a look before the scene, taken again for the same image, its brief waited on again after a lost answer, the style limit with nothing paid; a price without its unit, « 250k », two amounts as buttons with no second read; scene words and a new shop line kept before the scene and listed by the review, a refused line with nothing paid and the recap again to drop it, the recap's switch off kept through a failed scene setup and a reload, a line asked on a poster naming every line drawn; « Corriger l’affiche » back to the field; the kit row's last choices on the next poster, a saved look chosen as a chip and a title style in the scene request, the same recap and request after a refused image and after a failed style read; « Garder cette scène comme modèle » twice with one model, in « Mon kit » and as a chip; the title style in « Pas à pas » restored from its version, asked in the next scene, set as the title layer's font, and « Mon kit »'s default changed only by a choice), read failed, 360 px and desktop, both themes, zero spend.")
                     finally:
                         browser.close()
             finally:

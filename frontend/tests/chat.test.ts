@@ -1,19 +1,23 @@
 import { expect, it } from 'vitest'
 import { bind, open } from '../src/api'
-import { cardButton, CHANGE_BUTTONS, changes, complete, effectOf, productsOf, identityLine, isThread, keepRequest, paid, fate, final, limitLine, modifications, nextStep, normal, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, picturesOfRecap, recapFormat, readPending, readThread, settled, spend, storeThread, supersede, swapRole, threadKey, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
+import { amountsOf, cardButton, CHANGE_BUTTONS, changes, chosenKit, complete, createName, effectOf, productsOf, identityLine, isThread, keepRequest, kitChips, kitDraft, kitOf, linesLine, newLines, ownTitle, paid, fate, final, limitLine, modifications, nextStep, normal, ROLE_NAMES, sceneLine, staleLine, staleOf, lines, movedTo, newPending, nextRole, pendingFor, pendingKey, picturesOfRecap, recapFormat, readPending, readThread, settled, spend, storeThread, supersede, swapLabel, swapRole, textOf, threadKey, titleLine, TITLES, trim, unresolved, unsentKey, UNSTORED, versionsLeft, waitingIn, warns, wireDraft, type Item, type Role } from '../src/chat'
 import type { Visual } from '../src/document'
 import { memory } from './fixture'
 
 const pictures = (...roles: Role[]) => roles.map((role, index) => ({ id: `p${index}`, role, asset: `a${index}` }))
 const item = (extra: Partial<Item> = {}): Item => ({ id: 'i', role: 'app', text: 'x', at: 1, ...extra })
 
-it('gives the first image to the product, the second to the inspiration, then product photos up to three', () => {
+it('makes every attached image a product photo, three at most; a style model only by a touch on its label (D-KIT-006)', () => {
   expect(nextRole([])).toBe('product')
-  expect(nextRole(pictures('product'))).toBe('inspiration')
-  expect(nextRole(pictures('product', 'inspiration'))).toBe('product')
-  expect(nextRole(pictures('product', 'inspiration', 'product'))).toBe('product')
+  expect(nextRole(pictures('product'))).toBe('product')  // never a style model by its position
+  expect(nextRole(pictures('product', 'product'))).toBe('product')
+  expect(nextRole(pictures('product', 'product', 'product'))).toBeNull()
+  expect(nextRole(pictures('inspiration', 'product', 'product'))).toBe('product')  // the style photo is not a product
   expect(nextRole(pictures('product', 'inspiration', 'product', 'product'))).toBeNull()
-  expect(nextRole(pictures('inspiration'))).toBe('product')  // the first one was swapped: a product is still missing
+  expect([ROLE_NAMES.product, ROLE_NAMES.inspiration]).toEqual(['Produit', 'Modèle de style'])
+  // The touch's name begins with what the label shows (the name holds the visible words).
+  expect(swapLabel('product')).toBe('Produit : marquer comme modèle de style')
+  expect(swapLabel('inspiration')).toBe('Modèle de style : marquer comme produit')
 })
 it('swaps a role and never keeps two inspirations', () => {
   expect(swapRole(pictures('product', 'inspiration'), 'p0').map(picture => picture.role)).toEqual(['inspiration', 'product'])
@@ -69,11 +73,16 @@ it('keeps the last 100 items of a thread', () => {
   expect(readThread(JSON.stringify({ items: many })).items).toHaveLength(100)
 })
 it('never trusts the storage: a damaged thread is empty and wrong fields are left out', () => {
-  expect(readThread('{nope')).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [] } })
+  expect(readThread('{nope')).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [], scene_fr: null, offer_lines: [], lines: true, look: null, title: null } })
   const read = readThread(JSON.stringify({ items: [item(), { id: 1, role: 'app', text: 'x' }, { id: 'b', role: 'robot', text: 'x' }, item({ id: 'c', card: {} as any }), null],
-    draft: { name: 'Sony', price_ar: '700000', style: 'rose', pictures: [{ asset: 'a', role: 'product' }, { asset: 'b', role: 'logo' }, 7] } }))
+    draft: { name: 'Sony', price_ar: '700000', style: 'rose', pictures: [{ asset: 'a', role: 'product' }, { asset: 'b', role: 'logo' }, 7], scene_fr: 5, offer_lines: ['Garantie 6 mois', 3, ' '], lines: 'off', look: 7, title: 'gothique' } }))
   expect(read.items.map(entry => entry.id)).toEqual(['i'])
-  expect(read.draft).toEqual({ name: 'Sony', price_ar: null, style: null, identity: null, pictures: [{ asset: 'a', role: 'product' }] })
+  expect(read.draft).toEqual({ name: 'Sony', price_ar: null, style: null, identity: null, pictures: [{ asset: 'a', role: 'product' }], scene_fr: null, offer_lines: ['Garantie 6 mois'], lines: true, look: null, title: null })
+  // The owner's scene words, his switch and his kit row come back as he left them.
+  expect(readThread(JSON.stringify({ items: [], draft: { scene_fr: 'fond rouge', lines: false, look: 'L1', title: 'condense' } })).draft).toMatchObject({ scene_fr: 'fond rouge', offer_lines: [], lines: false, look: 'L1', title: 'condense' })
+  // Scene words over the reader's 500 characters are left out: sent back, every read of the thread would be refused.
+  expect(readThread(JSON.stringify({ items: [], draft: { scene_fr: 'a'.repeat(500) } })).draft.scene_fr).toBe('a'.repeat(500))
+  expect(readThread(JSON.stringify({ items: [], draft: { scene_fr: 'a'.repeat(501) } })).draft.scene_fr).toBeNull()
 })
 it('keeps a pending read as one unchangeable record of its key and exact body', () => {
   const pending = newPending({ text: 'Sony, 700 000 Ar', draft: { name: null } } as { text: string })
@@ -91,7 +100,7 @@ it('keeps the pending read while its outcome is unknown, and drops it on a defin
 })
 it('leaves a pointer where the new thread went, and reads nothing else from it', () => {
   const id = '0b9f3c1e-2a4d-4e6f-8a1b-3c5d7e9f1a2b'
-  expect(readThread(movedTo(id))).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [] }, moved: id })
+  expect(readThread(movedTo(id))).toEqual({ items: [], draft: { name: null, price_ar: null, style: null, identity: null, pictures: [], scene_fr: null, offer_lines: [], lines: true, look: null, title: null }, moved: id })
   expect(readThread(JSON.stringify({ moved: '../x', items: [item()] })).moved).toBeUndefined()
   expect(readThread(JSON.stringify({ items: [item()] })).moved).toBeUndefined()
 })
@@ -111,6 +120,8 @@ it('retires a card only on a refusal that an earlier delivery of the same reques
   for (const code of ['asset_missing', 'asset_corrupt', 'unknown_asset', 'provider_mode_mismatch']) expect(final(code), code).toBe(false)
   // The request's own words against the document at its revision: asking again changes nothing (audit 2026-11-15).
   for (const code of ['invalid_headline', 'contact_unsupported']) expect(final(code), code).toBe(true)
+  // The request's lines against the shop's profile: the same old lines are refused again; a new card shows the shop's own.
+  for (const code of ['shop_lines_changed', 'shop_lines_missing']) expect(final(code), code).toBe(true)
   // A refusal stores nothing under the key: these may let a delivery still on its way pass later, so the card keeps it.
   for (const code of ['image_job_running', 'budget_exhausted', 'shop_daily_limit', 'no_credit', 'shop_suspended', 'rate_limited', 'provider_unavailable', 'unauthenticated', 'service_down',
     'server_error', 'network', 'timeout', 'invalid_response', 'something_new', '', 'creation_abandoned', 'format_unavailable']) expect(final(code), code).toBe(false)
@@ -123,8 +134,13 @@ it('names the outcome of the job a card recorded', () => {
 it('sends the reader the last six lines and the draft with its uploaded pictures counted', () => {
   const thread = Array.from({ length: 8 }, (_, index) => item({ id: String(index), role: index % 2 ? 'app' : 'owner', text: index === 7 ? ' ' : `m${index}` }))
   expect(lines(thread)).toEqual([1, 2, 3, 4, 5, 6].map(index => ({ role: index % 2 ? 'app' : 'owner', text: `m${index}` })))
-  const draft = { name: 'Sony', price_ar: 700000, style: 'sombre' as const, identity: null, pictures: [{ asset: 'a', role: 'product' as Role }, { asset: 'b', role: 'inspiration' as Role }] }
+  const draft = { name: 'Sony', price_ar: 700000, style: 'sombre' as const, identity: null, pictures: [{ asset: 'a', role: 'product' as Role }, { asset: 'b', role: 'inspiration' as Role }],
+    scene_fr: null, offer_lines: ['Garantie 6 mois'], lines: true, look: 'L1', title: 'condense' as const }
   expect(wireDraft(draft)).toEqual({ name: 'Sony', price_ar: 700000, style: 'sombre', product_photos: 1, inspiration: true })
+  // The scene words go back to the reader only once it gave some (a server from before refuses an unknown key); the
+  // offered lines, the switch, the saved look and the title never leave this device (the reader's style stays a house one).
+  expect('scene_fr' in wireDraft(draft)).toBe(false)
+  expect(wireDraft({ ...draft, scene_fr: 'fond rouge' })).toEqual({ name: 'Sony', price_ar: 700000, style: 'sombre', product_photos: 1, inspiration: true, scene_fr: 'fond rouge' })
   // The shop's identity is sent only when the owner said it, on or off: without it the body is the one from before the
   // field (toEqual above would pass with `identity: undefined`; the key itself is checked here).
   expect('identity' in wireDraft(draft)).toBe(false)
@@ -452,4 +468,105 @@ it('says that a paid image waits from the stored threads, read only; storage tha
   Object.defineProperty(unlisted, 'length', { get: () => { throw new DOMException('denied', 'SecurityError') } })
   expect(waitingIn(unlisted)).toBe(true)
   expect(waitingIn(null)).toBe(true)
+})
+
+it('says on the recap the scene and the shop’s lines it will draw (D-KIT-004, D-KIT-005, D-KIT-006)', () => {
+  expect(sceneLine('Studio clair')).toBe('Scène : Studio clair')
+  expect(sceneLine('Luxe sombre', 'fond rouge avec des flammes')).toBe('Scène : Luxe sombre, avec vos mots : « fond rouge avec des flammes »')
+  expect(sceneLine(null, null, true)).toBe('Scène : votre modèle de style (lu, puis gardé dans votre kit)')
+  expect(sceneLine(null, 'sur une table en bois')).toBe('Scène : votre modèle de style, avec vos mots : « sur une table en bois »')
+  expect(linesLine(['Garantie 6 mois', 'Paiement Mvola'])).toBe('Lignes de la boutique : Garantie 6 mois · Paiement Mvola')
+  expect(linesLine([])).toBe('')
+})
+it('offers only the lines the shop does not hold yet, compared without case (D-KIT-005)', () => {
+  // A tap kept « Garantie 6 mois », then failed before the poster: the next recap draws it once, as a shop line.
+  expect(newLines(['garantie 6 MOIS', 'Paiement Mvola'], ['Garantie 6 mois'])).toEqual(['Paiement Mvola'])
+  expect(newLines(['Garantie 6 mois'])).toEqual(['Garantie 6 mois'])  // a shop with no line known
+  expect(newLines([], ['Garantie 6 mois'])).toEqual([])
+})
+it('pays for a shop line as for a new scene, under its own button (D-KIT-005)', () => {
+  const line = item({ card: { kind: 'line', visual_id: 'v', lines: ['Garantie 6 mois'], words: { title: 'Sony' }, effect: 'scene' } })
+  expect([paid(line.card), changes(line.card)]).toEqual([true, true])
+  expect(effectOf({ kind: 'line' }, { headline: null })).toBe('scene')  // never free, even without its effect
+  expect(cardButton(line)).toBe('create')
+  expect(cardButton(line, undefined, undefined, 0)).toBeNull()  // the version limit holds for it
+  expect(cardButton({ ...line, spent: true, request })).toBe('resume')
+  // Its line refused by the server: the way to « Mon compte », where the shop's lines are, never « Pas à pas ».
+  expect(cardButton({ ...line, spent: true, done: true, card: { ...line.card!, error: 'refusée', account: true } })).toBe('account')
+  expect(unresolved({ ...line, spent: true, request })).toBe(true)
+  expect(warns(line)).toBe(false)
+  expect(createName(line.card!, 'scene')).toBe('Garder et refaire l’affiche')
+  expect([createName({ kind: 'recap' }, null), createName({ kind: 'change' }, 'refine'), createName({ kind: 'restyle' }, 'scene')]).toEqual(['Créer l’affiche', 'Créer', 'Refaire l’affiche'])
+})
+it('offers one button per amount read, from the card as stored (D-KIT-002)', () => {
+  expect(amountsOf({ kind: 'ask_price', amounts: [13_700_000, 700_000] })).toEqual([13_700_000, 700_000])
+  expect(amountsOf({ kind: 'ask_price', amounts: [250_000, 250_000, 0, -5, 1.5, '9' as any, 1, 2, 3, 4] })).toEqual([250_000, 1, 2, 3])
+  expect(amountsOf({ kind: 'ask_price' })).toEqual([])  // a server from before: the question alone, no button
+  expect(amountsOf({ kind: 'ask_price', amounts: 'x' as any })).toEqual([])
+  expect(cardButton(item({ card: { kind: 'ask_price', amounts: [250_000] } }))).toBeNull()  // a tap is free: no paid button
+})
+it('draws the unused parts apart from the card’s sentence, and a card from before as it is (D-KIT-004)', () => {
+  const unused = '« publie-la sur Facebook » : je ne sais pas le mettre sur l’affiche. Dites-le autrement.'
+  expect(textOf(`Voici l’affiche que je vais créer.\n${unused}\nJ’ai changé : le style (avant : Studio clair).`, { kind: 'recap', unused_fr: [unused] }))
+    .toBe('Voici l’affiche que je vais créer.\nJ’ai changé : le style (avant : Studio clair).')
+  expect(textOf(`Écrivez le produit et son prix.\n${unused}`, { kind: 'unclear' })).toBe(`Écrivez le produit et son prix.\n${unused}`)
+  expect(textOf('Écrivez le produit et son prix.')).toBe('Écrivez le produit et son prix.')
+})
+
+// D-KIT-009: the kit in the message box.
+const looks = [{ id: 'L1', name: 'Style 1', reference_asset: 'a1' }, { id: 'L2', name: 'Vitrine rouge', reference_asset: 'a2' }]
+it('offers the house styles and the shop’s looks, the most recently used first; an unknown id is skipped (D-KIT-009)', () => {
+  const ids = (...args: Parameters<typeof kitChips>) => kitChips(...args).map(chip => chip.id)
+  expect(ids()).toEqual(['clair', 'couleur', 'sombre'])  // an adapter with no kit: the three house chips, as before
+  expect(ids(looks)).toEqual(['clair', 'couleur', 'sombre', 'L1', 'L2'])
+  expect(ids(looks, ['L2', 'sombre'])).toEqual(['L2', 'sombre', 'clair', 'couleur', 'L1'])
+  // A removed look, another shop's id or a repeat in the list takes no place.
+  expect(ids(looks, ['gone', 'L1', 'clair', 'L1'])).toEqual(['L1', 'clair', 'couleur', 'sombre', 'L2'])
+  expect(ids([looks[1]], ['L1', 'couleur'])).toEqual(['couleur', 'clair', 'sombre', 'L2'])
+  expect(kitChips(looks, ['L2'])[0]).toEqual({ id: 'L2', name: 'Vitrine rouge', asset: 'a2' })  // its model image
+  expect(kitChips()[0]).toEqual({ id: 'clair', name: 'Studio clair' })  // a house style has none
+})
+it('takes the title of the scene by default: « Moderne » with a house style, the model’s own with a look or a style photo (D-KIT-012)', () => {
+  expect(TITLES.map(([, name]) => name)).toEqual(['Moderne', 'Gras condensé', 'Italique sport', 'Élégant'])
+  const draft = (look: string | null, title: 'moderne' | 'condense' | null = null) => ({ look, title })
+  expect(chosenKit(draft(null))).toEqual({ look: undefined, model: false, title: undefined })
+  expect(chosenKit(draft('L2'), looks)).toEqual({ look: looks[1], model: true, title: undefined })
+  expect(chosenKit(draft(null), looks, true)).toEqual({ look: undefined, model: true, title: undefined })  // the style photo
+  // A look the shop no longer has (or not read yet) is no scene: the house style is.
+  expect(chosenKit(draft('gone'), looks)).toEqual({ look: undefined, model: false, title: undefined })
+  // A style photo is the scene, whatever look the row held.
+  expect(chosenKit(draft('L1'), looks, true)).toMatchObject({ look: undefined, model: true })
+  // « Moderne » is a choice only with a model, whose default is its own lettering.
+  expect(chosenKit(draft(null, 'moderne'))).toMatchObject({ title: undefined })
+  expect(chosenKit(draft('L1', 'moderne'), looks)).toMatchObject({ title: 'moderne' })
+  expect(chosenKit(draft(null, 'condense'))).toMatchObject({ title: 'condense' })
+  expect(chosenKit(draft('L1', 'condense'), looks)).toMatchObject({ title: 'condense' })
+  // The select keeps a title only when it is not the scene's default: the default follows the scene when it changes.
+  expect([ownTitle('moderne', false), ownTitle('moderne', true), ownTitle('', true), ownTitle('sport', false), ownTitle('gothique', true)]).toEqual([null, 'moderne', null, 'sport', null])
+})
+it('says the title on the recap only when it is not the default (D-KIT-009)', () => {
+  expect(titleLine('condense')).toBe('Titre : Gras condensé')
+  expect(titleLine('serif')).toBe('Titre : Élégant')
+  expect(titleLine(chosenKit({ look: null, title: null }).title)).toBe('')  // « Moderne » with a house style
+  expect(titleLine(chosenKit({ look: 'L1', title: null }, looks).title)).toBe('')  // the model's own
+  expect(titleLine(chosenKit({ look: 'L1', title: 'moderne' }, looks).title)).toBe('Titre : Moderne')
+  expect(titleLine('gothique')).toBe('')  // a stored card is never trusted
+})
+it('passes the kit at the tap: the look chosen, the title when not the default, each part only when set (D-KIT-009)', () => {
+  const house = chosenKit({ look: null, title: null }, looks)
+  expect(kitOf(null, house, [], [])).toEqual({})
+  expect(kitOf('fond rouge', house, ['Garantie 6 mois', 'Paiement Mvola'], ['Paiement Mvola'])).toEqual({ scene: 'fond rouge', lines: ['Garantie 6 mois', 'Paiement Mvola'], keep: ['Paiement Mvola'] })
+  expect(kitOf(null, chosenKit({ look: 'L2', title: null }, looks), [], [])).toEqual({ look: 'L2' })
+  expect(kitOf(null, chosenKit({ look: 'L2', title: 'sport' }, looks), [], [])).toEqual({ look: 'L2', title: 'sport' })
+  expect(kitOf(null, chosenKit({ look: null, title: 'serif' }, looks), [], [])).toEqual({ title: 'serif' })
+  // With a style photo the adapter reads the photo into a look: no saved look is sent beside it.
+  expect(kitOf(null, chosenKit({ look: 'L2', title: null }, looks, true), [], [])).toEqual({})
+  expect(kitOf(null, chosenKit({ look: 'gone', title: 'moderne' }, looks), [], [])).toEqual({})
+})
+it('starts a new poster from the kit’s last choices; the editor’s house style without them (D-KIT-009)', () => {
+  expect(kitDraft()).toEqual({ style: 'clair', look: null, title: null })
+  expect(kitDraft(undefined, 'sombre')).toEqual({ style: 'sombre', look: null, title: null })  // as before the kit
+  expect(kitDraft(undefined, 'L1')).toEqual({ style: 'clair', look: null, title: null })  // a look id is not a house style
+  expect(kitDraft({ look: 'L1', style: 'couleur', title: 'condense' }, 'sombre')).toEqual({ style: 'couleur', look: 'L1', title: 'condense' })
+  expect(kitDraft({ look: 7, style: 'rose', title: 'gothique' }, 'sombre')).toEqual({ style: 'sombre', look: null, title: null })
 })

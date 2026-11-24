@@ -119,16 +119,19 @@ def run():
                     page.get_by_role('button', name='En haut à gauche', exact=True).click()
                     page.get_by_role('tab', name='Style', exact=True).click()
                     page.get_by_role('button', name='Aux couleurs du produit', exact=True).click()
-                    palette = page.get_by_role('group', name='Palette de la prochaine version')
-                    expect(palette).to_contain_text('#202020')
+                    # No colour code is written (D-KIT-012): the main swatch's own colour is checked.
+                    palette = page.get_by_role('img', name='Palette de la prochaine version')
+                    main_swatch = palette.locator('i').nth(2)
+                    expect(main_swatch).to_have_css('background-color', 'rgb(32, 32, 32)')
+                    expect(palette).not_to_contain_text('#')
                     manual = page.get_by_label('Corriger la couleur principale')
                     manual.fill('#cc1122')
-                    expect(palette).to_contain_text('#CC1122')
+                    expect(main_swatch).to_have_css('background-color', 'rgb(204, 17, 34)')
                     url = page.url
                     expect(page.get_by_text('Enregistré', exact=True)).to_be_visible()
                     page.reload()
                     page.get_by_role('button', name='Aux couleurs du produit', exact=True).click()
-                    expect(palette).to_contain_text('#CC1122')
+                    expect(main_swatch).to_have_css('background-color', 'rgb(204, 17, 34)')
                     # A decoder already in flight cannot overwrite a newer manual choice.
                     page.evaluate("""() => {const original=window.createImageBitmap; window.restoreBitmap=()=>{window.createImageBitmap=original};
                       window.createImageBitmap=async (...args)=>{window.decodeStarted=true; await new Promise(r=>setTimeout(r,800)); return original(...args)}}""")
@@ -136,7 +139,7 @@ def run():
                     page.wait_for_function('window.decodeStarted === true')
                     manual.fill('#cc1122')
                     page.wait_for_timeout(1000)
-                    expect(palette).to_contain_text('#CC1122')
+                    expect(main_swatch).to_have_css('background-color', 'rgb(204, 17, 34)')
                     page.evaluate('window.restoreBitmap()')
                     # Failure is visible and a manual colour recovers without any image call.
                     page.route('**/api/product-inputs/*', lambda route: route.fulfill(status=503, content_type='application/json', body='{"error":{"code":"service_down","message_fr":"Analyse indisponible","retryable":true}}'))
@@ -144,11 +147,11 @@ def run():
                     expect(page.locator('.product-palette [role=alert]')).to_be_visible()
                     expect(page.get_by_role('button', name='Générer l’affiche', exact=True)).to_be_disabled()
                     manual.fill('#334455')
-                    expect(palette).to_contain_text('#334455')
+                    expect(main_swatch).to_have_css('background-color', 'rgb(51, 68, 85)')
                     assert not requests
                     page.unroute('**/api/product-inputs/*')
                     page.get_by_role('button', name='Reprendre les couleurs de la photo').click()
-                    expect(palette).to_contain_text('#202020')
+                    expect(main_swatch).to_have_css('background-color', 'rgb(32, 32, 32)')
                     assert page.evaluate("localStorage.getItem('affiche.shop1.palette.' + location.hash.slice(1))") is None
                     page.get_by_role('button', name='Générer l’affiche', exact=True).click()
                     page.get_by_role('button', name='Lancer la génération', exact=True).click()

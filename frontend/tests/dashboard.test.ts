@@ -1,8 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { bind, open } from '../src/api'
-import { creditHistory, historyEntry, sectionRead, type HistoryEntry } from '../src/dashboard'
+import { creditHistory, historyEntry, sectionRead, stateBadges, stateNames, type HistoryEntry } from '../src/dashboard'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+it('names each list state with one word, « Confirmée » only for a poster whose file is this revision', () => {
+  expect(stateNames).toEqual({ draft: 'Brouillon', to_review: 'À vérifier', approved: 'À confirmer', confirmed: 'Confirmée' })
+  expect(stateBadges).toEqual({ draft: 'badge', to_review: 'badge warn', approved: 'badge', confirmed: 'badge ok' })
+})
 
 it('keeps the latest section result, ignores a late response after clearing it, and retains the last good value on timeout', async () => {
   bind(1); open()

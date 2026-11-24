@@ -95,10 +95,13 @@ describe('exact Ariary values', () => {
   })
   // As prices are written in Madagascar and typed on a phone (first walk on the live pilot, 2026-11-13).
   it.each([['90.000', 90000], ['90 000 Ar', 90000], ['90000ar', 90000], [' 90 000 ', 90000], ['1.250.000 AR', 1250000],
-    ['12 Ar', 12], [' 12', 12], ['190 000 ariary', 190000], ['5.000 MGA', 5000]])('reads %s as %d', (value, amount) => {
+    ['12 Ar', 12], [' 12', 12], ['190 000 ariary', 190000], ['5.000 MGA', 5000],
+    // In thousands, as sellers write them (D-KIT-002): no floor, the field is the price.
+    ['250k', 250000], ['250K Ar', 250000], ['250kAr', 250000], ['250 k', 250000], ['5k', 5000], ['9999k', 9999000]])('reads %s as %d', (value, amount) => {
     expect(parsePrice(value as string)).toBe(amount)
   })
-  it.each(['1e3', '1.5', '90,000', '90,5', '90 00', '9.0000', '1.000 000', '1 000.000', '-1', 'Ar', '', 'Ar 90 000', '90 000 € ', '9007199254740992'])('refuses %s', value => {
+  it.each(['1e3', '1.5', '90,000', '90,5', '90 00', '9.0000', '1.000 000', '1 000.000', '-1', 'Ar', '', 'Ar 90 000', '90 000 € ', '9007199254740992',
+    '1,5k', '1.5k', '10000k', 'k', '250kk', '250 000k', '250 k Ar k'])('refuses %s', value => {
     expect(() => parsePrice(value)).toThrow()
   })
 })

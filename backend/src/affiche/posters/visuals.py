@@ -15,11 +15,11 @@ from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
 from affiche.visuals.prompts import ReasonCode
 from . import jobs, looks, store
 from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, Sha, canonical
-from .plans import ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, screen_adjustment, seal_place, fixed_plan, screen_art, validate_plan
+from .plans import TITLE_STYLES, ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, screen_adjustment, seal_place, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
 # Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
-TEXT_CHECKS = {"text_title", "text_price", "text_signature"}
+TEXT_CHECKS = {"text_title", "text_price", "text_signature", "text_lines"}
 
 
 def required_checks(baked: dict | None) -> set[str]:
@@ -30,6 +30,8 @@ def required_checks(baked: dict | None) -> set[str]:
             required.add("text_price")
         if "shop_name" in baked or "contact" in baked:
             required.add("text_signature")
+        if baked.get("shop_lines"):
+            required.add("text_lines")
     return required
 
 
@@ -50,6 +52,11 @@ class SceneRequest(Model):
     # The version this scene replaces (a word change asked in the chat, ADR-101): the scene adjustments the owner
     # asked on it by message are kept. Left out when absent, so other requests keep their idempotency hash.
     keep_adjustments_of: Id | None = None
+    # The owner's scene words of his first message (D-KIT-003): kept with the job like a refinement's instruction, so
+    # the next refinements and word changes say them again. Left out when absent, as keep_adjustments_of.
+    adjustment_fr: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)] | None = None
+
+    _screen = field_validator("adjustment_fr")(lambda value: value if value is None else screen_adjustment(value))
 
 
 def kept_adjustments(conn, shop, visual_id) -> list[str]:
@@ -64,11 +71,11 @@ def kept_adjustments(conn, shop, visual_id) -> list[str]:
     return notes
 
 
-def checked_adjustments(conn, shop, visual_id) -> list[str]:
-    """kept_adjustments within their limits. Copies share their versions, so the twelve-scenes limit of one poster does
-    not bound a chain. Refused, never cut: a prompt that silently lost an adjustment would be a poster the owner did
-    not ask for."""
-    notes = kept_adjustments(conn, shop, visual_id)
+def checked_adjustments(conn, shop, visual_id, added: str | None = None) -> list[str]:
+    """kept_adjustments within their limits, `added` last. Copies share their versions, so the twelve-scenes limit of
+    one poster does not bound a chain. Refused, never cut: a prompt that silently lost an adjustment would be a poster
+    the owner did not ask for."""
+    notes = kept_adjustments(conn, shop, visual_id) + ([added] if added else [])
     if len(notes) > 12 or sum(map(len, notes)) > 3000:
         raise store.Refused("adjustments_limit")
     try:  # screened when asked; the screen may have grown since
@@ -99,7 +106,7 @@ class RefinementRequest(Model):
 
 
 FidelityChecks = dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration",
-                              "text_title", "text_price", "text_signature"], bool]
+                              "text_title", "text_price", "text_signature", "text_lines"], bool]
 
 
 class Decision(Model):
@@ -260,19 +267,31 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             logo = next((layer for layer in document.formats[request.format].layers if layer.role == "logo"), None)
             if not (logo and logo.shape == "circle" and document.include.logo) or document.include.shop_name:
                 raise store.Refused("invalid_headline")
-        style = look_style(conn, shop, request.headline.look_id if request.headline else None)
+        style = lettering(conn, shop, request.headline and request.headline.model_dump())
         adjustments = []
         if request.keep_adjustments_of:
             if request.keep_adjustments_of not in listed_visuals(conn, shop, document.model_dump()):
                 raise store.Refused("not_found", 404)
-            adjustments = checked_adjustments(conn, shop, request.keep_adjustments_of)
+        if request.keep_adjustments_of or request.adjustment_fr:
+            adjustments = checked_adjustments(conn, shop, request.keep_adjustments_of, request.adjustment_fr)
+        lines = {}
+        if request.headline and request.headline.lines is not None:
+            # The shop's lines, read in this transaction (D-KIT-005): drawn only when they are the ones the owner was
+            # shown, in order. The job keeps them: they are this version's snapshot, as the drawn title is.
+            kept = store.get_profile(conn, shop)["lines"]
+            if not kept:
+                raise store.Refused("shop_lines_missing", 409)
+            if request.headline.lines != kept:
+                raise store.Refused("shop_lines_changed", 409)
+            lines = {"shop_lines": kept}
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(request.style_reference_asset),
                                      headline=request.headline, title=title, signature=signature, deduplicate_brand=True,
-                                     adjustments=adjustments, **price, **style)
+                                     adjustments=adjustments, **price, **style, **lines)
         except ValueError as refusal:
-            # The owner can cause these four by what he typed: each gets its own sentence and its field.
+            # The owner can cause these four by what he typed: each gets its own sentence and its field. The shop's lines
+            # cannot fail here: Headline.lines passed today's rule and equals them.
             code, field = {"headline_title_too_long": ("title_too_long", "offer.title"),
                            "headline_title_unsupported": ("title_unsupported", "offer.title"),
                            "headline_contains_commercial_or_instruction_text": ("title_commercial_text", "offer.title"),
@@ -284,7 +303,7 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                    "style_reference_asset": request.style_reference_asset,
                    "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
         if request.headline:
-            payload["headline"] = request.headline.model_dump() | {"title": title} | signature | price
+            payload["headline"] = request.headline.model_dump(exclude={"lines"}) | {"title": title} | signature | price | lines
             if brand_in_title(request.headline.brand, title):
                 payload["headline"]["brand_in_title"] = True
         if seal:
@@ -329,8 +348,10 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
                                      headline=Headline(**{k: v for k, v in baked.items() if k in Headline.model_fields}) if baked else None,
                                      title=baked["title"] if baked else None, signature=signature,
                                      price_ar=baked.get("price_ar") if baked else None,
+                                     # Its base's lines, not the profile's: the words this poster already shows.
+                                     shop_lines=baked.get("shop_lines", ()) if baked else (),
                                      deduplicate_brand=bool(baked and baked.get("brand_in_title")),
-                                     **look_style(conn, shop, baked.get("look_id") if baked else None))
+                                     **lettering(conn, shop, baked))  # its base's title style and look
         except ValueError:
             raise store.Refused("invalid_plan") from None
         payload = {"plan_id": plan["id"], "format": request.format, "size": POSTER_SIZES[request.format],
@@ -343,17 +364,19 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
             payload["headline"] = baked
             if baked.get("logo_seal"):
                 payload["logo_seal"] = seal_place(ScenePlan.model_validate_json(plan["plan_json"]),
-                                                  look_style(conn, shop, baked.get("look_id")).get("align", "centre"))
+                                                  lettering(conn, shop, baked).get("align", "centre"))
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "refine", payload)
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/refinements", request.model_dump(exclude_none=True), apply, revision=revision)
 
 
-def look_style(conn, shop, look_id) -> dict:
-    """Typography and alignment of the shop's own saved look; an unknown or foreign id is refused (404)."""
-    if look_id is None:
-        return {}
-    brief = looks.get_look(conn, shop, look_id)["brief"]
-    return {"headline_style": brief["headline_style_en"], "align": brief["alignment"]}
+def lettering(conn, shop, headline: dict | None) -> dict:
+    """The drawn title's lettering and alignment (D-KIT-012): its title style wins, else the lettering of the shop's own
+    saved look, else none (the default); the alignment is the look's. An unknown or foreign look is refused (404)."""
+    headline = headline or {}
+    brief = looks.get_look(conn, shop, headline["look_id"])["brief"] if headline.get("look_id") else None
+    style = (TITLE_STYLES[headline["title_style"]] if headline.get("title_style")
+             else brief["headline_style_en"] if brief else None)
+    return ({"headline_style": style} if style else {}) | ({"align": brief["alignment"]} if brief else {})
 
 
 def profile_signature(document) -> dict[str, str]:

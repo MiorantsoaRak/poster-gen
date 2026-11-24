@@ -570,11 +570,14 @@ def walk_look(browser, session, scheme, errors):
         marks |= check_contrast(device, f"step {step} at 360 px, {theme}", placeholders=("input[name=brand]", "input[name=subtitle]") if step == "textes" else ())
         check_targets(device, f"step {step} at 360 px, {theme}")
         shot(device, f"look-360-{theme}-etape-{step}.png", full_page=False)
-    # Changes that act at once are switches; what acts on the next version stays a checkbox under its heading.
+    # Changes that act at once are switches; what acts on the next version stays a checkbox under its heading. Two boxes
+    # draw in the image, both in « Textes » (D-KIT-012): the texts (the contact with them), and the price.
+    device.get_by_role("tab", name="Textes", exact=True).tap()
+    expect(device.locator("label.check:not(.switch)", has_text="Dessiner")).to_have_text(["Dessiner les textes dans l’image", "Dessiner aussi le prix dans l’image"])
     device.get_by_role("tab", name="Boutique", exact=True).tap()
     expect(device.locator("label.switch")).to_have_count(3)
     expect(device.get_by_role("checkbox", name="Contact", exact=True)).not_to_be_checked()
-    expect(device.locator("label.check:not(.switch)", has_text="Dessiner aussi le contact dans l’image")).to_have_count(0)
+    expect(device.locator("label.check", has_text="Dessiner")).to_have_count(0)
     device.get_by_role("tab", name="Style", exact=True).tap()
     device.get_by_role("button", name="Générer l’affiche").tap()
     device.get_by_role("button", name="Lancer la génération").tap()
@@ -736,6 +739,7 @@ def walk_wait(browser, session, errors):
     assert elapsed.evaluate("e => !e.closest('[role=status], [role=alert], [aria-live]')")
     held["status"] = "running"
     expect(words).to_contain_text("Votre affiche prend forme.")
+    expect(words).to_contain_text("L’IA compose une nouvelle version. En général 1 à 2 minutes.")  # D-KIT-007
     expect(pill).to_have_text("Création en cours")
     expect(block.locator("li[aria-current=step]")).to_contain_text("Création de l’affiche")
     expect(cancel).to_have_count(0)
@@ -821,8 +825,10 @@ def walk_wait(browser, session, errors):
     held["status"] = None
     alternative = device.get_by_role("dialog", name="Vérifier la fidélité du produit")
     expect(alternative).to_be_visible(timeout=30000)
-    alternative.get_by_role("button", name="Tout est conforme, approuver").tap()
-    device.get_by_role("dialog", name="Fidélité approuvée").get_by_role("button", name="Fermer").tap()
+    # A version is approved only with the confirmation of its file (D-KIT-001): the review offers no other approval.
+    expect(alternative.get_by_role("button", name=re.compile("approuver", re.I))).to_have_count(0)
+    expect(alternative).not_to_contain_text("approuver")
+    alternative.get_by_role("button", name="Fermer").tap()
     expect(block).to_have_count(0)
     check_still(device, still, "after a new version at 360 px")
     assert len(scenes) == 2, scenes
@@ -1084,7 +1090,7 @@ def walk_words(browser, session, errors):
     page.wait_for_function("id => localStorage.getItem('affiche.shop1.words.' + id)?.includes('Casque')", arg=poster_a)
     entry = page.evaluate(kept, poster_a)
     assert (entry["brand"], entry["subtitle"], entry["accent_word"]) == ("MarqueAlpha", "SOUS-TITRE ALPHA", "Casque"), entry
-    assert sorted(entry) == ["accent_colour", "accent_word", "at", "brand", "brand_text", "contact", "on", "price", "subtitle"], entry
+    assert sorted(entry) == ["accent_colour", "accent_word", "at", "brand", "brand_text", "contact", "lines", "on", "price", "subtitle"], entry
     assert not re.search("120|034|phone-noir", json.dumps(entry | {"at": 0})), entry
     page.reload()
     expect(page.get_by_role("heading", name="Casque Alpha", exact=True)).to_be_visible()
@@ -1105,10 +1111,18 @@ def walk_words(browser, session, errors):
     expect(page.get_by_label("Les photos correspondent")).not_to_be_checked()
     # The version carries A's words now: its entry is gone.
     assert page.evaluate(kept, poster_a) is None, page.evaluate(kept, poster_a)
-    make("Enceinte Beta", "80 000")
+    # The form reads a price in thousands as sellers write it (D-KIT-002).
+    make("Enceinte Beta", "80k")
+    expect(page.get_by_label("Prix en ariary", exact=True)).to_have_value(re.compile(r"^80\s000$"))
     expect(brand).to_have_value("")
     expect(subtitle).to_have_value("")
     expect(words.filter(has_text="Aucun")).to_have_attribute("aria-pressed", "true")
+    # Straight quotes in the title are replaced, not refused (D-KIT-007): no fault while typing, curled on leaving the field.
+    title = page.locator("textarea[name=title]")
+    title.fill('Enceinte "Beta" 55"')
+    expect(page.locator("#erreur-titre")).to_have_count(0)
+    title.blur()
+    expect(title).to_have_value("Enceinte « Beta » 55″")
     asked = len(scenes)
     generate()
     sent = scenes[asked]
@@ -1130,7 +1144,65 @@ def walk_words(browser, session, errors):
     expect(words.filter(has_text="Casque")).to_have_attribute("aria-pressed", "true")
     assert not page.evaluate("() => Object.keys(localStorage).some(key => key.startsWith('affiche.shop1.words.') && /Alpha|ALPHA|Casque/.test(localStorage.getItem(key)))")
     assert page.evaluate(kept, poster_a) is None
+    walk_shop_lines(page, poster_a, scenes)
     context.close()
+
+
+def walk_shop_lines(page, poster, scenes):
+    """The shop's lines in « Pas à pas » (D-KIT-005): off with its reason while the shop has none; on, the scene request
+    carries them as the page holds them, the review lists them and the confirmation answers for them (the server requires
+    `text_lines` then); changed on another device, the request is refused before anything is spent, the server's sentence
+    is said and the page reads them again. The shop has no lines again at the end."""
+    box = page.get_by_role("checkbox", name="Afficher les lignes de la boutique")
+    headers = {"Origin": ORIGIN, "X-Affiche-Bundle": str(BUNDLE)}
+
+    def shop_lines(lines):
+        profile = page.request.get(f"{ORIGIN}/api/shop-profile").json()
+        answer = page.request.put(f"{ORIGIN}/api/shop-profile", headers={**headers, "Idempotency-Key": str(uuid4()), "If-Match": f'"{profile["revision"]}"'},
+                                  data={"name": profile["name"], "contact": profile["contact"], "logo_asset": profile["logo_asset"], "lines": lines})
+        assert answer.ok, answer.text()
+
+    def jobs():
+        return len(page.request.get(f"{ORIGIN}/api/creations/{poster}/jobs").json()["items"])
+
+    page.get_by_role("tab", name="Boutique", exact=True).click()
+    expect(box).to_be_disabled()
+    expect(box).not_to_be_checked()
+    expect(page.get_by_role("button", name="Les ajouter dans « Mon compte »")).to_be_visible()
+    shop_lines(["Garantie 6 mois", "Paiement Mvola"])
+    page.reload()
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+    page.get_by_role("tab", name="Boutique", exact=True).click()
+    # The version shown drew no line: the box follows it until it is touched.
+    expect(box).to_be_enabled()
+    expect(box).not_to_be_checked()
+    expect(page.locator("#panneau")).to_contain_text("Garantie 6 mois · Paiement Mvola")
+    box.check()
+    asked = len(scenes)
+    page.get_by_role("button", name="Nouvelle version").click()
+    # The dialog names the lines before any credit, in the chat recap's words (review t-kit-frontend r1, 8).
+    expect(page.get_by_role("dialog")).to_contain_text("Lignes de la boutique : Garantie 6 mois · Paiement Mvola.")
+    page.get_by_role("button", name="Lancer la génération").click()
+    review = page.get_by_role("dialog", name="Vérifier la fidélité du produit")
+    expect(review).to_be_visible(timeout=30000)
+    assert scenes[asked]["headline"]["lines"] == ["Garantie 6 mois", "Paiement Mvola"], scenes[asked]
+    expect(review.locator(".points li", has_text="Lignes de la boutique")).to_contain_text("Garantie 6 mois · Paiement Mvola")
+    review.get_by_role("button", name="Choisir cette version").click()
+    expect(page.locator(".final-preview")).to_contain_text("Garantie 6 mois · Paiement Mvola", timeout=30000)
+    download_review(page)
+    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+    # Changed elsewhere: refused before any job, in « Boutique », and the lines shown are the shop's again.
+    shop_lines(["Garantie 12 mois"])
+    before = jobs()
+    page.get_by_role("tab", name="Boutique", exact=True).click()
+    expect(box).to_be_checked()
+    expect(page.locator("#panneau")).to_contain_text("Garantie 6 mois · Paiement Mvola")
+    page.get_by_role("button", name="Nouvelle version").click()
+    page.get_by_role("button", name="Lancer la génération").click()
+    expect(page.locator("#panneau .refusal")).to_have_text(MESSAGES["shop_lines_changed"])
+    expect(page.locator("#panneau")).to_contain_text("Garantie 12 mois")
+    assert jobs() == before and scenes[-1]["headline"]["lines"] == ["Garantie 6 mois", "Paiement Mvola"], scenes[-1]
+    shop_lines([])
 
 
 BOX_JS = "e => { const b = e.getBoundingClientRect(); return [b.width, b.height] }"
@@ -2873,6 +2945,8 @@ def run():
                         cost.get_by_role("button", name="Annuler").click()
                         assert not admissions, admissions
                         open_group("Textes")
+                        # By default the texts are drawn, the contact with them (ADR-055, D-KIT-012): the box is in view.
+                        expect(page.get_by_label("Dessiner les textes dans l’image")).to_be_checked()
                         check_contrast(page, "step Textes")
                         check_resting(page, "step editor at 1440 px", ".rail")
                         shot(page, "step-textes.png")
@@ -2907,9 +2981,10 @@ def run():
                         until(lambda: footer("contact")["align"] == "right")
                         assert json.loads(page.evaluate("localStorage.getItem('affiche.shop1.style')"))["contact_align"] == "right"
                         # By default the contact is drawn in the composition, at the chosen position, without the
-                        # shop name (ADR-055). The option is in view: no section has to be opened to find it.
+                        # shop name (ADR-055): it follows « Dessiner les textes dans l’image » and has no box of its own
+                        # (D-KIT-012); the request below carries it.
                         expect(page.get_by_text("Pour la prochaine version", exact=True)).to_be_visible()
-                        expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_be_checked()
+                        expect(page.get_by_label("Dessiner aussi le contact dans l’image")).to_have_count(0)
                         check_contrast(page, "step Boutique")
                         shot(page, "step-boutique.png")
                         open_group("Style")
@@ -3013,7 +3088,7 @@ def run():
                         expect(tab("Textes")).to_have_attribute("aria-selected", "true")
                         expect(chips.first).to_have_attribute("aria-pressed", "true")
                         expect(page.get_by_role("button", name="Rouge", exact=True)).to_have_attribute("aria-pressed", "true")
-                        page.get_by_label("Laisser l’IA composer le titre dans l’image").uncheck()
+                        page.get_by_label("Dessiner les textes dans l’image").uncheck()
                         tab("Style").click()
                         expect(page.get_by_role("button", name="Luxe sombre")).to_have_attribute("aria-pressed", "true")
                         # One tap: the plan is made on the way and reused by the retry below.
@@ -3248,6 +3323,25 @@ def run():
                         page.get_by_role("group", name="Élément à régler").get_by_role("button", name="Prix", exact=True).click()
                         expect(page.get_by_label("Police", exact=True)).to_have_value("montserrat-black-italic")
                         expect(page.get_by_label("Présentation du prix", exact=True)).to_have_value("capsule")
+                        # The choices few sellers need sit in one closed section (D-KIT-012), Police and the price's
+                        # presentation above it. Opened from the keyboard, the size still works: saved, then undone.
+                        advanced = page.locator(".layer-properties details", has_text="Réglages avancés")
+                        size = page.get_by_label("Taille", exact=True)
+                        assert advanced.evaluate("e => !e.open")
+                        for hidden in (size, page.get_by_label("Graisse", exact=True), page.get_by_role("checkbox", name="Contour", exact=True),
+                                       page.get_by_role("checkbox", name="Ombre", exact=True), page.get_by_label("Position X", exact=True), page.get_by_label("Hauteur", exact=True)):
+                            expect(hidden).to_be_hidden()
+                        price_size = lambda: footer("price")["font_size"]
+                        kept_size = next(layer for layer in expected_styled["formats"]["feed"]["layers"] if layer["role"] == "price")["font_size"]
+                        advanced.locator("summary").focus()
+                        page.keyboard.press("Enter")
+                        expect(size).to_be_visible()
+                        expect(size).to_have_value(f"{kept_size:g}")
+                        size.fill(f"{kept_size + 8 if kept_size <= 232 else kept_size - 8:g}")
+                        size.press("Tab")
+                        until(lambda: price_size() != kept_size)
+                        page.get_by_role("button", name="Annuler", exact=True).click()
+                        until(lambda: price_size() == kept_size)
                         page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
                         assert page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()["document"] == expected_styled
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
@@ -3333,7 +3427,7 @@ def run():
                         # Managing the list (R-CREATION-LIBRARY-003): state in words, copy, remove with confirmation, restore.
                         rows = page.locator(".library-row")
                         before = rows.count()
-                        expect(page.locator(".library-item .badge").first).to_have_text(re.compile("Brouillon|À vérifier|Approuvée|Confirmée"))
+                        expect(page.locator(".library-item .badge").first).to_have_text(re.compile("Brouillon|À vérifier|À confirmer|Confirmée"))
                         expect(page.locator("aside.side .nav a", has_text="Mes affiches")).to_contain_text(str(before))
                         options = rows.first.get_by_role("button", name=re.compile("^Actions pour"))
                         duplicate = rows.first.get_by_role("button", name=re.compile("^Dupliquer"))
@@ -3522,7 +3616,7 @@ def run():
                         assert page.request.get(f"{ORIGIN}/api/creations/{original_seal_id}").json() == original_seal
                         # Managing styles (R-CREATION-LIBRARY-004): open, rename with its refusals, remove with confirmation.
                         page.locator(".final-preview").wait_for(state="detached")
-                        go(page, "Styles")
+                        go(page, "Mon kit")
                         cards = page.locator(".look-card")
                         expect(cards).to_have_count(4)
                         check_resting(page, "Styles", ".look-card")
@@ -3543,7 +3637,7 @@ def run():
                         expect(page.locator(".confirm")).to_contain_text("le gardent")
                         page.locator(".confirm").get_by_role("button", name="Retirer ce style").click()
                         expect(cards).to_have_count(3)
-                        expect(page.locator("aside.side .nav a", has_text="Styles")).to_contain_text("3")
+                        expect(page.locator("aside.side .nav a", has_text="Mon kit")).to_contain_text("3")
                         assert page.request.get(f"{ORIGIN}/api/looks").json()["items"] == []
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
                         page.screenshot(path=str(OUTPUT / "styles.png"))
@@ -3576,7 +3670,12 @@ def run():
                         repair.click()
                         expect(price).to_be_focused()
                         price.fill("10 000")
+                        # A straight quote in the title is replaced, not refused (D-KIT-007); a line break still blocks.
                         page.get_by_label("Titre", exact=True).fill('Petite photo 32"')
+                        expect(page.locator("#erreur-titre")).to_have_count(0)
+                        page.get_by_label("Titre", exact=True).blur()
+                        expect(page.get_by_label("Titre", exact=True)).to_have_value("Petite photo 32″")
+                        page.get_by_label("Titre", exact=True).fill("Petite photo\n32")
                         expect(page.locator("#erreur-titre")).to_contain_text("contient un guillemet droit")
                         open_group("Style")
                         expect(generate).to_be_disabled()
@@ -3721,13 +3820,13 @@ def run():
                         mobile.wait_for_function("document.querySelector('.poster-canvas canvas').getBoundingClientRect().height >= 140")
                         expect(canvas_phone).to_be_in_viewport(ratio=1)
                         state_badge = mobile.locator(".frame .badge")
-                        expect(state_badge).to_have_text("Version 1 · approuvée")
+                        expect(state_badge).to_have_text("Version 1 · confirmée")
                         assert topmost(state_badge)
                         mobile.get_by_role("button", name=re.compile(r"^Versions ")).tap()
                         thumb = mobile.locator(".version img").first.bounding_box()
                         assert (round(thumb["width"]), round(thumb["height"])) == (56, 70), thumb
                         assert thumb["y"] > poster_box()["y"] + poster_box()["height"]
-                        expect(mobile.locator(".versions .state").first).to_have_text("Approuvée")
+                        expect(mobile.locator(".versions .state").first).to_have_text("Confirmée")
                         mobile.get_by_role("button", name=re.compile(r"^Versions ")).tap()
                         expect(mobile.locator(".tab .tool")).to_have_count(4)
                         assert all(tool.is_visible() for tool in mobile.locator(".tab .tool").all())

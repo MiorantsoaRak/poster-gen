@@ -4,6 +4,7 @@
 
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
+| [seller-kit.md](seller-kit.md) | R-KIT-001 … 013 | Approved for design 2026-11-23 by the lead in the owner's place (ADR-131), from [the user walk](../reviews/user-walk-2026-11-23.md): slice 1 the walk's fixes, slice 2 the kit | [seller-kit](../designs/seller-kit.md), approved v3 |
 | [saas-journey.md](saas-journey.md) | R-JOURNEY-001 … 007 | Approved for design, 2026-11-22 | [Approved design](../designs/saas-journey.md) |
 | [first-poster-guide.md](first-poster-guide.md) | R-GUIDE-001 … 004 | Approved for design, 2026-11-22 | [Approved design](../designs/first-poster-guide.md) |
 | [multi-shop.md](multi-shop.md) | R-MULTI-SHOP-001 … 006 | Approved 2026-11-15 under the autonomy grant (ADR-106), Release 1 « Invitation » ([roadmap](../ROADMAP.md), ADR-105) | [multi-shop](../designs/multi-shop.md) v4, approved under the autonomy grant (ADR-107) |

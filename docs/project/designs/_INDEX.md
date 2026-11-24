@@ -4,6 +4,7 @@
 
 | Design file | Requirements / sections | Status |
 |---|---|---|
+| [seller-kit.md](seller-kit.md) | R-KIT-001–012; D-KIT-001 … 012 | Approved v3 2026-11-23 under ADR-131, after a devil's advocate and review r1 (APPROVE WITH FIXES, fixes in); tasks T-KIT-001 … 015 in TODO.md; one migration (0021), no new route |
 | [saas-journey.md](saas-journey.md) | R-JOURNEY-001–007 | Approved for implementation, 2026-11-22 |
 | [first-poster-guide.md](first-poster-guide.md) | R-GUIDE-001–004 | Approved for implementation, 2026-11-22 |
 | [shop-dashboard.md](shop-dashboard.md) | R-SHOP-DASH-001…009 | v4 mobile amendment implemented locally for 005–009 (ADR-119, T-SHOP-DASH-006–011). v3 implemented locally (ADR-114–118), 2026-11-18; real-device and screen-reader release checks pending |

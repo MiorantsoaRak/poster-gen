@@ -8,12 +8,12 @@ import json
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 from sqlalchemy import text
 
 from affiche.db import utc_now
 from . import jobs, store
-from .models import Colour, Model, Sha, canonical
+from .models import Colour, Id, Model, Sha, canonical
 from .plans import ArtDirection, screen_art, wire_schema
 
 LOOK_LIMIT = 24  # per shop, counting only looks in use: the picker stays usable
@@ -59,8 +59,17 @@ LookName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
 
 
 class LookRequest(Model):
+    """A style photo of the shop, or a version of one of its posters kept as a model (D-KIT-010): exactly one. Each is
+    left out of the body when absent, so earlier bodies keep their hash."""
     name: LookName
-    reference_asset: Sha
+    reference_asset: Sha | None = Field(None, exclude_if=lambda value: value is None)
+    visual_id: Id | None = Field(None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def one_reference(self):
+        if (self.reference_asset is None) == (self.visual_id is None):
+            raise ValueError("one_reference_required")
+        return self
 
 
 class Rename(Model):
@@ -77,12 +86,29 @@ def stub_brief() -> StyleBrief:
 
 def request_look(engine, settings, shop, key, creation_id, revision, request: LookRequest):
     def apply(conn):
-        store._asset(conn, settings.data_dir, shop, request.reference_asset, "style")
+        reference = request.reference_asset
+        if request.visual_id:
+            # A version's scene kept as a model (D-KIT-010): its image becomes a style image of the shop here, so that
+            # the brief and its job read it as any style photo.
+            visual = store._owned(conn, "poster_visuals", shop, request.visual_id)
+            if visual["treatment"] != "scene":
+                raise store.Refused("unsupported_visual")
+            reference = visual["image_asset"]
+            conn.execute(text("INSERT INTO asset_access VALUES (:shop,:sha,'style') ON CONFLICT DO NOTHING"),
+                         {"shop": shop, "sha": reference})
+        store._asset(conn, settings.data_dir, shop, reference, "style")
+        # An image the shop already has a look from gives that look again, with no new brief (v2 point 6): the answer is
+        # the job that made it, already succeeded, which a client follows as any look job. Nothing is reserved.
+        made = conn.execute(text("SELECT job_id FROM looks WHERE shop_id=:shop AND reference_asset=:sha AND removed_at "
+                                 "IS NULL ORDER BY created_at DESC LIMIT 1"), {"shop": shop, "sha": reference}).scalar()
+        if made:
+            store._revision(store.get_creation(conn, shop, creation_id)["revision"], revision)
+            return 200, {"job_id": made, "status_url": f"/api/jobs/{made}", "reused": True}
         if conn.execute(text("SELECT COUNT(*) FROM looks WHERE shop_id=:shop AND removed_at IS NULL"), {"shop": shop}).scalar_one() >= LOOK_LIMIT:
             raise store.Refused("look_limit", 409)
         # Runs on the planner queue and budget: the job kinds are fixed by an applied migration.
         return 202, jobs.enqueue(conn, settings, shop, creation_id, revision, "plan",
-                                 {"look": request.model_dump()})
+                                 {"look": {"name": request.name, "reference_asset": reference}})
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{creation_id}/looks", request.model_dump(), apply,
                         revision=revision)
 

@@ -5,9 +5,10 @@ export interface LibraryItem { id: string; revision: number; has_current_file?: 
 export interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 /** The unit after a count of credits, as the shell writes it (App.vue balanceLabel). */
 export const creditWord = (n: number) => 'crédit' + (Math.abs(n) === 1 ? '' : 's')
-export const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'Approuvée', confirmed: 'Confirmée' }
-// The badge of a poster's state in a list (D-REDESIGN-004): a draft plain, the rest by tone.
-export const stateBadges = { draft: 'badge', to_review: 'badge warn', approved: 'badge ok', confirmed: 'badge ok' }
+// approved: the scene is approved but this revision has no confirmed file (D-KIT-001): « Confirmée » would be false.
+export const stateNames = { draft: 'Brouillon', to_review: 'À vérifier', approved: 'À confirmer', confirmed: 'Confirmée' }
+// The badge of a poster's state in a list (D-REDESIGN-004): a draft and a poster to confirm plain, the rest by tone.
+export const stateBadges = { draft: 'badge', to_review: 'badge warn', approved: 'badge', confirmed: 'badge ok' }
 interface Attention { total: number; first_creation_id: string | null; first_creation_title?: string | null }
 export interface Summary {
   as_of: string; review: Attention; failed: Attention

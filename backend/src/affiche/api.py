@@ -35,6 +35,7 @@ from affiche.posters import (auth, credits, exports, facebook, facebook_connect,
                              rendering, store, terms, typography, visuals)
 from affiche.posters.service import PosterService
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
+from affiche.posters.plans import ShopLines
 from affiche.runtime import start
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import usd_to_micros
@@ -122,7 +123,12 @@ MESSAGES = {
         "no_credit": "Il ne vous reste plus de crédit : rien n’a été envoyé, et vos affiches restent disponibles.",
         "image_job_running": "Une image est déjà en cours de préparation pour cette création.",
         "already_started": "Cette tâche a déjà démarré et ne peut plus être annulée.",
-        "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver.",
+        # An older page does not list every kind of drawn words (the shop's lines, D-KIT-005): a reload brings it.
+        "fidelity_incomplete": "Relisez et cochez aussi chaque texte dessiné dans l’image avant d’approuver. Si un texte de l’image manque à la liste, rechargez la page.",
+        # The shop's lines (D-KIT-005): typed in « Mon compte », drawn by a scene only as the owner was shown them.
+        "shop_line_refused": "Une ligne de la boutique : 40 caractères au plus, sans guillemet droit, sans montant, remise ni numéro (le prix et le contact ont leurs champs). Trois lignes au plus, toutes différentes.",
+        "shop_lines_changed": "Les lignes de la boutique ont changé : vérifiez-les, puis relancez.",
+        "shop_lines_missing": "La boutique n’a pas encore de lignes : ajoutez-les dans Mon compte.",
         "look_limit": "Vous avez déjà enregistré le nombre maximal de styles.",
         "look_name_taken": "Un autre style porte déjà ce nom. Choisissez-en un autre.",
         "look_removed": "Ce style a été retiré.",
@@ -140,10 +146,38 @@ MESSAGES = {
         "terms_required": "Acceptez d'abord les conditions d'utilisation : rien n'a été envoyé, et aucun crédit n'a été pris.",
         # The chat's cards (posters/reads.py): the one place for their French sentences. {} is filled by the server.
         "card_ask_product": "Quel est le produit ? Marque et modèle.",
-        "card_ask_price": "Quel est le prix ? Écrivez-le en chiffres, par exemple 700 000 Ar.",
+        # The price question names what it read (D-KIT-002): {} is each amount, as the recap shows it.
+        "card_ask_price": "Je ne vois pas de prix dans votre message. Écrivez-le en chiffres, par exemple 250 000 Ar.",
+        "card_ask_price_one": "Le prix est-il {} ?",
+        "card_ask_price_which": "J’ai lu {} : lequel est le prix ?",
+        "card_ask_price_many": "J’ai lu plusieurs montants. Écrivez le prix seul, par exemple 250 000 Ar.",
         "card_ask_photo": "Il me faut une photo du produit.",
         "card_recap": "Voici l’affiche que je vais créer.",
-        "card_refused": "Je ne peux pas demander ce changement à l’image : retirez les mots de prix, de promotion ou de garantie. Le prix se change à part, par message.",
+        "card_refused": "Je ne dessine pas de prix, de remise ni de promotion dans l’image. Le prix se change par message ; une garantie, une livraison ou un paiement va dans les lignes de la boutique : écrivez par exemple « ajoute Garantie 6 mois ».",
+        "card_redraw": "Le texte est dessiné dans l’image : cette correction refait toute l’image, pour 1 crédit.",
+        "card_not_advert": "Je fais des affiches pour ce que votre boutique vend. Envoyez la photo d’un produit, son nom et son prix.",
+        # A part of a new poster's message that will not be used (D-KIT-004), one line each; {} is the owner's words.
+        "card_unused_commercial": "« {} » : un prix, une remise ou une promotion ne va pas dans l’image. Le prix a son champ ; le reste va dans la description de la publication.",
+        "card_unused_product": "« {} » : une affiche montre un seul produit. Faites une affiche par produit.",
+        "card_unused_format": "« {} » : par message, l’affiche est au format Publication ; les autres formats se font dans Pas à pas.",
+        "card_unused_photo": "« {} » : touchez l’étiquette d’une photo pour dire si c’est le produit ou un modèle de style.",
+        "card_unused_other": "« {} » : je ne sais pas le mettre sur l’affiche. Dites-le autrement.",
+        # A choice of the recap that this message changed (R-KIT-004): « J’ai changé : a, b et c. »
+        "card_changed": "J’ai changé : {}.",
+        "card_changed_name": "le nom (avant : {})",
+        "card_changed_price_ar": "le prix (avant : {})",
+        "card_changed_style": "le style (avant : {})",
+        "card_changed_scene_fr": "la scène (avant : « {} »)",
+        "card_changed_identity_with": "le logo et le contact de la boutique (avant : avec)",
+        "card_changed_identity_without": "le logo et le contact de la boutique (avant : sans)",
+        # The shop's lines asked by message (D-KIT-005); {} is a line, or the lines quoted.
+        "card_line": "Je garde {} dans les lignes de la boutique et je refais l’affiche avec.",
+        "card_line_kept": "« {} » est déjà dans les lignes de la boutique.",
+        "card_line_too_long": "« {} » : une ligne de la boutique fait 40 caractères au plus.",
+        "card_line_refused": "« {} » : une ligne de la boutique ne contient ni montant, ni remise, ni numéro.",
+        "card_lines_full": "La boutique a déjà trois lignes : remplacez-en une dans Mon compte.",
+        "card_lines_steps": "Les lignes de la boutique sont dessinées dans l’image : cette affiche n’a pas de textes dessinés.",
+        "card_rest_after": "Demandez le reste ensuite.",
         "card_unclear": "Écrivez le produit et son prix.",
         "card_unclear_poster": "Dites ce qu’il faut changer : {}. Le reste se change dans Pas à pas.",  # the field table's labels
         "card_same": "L’affiche a déjà ces textes.",
@@ -367,8 +401,15 @@ class Acceptance(Model):
     version: str = Field(min_length=1, max_length=32)  # the version the page showed (terms.VERSION)
 
 
+class ProfileUpdate(Profile):
+    # The shop's lines (D-KIT-005). Absent: unchanged, and omitted, so the bodies of pages that do not know them keep
+    # their idempotency hash and erase nothing. Never in BrandSnapshot: a line is only ever drawn words.
+    lines: ShopLines | None = Field(None, exclude_if=lambda value: value is None)
+
+
 class ProfileView(Profile):
     revision: int
+    lines: list[str]
 
 
 class CurrentConfirmation(Model):
@@ -552,14 +593,19 @@ def status_view(conn, settings: Settings, started_at: str) -> dict:
 
 
 # The library's « À vérifier » (c: a creation, v: its current version), counted by the shop's dashboard too
-# (D-SHOP-DASH-001): the scene its primary format shows waits for review, or a later version waits outside the document
-# until it is chosen. Every join keeps to the creation's shop. The shown scene is one lookup by id; the posters with a
-# waiting version are found once per query, not once per poster: :shop is the caller's, whose c.shop_id it is.
+# (D-SHOP-DASH-001): the scene its primary format shows waits for review, or a version of one of its jobs waits that is
+# newer than both that scene and the poster's last confirmation (D-KIT-001): one left undecided before them no longer
+# speaks for the poster. Every join keeps to the creation's shop. Both stamps are db.utc_now() text, so text order is
+# time order; SQLite's max(a,b) is NULL when one is, hence the COALESCE ('': no scene, no confirmation).
+# ponytail: the waiting versions are looked up once per poster, scanning the shop's jobs (no index on
+# poster_jobs.creation_id); add that index in a migration if a shop's list grows slow.
 SCENE = ("s.shop_id=c.shop_id AND s.id=json_extract(v.document_json,'$.formats.'"
          "||json_extract(v.document_json,'$.primary_format')||'.scene.visual_id')")
 TO_REVIEW = (f"(EXISTS(SELECT 1 FROM poster_visuals s WHERE {SCENE} AND s.status='pending_review') OR"
-             " c.id IN (SELECT j.creation_id FROM poster_visuals w JOIN poster_jobs j ON j.id=w.job_id"
-             " WHERE w.shop_id=:shop AND j.shop_id=:shop AND w.status='pending_review'))")
+             " EXISTS(SELECT 1 FROM poster_jobs j JOIN poster_visuals w ON w.job_id=j.id"
+             " WHERE j.creation_id=c.id AND j.shop_id=c.shop_id AND w.shop_id=c.shop_id AND w.status='pending_review'"
+             f" AND w.created_at>max(COALESCE((SELECT s.created_at FROM poster_visuals s WHERE {SCENE}),''),"
+             "COALESCE((SELECT max(k.confirmed_at) FROM confirmations k WHERE k.creation_id=c.id),''))))")
 IMAGE_KINDS_SQL = ",".join(f"'{kind}'" for kind in sorted(jobs.IMAGE_KINDS))
 # The poster's latest image generation (by admission, then id) ended without an image. Any later one supersedes it, a
 # cancelled one included, and a cancelled one is no failure (D-SHOP-DASH-001). One pass over the shop's image jobs
@@ -921,6 +967,8 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
     async def validation(request, error):
         # Pydantic errors contain raw inputs (passwords/documents); never serialise or log them.
         field = ".".join(map(str, error.errors()[0]["loc"])) if error.errors() else None
+        if request.url.path == "/api/shop-profile" and error.errors() and error.errors()[0]["loc"][:2] == ("body", "lines"):
+            return error_response(request, store.Refused("shop_line_refused", field="lines"))  # his own words: their rule
         return error_response(request, store.Refused("validation_error", field=field))
 
     @app.exception_handler(HTTPException)
@@ -1040,7 +1088,7 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
             return result_response((200, store.get_profile(conn, request.state.shop)))
 
     @protected.put("/api/shop-profile", response_model=ProfileView)
-    def save_profile(body: Profile, request: Request, key: Key, version: Version = None):
+    def save_profile(body: ProfileUpdate, request: Request, key: Key, version: Version = None):
         return result_response(store.save_profile(app.state.engine, settings.data_dir, request.state.shop,
                                                   key, body, expected_revision(version)))
 

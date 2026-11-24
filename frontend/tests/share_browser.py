@@ -1456,21 +1456,22 @@ def publishing(browser, errors, data, product):
     page.set_viewport_size({"width": 1366, "height": 768})
 
     # No post yet, and no sheet of the panel's own: the button opens the page for this poster, which says that no Page is
-    # connected and leads to « Mon compte », where the stand-in's dialog connects one.
+    # connected and connects one itself (D-KIT-008): the stand-in's dialog, « Connecter cette Page » in « Mon compte »,
+    # then back on the same post by itself, its caption as the description, nothing sent.
     expect(lines).to_have_count(0)
     expect(panel.get_by_text(other)).to_have_count(0)
     show_sharing(panel)
     panel.get_by_label("Légende de la publication").fill("Casque Bose QC, 450 000 Ar")
     alone()
-    expect(page.get_by_text("Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».", exact=True)).to_be_visible()
-    page.get_by_role("link", name="Mon compte", exact=True).last.click()
-    page.wait_for_url(re.compile(r"#compte$"))
-    card = page.get_by_role("region", name="Page Facebook", exact=True)
-    card.get_by_role("button", name="Connecter ma Page Facebook").click()
+    expect(page.get_by_text("Aucune Page Facebook n’est connectée.", exact=True)).to_be_visible()
+    page.locator(".shop-publish").get_by_role("button", name="Connecter ma Page Facebook").click()
     page.wait_for_url(smoke.ORIGIN + "/#compte")
+    card = page.get_by_role("region", name="Page Facebook", exact=True)
     card.get_by_role("radio", name="Page d’essai 1").check()
     card.get_by_role("button", name="Connecter cette Page").click()
-    expect(card).to_contain_text("Page connectée : Page d’essai 1")
+    page.wait_for_url(f"**/#publier-{poster}")
+    expect(field).to_have_value("Casque Bose QC, 450 000 Ar")
+    assert not sent
 
     # Published from the page for this poster: that poster alone, the caption its field shows (this device refuses to
     # keep the edit: storage still holds the earlier text); then on the panel, its line and its link.
@@ -1675,7 +1676,7 @@ def run():
           "failing (deadline, PNG, null, size), cannot share; prepared on confirmation in place; a late encoding never "
           "another opening's; an earlier version never offers it; not gated; the app switch keeps the outcome for the same "
           "shop and drops it for another; 360 px, both themes, keyboard. « Publier sur ma Page » (stand-in; none with the "
-          "feature off): opens the page for this poster alone, which leads to « Mon compte » without a Page; published "
+          "feature off): opens the page for this poster alone, which connects a Page itself and comes back to the same post; published "
           "there with the caption the field shows (its storage write refused), the panel lists the post (« seule ») with Facebook's link; an unknown one offers "
           "« Répondre », which leads to « Publier » where the owner says; confirmed in another format, the sentence and no "
           "button; an earlier version keeps its posts, without the button, twenty a page with « Voir plus »; 360 px; no record "

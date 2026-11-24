@@ -1,6 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { clearFacebookOrigin, facebookCard, keepFacebookOrigin, panelLine, postsAddress, takeFacebookOrigin } from '../src/facebook'
+import { bind, open } from '../src/api'
+import { clearFacebookOrigin, facebookCard, keepFacebookOrigin, manualReturnLine, panelLine, postsAddress, startFacebook, takeFacebookOrigin } from '../src/facebook'
 import type { Post } from '../src/publish'
+
+// The shop's requests leave only once the gate has opened on the bound shop: shop 2 here (before any storage is stubbed).
+bind(2); open()
 
 const page = { id: '100000000000001', name: 'Page d’essai 1', state: 'connected' as const }
 const choice = [{ id: '100000000000001', name: 'Page d’essai 1' }, { id: '100000000000002', name: 'Page d’essai 2' }]
@@ -53,6 +57,51 @@ it('uses ordinary navigation if the tab refuses storage', () => {
   expect(keepFacebookOrigin(2, 'publier')).toBe(false)
   expect(takeFacebookOrigin(2)).toBeNull()
   expect(() => clearFacebookOrigin()).not.toThrow()
+})
+
+it('keeps the publish origin before it leaves for Facebook, and nothing when the request fails', async () => {
+  const data = tabStorage(), dialog = 'https://www.facebook.com/v23.0/dialog/oauth?state=s'
+  const leaving: string[] = []  // what this tab keeps at the moment it leaves
+  const assign = vi.fn(() => { leaving.push(...data.values()) })
+  vi.stubGlobal('location', { assign })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ url: dialog }))))
+  const origin = 'publier-' + crypto.randomUUID()
+  expect(await startFacebook(2, origin)).toBe('left')
+  expect(assign).toHaveBeenCalledWith(dialog)
+  expect(leaving.map(record => JSON.parse(record))).toEqual([{ shop: 2, origin }])
+  expect(takeFacebookOrigin(2)).toBe(origin)
+  // « Mon compte » with no publish origin: it leaves, keeping nothing.
+  expect(await startFacebook(2, null)).toBe('left')
+  expect(data.size).toBe(0)
+  // The page that asked is gone once the answer is in: nothing kept, the tab stays.
+  expect(await startFacebook(2, 'publier', { still: () => false })).toBe('stopped')
+  expect(data.size).toBe(0)
+  expect(assign).toHaveBeenCalledTimes(2)
+  // The request fails: its error is the caller's sentence; nothing kept, the tab stays.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'facebook_off', message_fr: 'Indisponible.' } }), { status: 503 })))
+  await expect(startFacebook(2, 'publier')).rejects.toThrow('Indisponible.')
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline') }))
+  await expect(startFacebook(2, 'publier')).rejects.toThrow('Connexion interrompue.')
+  expect(data.size).toBe(0)
+  expect(assign).toHaveBeenCalledTimes(2)
+  // The tab refuses to leave: what was kept is taken back.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ url: dialog }))))
+  assign.mockImplementationOnce(() => { throw new DOMException('Refusé', 'SecurityError') })
+  await expect(startFacebook(2, 'publier')).rejects.toThrow('Refusé')
+  expect(data.size).toBe(0)
+})
+
+it('says when this tab cannot keep the return, then leaves without it on the next tap', async () => {
+  vi.stubGlobal('sessionStorage', { setItem() {}, getItem: () => null, removeItem() {} })
+  const assign = vi.fn()
+  vi.stubGlobal('location', { assign })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ url: 'https://www.facebook.com/dialog' }))))
+  expect(await startFacebook(2, 'publier')).toBe('unkept')
+  expect(assign).not.toHaveBeenCalled()
+  expect(await startFacebook(2, 'publier', { unkept: true })).toBe('left')
+  expect(assign).toHaveBeenCalledOnce()
+  expect(manualReturnLine('publier')).toBe('Ce navigateur ne peut pas mémoriser le retour. Après Facebook, ouvrez « Publier » depuis le menu.')
+  expect(manualReturnLine('publier-' + crypto.randomUUID())).toBe('Ce navigateur ne peut pas mémoriser le retour. Après Facebook, ouvrez « Mes affiches », puis l’affiche à publier.')
 })
 
 it('gives the card the form of what the server says, a waiting choice first', () => {

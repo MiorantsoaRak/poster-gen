@@ -4,7 +4,7 @@ import { shopKey } from './api'
 // version) are kept in the browser, one entry per poster of the shop (ADR-083, T-KEEP-WORDS, D-MULTI-SHOP-007). Nothing
 // else is stored there.
 export const wordsPrefix = () => shopKey('words.'), WORDS_KEPT = 30
-export type KeptWords = { on: boolean; price: boolean; contact: boolean; brand_text: boolean; brand: string; subtitle: string; accent_word: string; accent_colour: string }
+export type KeptWords = { on: boolean; price: boolean; contact: boolean; brand_text: boolean; lines: boolean; brand: string; subtitle: string; accent_word: string; accent_colour: string }
 
 /** What a stored entry may give back for a poster with this title. The storage is never trusted: a field of the wrong
  *  type or size is left out, and so is an accent word that the title no longer contains (the server would refuse it). */
@@ -13,13 +13,17 @@ export function readWords(raw: string | null, title: string): Partial<KeptWords>
   try { saved = JSON.parse(raw ?? 'null') } catch { return {} }
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
   const words: Partial<KeptWords> = {}
-  for (const key of ['on', 'price', 'contact', 'brand_text'] as const) if (typeof saved[key] === 'boolean') words[key] = saved[key]
+  for (const key of ['on', 'price', 'contact', 'brand_text', 'lines'] as const) if (typeof saved[key] === 'boolean') words[key] = saved[key]
   // 60 is what the two fields accept (maxlength) and what the image model can draw.
   for (const key of ['brand', 'subtitle'] as const) if (typeof saved[key] === 'string' && saved[key].length <= 60) words[key] = saved[key]
   if (typeof saved.accent_word === 'string' && (!saved.accent_word.trim() || title.includes(saved.accent_word.trim()))) words.accent_word = saved.accent_word.trim()
   if (typeof saved.accent_colour === 'string' && /^#[0-9A-Fa-f]{6}$/.test(saved.accent_colour)) words.accent_colour = saved.accent_colour.toLowerCase()
   return words
 }
+
+/** A straight quote as a seller types it is replaced, not refused (D-KIT-007), as the server's reads.py curl_quotes: a pair
+ *  becomes « … », one left alone ″ (55"). The image model cannot draw a straight quote. */
+export const curlQuotes = (text: string) => text.replace(/"\s*([^"]*?)\s*"/g, '« $1 »').replace(/"/g, '″')
 
 /** The keys to remove so that only the `keep` most recently written entries stay; an entry without a readable date goes first. */
 export function staleWords(entries: [key: string, raw: string | null][], keep = WORDS_KEPT): string[] {

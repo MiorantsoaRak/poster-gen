@@ -223,6 +223,19 @@ def test_every_refusal_the_owner_can_meet_has_its_own_french_sentence(client):
     assert answer.status_code == 422 and "invalid_cursor" in answer.json()["error"]["message_fr"]
 
 
+def test_every_chat_card_sentence_is_in_messages():
+    """The chat's cards (posters/reads.py) take their French from MESSAGES: a key named there and missing here would
+    fail a paid read after the call. Kinds whose sentence is card_{kind} are listed by hand."""
+    from affiche.posters import reads
+    source = Path(reads.__file__).read_text(encoding="utf-8")
+    named = set(re.findall(r'"(card_[a-z_]+)"', source)) | {f"card_{kind}" for kind in (
+        "unclear", "ask_product", "ask_price", "ask_photo", "recap", "same", "steps")}
+    named |= set(reads.UNUSED.values()) | {f"card_changed_{key}" for key, _shown in reads.CHANGED}
+    assert len(named) > 40 and not named - set(affiche_api.MESSAGES), sorted(named - set(affiche_api.MESSAGES))
+    # Each unused part's sentence quotes the owner's words once.
+    assert all(affiche_api.MESSAGES[key].count("{}") == 1 for key in reads.UNUSED.values())
+
+
 def test_cookie_is_opaque_hash_only_and_logout_revokes(client):
     assert client.get("/api/shop-profile").status_code == 401
     assert client.get("/api/session").json() == {"authenticated": False}
@@ -888,7 +901,7 @@ def test_an_upgraded_pilot_with_no_password_anywhere_refuses_to_start(settings, 
             TestClient(create_app(settings)):
         pass
     with sqlite3.connect(settings.data_dir / "affiche.db") as conn:  # migrated, nothing else: fixed forward
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0020",)
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0021",)
         assert conn.execute("SELECT password_hash FROM shop_profile").fetchall() == [(None,)]
         assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (1,)
 
@@ -1146,6 +1159,59 @@ def test_list_states_removed_view_restore_and_stale_copy(client, settings):
     with engine.connect() as conn:
         # Copying, removing and restoring never reach a provider.
         assert conn.exec_driver_sql("SELECT count(*) FROM poster_calls").scalar_one() == calls
+
+
+def test_a_confirmed_poster_is_confirmed_whatever_its_older_versions(client, settings):
+    """D-KIT-001, the Message path of the user walk: version 1 never decided, version 2 made by a correction, chosen
+    and confirmed. A waiting version counts only when it is newer than the scene shown and the last confirmation."""
+    from affiche.posters import exports, visuals
+    from affiche.posters.models import Document
+    from test_exports import confirm_request, render
+    from test_poster_visuals import execute, fixed, scene
+    login(client)
+    engine = client.app.state.engine
+    poster = create_draft(client)
+    path = f'/api/creations/{poster["id"]}'
+    approval = visuals.Decision(action="approve", checks={check: True for check in visuals.CHECKS | visuals.TEXT_CHECKS})
+
+    def state():
+        return {item["id"]: item["state"] for item in client.get("/api/creations").json()["items"]}[poster["id"]]
+
+    def review():
+        return client.get("/api/shop-dashboard").json()["review"]["total"]
+
+    def save(change):
+        current = client.get(path).json()
+        document = Document.model_validate(current["document"])
+        change(document)
+        return store.save_creation(engine, settings.data_dir, 1, str(uuid4()), poster["id"], document, current["revision"])[1]
+
+    def confirm(creation):
+        exports.confirm(engine, settings, 1, str(uuid4()), poster["id"], creation["revision"],
+                        confirm_request(render(engine, settings, creation)))
+
+    scene(engine, settings, poster, fixed(engine, settings, poster))
+    first = execute(engine, settings)
+    assert (state(), review()) == ("to_review", 1)
+    visuals.request_refinement(engine, settings, 1, str(uuid4()), poster["id"], client.get(path).json()["revision"],
+                               visuals.RefinementRequest(base_visual_id=first, instruction_fr="Un fond plus clair"))
+    second = execute(engine, settings)
+    chosen = save(lambda document: setattr(document.formats["feed"].scene, "visual_id", second))
+    visuals.decide(engine, 1, str(uuid4()), second, approval)
+    confirm(chosen)
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, first)["status"] == "pending_review"  # superseded, never decided
+    assert (state(), review()) == ("confirmed", 0)
+    # A version made after the confirmation waits for the owner.
+    scene(engine, settings, chosen, fixed(engine, settings, chosen))
+    third = execute(engine, settings)
+    assert client.get(path).json()["document"]["formats"]["feed"]["scene"]["visual_id"] == second != third
+    assert (state(), review()) == ("to_review", 1)
+    # The owner keeps version 2 and confirms an edit of it while version 3 waits: version 3 was there when he confirmed.
+    edited = save(lambda document: setattr(document.offer, "price_ar", document.offer.price_ar + 1000))
+    assert (state(), review()) == ("to_review", 1)
+    confirm(edited)
+    assert (state(), review()) == ("confirmed", 0)
 
 
 def test_storage_error_is_safe_and_no_partial_creation(client, monkeypatch, caplog):

@@ -1,19 +1,22 @@
 import asyncio
 import itertools
+import json
 import time
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from sqlalchemy import text
 
-from affiche import assets
+from affiche import api as affiche_api, assets
+from affiche.api import ProfileUpdate
 from affiche.db import write_tx
 from affiche.visuals.admission import spent_micros
 from affiche.visuals.gateway import prepare_provider_input
-from affiche.posters import exports, jobs, looks, store, typography, visuals
+from affiche.posters import credits, exports, jobs, looks, store, typography, visuals
 from affiche.posters.models import (
     FORMATS, CopyCreation, Crop, Document, NewCreation, Offer, PriceBadge, ProductInput, Profile, Scene,
 )
+from affiche.posters.plans import Headline
 from affiche.posters.service import PosterService
 from affiche.posters.worker import run_job
 from test_api import client, create_draft, login, password_hash, post, settings  # noqa: F401
@@ -621,3 +624,187 @@ def post_scene(client, id, revision, plan_id, format="feed"):
                            json={"plan_id": plan_id, "format": format, "acknowledged_warnings": ["low_resolution"]})
     assert response.status_code == 202, response.text
     return response
+
+
+LINES = ["Garantie 6 mois", "Paiement Mvola"]
+
+
+def lined(engine, settings, lines=LINES):
+    """The shop's lines kept in its profile (D-KIT-005), as « Mon compte » saves them."""
+    with engine.connect() as conn:
+        revision = store.get_profile(conn, 1)["revision"]
+    store.save_profile(engine, settings.data_dir, 1, key(), ProfileUpdate(lines=lines), revision)
+
+
+def drawn_scene(engine, settings, creation, lines=LINES, **more):
+    """A scene drawing its title and price, and the shop's lines as the owner was shown them."""
+    return visuals.request_scene(engine, settings, 1, key(), creation["id"], creation["revision"], visuals.SceneRequest(
+        plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"],
+        headline=Headline(price=True, lines=lines), **more))[1]
+
+
+def job_payload(engine, job_id):
+    with engine.connect() as conn:
+        return json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE id=:id"), {"id": job_id}).scalar_one())
+
+
+def test_a_scene_draws_the_profiles_lines_and_its_review_requires_them(engine, settings, input_id):
+    """D-KIT-005: the lines the owner was shown are the profile's, so the scene draws them; its job keeps them as the
+    version's own words, which its review asks to check like every drawn text. Lines changed later leave it as it is."""
+    lined(engine, settings)
+    creation = draft(engine, settings.data_dir, input_id)
+    payload = job_payload(engine, drawn_scene(engine, settings, creation)["job_id"])
+    assert payload["headline"]["shop_lines"] == LINES and "lines" not in payload["headline"]
+    assert 'one per line in this order: "Garantie 6 mois", "Paiement Mvola".' in payload["prompt"]
+    assert "the price label, the shop lines and the markings" in payload["prompt"]
+    visual_id = execute(engine, settings)
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, visual_id)["headline"]["shop_lines"] == LINES
+        drawn = visuals.baked_headline(conn, 1, store._owned(conn, "poster_visuals", 1, visual_id))
+    assert visuals.required_checks(drawn) == visuals.CHECKS | {"text_title", "text_price", "text_lines"}
+    without = {check: True for check in visuals.CHECKS | {"text_title", "text_price"}}
+    with pytest.raises(store.Refused, match="fidelity_incomplete"):  # an older page does not list them
+        visuals.decide(engine, 1, key(), visual_id, visuals.Decision(action="approve", checks=without))
+    approved = visuals.decide(engine, 1, key(), visual_id,
+                              visuals.Decision(action="approve", checks=without | {"text_lines": True}))[1]
+    assert approved["status"] == "approved" and approved["checks"]["text_lines"] is True
+    lined(engine, settings, ["Livraison 24h"])
+    with engine.connect() as conn:
+        assert visuals.get_visual(conn, 1, visual_id)["headline"]["shop_lines"] == LINES
+    # A scene that draws no line asks no check for them.
+    assert "text_lines" not in visuals.required_checks({"title": "Une enceinte", "price_ar": 899000})
+
+
+def test_lines_asked_without_lines_are_refused_before_any_spend(engine, settings, input_id):
+    """r1 2: the lines the owner was shown must be the profile's, in order, else 409 before anything is reserved or
+    queued. The request's hash covers the words; a request that asks for no line is hashed as before."""
+    creation = draft(engine, settings.data_dir, input_id)
+
+    def spent():
+        with engine.connect() as conn:
+            return conn.execute(text("SELECT COUNT(*) FROM poster_jobs")).scalar_one(), credits.balance(conn, 1)
+
+    before = spent()
+    with pytest.raises(store.Refused) as refusal:
+        drawn_scene(engine, settings, creation)
+    assert (refusal.value.code, refusal.value.status) == ("shop_lines_missing", 409) and spent() == before
+    lined(engine, settings)
+    for shown in (LINES[::-1], LINES[:1], [*LINES, "Retrait en boutique"], ["Garantie 6 MOIS", "Paiement Mvola"], []):
+        with pytest.raises(store.Refused) as refusal:
+            drawn_scene(engine, settings, creation, shown)
+        assert (refusal.value.code, refusal.value.status) == ("shop_lines_changed", 409) and spent() == before, shown
+    drawn_scene(engine, settings, creation)
+    assert spent()[0] == before[0] + 1
+    assert "lines" not in visuals.SceneRequest(plan_id=key(), headline=Headline(price=True)).model_dump(exclude_none=True)["headline"]
+
+
+def test_a_refinement_keeps_its_bases_lines(engine, settings, input_id):
+    """A refinement draws its base's lines again, not the profile's, which changed since (D-KIT-005)."""
+    lined(engine, settings)
+    creation = draft(engine, settings.data_dir, input_id)
+    drawn_scene(engine, settings, creation)
+    base = execute(engine, settings)
+    lined(engine, settings, ["Livraison 24h"])
+    result = visuals.request_refinement(engine, settings, 1, key(), creation["id"], 2, visuals.RefinementRequest(
+        base_visual_id=base, instruction_fr="Une lumière plus chaude"))[1]
+    payload = job_payload(engine, result["job_id"])
+    assert payload["headline"]["shop_lines"] == LINES
+    assert '"Garantie 6 mois", "Paiement Mvola"' in payload["prompt"] and "Livraison 24h" not in payload["prompt"]
+    refined = execute(engine, settings)
+    with engine.connect() as conn:
+        assert "text_lines" in visuals.required_checks(
+            visuals.baked_headline(conn, 1, store._owned(conn, "poster_visuals", 1, refined)))
+
+
+def test_a_first_scene_carries_the_owners_words_and_keeps_them(engine, settings, input_id):
+    """D-KIT-003: the scene words of the first message reach the first image as a kept adjustment, and the refinement
+    after it says them again. Screened as a refinement's instruction; absent from the request's hash when not sent."""
+    creation = draft(engine, settings.data_dir, input_id)
+    words = "fond rouge, produit posé sur une table en bois"
+    result = visuals.request_scene(engine, settings, 1, key(), creation["id"], 1, visuals.SceneRequest(
+        plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"],
+        adjustment_fr=f" {words} "))[1]
+    payload = job_payload(engine, result["job_id"])
+    assert payload["adjustments"] == [words] and f'"kept_adjustments":["{words}"]' in payload["prompt"]
+    assert "Scene: the owner described the picture he wants." in payload["prompt"]
+    first = execute(engine, settings)
+    refined = visuals.request_refinement(engine, settings, 1, key(), creation["id"], 2, visuals.RefinementRequest(
+        base_visual_id=first, instruction_fr="Une lumière plus chaude"))[1]
+    prompt = job_payload(engine, refined["job_id"])["prompt"]
+    assert f'"kept_adjustments":["{words}"]' in prompt and '"requested_adjustment":"Une lumière plus chaude"' in prompt
+    for refused in ("fond rouge, promo -50%", "écris 250 000 Ar", "x" * 501, ""):
+        with pytest.raises(ValidationError):
+            visuals.SceneRequest(plan_id=key(), adjustment_fr=refused)
+    assert "adjustment_fr" not in visuals.SceneRequest(plan_id=key()).model_dump(exclude_none=True)
+
+
+def test_http_shop_lines_from_the_profile_to_the_scene(client):
+    """The contract of the « Mon compte » fields and of the scene request (T-KIT-006, 009): GET and PUT carry `lines`, a
+    body without them changes none, a refused line has its own code and sentence on the field « lines », and a scene
+    asked with other lines than the profile's says so."""
+    login(client)
+
+    def put(body, revision):
+        return client.put("/api/shop-profile", json={"name": "Boutique", "contact": None, "logo_asset": None} | body,
+                          headers={"If-Match": f'"{revision}"', "Idempotency-Key": key()})
+
+    assert client.get("/api/shop-profile").json()["lines"] == []
+    for bad in (["Livraison 5 000"], ["Garantie 6 mois", "garantie 6 mois"], ["a", "b", "c", "d"]):
+        refused = put({"lines": bad}, 1).json()["error"]
+        assert {key: refused[key] for key in ("code", "field", "message_fr")} == {
+            "code": "shop_line_refused", "field": "lines", "message_fr": affiche_api.MESSAGES["shop_line_refused"]}
+    assert put({"lines": LINES}, 1).json()["lines"] == LINES
+    assert put({}, 2).json()["lines"] == LINES  # a page that does not know them
+    assert client.get("/api/shop-profile").json() == {"revision": 3, "name": "Boutique", "contact": None,
+                                                       "logo_asset": None, "lines": LINES}
+    creation = create_draft(client)
+    planned = client.post(f'/api/creations/{creation["id"]}/plans', headers={"If-Match": '"1"', "Idempotency-Key": key()},
+                          json={"mode": "fixed", "direction": "Terrasse tropicale"})
+    answer =client.post(f'/api/creations/{creation["id"]}/scenes', headers={"If-Match": '"1"', "Idempotency-Key": key()},
+                         json={"plan_id": planned.json()["id"], "acknowledged_warnings": ["low_resolution"],
+                               "headline": {"price": True, "lines": LINES[:1]}})
+    assert answer.status_code == 409 and answer.json()["error"]["message_fr"] == (
+        "Les lignes de la boutique ont changé : vérifiez-les, puis relancez.")
+
+
+def test_a_title_style_wins_over_the_looks_and_a_refinement_keeps_it(engine, settings, input_id):
+    """D-KIT-012: the title style's words win over the look's lettering, the look keeps its alignment, and a refinement
+    draws its base's title style again. Without a look the guard takes a lettering that comes from a title style."""
+    settings.planner_provider = "stub"
+    creation = draft(engine, settings.data_dir, input_id)
+    reference = store.upload(engine, settings.data_dir, 1, photo(), "style")["asset"]
+    looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"],
+                       looks.LookRequest(name="Vagues", reference_asset=reference))
+    look_id = execute(engine, settings)
+
+    def revision():
+        with engine.connect() as conn:
+            return store.get_creation(conn, 1, creation["id"])["revision"]
+
+    def styled_scene(headline):
+        current = creation | {"revision": revision()}
+        return job_payload(engine, visuals.request_scene(engine, settings, 1, key(), creation["id"], current["revision"],
+                                                         visuals.SceneRequest(plan_id=fixed(engine, settings, current)["id"],
+                                                                              acknowledged_warnings=["low_resolution"],
+                                                                              headline=headline))[1]["job_id"])
+
+    sport = "set in this typographic style: heavy italic sans-serif slanted forward, dynamic, no ornaments."
+    payload = styled_scene(Headline(look_id=look_id, title_style="sport"))
+    assert payload["headline"]["title_style"] == "sport" and sport in payload["prompt"]
+    assert "Bold geometric sans-serif" not in payload["prompt"] and "left-aligned at the left edge" in payload["prompt"]
+    base = execute(engine, settings)
+    refined = visuals.request_refinement(engine, settings, 1, key(), creation["id"], revision(), visuals.RefinementRequest(
+        base_visual_id=base, instruction_fr="Une lumière plus chaude"))[1]
+    prompt = job_payload(engine, refined["job_id"])["prompt"]
+    assert sport in prompt and "Bold geometric sans-serif" not in prompt
+    execute(engine, settings)
+    alone = styled_scene(Headline(title_style="condense"))["prompt"]
+    assert "set in this typographic style: extra-bold condensed sans-serif in capitals" in alone
+    assert "Headline, centred inside the area" in alone
+    with engine.connect() as conn:  # moderne is the default lettering, even beside a look, which keeps its alignment
+        assert visuals.lettering(conn, 1, {"look_id": look_id, "title_style": "moderne"}) == {"align": "left"}
+        assert visuals.lettering(conn, 1, {"look_id": look_id}) == {
+            "headline_style": looks.stub_brief().headline_style_en, "align": "left"}
+        assert visuals.lettering(conn, 1, None) == {}
+    assert "title_style" not in visuals.SceneRequest(plan_id=key(), headline=Headline(price=True)).model_dump(
+        exclude_none=True)["headline"]

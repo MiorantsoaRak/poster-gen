@@ -1,22 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { api, ApiError, bound, changePassword, state, upload, writeProfile, type Profile, type Terms } from './api'
-import { clearFacebookOrigin, facebookCard, isPublishOrigin, keepFacebookOrigin, type FacebookAnswer } from './facebook'
+import { api, ApiError, bound, changePassword, shopLines, state, upload, writeProfile, type Profile, type Terms } from './api'
+import { facebookCard, isPublishOrigin, manualReturnLine, startFacebook, type FacebookAnswer } from './facebook'
 import { termsDate } from './generation'
 
 const props = withDefaults(defineProps<{ terms: Terms | null; termsUnavailable: boolean; support: string; publishOrigin?: string | null; interactive?: boolean }>(), { interactive: true })
 const emit = defineEmits<{ saved: [profile: Profile]; terms: []; signOut: [] }>()
 const baseline = ref<Profile>(), draft = ref<Profile>(), conflict = ref(false), uncertain = ref(false)
-const working = ref(false), profileError = ref(''), profileNotice = ref('')
-const fieldNames = { name: 'Nom de la boutique', contact: 'Contact de la boutique', logo_asset: 'Logo' } as const
+const working = ref(false), profileError = ref(''), profileNotice = ref(''), linesError = ref('')
+const fieldNames = { name: 'Nom de la boutique', contact: 'Contact de la boutique', logo_asset: 'Logo', lines: 'Lignes de la boutique' } as const
 type ProfileField = keyof typeof fieldNames
+// The draft holds three line fields, its own copy (D-KIT-005, r1 7): never the saved list itself, which v-model would edit.
+const form = (profile: Profile): Profile => ({ ...profile, lines: [0, 1, 2].map(index => profile.lines?.[index] ?? '') })
+// A field as it would be saved, compared by value: the lines as the list sent.
+const value = (profile: Profile | undefined, field: ProfileField) =>
+  JSON.stringify(field === 'lines' ? shopLines(profile?.lines) : profile?.[field]?.trim() || null)
 const overlaps = ref<ProfileField[]>([])
 function choose(field: ProfileField, saved: boolean) {
-  if (saved && draft.value && baseline.value) draft.value[field] = baseline.value[field]
+  if (saved && draft.value && baseline.value) draft.value = { ...draft.value, [field]: form(baseline.value)[field] }
   overlaps.value = overlaps.value.filter(key => key !== field)
 }
 const fields = Object.keys(fieldNames) as ProfileField[]
-const dirty = computed(() => fields.some(key => (draft.value?.[key] || '') !== (baseline.value?.[key] || '')))
+const dirty = computed(() => fields.some(key => value(draft.value, key) !== value(baseline.value, key)))
 const pending = computed(() => working.value && !!draft.value)
 const profileHeading = ref<HTMLElement>()
 let lastEdit: HTMLElement | null = null
@@ -33,16 +38,16 @@ const message = (reason: unknown) => reason instanceof Error ? reason.message : 
 
 async function readProfile() {
   if (working.value) return
-  working.value = true; profileError.value = ''; profileNotice.value = ''
+  working.value = true; profileError.value = ''; profileNotice.value = ''; linesError.value = ''
   try {
     const saved = await api<Profile>('/api/shop-profile', { timeout: 20_000 })
-    const merged = { ...saved }
+    let merged = form(saved)
     if (conflict.value && baseline.value && draft.value) {
       for (const field of fields) {
-        const local = draft.value[field]?.trim() || null
-        if (local === baseline.value[field]) continue
-        merged[field] = local
-        if (saved[field] !== baseline.value[field] && saved[field] !== local) overlaps.value.push(field)
+        const local = value(draft.value, field), before = value(baseline.value, field), now = value(saved, field)
+        if (local === before) continue
+        merged = { ...merged, [field]: form(draft.value)[field] }
+        if (now !== before && now !== local) overlaps.value.push(field)
       }
       profileNotice.value = 'Version enregistrée relue. Vérifiez vos modifications avant de les enregistrer.'
     }
@@ -52,15 +57,17 @@ async function readProfile() {
 }
 async function save() {
   if (working.value || !draft.value || conflict.value || overlaps.value.length) return
-  working.value = true; profileError.value = ''; profileNotice.value = ''
+  working.value = true; profileError.value = ''; profileNotice.value = ''; linesError.value = ''
   try {
-    const saved = await writeProfile(draft.value)
-    baseline.value = saved; draft.value = { ...saved }; uncertain.value = false
+    const saved = await writeProfile(draft.value, draft.value.lines)
+    baseline.value = saved; draft.value = form(saved); uncertain.value = false
     profileNotice.value = 'Profil enregistré.'; emit('saved', saved)
   } catch (reason) {
     conflict.value = reason instanceof ApiError && reason.code === 'revision_conflict'
     uncertain.value = !(reason instanceof ApiError && reason.status >= 400 && reason.status < 500)
-    profileError.value = uncertain.value ? 'L’enregistrement n’a pas pu être confirmé. Réessayez la même demande.'
+    // A refused line: the server's rule, said at the three fields.
+    if (reason instanceof ApiError && reason.field === 'lines') linesError.value = reason.message
+    else profileError.value = uncertain.value ? 'L’enregistrement n’a pas pu être confirmé. Réessayez la même demande.'
       : conflict.value ? 'Le profil a changé sur un autre appareil. Vos modifications sont conservées.' : message(reason)
   } finally { working.value = false }
 }
@@ -124,21 +131,16 @@ async function onFacebook(run: () => Promise<void>) {
 const connectFacebook = () => onFacebook(async () => {
   const shop = bound.value
   if (typeof shop !== 'number' || state.value !== 'shown') return
-  const answer = await api<{ url: string }>('/api/facebook/connect', { method: 'POST', timeout: 20_000 })
-  if (bound.value !== shop || state.value !== 'shown' || location.hash !== '#compte' || !facebookHeading.value?.isConnected) return
-  if (origin.value && !keepFacebookOrigin(shop, origin.value) && !manualReturn.value) {
-    manualReturn.value = true
-    return
-  }
-  try {
-    window.location.assign(answer.url)
-  } catch (reason) {
-    clearFacebookOrigin()
-    throw reason
-  }
+  const still = () => bound.value === shop && state.value === 'shown' && location.hash === '#compte' && !!facebookHeading.value?.isConnected
+  if (await startFacebook(shop, origin.value, { still, unkept: manualReturn.value }) === 'unkept') manualReturn.value = true
 })
-const choosePage = () => onFacebook(async () => showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'POST', timeout: 20_000,
-  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_id: facebookPick.value }) })))
+// Back from Facebook for a post (D-KIT-008): once the Page is connected, the same post by itself (the link stays). The
+// address changes as a link's would: App.vue still asks about an unsaved profile.
+const choosePage = () => onFacebook(async () => {
+  showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'POST', timeout: 20_000,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page_id: facebookPick.value }) }))
+  if (origin.value && facebookState.value === 'connected' && location.hash === '#compte') location.hash = origin.value
+})
 const disconnectFacebook = () => onFacebook(async () => showFacebook(await api<FacebookAnswer>('/api/facebook/page', { method: 'DELETE', timeout: 20_000 })))
 onMounted(readProfile)
 onMounted(readFacebook)
@@ -153,17 +155,24 @@ onMounted(readFacebook)
         <label>Nom de la boutique<input v-model="draft.name" autocomplete="organization" maxlength="160" /></label>
         <label>{{ fieldNames.contact }}<textarea v-model="draft.contact" rows="2" maxlength="500" aria-describedby="aide-contact-boutique" /></label>
         <small id="aide-contact-boutique">Ces coordonnées peuvent apparaître sur vos affiches si vous choisissez de les inclure.</small>
+        <fieldset class="lines"><legend>{{ fieldNames.lines }}</legend>
+          <small id="aide-lignes">Vos conditions de vente, écrites une fois : garantie, livraison, paiement. Sans montant, remise ni numéro. Elles peuvent être dessinées sur vos affiches si vous choisissez de les inclure.</small>
+          <label v-for="index in 3" :key="index">Ligne {{ index }}<input v-model="draft.lines![index - 1]" autocomplete="off" maxlength="40"
+            aria-describedby="aide-lignes erreur-lignes" :aria-invalid="!!linesError || undefined" @input="linesError = ''" /></label>
+          <p v-if="linesError" id="erreur-lignes" role="alert" class="why">{{ linesError }}</p>
+        </fieldset>
         <label class="file-pick">Logo<input type="file" accept="image/jpeg,image/png,image/webp" @change="logo" /><span class="pick-button">{{ draft.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label>
         <div v-if="draft.logo_asset" class="row"><img class="logo-preview" :src="'/api/assets/' + draft.logo_asset" width="100" height="64" alt="Logo de la boutique" />
           <button type="button" class="text-button" @click="rememberEdit($event); draft.logo_asset = null">Retirer le logo</button></div>
       </fieldset>
       <p v-else-if="working" role="status">Lecture du profil…</p>
       <template v-if="draft && baseline">
-        <fieldset v-for="field in overlaps" :key="field" class="collision"><legend>{{ fieldNames[field] }} modifié sur les deux appareils</legend>
+        <fieldset v-for="field in overlaps" :key="field" class="collision"><legend>{{ fieldNames[field] }} {{ field === 'lines' ? 'modifiées' : 'modifié' }} sur les deux appareils</legend>
           <div v-for="source in (['draft', 'saved'] as const)" :key="source">
             <strong>{{ source === 'draft' ? 'Votre saisie' : 'Version enregistrée' }}</strong>
             <img v-if="field === 'logo_asset' && (source === 'draft' ? draft : baseline).logo_asset" class="logo-preview"
               :src="'/api/assets/' + (source === 'draft' ? draft : baseline).logo_asset" width="80" height="60" :alt="source === 'draft' ? 'Votre logo' : 'Logo enregistré'" />
+            <p v-else-if="field === 'lines'">{{ shopLines((source === 'draft' ? draft : baseline).lines).join(' · ') || 'Aucune ligne' }}</p>
             <p v-else>{{ (source === 'draft' ? draft : baseline)[field] || (field === 'logo_asset' ? 'Aucun logo' : 'Non renseigné') }}</p>
             <button type="button" class="secondary" @click="choose(field, source === 'saved')">{{ source === 'draft' ? 'Garder ma saisie' : 'Garder la version enregistrée' }}</button>
           </div>
@@ -188,7 +197,7 @@ onMounted(readFacebook)
         <template v-else><p><strong translate="no">{{ facebook.page.name }}</strong></p><p class="why">Reconnectez votre Page.</p></template>
       </template>
       <template v-if="facebookState === 'connect' || facebookState === 'reconnect'">
-        <p v-if="manualReturn" id="retour-manuel" role="status">Ce navigateur ne peut pas mémoriser le retour. Après Facebook, {{ origin === 'publier' ? 'ouvrez « Publier » depuis le menu.' : 'ouvrez « Mes affiches », puis l’affiche à publier.' }}</p>
+        <p v-if="manualReturn" id="retour-manuel" role="status">{{ manualReturnLine(origin) }}</p>
         <button class="secondary" :disabled="facebookBusy" :aria-describedby="manualReturn ? 'retour-manuel aide-facebook' : 'aide-facebook'" @click="connectFacebook">{{ manualReturn ? 'Continuer vers Facebook' : facebookState === 'reconnect' ? 'Reconnecter ma Page' : 'Connecter ma Page Facebook' }}</button>
         <small id="aide-facebook">Facebook vous demandera quelles Pages autoriser.</small>
         <small>Si Facebook refuse l’accès, votre Page doit d’abord être autorisée par Doka Studio : demandez-le à l’opérateur.</small>
@@ -228,7 +237,9 @@ fieldset { display: grid; gap: 12px; border: 0; min-width: 0; margin: 0; padding
 input[type=file] { max-width: 100% }
 /* The Pages to choose from (« Page Facebook »): native radios, sized as the application's checkboxes. */
 input[type=radio] { width: 22px; height: 22px; min-height: 22px; flex: none; margin: -1px 0 0; padding: 0; accent-color: var(--text); cursor: pointer }
-.facebook legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted) }
+.facebook legend, .lines legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted) }
+/* The three lines' title reads above their own labels: the text colour, a step apart. */
+.lines legend { margin-bottom: 6px; font-size: 14px; color: var(--text) }
 #titre-facebook { scroll-margin-block-start: 5rem }
 .collision { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius) }
 .collision > div { display: grid; gap: 6px }

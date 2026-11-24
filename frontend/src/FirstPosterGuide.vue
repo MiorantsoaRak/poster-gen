@@ -44,7 +44,7 @@ watch(() => props.step, focusStep, { flush: 'post' })
       <details>
         <summary>Si vous êtes bloqué</summary>
         <template v-if="step === 0">
-          <p>Marquez la photo de l’article comme « Produit » et une référence de style comme « Inspiration ». Pour remplacer la photo sur une affiche existante, « Copier avec cette photo » conserve l’original.</p>
+          <p>Une photo jointe est une photo du produit. Pour une affiche dont vous aimez le style, touchez son étiquette : elle devient « Modèle de style ». Pour remplacer la photo sur une affiche existante, « Copier avec cette photo » conserve l’original.</p>
         </template>
         <template v-else-if="step === 1">
           <p>Dans « Pas à pas », ouvrez « Textes » ou « Boutique » pour corriger l’offre. Un prix dessiné dans l’image demande une nouvelle génération pour le modifier. Si les conditions sont en attente, ouvrez « Lire les conditions » dans l’atelier.</p>

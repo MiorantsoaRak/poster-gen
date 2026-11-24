@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -126,9 +128,10 @@ def test_spooled_brief_is_validated_again_before_it_is_stored(engine, settings, 
 def test_saved_look_is_renamed_and_removed_without_breaking_what_used_it(engine, settings, input_id):
     settings.planner_provider = "stub"
     creation = draft(engine, settings.data_dir, input_id)
-    reference = store.upload(engine, settings.data_dir, 1, photo(), "style")["asset"]
+    colours = iter(("red", "green", "blue", "white"))
 
-    def make(name):
+    def make(name):  # each from its own image: a second request for one image gives its first look (v2 point 6)
+        reference = store.upload(engine, settings.data_dir, 1, photo(colour=next(colours)), "style")["asset"]
         looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"],
                            looks.LookRequest(name=name, reference_asset=reference))
         return execute(engine, settings)
@@ -169,7 +172,7 @@ def test_saved_look_is_renamed_and_removed_without_breaking_what_used_it(engine,
         looks.rename_look(engine, 1, key(), first, looks.Rename(name="Retour"))
     with engine.connect() as conn:
         assert looks.get_look(conn, 1, first)["name"] == "Été bleu"  # still readable by id
-        assert visuals.look_style(conn, 1, first)["align"] == "left"
+        assert visuals.lettering(conn, 1, {"look_id": first})["align"] == "left"
         current = store.get_creation(conn, 1, creation["id"])
         rows = conn.execute(text("SELECT COUNT(*) FROM looks")).scalar_one()
         calls = conn.execute(text("SELECT COUNT(*) FROM poster_calls")).scalar_one()
@@ -194,7 +197,83 @@ def test_removed_looks_do_not_count_towards_the_limit(engine, settings, input_id
     request = looks.LookRequest(name="Seul", reference_asset=reference)
     looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)
     only = execute(engine, settings)
+    other = looks.LookRequest(name="Autre", reference_asset=store.upload(
+        engine, settings.data_dir, 1, photo(colour="red"), "style")["asset"])
     with pytest.raises(store.Refused, match="look_limit"):
-        looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)
+        looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], other)
     looks.remove_look(engine, 1, key(), only)
+    # A removed look is not given again: its image makes a new one.
+    assert looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)[0] == 202
+
+
+def counts(engine):
+    with engine.connect() as conn:
+        return tuple(conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+                     for table in ("poster_jobs", "poster_calls", "looks"))
+
+
+def test_a_versions_scene_becomes_a_look_and_its_access_is_granted_once(engine, settings, input_id):
+    """D-KIT-010: a version of the shop's poster kept as a model. Its image becomes a style image of the shop in the
+    request's transaction, and the look pipeline reads it as any style photo."""
+    settings.planner_provider = "stub"
+    creation = draft(engine, settings.data_dir, input_id)
+    visuals.request_scene(engine, settings, 1, key(), creation["id"], creation["revision"], visuals.SceneRequest(
+        plan_id=fixed(engine, settings, creation)["id"], acknowledged_warnings=["low_resolution"]))
+    version = execute(engine, settings)
+
+    def access():
+        with engine.connect() as conn:
+            image = store._owned(conn, "poster_visuals", 1, version)["image_asset"]
+            return image, conn.execute(text("SELECT COUNT(*) FROM asset_access WHERE shop_id=1 AND asset_sha=:sha AND "
+                                            "role='style'"), {"sha": image}).scalar_one()
+
+    image, before = access()
+    with engine.connect() as conn:
+        revision = store.get_creation(conn, 1, creation["id"])["revision"]
+    request = looks.LookRequest(name="Modèle JBL", visual_id=version)
+    with pytest.raises(store.Refused) as refusal:  # another shop's version: nothing granted, nothing queued
+        looks.request_look(engine, settings, 2, key(), creation["id"], revision, request)
+    assert (refusal.value.code, refusal.value.status, access()[1], counts(engine)[2]) == ("not_found", 404, 0, 0)
+    status, queued = looks.request_look(engine, settings, 1, key(), creation["id"], revision, request)
+    assert (status, before, access()[1]) == (202, 0, 1)
+    with engine.connect() as conn:  # the job is the one a style photo makes
+        assert json.loads(conn.execute(text("SELECT input_json FROM poster_jobs WHERE id=:id"), {"id": queued["job_id"]})
+                          .scalar_one()) == {"look": {"name": "Modèle JBL", "reference_asset": image}}
+    look_id = execute(engine, settings)
+    with engine.connect() as conn:
+        assert looks.get_look(conn, 1, look_id)["reference_asset"] == image
+    # Kept again: the same look, no second grant, job or brief (v2 point 6).
+    again = looks.request_look(engine, settings, 1, key(), creation["id"], revision, request)
+    assert again == (200, {"job_id": queued["job_id"], "status_url": f"/api/jobs/{queued['job_id']}", "reused": True})
+    assert access()[1] == 1
+    # Exactly one reference; an earlier body is dumped, so hashed, as before.
+    for bad in ({}, {"reference_asset": image, "visual_id": version}):
+        with pytest.raises(ValidationError):
+            looks.LookRequest(name="x", **bad)
+    assert looks.LookRequest(name="x", reference_asset=image).model_dump() == {"name": "x", "reference_asset": image}
+
+
+def test_a_style_image_read_before_gives_its_look_again_without_spending(engine, settings, input_id):
+    """v2 point 6: a style photo the shop already has a look from answers that look, followed as its finished job; a
+    request for it spends nothing and queues nothing. A removed look is not given again."""
+    settings.planner_provider = "stub"
+    creation = draft(engine, settings.data_dir, input_id)
+    reference = store.upload(engine, settings.data_dir, 1, photo(), "style")["asset"]
+    request = looks.LookRequest(name="Vagues", reference_asset=reference)
+    first = looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)[1]
+    look_id = execute(engine, settings)
+    before = counts(engine)
+    mutation = key()
+    reused = looks.request_look(engine, settings, 1, mutation, creation["id"], creation["revision"],
+                                looks.LookRequest(name="Style 2", reference_asset=reference))
+    assert reused == (200, {"job_id": first["job_id"], "status_url": first["status_url"], "reused": True})
+    assert counts(engine) == before
+    with engine.connect() as conn:
+        job = jobs.get_job(conn, 1, first["job_id"])
+    assert (job["kind"], job["status"], job["result_ref"]) == ("look", "succeeded", look_id)  # what the client follows
+    assert looks.request_look(engine, settings, 1, mutation, creation["id"], creation["revision"],
+                              looks.LookRequest(name="Style 2", reference_asset=reference)) == reused  # replayed
+    with pytest.raises(store.Refused, match="revision_conflict"):
+        looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"] + 1, request)
+    looks.remove_look(engine, 1, key(), look_id)
     assert looks.request_look(engine, settings, 1, key(), creation["id"], creation["revision"], request)[0] == 202

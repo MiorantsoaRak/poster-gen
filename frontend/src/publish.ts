@@ -66,6 +66,12 @@ export function moveTo(draft: Draft, from: number, to: number) {
   if (from === to || from < 0 || to < 0 || from > last || to > last) return draft
   return edited(draft, { items: reorder(draft.items, from, to) })
 }
+/** The poster brought from its own page by « Publier plusieurs affiches » (D-KIT-008): added at the end, then put first;
+ *  one already in the draft is put first. At the limit, one not in the draft is not added: the very same draft. */
+export function putFirst(draft: Draft, id: string, limit: number | null) {
+  const added = draft.items.includes(id) ? draft : toggle(draft, id, limit)
+  return moveTo(added, added.items.indexOf(id), 0)
+}
 /** The handle's arrow keys: one place earlier (-1) or later (1); at an end nothing changes. */
 export const move = (draft: Draft, id: string, by: -1 | 1) => { const at = draft.items.indexOf(id); return at < 0 ? draft : moveTo(draft, at, at + by) }
 /** A drag starts only past this many pixels: a tap, or a finger that trembles, moves nothing. */
@@ -191,6 +197,8 @@ export function whyNot(action: Action, limit: number | null, description: string
   if (action === 'description') return FAULTS[descriptionFault(description) as keyof typeof FAULTS]
   return why[action]
 }
+/** Nothing chosen yet is no fault: its reason is help, never in the warning colour (D-KIT-008; after a post the draft is empty). */
+export const helpOnly = (action: Action) => action === 'empty'
 export const faultLine = (description: string) => { const fault = descriptionFault(description); return fault ? FAULTS[fault] : '' }
 /** Over the grid: at the limit exactly, why it adds no more; over it, what to take out. Never a count it does not hold. */
 export function limitLine(count: number, limit: number | null) {

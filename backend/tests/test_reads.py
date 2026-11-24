@@ -108,7 +108,7 @@ def test_migration_0012_on_a_0011_database(tmp_path, monkeypatch):
         migrate(engine)
         migrate(engine)  # start-up replay
         with engine.connect() as conn:
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0020"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0021"
             assert conn.exec_driver_sql("SELECT value FROM meta WHERE key='planner_mode'").scalar_one() == "stub"
             columns = {row[1]: row[3] for row in conn.exec_driver_sql("PRAGMA table_info(chat_reads)")}
             assert conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name='chat_reads_created'").scalar_one() \
@@ -128,12 +128,22 @@ def test_migration_0012_on_a_0011_database(tmp_path, monkeypatch):
 REJECTED = [  # (message, the partial value a model could return): no amount of the owner's, so no candidate
     ("JBL A55..123 Ar", 123), ("JBL 七700 123 Ar", 123), ("JBL ⁻700 000 Ar", 700000), ("JBL 700٫123 456 Ar", 123456),
     ("-700 123 Ar", 123), ("+700 000 Ar", 700000), ("−700 000 Ar", 700000), ("700,123 456 Ar", 456),
-    ("٧700 123 Ar", 123), ("Prix 1234 567 Ar", 567), ("700 000,00 Ar", 0), ("700k", 700000),
-    ("(700 000 Ar)", 700000), ("Armani 700", 700), ("arrivage 700 000", 700000),
-    ("Sony WH-1000XM6 noir", 1000), ("0 Ar", 0), ("000 Ar", 0), ("0", 0), ("700 000 Argent", 700000),
-    ("1.5 000 Ar", 5000), ("700.00 Ar", 70000), ("700 000 A r", 700000),
+    ("٧700 123 Ar", 123), ("Prix 1234 567 Ar", 567), ("700 000,00 Ar", 0),
+    ("(700 000 Ar)", 700000), ("Armani 700", 700),
+    ("Sony WH-1000XM6 noir", 1000), ("0 Ar", 0), ("000 Ar", 0), ("0", 0),
+    ("1.5 000 Ar", 5000), ("700.00 Ar", 70000),
     ("JBL Flip 7. 700 000 Ar", 700000), ("JBL (7) 700 000 Ar", 700000), ("JBL 7+ 700 000 Ar", 700000),
-    ("2 350000", 350000),
+    # D-KIT-002: without a unit, under 10 000, from a 0, glued to more digits, or a decimal thousands.
+    ("Batterie 5000 mAh", 5000), ("TV 4K", 4000), ("Appel 0341234567", 341234567), ("Tel 034 12 345 67", 3412),
+    ("JBL 1 250 000,00", 1250000), ("JBL 1,5k", 1500), ("JBL -700 000", 700000), ("JBL (700 000)", 700000),
+    ("JBL 05k", 5000), ("Prix 9999", 9999), ("JBL 7+ 700 000", 700000), ("500", 500),
+    # T-KIT-016 (review r1 of T-KIT-003): a telephone number, whatever _cut keeps of it; another currency; a measure
+    # after a number without an ariary unit (the lead's decision, 2026-11-23).
+    ("Contact 034 1234567", 1234567), ("JBL 032 12 34567", 34567), ("Casque JBL, contact 034 1234567", 1234567),
+    ("Casque 250000 €", 250000), ("Casque 250 000 $", 250000), ("Casque 1 250 000 Fmg", 1250000),
+    ("Casque 250000 euros.", 250000), ("Casque 250k €", 250000), ("Casque 250 000 dollars", 250000),
+    ("Powerbank Xiaomi 20000 mAh", 20000), ("Powerbank 20000mAh", 20000), ("Powerbank 20 000 MAH.", 20000),
+    ("Powerbank 20k mAh", 20000), ("Disque 12000 rpm", 12000), ("Clé 64000 Mo", 64000),
     ("JBL 七 700 000 Ar", 700000), ("JBL \u2077 700 000 Ar", 700000),  # numeric, not decimal: still not a model code
 ]
 
@@ -165,6 +175,26 @@ REJECTED = [  # (message, the partial value a model could return): no amount of 
     # A token of four digits or more, or with a dot, is the amount alone: the digits before it are the name.
     ("airpods pro 2 350000ar fond clair", [350000]), ("airpods pro 2 350.000 Ar", [350000]),
     ("Redmi Note 13 700000 Ar", [700000]), ("12 3456 Ar", [3456]), ("2 350 000 Ar", [2350000, 350000]),
+    # D-KIT-002, as sellers write them: each writing with each unit, and without (from 10 000).
+    *((f"Casque {written}{unit}", [250000]) for written in ("250000", "250 000", "250.000", "250k", "250K")
+      for unit in (" Ar", " ar", " ariary", " MGA", "Ar", "")),
+    ("casque sony wh-ch720n noir 250000", [250000]), ("Casque 250k, noir", [250000]), ("Casque 250 000.", [250000]),
+    ("Livraison 5k Ar", [5000]), ("Casque 10k", [10000]), ("Casque 10 000", [10000]),
+    # Moved from REJECTED: a thousands token, and bare runs from 10 000.
+    ("700k", [700000]), ("arrivage 700 000", [700000]), ("700 000 Argent", [700000]), ("700 000 A r", [700000]),
+    ("2 350000", [350000]),
+    # Beside an amount with its unit: both, the model or the owner chooses.
+    ("250000, livraison 5000 Ar", [250000, 5000]), ("Redmi Note 13 700 000", [13700000, 700000]),
+    ("SSD 1000 Go 350000", [350000]), ("Casque 2024 250000", [250000]), ("Batterie 5000 mAh 250000", [250000]),
+    ("13 700 000 ou 700 000", [13700000, 700000]), ("JBL Flip 7, 700 000", [700000]),
+    # The whole message alone: from 1 000 (the message says nothing else).
+    ("5000", [5000]), ("2 350000", [350000]),
+    # T-KIT-016: a group before a thousands token may be its millions: both readings.
+    ("Prix 1 200k Ar", [1200000, 200000]), ("iPhone 13 250k", [13250000, 250000]), ("Casque 2 500k", [2500000, 500000]),
+    ("Casque 1 050k", [1050000]), ("SSD 1000 250k", [250000]),
+    # A measure ends a bare number, never an amount with its ariary unit; the price beside it stays.
+    ("Powerbank 20000 mAh 85000", [85000]), ("Powerbank 20000 mAh, 20 000 Ar", [20000]),
+    ("Powerbank 20000mAh 85 000 Ar", [85000]), ("Casque 250 000 Ar, 300 € ailleurs", [250000]),
 ])
 def test_candidate_amounts(message, amounts):
     assert reads.candidate_amounts(message) == amounts
@@ -203,7 +233,7 @@ def test_every_card_from_the_stub_reader(stub, client, settings):
     assert asked == {"kind": "ask_product", "text_fr": "Quel est le produit ? Marque et modèle."}
     assert (draft["price_ar"], draft["style"]) == (700000, "sombre")
     asked, draft = card("JBL Flip 7")
-    assert asked["kind"] == "ask_price" and "700 000 Ar" in asked["text_fr"] and draft["name"] == "JBL Flip 7"
+    assert asked == {"kind": "ask_price", "text_fr": MESSAGES["card_ask_price"]} and draft["name"] == "JBL Flip 7"
     asked, draft = card("Sony WH-1000XM6 noir, 700 000 Ar", product_photos=0)
     assert asked == {"kind": "ask_photo", "text_fr": "Il me faut une photo du produit."}
     assert (draft["name"], draft["price_ar"]) == ("Sony WH-1000XM6 noir", 700000)
@@ -226,9 +256,11 @@ def test_every_card_from_the_stub_reader(stub, client, settings):
     recap, _ = card("JBL Flip 7 blanc", name="JBL Flip 7", price_ar=700000)
     assert (recap["name"], recap["price_ar"]) == ("JBL Flip 7 blanc", 700000)
     # The title rules of the scene route, with their existing sentences; the refused name is not kept.
-    for name, code in (("x" * 61, "title_too_long"), ("JBL promo", "title_commercial_text"), ('TV 32"', "title_unsupported")):
+    for name, code in (("x" * 61, "title_too_long"), ("JBL promo", "title_commercial_text")):
         asked, draft = card(name)
         assert asked == {"kind": "ask_product", "text_fr": MESSAGES[code]} and draft["name"] is None
+    # A straight quote is curled, not refused (D-KIT-007).
+    assert card('TV 32"')[1]["name"] == "TV 32″"
 
     assert all(row["status"] == "succeeded" and row["cost_micros"] == 0 and row["provider"] == "stub"
                for row in rows(client.app.state.engine))
@@ -369,7 +401,7 @@ def test_succeeded_read_pays_the_real_cost(engine, claude):
         "message": "JBL Flip 7, 700 000 Ar", "has_poster": False, "history": [],
         "draft": {"name": None, "price_ar": None, "style": None, "product_photos": 2, "inspiration": False}}
     assert sent["output_config"]["format"]["schema"]["properties"].keys() == {
-        "intent", "product_name", "price_ar", "style", "instruction_fr", "identity"}
+        "intent", "product_name", "price_ar", "style", "instruction_fr", "identity", "shop_lines", "unused", "advert"}
     row, = rows(engine)
     assert (row["status"], row["cost_micros"], row["cost_is_estimate"], row["provider"], row["model"]) == (
         "succeeded", REAL, 0, "claude", MODEL)
@@ -396,7 +428,9 @@ def _running(engine, settings, key):
     (lambda: reply({"product_name": "JBL"}, usage={}), "succeeded", ESTIMATE, 1, "ask_price"),  # usage unreadable
     (lambda: reply(content=[{"type": "text", "text": "not JSON"}]), "succeeded", REAL, 0, "unclear"),
     (lambda: reply({"intent": "greeting"}), "succeeded", REAL, 0, "unclear"),
-    (lambda: reply({"intent": "other", "product_name": "JBL"}), "succeeded", REAL, 0, "unclear"),
+    (lambda: reply({"intent": "other"}), "succeeded", REAL, 0, "unclear"),
+    # « other » keeps what the read brings (T-KIT-016): a name, then the price question.
+    (lambda: reply({"intent": "other", "product_name": "JBL"}), "succeeded", REAL, 0, "ask_price"),
     (lambda: reply({"price_ar": "700000"}), "succeeded", REAL, 0, "unclear"),
     # A price the owner did not write is dropped: 1000 is in the message, but not as an amount.
     (lambda: reply({"product_name": "JBL Flip 7", "price_ar": 7000000}), "succeeded", REAL, 0, "ask_price"),
@@ -778,22 +812,25 @@ CREATION, VISUAL = str(uuid4()), str(uuid4())
 DRAWN = {"title": "Sony WH-CH720N", "brand": None, "subtitle": None}  # drawn words, the price laid over the image
 
 
-def words(image=None, title="Sony WH-CH720N", price_ar=450000, accent=None, model_image=False, adjusted=False):
+def words(image=None, title="Sony WH-CH720N", price_ar=450000, accent=None, model_image=False, adjusted=False, lines=()):
     """The poster words of reads.poster_words: the image's (empty: no drawn words) and the document's."""
     return {"visual_id": VISUAL, "accent_word": accent, "model_image": model_image, "adjusted": adjusted,
-            "image": dict(image or {}),
+            "lines": list(lines), "image": dict(image or {}),
             "document": {"title": title, "price_ar": price_ar}}
 
 
-def change(message, poster, **fields):
+def change(message, poster, profile=(), **fields):
+    """The card of a poster's read; `profile`: the shop's lines (D-KIT-005)."""
     fields = {row.name: None for row in reads.FIELDS} | {"remove": [], "format": None, "identity": None,
-                                                         "commercial": False} | fields
+                                                         "commercial": False, "shop_lines": [], "advert": True} | fields
     request = reads.ReadRequest(**body(message, CREATION, visual_id=VISUAL))
-    return reads.build(reads.poster_fields()(**fields), request, MESSAGES, poster)["card"]
+    return reads.build(reads.poster_fields()(**fields), request, MESSAGES, poster, list(profile))["card"]
 
 
 def scene(text_fr, **words):
-    return {"kind": "change", "text_fr": text_fr, "visual_id": VISUAL, "effect": "scene", "words": words}
+    """A new image from changed words: its cost is said after what changes (D-KIT-007)."""
+    return {"kind": "change", "text_fr": f"{text_fr}\n{MESSAGES['card_redraw']}", "visual_id": VISUAL,
+            "effect": "scene", "words": words}
 
 
 def refused(code, *values):
@@ -801,6 +838,7 @@ def refused(code, *values):
 
 
 SAME = {"kind": "same", "text_fr": "L’affiche a déjà ces textes."}
+REDRAW = MESSAGES["card_redraw"]
 STEPS = {"kind": "steps", "text_fr": MESSAGES["card_steps"]}
 
 
@@ -852,7 +890,7 @@ def test_the_owners_own_message_is_the_scene_adjustment():
 def test_the_field_table_drives_the_schema_the_card_and_the_sentence(monkeypatch):
     schema = wire_schema(reads.poster_fields())
     assert schema["required"] == ["title", "brand", "subtitle", "price_ar", "instruction_fr", "style", "remove",
-                                  "format", "identity", "commercial"]
+                                  "format", "identity", "commercial", "shop_lines", "advert"]
     assert schema["properties"]["style"]["anyOf"][0]["enum"] == ["clair", "couleur", "sombre"]
     assert schema["properties"]["remove"]["items"]["enum"] == ["brand", "subtitle"]
     assert all(schema["properties"][row.name]["description"] == row.rule for row in reads.FIELDS)
@@ -900,17 +938,18 @@ def test_brand_set_apart_token_rule_and_separators(title, brand, rest):
 
 def test_the_coloured_word_that_leaves_the_title_is_said():
     card = change("mets Sony en haut", words(DRAWN | {"accent_word": "Sony"}, accent="Sony"), brand="Sony")
-    assert card["text_fr"] == "Titre : WH-CH720N\nMarque : Sony\nLe mot en couleur est retiré."
+    assert card["text_fr"] == f"Titre : WH-CH720N\nMarque : Sony\nLe mot en couleur est retiré.\n{REDRAW}"
     card = change("mets Sony en haut", words(DRAWN | {"accent_word": "WH"}, accent="WH"), brand="Sony")
-    assert card["text_fr"] == "Titre : WH-CH720N\nMarque : Sony"
+    assert card["text_fr"] == f"Titre : WH-CH720N\nMarque : Sony\n{REDRAW}"
 
 
 def test_words_first_drop_the_instruction():
     # The instruction holds « titre », which the refinement screen refuses: dropped before it is screened.
     card = change("marque Sony, et mets le titre sur un fond sombre", words(DRAWN), brand="Sony",
                   instruction_fr="mets le titre sur un fond sombre")
-    assert card == scene("Titre : WH-CH720N\nMarque : Sony\n" + MESSAGES["card_words_first"], title="WH-CH720N",
-                         brand="Sony", subtitle=None, price_ar=450000)
+    assert card == scene("Titre : WH-CH720N\nMarque : Sony", title="WH-CH720N", brand="Sony", subtitle=None,
+                         price_ar=450000) | {"text_fr": f"Titre : WH-CH720N\nMarque : Sony\n{REDRAW}\n"
+                                                        + MESSAGES["card_words_first"]}
     assert change("un fond sombre", words(DRAWN), instruction_fr=" un fond sombre ") == {
         "kind": "change", "text_fr": "Scène : « un fond sombre »", "visual_id": VISUAL, "effect": "refine",
         "instruction_fr": "un fond sombre"}
@@ -931,7 +970,11 @@ def test_the_checks_run_in_the_designs_order():
     for message in ("mets un sous-titre", "sous-titre garantie 2 ans"):
         assert change(message, words(DRAWN), subtitle="garantie 2 ans") == refused("validation_error")
     # A change is whole or not offered: one refused field refuses the whole card.
-    assert change("marque Sony, 650 000 Ar", words(DRAWN), brand="Sony", price_ar=700000) == refused("card_ask_price")
+    # A misread price names the amount read, never « Je ne vois pas de prix » (T-KIT-016).
+    assert change("marque Sony, 650 000 Ar", words(DRAWN), brand="Sony", price_ar=700000) == refused(
+        "card_ask_price_one", reads.format_price(650000))
+    assert change("marque Sony, mets 1 200k", words(DRAWN), brand="Sony", price_ar=650000) == refused(
+        "card_ask_price_which", f"{reads.format_price(1200000)} ou {reads.format_price(200000)}")
 
 
 def test_the_word_guard_names_the_word_nobody_wrote():
@@ -946,7 +989,7 @@ def test_the_word_guard_names_the_word_nobody_wrote():
         "effect"] == "scene"
     # Documented limit: a wrong arrangement of the owner's own words passes; the card shows the text whole.
     card = change("sous-titre RAM 8 Go, stockage 128 Go", words(DRAWN), subtitle="RAM 128 Go")
-    assert card["text_fr"] == "Sous-titre : RAM 128 Go"
+    assert card["text_fr"] == f"Sous-titre : RAM 128 Go\n{REDRAW}"
 
 
 def test_remove_and_same():
@@ -954,7 +997,7 @@ def test_remove_and_same():
     assert change("sans sous-titre", stored, remove=["subtitle"]) == scene(
         "Sous-titre : retiré", title="WH-CH720N", brand="Sony", subtitle=None, price_ar=450000)
     assert change("sans marque ni sous-titre", stored, remove=["brand", "subtitle"])["text_fr"] == (
-        "Marque : retiré\nSous-titre : retiré")
+        f"Marque : retiré\nSous-titre : retiré\n{REDRAW}")
     # No brand to take off among the words: the message goes to the scene (a mark drawn on the image, perhaps).
     assert change("enlève la marque", words(DRAWN), remove=["brand"]) == refine("enlève la marque")
     # A price already there: nothing for the words, and a price is never a scene adjustment.
@@ -997,10 +1040,11 @@ def test_going_back_to_the_images_words_is_free():
     # whole new image with that title, and the card says the title line (as \u00ab Nouvelle version \u00bb would draw it).
     both = words(DRAWN | {"price_ar": 450000}, title="Sony WH-CH720N bleu", price_ar=500000)
     card = change("remets 450 000 Ar", both, price_ar=450000)
-    assert (card["effect"], card["text_fr"]) == ("scene", "Titre : Sony WH-CH720N bleu")
+    assert (card["effect"], card["text_fr"]) == ("scene", f"Titre : Sony WH-CH720N bleu\n{REDRAW}")
     assert card["words"]["price_ar"] == 450000
     # A new price beside that edited title: both lines, one image.
-    assert change("mets 480 000 Ar", both, price_ar=480000)["text_fr"] == "Titre : Sony WH-CH720N bleu\nPrix : 480\u202f000 Ar"
+    assert change("mets 480 000 Ar", both, price_ar=480000)["text_fr"] == (
+        f"Titre : Sony WH-CH720N bleu\nPrix : 480\u202f000 Ar\n{REDRAW}")
 
 
 @pytest.mark.parametrize(("message", "amounts"), [
@@ -1008,8 +1052,10 @@ def test_going_back_to_the_images_words_is_free():
     # digits is not one amount; its ending of two groups or more is.
     ("iPhone 15 1 200 000 Ar", [1200000, 200000]), ("Galaxy S24 256 1 450 000 Ar", [1450000, 450000]),
     ("Tecno 20 20 000 Ar", [20000]), ("A55 5 1 000 Ar", [1000]), ("Note 13 5 700 000 Ar", [5700000, 700000]),
-    # Still nothing: a lone last group is a piece of a badly written amount; no unit, no amount.
-    ("Prix 1234 567 Ar", []), ("x 1 2 3 Ar", []), ("700 00 Ar", []), ("20 00 000 Ar", []), ("15 1 200 000", []),
+    # Still nothing: a lone last group is a piece of a badly written amount.
+    ("Prix 1234 567 Ar", []), ("x 1 2 3 Ar", []), ("700 00 Ar", []), ("20 00 000 Ar", []),
+    # D-KIT-002: without a unit, the same span rules from 10 000.
+    ("15 1 200 000", [1200000, 200000]),
     # Unchanged: a whole run that is one amount, with its endings.
     ("Redmi Note 13 700 000 Ar", [13700000, 700000]),
 ])
@@ -1068,7 +1114,8 @@ def test_a_style_change_is_its_own_card():
                            "avant ne sont pas repris.", title="WH-CH720N", brand="Sony")
     assert change("luxe sombre, marque Bose", words(DRAWN), brand="Samsung", style="sombre") == refused(
         "card_word_unknown", "samsung")
-    assert change("luxe sombre à 300 000 Ar", words(DRAWN), price_ar=350000, style="sombre") == refused("card_ask_price")
+    assert change("luxe sombre à 300 000 Ar", words(DRAWN), price_ar=350000, style="sombre") == refused(
+        "card_ask_price_one", reads.format_price(300000))
     # A scene adjustment in the same message is asked after, as with a word change.
     assert change("luxe sombre avec un fond bleu", words(DRAWN), style="sombre", instruction_fr="fond bleu") == restyle(
         "Style : Luxe sombre\n" + MESSAGES["card_words_first"])
@@ -1130,7 +1177,8 @@ def test_the_shops_identity_asked_for_a_new_poster_is_in_the_draft():
     # The model sees the draft as it was sent: no new key unless the owner asked.
     assert "identity" not in reads.ReadRequest(**body("JBL")).draft.model_dump()
     assert "identity: true when the owner asks for the shop's logo or contact" in reads.SYSTEM
-    assert wire_schema(reads.Fields)["required"][-1] == "identity"
+    assert wire_schema(reads.Fields)["required"] == ["intent", "product_name", "price_ar", "style", "instruction_fr",
+                                                     "identity", "shop_lines", "unused", "advert"]
 
 
 def test_the_title_limit_is_60_when_drawn_and_240_as_a_layer():
@@ -1315,7 +1363,7 @@ def test_the_stub_reader_on_a_poster(poster, engine, settings):
     creation, visual = poster
     card = lambda message: read(engine, settings, message, creation, visual)["card"]  # noqa: E731
     stored = {"title": "Une enceinte", "brand": "JBL", "subtitle": None, "price_ar": 899000}
-    assert card("marque Sony") == {"kind": "change", "text_fr": "Marque : Sony", "visual_id": visual,
+    assert card("marque Sony") == {"kind": "change", "text_fr": f"Marque : Sony\n{REDRAW}", "visual_id": visual,
                                    "effect": "scene", "words": stored | {"brand": "Sony"}}
     assert card("titre Grande enceinte")["words"] == stored | {"title": "Grande enceinte"}
     assert card("sous-titre Son puissant")["words"] == stored | {"subtitle": "Son puissant"}
@@ -1410,7 +1458,7 @@ def test_a_poster_read_sends_its_own_prompt_and_the_servers_words(engine, claude
     monkeypatch.setattr(reads, "poster_words", lambda *_: poster_words)
     creation = draft(engine, tmp_path, input_id)["id"]  # it must exist and be active; its words are patched above
     answer = {row.name: None for row in reads.FIELDS} | {"remove": ["brand"], "format": None, "identity": None,
-                                                         "commercial": False}
+                                                         "commercial": False, "shop_lines": [], "advert": True}
     requests = []
 
     def handle(request):
@@ -1426,3 +1474,311 @@ def test_a_poster_read_sends_its_own_prompt_and_the_servers_words(engine, claude
         "message": "sans marque", "history": [{"role": "app", "text": "Bonjour"}],
         "poster_words": {"title": "Sony WH-CH720N", "brand": "Sony", "subtitle": None, "price_ar": 450000}}
     assert rows(engine)[0]["status"] == "succeeded"
+
+
+# The seller's kit (T-KIT-003): a new poster's read, from the reader's fields.
+GUARD = ("affiche.posters.reads", 30)  # the logger and level of the word guard's drops (counted in T-KIT-010)
+
+
+def new(message, found=None, profile=(), **draft):
+    """A new poster's answer; `found`: what the reader returned; `profile`: the shop's lines (D-KIT-005)."""
+    found = {"intent": "describe", "product_name": None, "price_ar": None, "style": None, "instruction_fr": None,
+             "identity": None} | (found or {})
+    return reads.build(reads.Fields(**found), reads.ReadRequest(**body(message, **draft)), MESSAGES, None, list(profile))
+
+
+def guarded(caplog):
+    return [record.getMessage() for record in caplog.records if (record.name, record.levelno) == GUARD]
+
+
+def test_the_price_question_names_what_it_read():
+    """D-KIT-002: no price set, the card says the amounts read, one button each; never the same question again."""
+    ask = lambda message, **found: new(message, {"product_name": "Redmi Note 13"} | found)["card"]  # noqa: E731
+    assert ask("Redmi Note 13") == {"kind": "ask_price", "text_fr": MESSAGES["card_ask_price"]}
+    assert MESSAGES["card_ask_price"] == ("Je ne vois pas de prix dans votre message. Écrivez-le en chiffres, par "
+                                          "exemple 250 000 Ar.")
+    assert ask("Redmi Note 13 250000") == {"kind": "ask_price", "text_fr": "Le prix est-il 250 000 Ar ?",
+                                           "amounts": [250000]}
+    assert ask("Redmi Note 13 700 000") == {
+        "kind": "ask_price", "text_fr": "J’ai lu 13 700 000 Ar ou 700 000 Ar : lequel est le prix ?",
+        "amounts": [13700000, 700000]}
+    assert ask("Redmi Note 13, 20 000 Ar ou 30 000 Ar ou 40 000 Ar")["text_fr"] == (
+        "J’ai lu 20 000 Ar, 30 000 Ar ou 40 000 Ar : lequel est le prix ?")
+    many = "Redmi 20 000 Ar, 30 000 Ar, 40 000 Ar, 50 000 Ar, 60 000 Ar"
+    assert ask(many) == {"kind": "ask_price", "text_fr": "J’ai lu plusieurs montants. Écrivez le prix seul, par "
+                                                         "exemple 250 000 Ar."}
+    assert len(ask("Redmi 20 000 Ar, 30 000 Ar, 40 000 Ar, 50 000 Ar")["amounts"]) == 4
+    # A price nobody wrote is still dropped; the question names what was written.
+    assert ask("Redmi Note 13 250000", price_ar=999000)["amounts"] == [250000]
+    # The model chose one of two: the recap shows it large before any credit.
+    recap = ask("Redmi Note 13 700 000", price_ar=700000)
+    assert (recap["kind"], recap["price_ar"]) == ("recap", 700000)
+    # The draft's price stays when this message writes none.
+    assert new("Redmi Note 13", {"product_name": "Redmi Note 13"}, price_ar=250000)["card"]["kind"] == "recap"
+    # The poster reader is given the same rule (T-KIT-016).
+    rule = "only when written in digits in this message, with or without a unit (250000, 250 000, 250.000, 250k); null"
+    assert rule in reads.SYSTEM and rule in next(row.rule for row in reads.FIELDS if row.name == "price_ar")
+
+
+def test_scene_words_of_the_first_message_reach_the_draft(caplog):
+    """D-KIT-003: the owner's own words, in his language; the word guard, then the refinement's screen."""
+    found = {"product_name": "JBL Flip 7", "price_ar": 250000}
+    message = "JBL Flip 7 250000, fond rouge avec des reflets"
+    answer = new(message, found | {"instruction_fr": "fond rouge avec des reflets"})
+    assert answer["draft"]["scene_fr"] == "fond rouge avec des reflets" and answer["card"]["kind"] == "recap"
+    assert "unused_fr" not in answer["card"] and "scene_fr" not in answer["card"]  # the client fills its recap
+    malagasy = "JBL Flip 7 250000 lamosina mena"
+    assert new(malagasy, found | {"instruction_fr": "lamosina mena"})["draft"]["scene_fr"] == "lamosina mena"
+    # The guard: translated, or completed with a feature nobody wrote. Dropped, logged, said as a part not used.
+    for scene in ("fond rouge", "lamosina mena, bluetooth 5.3"):
+        caplog.clear()
+        dropped = new(malagasy, found | {"instruction_fr": scene})
+        assert "scene_fr" not in dropped["draft"] and guarded(caplog) == ["word guard: scene dropped"]
+        assert dropped["card"]["unused_fr"] == [MESSAGES["card_unused_other"].format(malagasy)]
+    # The screen: a price or a promotion is not a scene.
+    screened = new("JBL Flip 7 250000, fond rouge promo -20%", found | {"instruction_fr": "fond rouge promo -20%"})
+    assert "scene_fr" not in screened["draft"] and screened["card"]["unused_fr"] == [
+        MESSAGES["card_unused_commercial"].format("fond rouge promo -20%")]
+    # A later message replaces the draft's scene (the reader returns the whole wanted scene), or leaves it.
+    replaced = new("plutôt un fond bleu", {"instruction_fr": "fond bleu"}, name="JBL Flip 7", price_ar=250000,
+                   scene_fr="fond rouge")
+    assert replaced["draft"]["scene_fr"] == "fond bleu"
+    assert replaced["card"]["text_fr"].endswith("J’ai changé : la scène (avant : « fond rouge »).")
+    kept = new("avec des reflets", {"instruction_fr": "fond rouge avec des reflets"}, name="JBL", price_ar=250000,
+               scene_fr="fond rouge")  # the draft's own words count for the guard
+    assert kept["draft"]["scene_fr"] == "fond rouge avec des reflets"
+    assert new("250000", {"price_ar": 250000}, name="JBL", scene_fr="fond rouge")["draft"]["scene_fr"] == "fond rouge"
+    # A body without the field has the hash it had before; the reader sees the draft's words.
+    old = {"text": "Mets la marque Sony", "creation_id": "00000000-0000-4000-8000-000000000001",
+           "history": [{"role": "app", "text": "Bonjour"}]}
+    sha = lambda **draft: reads._sha(reads.canonical(reads.ReadRequest(  # noqa: E731
+        **old, draft={"product_photos": 1, "inspiration": False} | draft)))
+    assert sha() == sha(scene_fr=None) == "152398624c19856d4be7be49fcfdd2f57b6917181344150f5425f2a0775f8515"
+    assert sha(scene_fr="fond rouge") != sha()
+    assert reads.ReadRequest(**body("JBL", scene_fr="fond rouge")).draft.model_dump()["scene_fr"] == "fond rouge"
+    for bad in ("", " ", "x" * 501):
+        with pytest.raises(ValueError):
+            reads.ReadRequest(**body("JBL", scene_fr=bad))
+
+
+def test_unused_parts_are_said_with_their_reason():
+    """D-KIT-004: each part not used, on its own line after the card's sentence and in unused_fr, byte for byte."""
+    message = ("Casque JBL 250000 promo -20% avec une enceinte, en story, la 2e photo est le style, publie-la "
+               "sur Facebook")
+    parts = [{"text": "promo -20%", "reason": "commercial"}, {"text": "avec une enceinte", "reason": "product"},
+             {"text": "en story", "reason": "format"}, {"text": "la 2e photo est le style", "reason": "photo"}]
+    card = new(message, {"product_name": "Casque JBL", "price_ar": 250000, "unused": parts})["card"]
+    said = [MESSAGES[f"card_unused_{part['reason']}"].format(part["text"]) for part in parts[:3]]
+    assert card["unused_fr"] == said and card["text_fr"] == "\n".join([MESSAGES["card_recap"], *said])
+    assert said[0] == ("« promo -20% » : un prix, une remise ou une promotion ne va pas dans l’image. Le prix a son "
+                       "champ ; le reste va dans la description de la publication.")
+    # The fourth is not said: the first three are kept, whatever the reader sent.
+    assert MESSAGES["card_unused_photo"].format(parts[3]["text"]) not in card["text_fr"]
+    other = new(message, {"intent": "other", "unused": [{"text": "publie-la sur Facebook", "reason": "other"}]})
+    assert other["card"] == {"kind": "unclear", "text_fr": MESSAGES["card_unclear"] + "\n« publie-la sur Facebook » : "
+                             "je ne sais pas le mettre sur l’affiche. Dites-le autrement.",
+                             "unused_fr": ["« publie-la sur Facebook » : je ne sais pas le mettre sur l’affiche. "
+                                           "Dites-le autrement."]}
+    # On a question too, said there once; a quote is one line, cut to 80 characters.
+    asked = new("JBL\nen  story " + "x" * 90, {"product_name": "JBL", "unused": [
+        {"text": "en\n story " + "x" * 90, "reason": "format"}]})["card"]
+    assert asked["kind"] == "ask_price" and asked["unused_fr"] == [MESSAGES["card_unused_format"].format(
+        ("en story " + "x" * 90)[:80])]
+    assert asked["text_fr"].split("\n")[1:] == asked["unused_fr"]
+    # The wire has no bounds: four parts and four lines are a whole answer, never a failed read (r1 fix 3).
+    answer = reads.Fields.model_validate_json(json.dumps({
+        "intent": "describe", "product_name": "JBL", "price_ar": None, "style": None, "instruction_fr": None,
+        "identity": None, "shop_lines": ["a", "b", "c", "d" * 41], "unused": parts + [{"text": "y" * 200, "reason": "other"}],
+        "advert": True}))
+    assert len(answer.unused) == 5 and len(answer.shop_lines) == 4
+    schema = json.dumps(wire_schema(reads.Fields))
+    assert "maxItems" not in schema and "maxLength" not in schema and "Constraints" not in schema
+
+
+def test_an_unused_quote_nobody_wrote_is_dropped(caplog):
+    card = new("Casque JBL 250000", {"product_name": "Casque JBL", "price_ar": 250000, "unused": [
+        {"text": "livraison gratuite", "reason": "commercial"}, {"text": "JBL 250000", "reason": "other"}]})["card"]
+    assert card["unused_fr"] == [MESSAGES["card_unused_other"].format("JBL 250000")]
+    assert guarded(caplog) == ["word guard: unused dropped"]
+
+
+def test_a_changed_recap_field_is_said():
+    """R-KIT-004: a choice the recap already had, changed by this read, is said with what it was."""
+    draft = {"name": "JBL Flip 7", "price_ar": 700000, "style": "clair", "scene_fr": "fond rouge", "identity": True}
+    card = new("JBL Flip 7 blanc, 650 000 Ar, luxe sombre, fond noir, sans logo", {
+        "product_name": "JBL Flip 7 blanc", "price_ar": 650000, "style": "sombre", "instruction_fr": "fond noir",
+        "identity": False}, **draft)["card"]
+    assert card["text_fr"] == (
+        "Voici l’affiche que je vais créer.\nJ’ai changé : le nom (avant : JBL Flip 7), le prix (avant : 700 000 "
+        "Ar), le style (avant : Studio clair), la scène (avant : « fond rouge ») et le logo et le contact de la "
+        "boutique (avant : avec).")
+    assert new("avec le logo", {"identity": True}, **draft | {"identity": False})["card"]["text_fr"].endswith(
+        "J’ai changé : le logo et le contact de la boutique (avant : sans).")
+    # The same value, or a field the recap did not have yet: nothing to say.
+    assert new("JBL Flip 7, 700 000 Ar", {"product_name": "JBL Flip 7", "price_ar": 700000, "style": "clair"},
+               **draft)["card"]["text_fr"] == MESSAGES["card_recap"]
+    assert new("JBL Flip 7, 700 000 Ar", {"product_name": "JBL Flip 7", "price_ar": 700000, "identity": True})[
+        "card"]["text_fr"] == MESSAGES["card_recap"]
+
+
+def test_a_warranty_by_message_is_an_offer_not_a_refusal(caplog):
+    """D-KIT-005, R-KIT-005: a line asked by message is offered to keep and draw, never refused for its words."""
+    found = {"product_name": "JBL Flip 7", "price_ar": 250000}
+    message = "JBL Flip 7 250000, ajoute Garantie 6 mois et Paiement Mvola"
+    offered = new(message, found | {"shop_lines": ["Garantie 6 mois", "garantie 6 MOIS", "Paiement Mvola"]})["card"]
+    assert offered["offer_lines"] == ["Garantie 6 mois", "Paiement Mvola"] and offered["text_fr"] == MESSAGES["card_recap"]
+    # Already kept; no room left; a line with an amount or too long: each said, none offered.
+    kept = new(message, found | {"shop_lines": ["garantie 6 mois"]}, ["Garantie 6 mois"])["card"]
+    assert "offer_lines" not in kept and kept["text_fr"].endswith("« garantie 6 mois » est déjà dans les lignes de la boutique.")
+    full = new(message, found | {"shop_lines": ["Paiement Mvola"]}, ["A", "B", "C"])["card"]
+    assert "offer_lines" not in full and full["text_fr"].endswith(
+        "La boutique a déjà trois lignes : remplacez-en une dans Mon compte.")
+    two = new(message, found | {"shop_lines": ["Garantie 6 mois", "Paiement Mvola"]}, ["A", "B"])["card"]
+    assert two["offer_lines"] == ["Garantie 6 mois"] and two["text_fr"].endswith(MESSAGES["card_lines_full"])
+    long = "Livraison gratuite partout à Antananarivo et en province"
+    rejected = new(f"JBL Flip 7 250000, Livraison 5 000 Ar, {long}",
+                   found | {"shop_lines": ["Livraison 5 000 Ar", long]})["card"]
+    assert "offer_lines" not in rejected and rejected["unused_fr"] == [
+        "« Livraison 5 000 Ar » : une ligne de la boutique ne contient ni montant, ni remise, ni numéro.",
+        f"« {long} » : une ligne de la boutique fait 40 caractères au plus."]
+    # A telephone number is said as what it is, not as a price or a promotion (T-KIT-016).
+    phone = new("JBL Flip 7 250000, ligne Tél 034 12 345 67", found | {"shop_lines": ["Tél 034 12 345 67"]})["card"]
+    assert phone["unused_fr"] == [MESSAGES["card_line_refused"].format("Tél 034 12 345 67")]
+    caplog.clear()
+    invented = new(message, found | {"shop_lines": ["Garantie 12 mois"]})["card"]
+    assert "offer_lines" not in invented and guarded(caplog) == ["word guard: shop_line dropped"]
+    # On a poster: a card of its own, paid, that keeps the line and redraws; before the commercial refusal.
+    kept_words = {"title": "Sony WH-CH720N", "brand": None, "subtitle": None, "price_ar": 450000}
+    line = change("ajoute garantie 6 mois", words(DRAWN), ["Paiement Mvola"], shop_lines=["Garantie 6 mois"],
+                  commercial=True)
+    assert line == {"kind": "line", "visual_id": VISUAL, "lines": ["Garantie 6 mois"], "words": kept_words,
+                    "effect": "scene", "text_fr": "Je garde « Garantie 6 mois » dans les lignes de la boutique et je "
+                                                  f"refais l’affiche avec.\n{REDRAW}"}
+    both = change("ajoute garantie 6 mois et paiement mvola, marque Sony", words(DRAWN),
+                  shop_lines=["Garantie 6 mois", "Paiement Mvola"], brand="Sony")
+    assert both["text_fr"] == (f"Je garde « Garantie 6 mois » et « Paiement Mvola » dans les lignes de la boutique et "
+                               f"je refais l’affiche avec.\n{REDRAW}\nDemandez le reste ensuite.")
+    assert both["words"] == kept_words  # the brand is asked after, from the new version
+    # A version without drawn words; every line already drawn; no room; a word nobody wrote; an amount.
+    assert change("ajoute garantie 6 mois", words(), shop_lines=["Garantie 6 mois"]) == {
+        "kind": "steps", "text_fr": "Les lignes de la boutique sont dessinées dans l’image : cette affiche n’a pas de "
+                                    "textes dessinés."}
+    assert change("ajoute garantie 6 mois", words(DRAWN, lines=["Garantie 6 mois"]), ["Garantie 6 mois"],
+                  shop_lines=["garantie 6 mois"]) == SAME
+    assert change("ajoute garantie 6 mois", words(DRAWN), ["A", "B", "C"], shop_lines=["Garantie 6 mois"]) == refused(
+        "card_lines_full")
+    assert change("ajoute garantie 6 mois", words(DRAWN, lines=["Garantie 6 mois"]), ["Garantie 6 mois", "B", "C"],
+                  shop_lines=["Garantie 6 mois", "B"])["kind"] == "line"  # kept, not drawn by this version yet
+    assert change("ajoute la garantie", words(DRAWN), shop_lines=["Garantie 2 ans"]) == refused("card_word_unknown", "2")
+    assert change("ajoute livraison 5 000 Ar", words(DRAWN), shop_lines=["Livraison 5 000 Ar"]) == refused(
+        "card_line_refused", "Livraison 5 000 Ar")
+    assert change("ajoute Tél 034-12-345-67", words(DRAWN), shop_lines=["Tél 034-12-345-67"]) == refused(
+        "card_line_refused", "Tél 034-12-345-67")
+    assert change(f"ajoute {long}", words(DRAWN), shop_lines=[long]) == refused("card_line_too_long", long)
+    # card_refused no longer asks the owner to remove his words; it says where a warranty goes.
+    assert "retirez" not in MESSAGES["card_refused"] and "lignes de la boutique" in MESSAGES["card_refused"]
+
+
+def test_a_word_change_that_redraws_says_so():
+    """D-KIT-007: a scene card made from words says it redraws the whole image for one credit; nothing else does."""
+    assert REDRAW == "Le texte est dessiné dans l’image : cette correction refait toute l’image, pour 1 crédit."
+    assert change("titre WH-CH720N noir", words(DRAWN), title="WH-CH720N noir")["text_fr"].endswith(REDRAW)
+    assert REDRAW not in change("650 000 Ar", words(DRAWN), price_ar=650000)["text_fr"]  # free: the image stays
+    assert REDRAW not in change("un fond sombre", words(DRAWN), instruction_fr="fond")["text_fr"]  # an adjustment
+    assert REDRAW not in change("luxe sombre", words(DRAWN), style="sombre")["text_fr"]  # restyle: its own card
+
+
+def test_quotes_in_a_name_are_curled():
+    assert [reads.curl_quotes(name) for name in ('TV 55"', 'Casque "Pro" noir', 'TV "Smart" 55"', "JBL")] == [
+        "TV 55″", "Casque « Pro » noir", "TV « Smart » 55″", "JBL"]
+    answer = new('Casque "Pro" 250000', {"product_name": 'Casque "Pro"', "price_ar": 250000})
+    assert answer["draft"]["name"] == "Casque « Pro »" and answer["card"]["name"] == "Casque « Pro »"
+    # A line break is still refused, with its sentence.
+    assert new("TV", {"product_name": "TV\n32"})["card"] == {"kind": "ask_product",
+                                                             "text_fr": MESSAGES["title_unsupported"]}
+
+
+def test_the_name_guard_lets_capitals_pass(caplog):
+    """D-KIT-007: letters and digits only; a name that fails is kept as the reader gave it, logged, no question."""
+    answer = new("redmi note13 250000", {"product_name": "Redmi Note 13", "price_ar": 250000})
+    assert (answer["card"]["kind"], answer["draft"]["name"], guarded(caplog)) == ("recap", "Redmi Note 13", [])
+    assert new("sony wh-ch720n 250000", {"product_name": "Sony WH-CH720N", "price_ar": 250000})["draft"]["name"] == (
+        "Sony WH-CH720N")
+    # The draft's name is the owner's too: a corrected product is built from it.
+    assert new("en blanc", {"product_name": "JBL Flip 7 blanc"}, name="JBL Flip 7", price_ar=250000)["card"][
+        "kind"] == "recap" and guarded(caplog) == []
+    invented = new("redmi note13 250000", {"product_name": "Redmi Note 13 Pro", "price_ar": 250000})
+    assert (invented["card"]["kind"], invented["draft"]["name"]) == ("recap", "Redmi Note 13 Pro")
+    assert guarded(caplog) == ["word guard: product_name kept"]
+    # A new word inside a written one is still new (T-KIT-016): « Pro » is not in « produit », « Air » not in « chair ».
+    for message, name in (("mon produit redmi note13 250000", "Redmi Note 13 Pro"), ("housse chair 250000", "Air")):
+        caplog.clear()
+        assert new(message, {"product_name": name, "price_ar": 250000})["draft"]["name"] == name
+        assert guarded(caplog) == ["word guard: product_name kept"]
+    assert "with their usual capitals (Sony WH-CH720N, iPhone 15 Pro, JBL Flip 7)" in reads.SYSTEM
+
+
+def test_a_message_that_is_no_advert_keeps_nothing():
+    """R-KIT-013: one sentence, nothing kept from that message, no paid card; in every doubt an advert."""
+    draft = {"name": "JBL Flip 7", "price_ar": 250000}
+    answer = new("fais un portrait de ma fille 250000", {"product_name": "Portrait", "price_ar": 250000,
+                                                         "instruction_fr": "portrait", "shop_lines": ["Garantie"],
+                                                         "advert": False}, **draft)
+    assert answer == {"card": {"kind": "unclear", "text_fr": MESSAGES["card_not_advert"]},
+                      "draft": {"name": "JBL Flip 7", "price_ar": 250000, "style": None, "product_photos": 1,
+                                "inspiration": False}}
+    assert MESSAGES["card_not_advert"] == ("Je fais des affiches pour ce que votre boutique vend. Envoyez la photo "
+                                           "d’un produit, son nom et son prix.")
+    assert change("fais un portrait", words(DRAWN), title="Portrait", advert=False) == {
+        "kind": "unclear", "text_fr": MESSAGES["card_not_advert"]}
+    assert reads.Fields(intent="describe", product_name=None, price_ar=None, style=None, instruction_fr=None,
+                        identity=None).advert is True
+    assert "advert: false only when the message plainly asks" in reads.SYSTEM
+    assert wire_schema(reads.poster_fields())["properties"]["advert"]["description"].startswith("False only when")
+
+
+def test_the_stub_reader_reads_the_kits_markers(stub, client):
+    """The stub's deterministic markers (D-KIT-004 "Tests") drive the new paths without a paid call."""
+    login(client)
+    with write_tx(client.app.state.engine) as conn:
+        conn.exec_driver_sql("""UPDATE shop_profile SET lines_json='["Paiement Mvola"]' WHERE id=1""")
+
+    def read(text, **draft):
+        answer = post(client, "/api/reads", body(text, **draft))
+        assert answer.status_code == 201, answer.text
+        return answer.json()
+
+    answer = read("JBL Flip 7 250000 scène : fond rouge, ligne : Garantie 6 mois pas utilisé : en story")
+    assert answer["draft"] == {"name": "JBL Flip 7", "price_ar": 250000, "style": None, "product_photos": 1,
+                               "inspiration": False, "scene_fr": "fond rouge"}
+    assert answer["card"] == {"kind": "recap", "text_fr": MESSAGES["card_recap"] + "\n" + MESSAGES[
+        "card_unused_other"].format("en story"), "name": "JBL Flip 7", "price_ar": 250000, "style": None,
+        "offer_lines": ["Garantie 6 mois"], "unused_fr": [MESSAGES["card_unused_other"].format("en story")]}
+    assert read("JBL 250000 ligne : Paiement Mvola")["card"]["text_fr"].endswith(
+        "« Paiement Mvola » est déjà dans les lignes de la boutique.")
+    assert read("casque sony wh-ch720n noir 250000")["card"]["name"] == "casque sony wh-ch720n noir"
+    assert read("Casque JBL 250k")["draft"]["price_ar"] == 250000
+    two = read("13 700 000 ou 700 000", name="Redmi Note 13")["card"]
+    assert (two["kind"], two["amounts"]) == ("ask_price", [13700000, 700000])
+    assert read("pas utilisé : publie-la sur Facebook")["card"]["kind"] == "unclear"
+
+
+def test_a_follow_up_read_as_other_keeps_its_scene_words_and_lines(stub, client):
+    """T-KIT-016 (review r1 of T-KIT-003, finding 5): a follow-up on a draft that the reader calls « other » keeps its
+    line and its scene words; the draft's product and price are not asked again."""
+    draft = {"name": "JBL Flip 7", "price_ar": 250000}
+    answer = new("ajoute Garantie 6 mois, fond rouge", {"intent": "other", "instruction_fr": "fond rouge",
+                                                        "shop_lines": ["Garantie 6 mois"]}, **draft)
+    assert answer["card"] == {"kind": "recap", "text_fr": MESSAGES["card_recap"], "name": "JBL Flip 7",
+                              "price_ar": 250000, "style": None, "offer_lines": ["Garantie 6 mois"]}
+    assert answer["draft"]["scene_fr"] == "fond rouge"
+    assert new("merci", {"intent": "other", "shop_lines": [" "]}, **draft)["card"] == {
+        "kind": "unclear", "text_fr": MESSAGES["card_unclear"]}  # nothing usable
+    assert "intent: describe = product, price, style, scene or shop lines of a new poster;" in reads.SYSTEM
+    # The stub says « other » for markers alone, as a paid reader may: the same recap through the route.
+    login(client)
+    request = body("scène : fond rouge ligne : Garantie 6 mois", **draft)
+    assert reads.stub_read(reads.ReadRequest(**request)).intent == "other"
+    answer = post(client, "/api/reads", request)
+    assert answer.status_code == 201, answer.text
+    assert answer.json()["card"]["offer_lines"] == ["Garantie 6 mois"] and answer.json()["draft"]["scene_fr"] == "fond rouge"

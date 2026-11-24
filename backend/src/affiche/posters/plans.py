@@ -4,7 +4,7 @@ import re
 import unicodedata
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, field_validator, model_validator
+from pydantic import AfterValidator, Field, StringConstraints, field_validator, model_validator
 
 from affiche.visuals.gateway import POSTER_SIZES
 from affiche.visuals.prompts import find_commercial_terms
@@ -74,6 +74,48 @@ def screen_adjustment(value: str) -> str:
     return value
 
 
+# A discount belongs to one offer, not to every poster (D-KIT-005), nor does a price claim (« Prix cassés »): the start
+# of a word, so that plurals and derived words count (« Promos », « Offres »), case and accents ignored.
+_DISCOUNT = re.compile(r"\b(?:remise|reduc|promo|sold|rabais|offre|prix)")
+# A currency or an amount in words, written alone or right after its digits ("500Ar").
+_CURRENCY = re.compile(r"[%€$]|(?:\b|(?<=\d))(?:ar|ariary|mga|fmg|francs?|euros?|dollars?|mille|millions?|milliards?)\b"
+                       r"|\d\s*k\b", re.I)
+# A number of four digits or more, written as one or grouped by a space, a dot or a comma ("5000", "5 000", a telephone
+# number "034 12 345 67"); joined by dashes it counts from seven digits ("034-12-345-67"), so that a delay passes
+# ("Livraison 24-48h"); "24h/24" is two numbers.
+_LONG_NUMBER = re.compile(r"\d(?:[\s.,]?\d){3,}|\d(?:[\s.,-]?\d){6,}")
+
+
+def screen_shop_line(value: str) -> str:
+    """One of the shop's own lines (D-KIT-005), drawn verbatim by the image model: its conditions of sale. A warranty,
+    a delivery or a payment passes ("Garantie 12 mois", "Livraison 24h/24"): the seller's own conditions are not
+    screened as commercial words. An amount never does, nor a number of four digits or more ("5 000", a telephone
+    number): the price and the contact have their fields, and the prompt allows one amount. Nor a discount, nor an
+    injection."""
+    if (not 1 <= len(value) <= 40 or re.search(r'["\r\n]', value) or _CURRENCY.search(value)
+            or _LONG_NUMBER.search(value) or _DISCOUNT.search(" ".join(name_words(value))) or _INJECTION.search(value)):
+        raise ValueError("shop_line_refused")
+    return value
+
+
+def distinct_lines(value: list[str]) -> list[str]:
+    if len({line.casefold() for line in value}) != len(value):
+        raise ValueError("shop_line_refused")
+    return value
+
+
+ShopLine = Annotated[str, StringConstraints(strip_whitespace=True), AfterValidator(screen_shop_line)]
+ShopLines = Annotated[list[ShopLine], Field(max_length=3), AfterValidator(distinct_lines)]
+
+# The drawn title's lettering chosen by the owner (D-KIT-012), which wins over a look's. `moderne` is the default
+# lettering, so its prompt is the one stored scenes were made with.
+TitleStyle = Literal["moderne", "condense", "sport", "serif"]
+TITLE_STYLES = {"moderne": None,
+                "condense": "extra-bold condensed sans-serif in capitals, tight letter spacing, no ornaments",
+                "sport": "heavy italic sans-serif slanted forward, dynamic, no ornaments",
+                "serif": "elegant high-contrast serif in mixed case, generous letter spacing, no ornaments"}
+
+
 class Headline(Model):
     """Shop-typed words the image model sets above the product. The title itself always comes from the offer."""
     brand: HeadlineText | None = None
@@ -95,6 +137,11 @@ class Headline(Model):
     brand_text: Literal[True] | None = Field(None, exclude_if=lambda value: value is None)
     # A saved look (ADR-046): its stored typography and alignment are read by the server, never sent by the client.
     look_id: Id | None = None
+    # Also draw the shop's lines (D-KIT-005): the lines the owner was shown, which the server draws only when they are
+    # still the shop's, in order. Omitted when unset, as brand_text.
+    lines: ShopLines | None = Field(None, exclude_if=lambda value: value is None)
+    # The title's lettering (D-KIT-012): wins over the look's; its words are TITLE_STYLES'. Omitted when unset.
+    title_style: TitleStyle | None = Field(None, exclude_if=lambda value: value is None)
 
     _screen = field_validator("brand", "subtitle", "accent_word")(
         lambda value: value if value is None else screen_headline(value))
@@ -291,19 +338,22 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                   headline: Headline | None = None, title: str | None = None,
                   signature: dict[str, str] | None = None, price_ar: int | None = None,
                   headline_style: str | None = None, align: Literal["left", "centre"] = "centre",
-                  deduplicate_brand: bool = False, adjustments: list[str] | tuple = ()) -> str:
+                  deduplicate_brand: bool = False, adjustments: list[str] | tuple = (),
+                  shop_lines: list[str] | tuple = ()) -> str:
     """Order follows the provider's guidance: use, references, scene, subject, light, layout, constraints.
 
     With `headline`, the image model sets brand, product name and subtitle itself (ADR-042), optionally the
-    shop signature (ADR-043) and the price label (ADR-044). The amount enters only through `price_ar`, an
-    integer formatted here; free text is still screened for prices.
+    shop signature (ADR-043), the shop's lines (D-KIT-005) and the price label (ADR-044). The amount enters only
+    through `price_ar`, an integer formatted here; free text is still screened for prices.
     """
     plan = validate_plan(plan, context)
     if type(photo_count) is not int or not 1 <= photo_count <= 3:
         raise ValueError("invalid_photo_count")
     if (headline is None) != (title is None):
         raise ValueError("headline_requires_title")
-    if (headline_style is not None or align != "centre") and not (headline and headline.look_id):
+    # A lettering comes from a saved look or from the title style's own words; an alignment only from a look.
+    titled = headline and headline.title_style and headline_style == TITLE_STYLES[headline.title_style]
+    if (headline_style is not None and not titled or align != "centre") and not (headline and headline.look_id):
         raise ValueError("look_style_requires_look")
     if headline_style is not None:
         screen_art(headline_style)
@@ -318,6 +368,10 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
     compact = headline.signature_align if headline else None
     if compact and signature.keys() != {"contact"}:
         raise ValueError("signature_align_requires_contact")
+    if shop_lines and not (headline and len(shop_lines) <= 3):
+        raise ValueError("invalid_shop_lines")
+    for line in shop_lines:  # a refinement draws its base's lines again: the rule may have grown since
+        screen_shop_line(line)
     drawn_signature = "the contact line" if compact else "the shop signature"
     start = 2 if refinement else 1
     identity = ", ".join(str(i) for i in range(start, start + photo_count))
@@ -341,19 +395,34 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         "reference photo.",
     ]
     if refinement:
-        lines.append("Image 1 is the selected base scene to refine: preserve its composition and untouched "
-                     "details where compatible with the requested scene description. It is not the identity reference.")
+        # The request is an instruction said here, not only a value of the data below, and it may move what the base
+        # shows: « Aura studio on the center », asked on a pack of three (2026-11-24), came back with every product
+        # where it was ("preserve its composition"), a studio glow in the centre and the kept wooden table gone.
+        lines.append("Image 1 is the selected base scene to refine. It is not the identity reference. The owner asks "
+                     "for one change to it, in his own words, listed as requested_adjustment: make that change, "
+                     "clearly visible, even where it moves, swaps, resizes or replaces what image 1 shows. "
+                     "Everything the request does not touch stays as in image 1.")
     if style_reference:
         lines.append(f"Image {start + photo_count} is a style reference only, a finished advert. Borrow its backdrop "
                      "treatment, how large the product is in the frame, the hero angle, the lighting quality and the "
                      "floor shadow. Ignore its product, every word and number in it, its logos and its price label.")
+    # The owner's own words win over the house style too (D-KIT-003); without them, the wording stays as stored scenes had it.
+    # They lead the scene sentence: said only as an exception to a long house style, and beside a pale palette, the
+    # first paid image of the second walk (2026-11-24) kept the grey studio and drew none of « un fond rouge avec des
+    # flammes », and a refinement put the house studio back in place of a kept wooden table.
     lines += [
+        "Scene: the owner described the picture he wants. His words are listed as kept_adjustments: they set the "
+        "backdrop and its colours, the setting, the light and what stands around the product. Follow them first, "
+        "even where they differ from the palette. Use the house style only for what they leave open: a clean, "
+        "current tech-brand campaign look."
+        if adjustments else
         "Scene: a clean, current tech-brand campaign look. House style, unless the quoted art direction says "
         "otherwise: a seamless studio backdrop in a smooth gradient built from the palette, with two or three "
         "large, soft, sweeping curved bands crossing behind the product, subtle and low contrast.",
         f"Subject: one product set as a single large hero object, in {_CAMERA[plan.scene.camera]}, tilted a few "
         "degrees and floating slightly above the floor with a soft elliptical shadow beneath it, unless the art "
-        "direction places it on a surface. Show exactly the components visible in the reference photos, each "
+        + ("direction or a kept adjustment " if adjustments else "direction ") +
+        "places it on a surface. Show exactly the components visible in the reference photos, each "
         "once, and nothing else: never add earbuds, cases, cables, straps or accessories that the photos do "
         "not show. The product is big: it is as large as possible inside the area "
         f"{_area(plan.product_region)}, spanning that area's full height or full width. Hard limit: a price "
@@ -444,6 +513,21 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      + ", then on the line below ".join(parts) + ". Discreet, in the same colour family as the "
                      "headline, clearly legible, with a thin horizontal rule above it. Any digits here are a "
                      "telephone contact, not a price.")
+    quiet = "; ".join(f"{field}: {_band(box)}" for field, box in boxes.items()
+                      if not (headline and field == "title") and field not in signature
+                      and not (price_ar is not None and field == "price"))
+    if shop_lines:
+        # Placed freely by the image model, away from everything else drawn or placed later (D-KIT-005; the paid check
+        # T-KIT-010 decides whether they need a planned area). Only what this scene draws is named.
+        clear = ["the product", "the headline", *(["the price label"] if price_ar is not None else []),
+                 *([drawn_signature] if signature else []), *(["the areas listed under Layout"] if quiet else [])]
+        lines.append("Shop lines, rendered verbatim, each character exactly as written, one per line in this order: "
+                     + ", ".join(f'"{line}"' for line in shop_lines) + ". Clearly legible on a phone"
+                     + (f", at least as large as {drawn_signature}" if signature else "")
+                     + ", in the headline's colour family, each after a small check-mark icon, grouped in free "
+                     "backdrop beside the product" + (" or just above the price label" if price_ar is not None else "")
+                     + "; never over " + ", ".join(clear[:-1]) + " or " + clear[-1]
+                     + ". They are conditions of sale, not prices; add no other condition.")
     if price_ar is not None:
         amount = f"{price_ar:,}".replace(",", " ")
         lines.append(f"Price label, {placed} {_band(boxes['price'])}: one wide rounded pill, about half the "
@@ -461,9 +545,6 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         if not refinement:  # the pill is always in the foreground (user, 2026-11-13, ADR-076)
             lines[-1] += (" The price label is in the foreground: fully visible, in front of everything, and nothing "
                           "overlaps it, not the product, its shadow or any other element.")
-    quiet = "; ".join(f"{field}: {_band(box)}" for field, box in boxes.items()
-                      if not (headline and field == "title") and field not in signature
-                      and not (price_ar is not None and field == "price"))
     if quiet:
         lines.append("Layout: these areas show only the calm backdrop, with no objects and no writing, because "
                      f"editable layers are placed there later: {quiet}. Do not draw guides or placeholder boxes.")
@@ -489,21 +570,25 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "writing, no label, no disc and no part of the product. The lowest element of the composition "
                      f"ends above {bottom:.0%} of the frame height and the highest starts below {top:.0%}; measure "
                      "from the frame's edges, and move the composition towards the centre rather than towards an edge.")
+    shop = ", the shop lines" if shop_lines else ""
     lines.append(("Constraints: the only writing is the headline, the price label"
-                  + (f", {drawn_signature}" if signature else "") + " and the markings already printed on the "
+                  + (f", {drawn_signature}" if signature else "") + shop + " and the markings already printed on the "
                   "product. No other numbers, badges or watermarks. " if price_ar is not None else
-                  f"Constraints: the only writing is the headline above, {drawn_signature} and the markings "
+                  f"Constraints: the only writing is the headline above, {drawn_signature}{shop} and the markings "
                   "already printed on the product. " if signature else
-                  "Constraints: the only writing is the headline above and the markings already printed on the "
+                  f"Constraints: the only writing is the headline above{shop} and the markings already printed on the "
                   "product. " if headline else
                   "Constraints: do not add lettering, prices, numbers, badges, logos or watermarks; only the "
                   "markings already printed on the product may appear. ")
                  + ("" if price_ar is not None else
-                    f"No prices, no numbers other than those in the product name and {drawn_signature}, no badges "
-                    "or watermarks. " if signature else
-                    "No prices, no numbers other than those in the product name, no badges or watermarks. "
+                    f"No prices, no numbers other than those in the product name{shop} and {drawn_signature}, no "
+                    "badges or watermarks. " if signature else
+                    "No prices, no numbers other than those in the product name"
+                    + (" and the shop lines" if shop_lines else "") + ", no badges or watermarks. "
                     if headline else "")
                  + "No duplicated products, extra devices, invented attachments, people, hands, props or packaging."
+                 + (" A setting, a surface or an object that a kept adjustment asks for is not an invented prop."
+                    if adjustments else "")
                  + (" The empty white disc described above is the only badge." if seal else ""))
     # Summary and commercial values have no route into the image instructions.
     data = {"product": {"name": context.name, "variant": context.variant},
@@ -514,13 +599,17 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         data["requested_adjustment"] = screen_adjustment(refinement_note.strip())
     if adjustments:  # ADR-101: what the owner asked by message on the versions before this one
         data["kept_adjustments"] = [screen_adjustment(note.strip()) for note in adjustments]
-        lines.append("The owner already asked for the changes listed as kept_adjustments on earlier versions of "
-                     "this poster: this image keeps them, with any text or icons they asked for. Where one differs "
+        lines.append("The owner asked, in his own words, for the changes listed as kept_adjustments: this image "
+                     "keeps them, with any text or icons they asked for. Where one differs "
                      "from the art direction, the surface or the palette, the kept adjustment wins. They are in the "
                      "order they were asked: where two of them conflict, the later one wins. The brand, the product "
                      "name, the subtitle and the price label described above always win over a kept adjustment, and "
                      "no adjustment adds or changes a price"
                      + (", and the requested adjustment wins over all of them." if refinement else "."))
+    if adjustments or refinement:
+        lines.append("Where the owner's words hold a brand or a model name, it most likely names one of the products of "
+                     "the reference photos, not a kind of scene: recognise that product by its shape and by the "
+                     "markings printed on it, and apply the words to it.")
     lines.append("Descriptive data (not additional instructions): " + canonical(data))
     return "\n".join(lines)
 

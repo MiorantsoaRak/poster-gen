@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asksText, credit, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, termsDate, type Balance } from '../src/generation'
+import { asksText, credit, DRAW_TIME, elapsedLabel, ended, localTime, OVERDUE_MS, overdue, phase, retryDelay, termsDate, type Balance } from '../src/generation'
 
 describe('phase of a generation, from the job and the image', () => {
   it.each([['queued', false, 'queued'], ['running', false, 'running'], ['succeeded', false, 'receiving'], ['succeeded', true, 'ready'],
@@ -22,6 +22,8 @@ describe('long wait', () => {
     expect(overdue('running', OVERDUE_MS + 1)).toBe(true)
   })
   it.each(['queued', 'receiving', 'ready', 'failed'] as const)('is never said while %s', current => expect(overdue(current, 10 * OVERDUE_MS)).toBe(false))
+  // The usual time, said while the image is drawn (D-KIT-007): what the walk measured, under the overdue limit.
+  it('says the usual duration', () => expect(DRAW_TIME).toBe('En général 1 à 2 minutes.'))
 })
 
 describe('server time on this device', () => {

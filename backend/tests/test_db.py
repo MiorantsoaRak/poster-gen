@@ -25,6 +25,7 @@ POSTS = ("facebook_posts", "facebook_post_items")  # 0019, empty
 ADDED_0019 = ["0019 ADDED shop_profile: no limit of images per post: as expected",
               *(f"0019 ADDED {table}: empty: as expected" for table in POSTS)]
 ADDED_0020 = ["0020 ADDED facebook_publications: gone: as expected"]
+ADDED_0021 = ["0021 ADDED shop_profile: no line yet: as expected"]
 DESIGN_TABLES = {"meta", "assets", "runs", "run_products", "abandonments", "variant_cycles", "cutouts",
                  "generation_requests", "provider_calls", "candidates", "shop_profile", "asset_access",
                  "product_inputs", "creations", "creation_versions", "mutation_keys", "sessions", "login_failures",
@@ -119,7 +120,7 @@ def test_photo_snapshot_migration_preserves_legacy_rows_without_inventing_hashes
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT * FROM run_products").one() == (
                 "old", "P1", "A", "old-sha", "JBL", "Blue", None)
-            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0020"
+            assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0021"
     finally:
         engine.dispose()
 
@@ -318,9 +319,9 @@ def test_keys_that_cannot_be_turned_on_again_discard_the_connection(tmp_path, mo
 
 def test_a_fresh_database_starts_with_shop_1_without_password(engine):
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0020"
-        assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at, post_image_limit"
-                                    " FROM shop_profile").all() == [("originalphone", None, "active", 1, None)]
+        assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == "0021"
+        assert conn.exec_driver_sql("SELECT identifier, password_hash, state, created_at = updated_at, post_image_limit,"
+                                    " lines_json FROM shop_profile").all() == [("originalphone", None, "active", 1, None, "[]")]
         assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
 
 
@@ -401,7 +402,7 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
     assert out.endswith("REHEARSAL OK\n") and f"environment: SQLite {sqlite3.sqlite_version}, Python " in out
-    assert "pending migrations: 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020" in out and "schema version: 0012 -> 0020" in out
+    assert "pending migrations: 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021" in out and "schema version: 0012 -> 0021" in out
     assert "ledger provider_calls: 512881 -> 512881" in out and "(over id, ip, attempted_at)" in out
     # shop_profile from 0012: 0013's projection, the earliest pending one, over its six columns of then.
     assert "(over id, revision, name, contact, logo_asset, updated_at)" in out
@@ -418,6 +419,7 @@ def test_the_rehearsal_passes_on_the_pilot_and_never_writes_the_file_it_is_given
     assert [line for line in lines if line.startswith("0018 ")] == ADDED_0018
     assert [line for line in lines if line.startswith("0019 ")] == ADDED_0019
     assert [line for line in lines if line.startswith("0020 ")] == ADDED_0020
+    assert [line for line in lines if line.startswith("0021 ")] == ADDED_0021
     guards =[line for line in lines if line.startswith("guard ")]
     assert len(guards) == 14 and all(line.endswith(": as expected") for line in guards)  # a table, 12 triggers, a column
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and read(path)[0]["version"] == "0012"
@@ -473,7 +475,7 @@ def test_0014_on_a_database_at_0013_counts_no_job_of_before_and_grants_nothing(t
         new = ("credit_grants", "operator_sessions", *CONNECTIONS, *POSTS)
         assert {table: after["tables"].pop(table)[0] for table in new} == dict.fromkeys(new, 0)
         assert after["tables"] == before["tables"] and after["sums"] == before["sums"]
-        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0020", 0, "ok")
+        assert (after["version"], after["foreign_key_check"], after["integrity_check"]) == ("0021", 0, "ok")
         with engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT kind, takes_credit FROM poster_jobs ORDER BY id").all() == [
                 ("plan", 0), ("scene", 0), ("text_patch", 0), ("text_texture", 0), ("render", 0), ("plan", 0)]
@@ -556,7 +558,7 @@ def test_a_database_at_head_changed_by_hand_fails_the_rehearsal_with_nothing_pen
             conn.exec_driver_sql(statement)
     assert rehearse.main(["rehearse", engine.url.database]) == 1
     out = capsys.readouterr().out
-    assert "pending migrations: none (code head 0020)" in out
+    assert "pending migrations: none (code head 0021)" in out
     assert out.splitlines()[-1] == f"REHEARSAL FAILED: {guard}"
 
 
@@ -606,7 +608,7 @@ def test_0017_on_a_populated_0016_database_keeps_every_shop_column_and_accepts_n
             credits.grant(conn, 2, 3, origin="offered", ref="welcome", actor="tests")
         assert rehearse.main(["rehearse", str(path)]) == 0
         out = capsys.readouterr().out
-        assert "pending migrations: 0017, 0018, 0019, 0020 (code head 0020)" in out and out.endswith("REHEARSAL OK\n")
+        assert "pending migrations: 0017, 0018, 0019, 0020, 0021 (code head 0021)" in out and out.endswith("REHEARSAL OK\n")
         assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at)"
                 in out)
         before, schema_before = read(path, preserved)
@@ -658,7 +660,7 @@ def test_0018_on_a_populated_0017_database_keeps_every_row_and_adds_three_empty_
                                  f"VALUES (1,'{T}','shopdeux','active','{T}')")
         assert rehearse.main(["rehearse", str(path)]) == 0
         out = capsys.readouterr().out
-        assert "pending migrations: 0018, 0019, 0020 (code head 0020)" in out and out.endswith("REHEARSAL OK\n")
+        assert "pending migrations: 0018, 0019, 0020, 0021 (code head 0021)" in out and out.endswith("REHEARSAL OK\n")
         assert [line for line in out.splitlines() if line.startswith("0018 ")] == ADDED_0018
         before, schema_before = read(path)
         migrate_to(engine, "0018", monkeypatch)
@@ -728,7 +730,7 @@ def test_0019_on_a_populated_0018_database_keeps_the_publications_and_adds_the_l
                                  f"VALUES (1,'{T}','shopdeux','active','{T}')")
         assert rehearse.main(["rehearse", str(path)]) == 0
         out = capsys.readouterr().out
-        assert "pending migrations: 0019, 0020 (code head 0020)" in out and out.endswith("REHEARSAL OK\n")
+        assert "pending migrations: 0019, 0020, 0021 (code head 0021)" in out and out.endswith("REHEARSAL OK\n")
         assert ("(over id, revision, name, contact, logo_asset, updated_at, identifier, password_hash, state, created_at,"
                 " terms_version, terms_accepted_at)" in out)
         assert [line for line in out.splitlines() if line.startswith("0019 ")] == ADDED_0019
@@ -819,11 +821,11 @@ def test_0020_on_a_populated_0019_database_turns_each_publication_into_a_post_of
     try:
         assert rehearse.main(["rehearse", str(path)]) == 1
         out = capsys.readouterr().out
-        assert "pending migrations: 0020 (code head 0020)" in out
+        assert "pending migrations: 0020, 0021 (code head 0021)" in out
         assert out.splitlines()[-1] == ("REHEARSAL FAILED: facebook_publications: 5 rows before migration 0020, which "
                                         "drops it")
         before, schema_before = read(path)
-        migrate(engine)
+        migrate_to(engine, "0020", monkeypatch)
         after, schema = read(path)
         assert [after["tables"].pop(table)[0] for table in POSTS] == [6, 6]
         assert before["tables"].pop("facebook_publications")[0] == 5
@@ -887,7 +889,7 @@ def test_0020_on_a_0019_database_without_publications_compares_the_posts_as_any_
         engine.dispose()
     assert rehearse.main(["rehearse", str(path)]) == 0
     out = capsys.readouterr().out
-    assert "pending migrations: 0020 (code head 0020)" in out and out.endswith("REHEARSAL OK\n")
+    assert "pending migrations: 0020, 0021 (code head 0021)" in out and out.endswith("REHEARSAL OK\n")
     assert [line for line in out.splitlines() if line.startswith("0020 ")] == ADDED_0020
     rows = {line.split()[0]: line.split()[1:3] for line in out.splitlines() if line.startswith("facebook_p")}
     assert (rows["facebook_posts"], rows["facebook_post_items"], rows["facebook_publications"]) == (

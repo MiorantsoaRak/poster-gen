@@ -307,11 +307,15 @@ export async function upload(file: File, role: 'original' | 'logo' | 'style', ti
   return api<{ asset: string; width: number; height: number; warnings: string[] }>('/api/assets', { method: 'POST', body, timeout })
 }
 
-export interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null }
+// `lines`: the shop's own lines (D-KIT-005), always in the server's answer; optional for a profile built on the page.
+export interface Profile { revision: number; name: string | null; contact: string | null; logo_asset: string | null; lines?: string[] }
 export interface Terms { version: string; paragraphs_fr: string[]; accepted_at: string | null; changed: boolean }
-export function writeProfile(profile: Profile) {
+/** The lines as sent: each field trimmed, the empty ones left out (the server refuses an empty line), in their order. */
+export const shopLines = (fields: readonly string[] = []) => fields.map(line => line.trim()).filter(Boolean)
+/** `lines` leave only when given: absent, the server keeps the shop's lines (a caller that does not edit them erases none). */
+export function writeProfile(profile: Profile, lines?: readonly string[]) {
   return mutation<Profile>('/api/shop-profile', { name: profile.name?.trim() || null, contact: profile.contact?.trim() || null,
-    logo_asset: profile.logo_asset }, profile.revision, undefined, 'PUT', false, 20_000)
+    logo_asset: profile.logo_asset, ...(lines && { lines: shopLines(lines) }) }, profile.revision, undefined, 'PUT', false, 20_000)
 }
 
 export async function changePassword(current: string, replacement: string) {

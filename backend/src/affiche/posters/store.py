@@ -129,19 +129,24 @@ def get_profile(conn: Connection, shop: int) -> dict:
     row = conn.execute(text("SELECT * FROM shop_profile WHERE id=:shop"), {"shop": shop}).mappings().first()
     if row is None:
         raise Refused("not_found", 404)
-    return {k: row[k] for k in ("revision", "name", "contact", "logo_asset")}
+    return {k: row[k] for k in ("revision", "name", "contact", "logo_asset")} | {"lines": json.loads(row["lines_json"])}
 
 
 def save_profile(engine, data_dir, shop, key, profile: Profile, revision):
+    """`profile` may carry the shop's lines (api.ProfileUpdate, D-KIT-005); without them they stay as they are, so a
+    page that does not know them erases nothing."""
+    body = profile.model_dump()
     def apply(conn):
         _revision(get_profile(conn, shop)["revision"], revision)
         if profile.logo_asset:
             _asset(conn, data_dir, shop, profile.logo_asset, "logo")
+        lines = body.get("lines")
         conn.execute(text("UPDATE shop_profile SET revision=revision+1,name=:name,contact=:contact,"
-                          "logo_asset=:logo_asset,updated_at=:now WHERE id=:shop"),
-                     profile.model_dump() | {"shop": shop, "now": utc_now()})
+                          "logo_asset=:logo_asset,lines_json=COALESCE(:lines,lines_json),updated_at=:now WHERE id=:shop"),
+                     {"name": profile.name, "contact": profile.contact, "logo_asset": profile.logo_asset,
+                      "lines": None if lines is None else canonical(lines), "shop": shop, "now": utc_now()})
         return 200, get_profile(conn, shop)
-    return mutate(engine, shop, key, "PUT", "/api/shop-profile", profile.model_dump(), apply, revision=revision)
+    return mutate(engine, shop, key, "PUT", "/api/shop-profile", body, apply, revision=revision)
 
 
 def get_input(conn: Connection, shop: int, id: str) -> dict:
@@ -174,6 +179,7 @@ def create_input(engine, data_dir, shop, key, product: ProductInput):
 def initial_document(request: NewCreation, profile: dict) -> Document:
     profile = dict(profile)
     profile["profile_revision"] = profile.pop("revision")
+    del profile["lines"]  # drawn words only, kept by the version that draws them, never a layer (D-KIT-005)
     width, height = FORMATS[request.primary_format]
     layers = []
     for role, y, h, size in (("title", 64, 192, 72), ("price", height-380, 120, 88),

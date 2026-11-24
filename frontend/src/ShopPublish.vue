@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { api, ApiError, mutation, shopKey, shopStorage, type Terms } from './api'
+import { api, ApiError, bound, mutation, shopKey, shopStorage, state, type Terms } from './api'
+import { manualReturnLine, startFacebook } from './facebook'
 import { captionFault, readCaption } from './share'
 import { retryDelay } from './generation'
 import {
-  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe, dropIndex, emptyDraft, faultLine, inFlight, isCandidate,
-  keptForSending, limitLine, LOST, move, moveTo, placeLine, postLine, posterCount, reorder, SLACK, publishAction, readStored, refusalOf, remove,
+  aloneLine, alreadyLine, answered, atLimit, codePoints, crossed, describe, dropIndex, emptyDraft, faultLine, helpOnly, inFlight, isCandidate,
+  keptForSending, limitLine, LOST, move, moveTo, placeLine, postLine, posterCount, putFirst, reorder, SLACK, publishAction, readStored, refusalOf, remove,
   requestOf, seenOf, takenOut, toggle, whyNot, without, type Candidate, type Candidates, type Draft, type ExcludedPoster, type Item, type LeftOut,
   type Page, type Post, type PostBody,
 } from './publish'
@@ -13,9 +14,13 @@ import {
 // « Publier sur Facebook » (D-FB-POST-005): `#publier`, the draft of a post of one or several posters, or with `poster`
 // (`#publier-<id>`) the page for that poster alone, whose description is its caption. What it keeps on the device is the
 // draft (`post-draft`), whose stamp is the request's key, and for one poster its caption: nothing else.
-interface ReturnedPoster { id: string; download_url: string }
-const props = defineProps<{ poster: string | null; terms: Terms | null; handed?: { poster: string; text: string } | null; addPoster?: ReturnedPoster | null }>()
-const emit = defineEmits<{ terms: []; poster: [id: string]; repair: [id: string, mayLeave: () => boolean]; handed: []; account: []; consumed: []; guide: [event: MouseEvent] }>()
+// `first`: the poster comes from « Publier plusieurs affiches » and goes first in the post (D-KIT-008).
+interface ReturnedPoster { id: string; download_url: string; first?: boolean }
+const props = defineProps<{ poster: string | null; terms: Terms | null; handed?: { poster: string; text: string } | null; addPoster?: ReturnedPoster | null
+  // `@several`, declared as a prop rather than an emit so that the page knows whether anyone listens: without a listener,
+  // « Publier plusieurs affiches » opens the page of several as before.
+  onSeveral?: (poster: ReturnedPoster) => void }>()
+const emit = defineEmits<{ terms: []; poster: [id: string]; repair: [id: string, mayLeave: () => boolean]; handed: []; consumed: []; guide: [event: MouseEvent] }>()
 const TIMEOUT = 20_000, DRAFT = 'post-draft', POSTS = '/api/facebook/posts'
 const UNKEPT = 'Cet appareil n’a pas pu garder votre publication : rien n’a été envoyé. Libérez de la place ou quittez la navigation privée, puis réessayez.'
 const UNREAD = 'Votre publication gardée sur cet appareil n’a pas pu être lue.'
@@ -243,6 +248,11 @@ function takeCaption(entry: { title: string; text: string }) {
 const posts = shallowRef<Post[]>([]), postsNext = ref<string | null>(null), postsError = ref(''), postsRead = ref(false), postsLine = ref('')
 const lines = computed(() => posts.value.map(post => ({ post, ...postLine(post) })))
 const running = computed(() => posts.value.some(inFlight))
+// The outcome of the latest send (D-KIT-008), its line read from `posts` as it moves: first under the title, until a
+// poster is added or the page is left.
+const sent = ref<string | null>(null)
+const outcome = computed(() => lines.value.find(entry => entry.post.id === sent.value) ?? null)
+watch(() => draft.value.items.length, (now, was) => { if (now > was) sent.value = null })
 /** The draft's post and the stamp it was made from (an edit forgets the post: `post` is always its own stamp's). */
 const followedPost = () => props.poster ? single.value : { post: draft.value.post, stamp: draft.value.stamp }
 function handle(post: Post, sent: string) {
@@ -333,6 +343,9 @@ const checking = ref(false), line = ref('')
 const action = computed(() => publishAction({ page: page.value ?? null, accepted: accepted.value, checking: checking.value,
   running: running.value, stale: stale.value && !reading.value, chosen: chosen.value, limit: props.poster ? null : limit.value, description: description.value }))
 const why = computed(() => whyNot(action.value, limit.value, description.value))
+// Only « nothing chosen » gives way to the outcome (D-KIT-008: a published post empties the draft). A failed post keeps
+// its posters, and every other reason « Publier… » is off stays said.
+const whyShown = computed(() => !!why.value && !(outcome.value && helpOnly(action.value)))
 const gridLine = computed(() => props.poster ? '' : limitLine(draft.value.items.length, limit.value))
 // Where a refusal is said: beside « Publier… » when it is shown, else under the title.
 const beside = computed(() => connected.value && !unread.value && (!props.poster || chosen.value.length > 0))
@@ -372,6 +385,7 @@ async function send(body: PostBody, stamp: string, quiet = false) {
     const post = await mutation<Post>(POSTS, body, undefined, stamp, 'POST', quiet, TIMEOUT)
     if (!holding(at)) return
     checking.value = false; checkFailures = 0; line.value = ''
+    sent.value = post.id
     handle(post, stamp)
     observe([post])
     if (!inFlight(post)) marksMoved()  // an earlier answer of this key, settled since
@@ -403,17 +417,23 @@ async function publishNow() {
       return
     }
     const { key, body } = requestOf(open.stamp, open.page.id, open.description, open.items.map(({ creation_id, confirmation_id, seen }) => ({ creation_id, confirmation_id, seen })))
+    sent.value = null  // the block says this send's outcome, or nothing
     await send(body, key)
     if (sheet.value === open) sheet.value = null
+    // After the sheet has given the focus back: the outcome's heading takes it, in view at 360 px and on desktop. An
+    // answer that comes later (no answer at first) does not take it from what the owner is doing by then.
+    if (sent.value && holding()) void nextTick(() => document.getElementById('titre-resultat')?.focus())
   } finally { sending.value = false }
 }
 
 // ── a post's controls ─────────────────────────────────────────────────────────────────────────────────────────
 const stopping = ref<string | null>(null), absent = shallowRef<Post | null>(null), answering = ref(false)
+// The post `postsLine` is about: said in the outcome block only for its own post, else in « Publications ».
+const linePost = ref<string | null>(null)
 async function stopPost(post: Post) {
   if (stopping.value || !holding()) return
   const at = token
-  stopping.value = post.id; postsLine.value = ''
+  stopping.value = post.id; postsLine.value = ''; linePost.value = post.id
   try { const answer = await api<Post>(`${POSTS}/${post.id}/stop`, { method: 'POST', timeout: TIMEOUT }); if (holding(at)) observe([answer]) }
   catch (reason) { if (holding(at)) postsLine.value = message(reason) }
   finally { stopping.value = null }
@@ -422,7 +442,7 @@ async function stopPost(post: Post) {
 async function sayOutcome(post: Post, present: boolean) {
   if (answering.value || !holding()) return
   const at = token
-  answering.value = true; postsLine.value = ''
+  answering.value = true; postsLine.value = ''; linePost.value = post.id
   try {
     const answer = await mutation<Post>(`${POSTS}/${post.id}/outcome`, { present }, undefined, undefined, 'POST', false, TIMEOUT)
     absent.value = null
@@ -580,18 +600,42 @@ async function refreshComposer(add: ReturnedPoster | null) {
   if (item.download_url !== add.download_url) {
     addLine.value = 'Le fichier confirmé a changé. Ouvrez l’affiche pour vérifier le nouveau fichier.'; return
   }
-  if (draft.value.items.includes(add.id)) {
+  // Already in the draft: left where it is, unless it comes to be first (« Publier plusieurs affiches »).
+  const present = draft.value.items.includes(add.id)
+  if (present && !add.first) {
     retryAdd.value = null; addLine.value = 'Cette affiche est déjà dans votre publication.'; return
   }
   if (running.value || sending.value || checking.value || sheet.value || absent.value) { addLine.value = RUNNING; return }
   if (draft.value.post || [item, ...chosen.value].some(entry => entry.pending || (entry.last && (inFlight(entry.last) || entry.last.status === 'unknown')))) {
     addLine.value = 'Vérifiez le résultat de la publication avant d’ajouter cette affiche.'; return
   }
-  if (atLimit(draft.value, limit.value)) { addLine.value = 'La limite d’images est atteinte. Retirez une affiche avant de réessayer.'; return }
-  const next = toggle(draft.value, add.id, limit.value)
+  if (!present && atLimit(draft.value, limit.value)) { addLine.value = 'La limite d’images est atteinte. Retirez une affiche avant de réessayer.'; return }
+  const next = add.first ? putFirst(draft.value, add.id, limit.value) : toggle(draft.value, add.id, limit.value)
   if (!keptBatch(next)) { addLine.value = DRAFT_UNKEPT + ' Réessayez l’ajout.'; return }
   draft.value = next; draftLine.value = ''; retryAdd.value = null
-  addLine.value = 'L’affiche a été ajoutée à votre publication.'
+  addLine.value = present ? 'Cette affiche est déjà dans votre publication.' : 'L’affiche a été ajoutée à votre publication.'
+}
+
+// ── no Page: the connection from this page (D-KIT-008) ────────────────────────────────────────────────────────
+// The draft or the caption is kept first: back from Facebook, « Mon compte » chooses the Page and comes back here, to the
+// same post (ADR-130). A tab that cannot keep the return says so; the next tap goes on without it.
+const address = computed(() => props.poster ? 'publier-' + props.poster : 'publier')
+const connecting = ref(false), connectLine = ref(''), manualReturn = ref(false)
+async function connectPage() {
+  const shop = bound.value, at = token, from = address.value
+  if (connecting.value || !holding(at) || typeof shop !== 'number' || state.value !== 'shown' || !saveBeforeLeaving()) return
+  connecting.value = true; connectLine.value = ''
+  try {
+    const still = () => holding(at) && bound.value === shop && state.value === 'shown' && location.hash === '#' + from
+    if (await startFacebook(shop, from, { still, unkept: manualReturn.value }) === 'unkept') manualReturn.value = true
+  } catch (reason) { if (holding(at)) connectLine.value = message(reason) }
+  finally { connecting.value = false }
+}
+// « Publier plusieurs affiches »: this page's poster goes first in the post of several, when App.vue takes it.
+function several() {
+  const item = chosen.value[0]
+  if (props.onSeveral && item) props.onSeveral({ id: item.id, download_url: item.download_url })
+  else location.hash = 'publier'
 }
 
 // Each hold starts afresh: what an earlier one had begun is not this one's.
@@ -599,6 +643,7 @@ function begin() {
   clearTimeout(pollTimer); clearTimeout(checkTimer); settle(); placeSaid.value = ''
   sheet.value = null; absent.value = null; replacing.value = null; checking.value = false; checkFailures = 0; pollFailures = 0
   line.value = ''; postsLine.value = ''; draftLine.value = ''; unreadLine.value = ''; takenLines.value = []
+  sent.value = null; connectLine.value = ''; manualReturn.value = false
   // What this tab read before it lost the page may be old (another tab may have published meanwhile): « Publier… »
   // stays off until the candidates are read again, as after a refusal (third code review of T-FB-013).
   stale.value = true
@@ -634,9 +679,27 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
     <div v-if="lockless" class="empty chat-elsewhere"><p role="status">Ce navigateur ne permet pas la page Publier. Ouvrez l’atelier dans un navigateur à jour.</p></div>
     <div v-else-if="owner === false" class="empty chat-elsewhere"><p role="status">La page Publier est ouverte dans un autre onglet.</p><button type="button" class="primary" @click="takeOver">Continuer ici</button></div>
     <template v-else-if="owner">
+    <!-- The outcome of the latest send, first under the title (D-KIT-008): the state in the server's words, Facebook's link
+         or the owner's answers. Its heading takes the focus after the send. -->
+    <section v-if="outcome" class="group outcome" aria-labelledby="titre-resultat">
+      <h2 id="titre-resultat" tabindex="-1">Résultat de la publication</h2>
+      <div class="post">
+        <img v-if="outcome.post.items[0]?.thumbnail_url" :src="outcome.post.items[0].thumbnail_url" width="48" height="60" alt="" /><span v-else class="blank" aria-hidden="true" />
+        <small><span translate="no">{{ outcome.post.page_name }}</span> · {{ outcome.count }}</small>
+        <span class="said">{{ outcome.state }}</span>
+        <div v-if="outcome.link || outcome.ask" class="row">
+          <a v-if="outcome.link" :href="outcome.link.href" target="_blank" rel="noopener">{{ outcome.link.label }}</a>
+          <template v-if="outcome.ask"><button class="secondary" :disabled="answering" @click="sayOutcome(outcome!.post, true)">Elle est sur ma Page</button><button class="secondary" :disabled="answering" @click="absent = outcome!.post">Elle n’y est pas</button></template>
+        </div>
+      </div>
+      <p v-if="postsLine && linePost === outcome.post.id" class="why" role="alert">{{ postsLine }}</p>
+    </section>
     <p v-if="reading && page === undefined" role="status">Lecture de votre Page et de vos affiches…</p>
     <p v-if="readError" class="why lead" role="alert">{{ readError }} <button class="text-button" @click="readCandidates()">Réessayer</button></p>
-    <div v-if="page !== undefined && !connected" class="refusal"><p>{{ page ? 'Reconnectez votre Page dans « Mon compte ».' : 'Aucune Page Facebook n’est connectée. Connectez votre Page dans « Mon compte ».' }}</p><a href="#compte" @click.prevent="saveBeforeLeaving() && emit('account')">Mon compte</a></div>
+    <div v-if="page !== undefined && !connected" class="refusal"><p>{{ page ? 'Votre Page est à reconnecter.' : 'Aucune Page Facebook n’est connectée.' }}</p>
+      <p v-if="manualReturn" id="retour-manuel" role="status">{{ manualReturnLine(address) }}</p>
+      <button type="button" class="primary" :disabled="connecting" :aria-busy="connecting || undefined" :aria-describedby="manualReturn ? 'retour-manuel' : undefined" @click="connectPage">{{ manualReturn ? 'Continuer vers Facebook' : page ? 'Reconnecter ma Page' : 'Connecter ma Page Facebook' }}</button>
+      <p v-if="connectLine" class="why lead" role="alert">{{ connectLine }}</p></div>
     <div v-if="repairError && (!connected || poster)" class="refusal">
       <p class="why" role="alert">{{ repairError }}</p>
       <label v-if="poster && (!connected || !chosen.length)">Légende de l’affiche<textarea :value="caption" rows="4" @input="typeDescription(($event.target as HTMLTextAreaElement).value)" /></label>
@@ -696,15 +759,15 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
           <p class="visually-hidden" role="status">{{ placeSaid }}</p>
           <p v-if="limit !== null" class="help">{{ limit }} images au plus par publication</p>
         </template>
-        <div class="row"><button class="primary" :disabled="action !== 'ready' || reading || sending" :aria-describedby="why ? 'pourquoi-publier' : undefined" @click="openSheet">Publier…</button>
+        <div class="row"><button class="primary" :disabled="action !== 'ready' || reading || sending" :aria-describedby="whyShown ? 'pourquoi-publier' : undefined" @click="openSheet">Publier…</button>
           <button v-if="!poster" class="secondary" :disabled="!draft.items.length && !draft.description" @click="keep(emptyDraft()); replacing = null">Vider</button></div>
-        <p v-if="why" id="pourquoi-publier" class="why">{{ why }}</p>
+        <p v-if="whyShown" id="pourquoi-publier" :class="helpOnly(action) ? 'help' : 'why'">{{ why }}</p>
         <p v-if="line" class="why" role="alert">{{ line }}</p>
         </div>
       </div>
       <template v-if="poster">
         <p v-if="draftCount" class="help">Votre publication en préparation ({{ posterCount(draftCount) }}) est gardée. <a href="#publier">La voir</a></p>
-        <a class="way" href="#publier">Publier plusieurs affiches</a>
+        <button type="button" class="secondary way" @click="several">Publier plusieurs affiches</button>
       </template>
     </section>
 
@@ -743,7 +806,7 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
     <section class="group" aria-labelledby="titre-publications">
       <h2 id="titre-publications">Publications</h2>
       <p v-if="checking" class="why" role="status">{{ LOST }}</p>
-      <p v-if="postsLine" class="why" role="alert">{{ postsLine }}</p>
+      <p v-if="postsLine && linePost !== outcome?.post.id" class="why" role="alert">{{ postsLine }}</p>
       <p v-if="postsError" class="why" role="alert">{{ postsError }} <button class="text-button" @click="readPosts()">Réessayer</button></p>
       <p v-else-if="!postsRead" role="status">Lecture des publications…</p>
       <p v-else-if="!posts.length" class="help">Aucune publication pour le moment.</p>
@@ -805,9 +868,10 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 .number { display: inline-grid; place-items: center; flex: none; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--invert); color: var(--invert-ink); font-size: 12.5px; font-weight: 700 }
 .blank { display: block; background: var(--raised); border-radius: 4px }
 .chosen, .posts, .tiles, .strip, .left-out ul { list-style: none; margin: 0; padding: 0 }
-.chosen li, .posts li { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 6px 14px; align-items: start; padding: 12px 0 }
+.chosen li, .posts li, .outcome .post { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 6px 14px; align-items: start; padding: 12px 0 }
+.outcome .post { padding: 0 }
 .chosen li + li, .posts li + li { border-top: 1px solid var(--line) }
-.chosen :is(img, .blank), .posts :is(img, .blank) { width: 48px; height: 60px; object-fit: contain; border-radius: 4px; grid-row: span 4 }
+.chosen :is(img, .blank), .posts :is(img, .blank), .outcome :is(img, .blank) { width: 48px; height: 60px; object-fit: contain; border-radius: 4px; grid-row: span 4 }
 /* A chosen poster: its picture, its name, then its two actions at the row's right end (the bin, then the handle). */
 .chosen li { position: relative; background: var(--surface); grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center }
 .chosen li > :is(img, .blank) { grid-column: 1; grid-row: 1 }
@@ -847,10 +911,10 @@ onBeforeUnmount(() => { closed = true; owner.value = false; release?.(); clearTi
 .left-out li small { display: block; color: var(--muted) }
 .left-out button { min-height: 44px }
 .left-out p { margin: 0 }
-.posts small { color: var(--muted) }
-.posts .said { font-weight: 600 }
-.posts .row { align-items: center }
-.posts .row a, .confirm a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text) }
+:is(.posts, .outcome) small { color: var(--muted) }
+:is(.posts, .outcome) .said { font-weight: 600 }
+:is(.posts, .outcome) .row { align-items: center }
+:is(.posts, .outcome) .row a, .confirm a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text) }
 /* The sheet's strip scrolls sideways inside the sheet, never the page. */
 .strip { display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; padding: 4px 2px 8px }
 .strip li { position: relative; flex: none }

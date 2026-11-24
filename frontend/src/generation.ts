@@ -17,6 +17,8 @@ export function elapsedLabel(ms: number) {
 // (R-POSTER-EDITOR-008: 100 s, whatever the model's usual time).
 export const OVERDUE_MS = 100_000
 export const overdue = (current: Phase, runningMs: number) => current === 'running' && runningMs > OVERDUE_MS
+// How long an image usually takes, said while it is drawn (D-KIT-007: the walk of 2026-11-23 measured 60 to 120 s).
+export const DRAW_TIME = 'En général 1 à 2 minutes.'
 
 // A server time on this device's clock. skew is the server's clock minus this one (a response's Date header), null
 // when unknown: then, as for a missing or unreadable stamp, the moment of first sight. Never in the future. The API writes
