@@ -195,8 +195,15 @@ def confirm(engine, settings, shop, key, id, revision, request):
             raise store.Refused("fidelity_incomplete")
         if request.review_visual_id and row["source_revision"] != revision:
             raise store.Refused("preview_stale", 409)
-        value = snapshot(conn, settings, shop, id, revision, row["format"], rendering.bundle(), request.review_visual_id)
-        if value["format_hash"] != row["format_hash"] or request.png_sha256 != row["png_sha256"]:
+        creation = store.get_creation(conn, shop, id)
+        if creation["document"].get("kind") == "free":
+            store._revision(creation["revision"], revision)
+            if creation["status"] != "active" or request.review_visual_id or creation["document"]["render_id"] != row["id"]:
+                raise store.Refused("preview_stale", 409)
+            expected_hash = row["png_sha256"]
+        else:
+            expected_hash = snapshot(conn, settings, shop, id, revision, row["format"], rendering.bundle(), request.review_visual_id)["format_hash"]
+        if expected_hash != row["format_hash"] or request.png_sha256 != row["png_sha256"]:
             raise store.Refused("preview_stale", 409)
         warnings = {warning["id"] for warning in json.loads(row["warnings_json"])}
         if set(request.acknowledged_warning_ids) != warnings:

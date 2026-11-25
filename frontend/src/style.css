@@ -877,6 +877,12 @@ a.primary, .download-button { display: inline-flex; align-items: center; gap: 8p
 .seg { display: flex; padding: 3px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line) }
 .seg button { min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap }
 .seg button[aria-pressed=true] { background: var(--invert); color: var(--invert-ink) }
+/* Three ways (Message, Pas à pas, Libre) on a 360 px phone: two fill the bar already. The three show on a new poster
+   only, where « + » would open the same page; the way home is in the menu and, in « Pas à pas », in the bottom bar. */
+@media (max-width: 400px) {
+  .app-header .seg:has(> :nth-child(3)) button { padding: 0 8px }
+  .app-header:has(.seg > :nth-child(3)) :is(.new-poster, .mark) { display: none }
+}
 .composer, .chat-side { background: var(--surface); border: 1px solid var(--line) }
 
 .chat-elsewhere { display: grid; gap: 14px; justify-items: start; max-width: 680px; margin: 6vh auto 0 }

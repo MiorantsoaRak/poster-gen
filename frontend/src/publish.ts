@@ -12,7 +12,7 @@ export interface Seen { id: string; status: PostStatus }
  *  (`last`, what `seen` sends) and `pending`: a post of it on the Page is unknown, whichever (the admission refuses it;
  *  after a restore it need not be the latest). */
 export interface Candidate {
-  id: string; name: string; title: string; price_ar: number; confirmation_id: string; thumbnail_url: string | null
+  id: string; name: string; title: string; price_ar: number | null; confirmation_id: string; thumbnail_url: string | null
   download_url: string; last: Seen | null; published_at: string | null; pending: boolean
 }
 /** With `ids`, a poster that cannot go, and why. */

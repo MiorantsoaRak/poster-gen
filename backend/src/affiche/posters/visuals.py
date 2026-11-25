@@ -140,6 +140,8 @@ def _snapshot(conn, shop, id, revision, format, enabled):
     store._revision(creation["revision"], revision)
     if creation["status"] != "active":
         raise store.Refused("creation_abandoned", 409)
+    if creation["document"].get("kind") == "free":
+        raise store.Refused("free_creation_only", 409)
     document = Document.model_validate(creation["document"])
     if format not in document.formats:
         raise store.Refused("format_missing")

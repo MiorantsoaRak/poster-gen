@@ -34,6 +34,7 @@ from affiche.db import utc_now
 from affiche.posters import (auth, credits, exports, facebook, facebook_connect, facebook_posts, jobs, looks, reads,
                              rendering, store, terms, typography, visuals)
 from affiche.posters.service import PosterService
+from affiche.posters import free_creation
 from affiche.posters.models import CopyCreation, Document, Format, Id, Model, NewCreation, ProductInput, Profile, Sha
 from affiche.posters.plans import ShopLines
 from affiche.runtime import start
@@ -47,6 +48,7 @@ log = logging.getLogger(__name__)
 # to do; tests/test_api.py fails when a new refusal code has neither a sentence here nor a place in its list of
 # codes that only a programming error can produce.
 MESSAGES = {
+    "free_creation_only": "Ouvrez cette affiche dans Création libre pour la modifier.",
         "title_too_long": "Le titre dépasse 60 caractères : l’IA ne peut pas le dessiner dans l’image. Raccourcissez le titre.",
         "title_unsupported": "Le titre contient un guillemet droit (\") ou un retour à la ligne : l’IA ne peut pas le dessiner. Écrivez par exemple « 32 pouces ».",
         "title_commercial_text": "Le titre contient un mot de prix, de promotion ou de garantie (par exemple « promo », « gratuit », « % », « Ar »). Le prix a son propre champ : retirez ce mot du titre.",
@@ -425,7 +427,7 @@ class CreationView(Model):
     revision: int
     status: Literal["active", "abandoned"]
     parent_creation_id: Id | None
-    document: Document
+    document: Document | free_creation.FreeDocument
     confirmation: CurrentConfirmation | None = None  # GET /api/creations/{id} only (D-SHARE-001): never a mutation's answer
 
 
@@ -602,7 +604,9 @@ def status_view(conn, settings: Settings, started_at: str) -> dict:
 # poster_jobs.creation_id); add that index in a migration if a shop's list grows slow.
 SCENE = ("s.shop_id=c.shop_id AND s.id=json_extract(v.document_json,'$.formats.'"
          "||json_extract(v.document_json,'$.primary_format')||'.scene.visual_id')")
-TO_REVIEW = (f"(EXISTS(SELECT 1 FROM poster_visuals s WHERE {SCENE} AND s.status='pending_review') OR"
+TO_REVIEW = (f"((json_extract(v.document_json,'$.kind')='free' AND json_extract(v.document_json,'$.render_id') IS NOT NULL "
+             "AND NOT EXISTS(SELECT 1 FROM confirmations k WHERE k.creation_id=c.id AND k.confirmed_revision=c.current_revision)) OR"
+             f" EXISTS(SELECT 1 FROM poster_visuals s WHERE {SCENE} AND s.status='pending_review') OR"
              " EXISTS(SELECT 1 FROM poster_jobs j JOIN poster_visuals w ON w.job_id=j.id"
              " WHERE j.creation_id=c.id AND j.shop_id=c.shop_id AND w.shop_id=c.shop_id AND w.status='pending_review'"
              f" AND w.created_at>max(COALESCE((SELECT s.created_at FROM poster_visuals s WHERE {SCENE}),''),"
@@ -814,6 +818,20 @@ def create_app(settings: Settings | None = None, prepare: Callable[[Engine], Non
         def facebook_post_outcome(id: Id, body: facebook_posts.OutcomeRequest, request: Request, key: Key):
             return result_response(facebook_posts.outcome(app.state.engine, request.state.shop, request.cookies.get(auth.COOKIE),
                                                           key, id, body, MESSAGES))
+
+    @protected.post("/api/free-creations", status_code=202)
+    def free_start(body: free_creation.Start, request: Request, key: Key):
+        return result_response(free_creation.start(app.state.engine, settings, request.state.shop, key, body))
+
+    @protected.get("/api/free-creations/{id}")
+    def free_thread(id: Id, request: Request):
+        with app.state.engine.connect() as conn:
+            return free_creation.transcript(conn, request.state.shop, id)
+
+    @protected.post("/api/free-creations/{id}/turns", status_code=202)
+    def free_turn(id: Id, body: free_creation.Turn, request: Request, key: Key, version: Version = None):
+        return result_response(free_creation.turn(app.state.engine, settings, request.state.shop, key, id,
+                                                  expected_revision(version), body))
 
     @protected.post("/api/reads", status_code=201)
     async def new_read(body: reads.ReadRequest, request: Request, key: Key):

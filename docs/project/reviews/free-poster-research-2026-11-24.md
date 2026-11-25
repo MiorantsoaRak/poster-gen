@@ -1,5 +1,16 @@
 # A general way to create, beside the product chat · research and code map · 2026-11-24
 
+## Owner's follow-up · 2026-11-25 · proposal for discussion
+
+The owner wants a chat where the seller prompts the image model directly, with a base template for a seller who gives little visual direction. Proposed entry under « Nouvelle affiche » is « Création libre », a conversation of its own alongside the guided product flow.
+
+- A seller can generate from words alone or attach photos and an optional visual reference. Send the original wording and the ordered attachments. The generation button shows the credit cost. Skip the product reader, name/price/photo completeness test and extracted recap for this conversation.
+- Offer one editable-by-instruction base style, « Style boutique ». Its brief covers composition, spacing, contrast and legibility. Apply it only to visual choices the seller leaves open. A reference or explicit request takes priority. A seller can turn it off. The same prompt can carry that precedence rule, so there is no preliminary call to classify the seller's intent.
+- Shop facts and assets are a separate choice. The base style supplies no names, prices, discounts or warranties. Add a saved logo or contact when requested or selected. Use the seller's own spelling and wording for text to draw.
+- Return the image to the conversation. A follow-up edits the selected version and keeps the earlier one available. The seller compares the image with the original request before confirming the final file, especially where several prices have to match several photos.
+
+A first comparison on Flare could use a sparse request, the same request with a strong conflicting direction or reference, and an actual three-price poster followed by a correction to just one price. Assess the fallback, obedience to the override and unchanged surrounding content separately. This proposal has not been approved or tried.
+
 Asked by the owner after his trial with a reference made of three product cards: « Think of a way we can handle those
 kind of reference: if the reference is three images with product name on each, will the system be able to handle it?
 … we keep the product based chat (and its step by step editor). But might be good to have one more general purpose and
@@ -158,3 +169,9 @@ between drawing and laying over, and between medium and high for this kind.
 - [CapCut: text rendering in AI images, what works in 2026](https://www.capcut.com/create/ai-image-text-rendering-works-in-2026)
 - [Google: Photoshoot in Pomelli](https://blog.google/innovation-and-ai/models-and-research/google-labs/pomelli-photoshoot/)
 - [Canva Bulk Create](https://www.canva.com/help/bulk-create/)
+
+## Delivery evidence · 2026-11-25
+
+Three real medium-quality Flare generations used the application ledger on the isolated local trial shop. The first poster used three source photos and a grey reference with an underlined red title, heart motifs and a black price capsule. The result reproduced those visual elements, replaced the reference subjects with the supplied products in order, and put 120 000 Ar, 85 000 Ar and 150 000 Ar under the matching subjects. A polish changed the middle price to 95 000 Ar with the other prices and arrangement retained. A separate text-only request produced a greeting card reading « Fety sambatra ». The individual calls cost USD 0.060915, 0.072306 and 0.012290. Local comparison and full-size images are in `outputs/free-creation/`.
+
+The Chromium walkthrough covers a 1366 px light desktop with all four attachments and a 390 px dark phone with no attachments. It reopens the conversation, compares the actual download hash with the preview, and submits a post to the Facebook stand-in. It also exercises exhaustion of the last credits while the confirmed file remains downloadable. An initial walkthrough caught broken attachment previews. The final browser test checks all four images decode.

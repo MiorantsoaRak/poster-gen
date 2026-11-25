@@ -4,6 +4,7 @@
 
 | Design file | Requirements / sections | Status |
 |---|---|---|
+| [free-creation.md](free-creation.md) | R-FREE-01–06 | D-FREE-01–04, authorized 2026-11-25 |
 | [seller-kit.md](seller-kit.md) | R-KIT-001–012; D-KIT-001 … 012 | Approved v3 2026-11-23 under ADR-131, after a devil's advocate and review r1 (APPROVE WITH FIXES, fixes in); tasks T-KIT-001 … 015 in TODO.md; one migration (0021), no new route |
 | [saas-journey.md](saas-journey.md) | R-JOURNEY-001–007 | Approved for implementation, 2026-11-22 |
 | [first-poster-guide.md](first-poster-guide.md) | R-GUIDE-001–004 | Approved for implementation, 2026-11-22 |

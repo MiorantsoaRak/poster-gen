@@ -54,6 +54,7 @@ Backend (`backend/`, Python 3.12 with uv; verified 2026-11-09 on Windows 10):
 | Operator page browser smoke (stub, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/admin_browser.py` |
 | Conditions of use browser smoke (stub, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/terms_browser.py` |
 | « Publier sur Facebook » page browser smoke (Facebook stand-in, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/publish_browser.py` |
+| « Libre » (free creation) browser smoke (stub image and Facebook stand-in, isolated data; build the frontend first: it runs `vite preview`) | `uv run python ../frontend/tests/free_creation_browser.py` |
 | Design review captures (stub, isolated data; build first; three widths in both themes, contact sheets and static snapshots in `outputs/design-capture/<label>/`; use a separate smoke port pair when running concurrently) | `uv run python ../frontend/tests/design_capture.py [label]` |
 | New migration file (hand-written SQL) | `uv run alembic revision -m "<message>"` |
 | One-time cutout model download (224 MB, to `%USERPROFILE%\.rembg\models\`) | `uv run python -c "from rembg import new_session; new_session('birefnet-general-lite')"` |

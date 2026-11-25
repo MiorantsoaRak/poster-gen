@@ -116,7 +116,7 @@ def enqueue(conn, settings, shop, creation_id, revision, kind, payload) -> dict:
             "SELECT 1 FROM poster_jobs WHERE creation_id=:id AND kind IN ('scene','refine','text_texture','background')"
             " AND status IN ('queued','running')"), {"id": creation_id}).first():
         raise Refused("image_job_running", 409)
-    if kind in {"scene", "refine"} and conn.execute(text(
+    if kind in {"scene", "refine"} and creation["document"].get("kind") != "free" and conn.execute(text(
             "SELECT COUNT(*) FROM poster_jobs WHERE creation_id=:id AND kind IN ('scene','refine')"
             " AND status IN ('queued','running','succeeded')"), {"id": creation_id}).scalar_one() >= SCENE_LIMIT:
         raise Refused("attempt_limit", 409)

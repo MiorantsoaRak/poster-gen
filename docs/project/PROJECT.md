@@ -6,6 +6,10 @@
 
 Affiche IA helps Original Phone Mada turn a product photo, verified information and a price into promotional posters that a shop operator can polish, export and reuse. The proposed approach combines an AI-generated product scene with editable text, prices and branding in a flexible canvas. The pilot supports full editing on phones and desktop, with a French interface and French captions.
 
+## Scope change of 2026-11-25
+
+The owner authorized a separate [Création libre](requirements/free-creation.md) conversation alongside the guided product flow. Sellers can create directly from words, optional photos and a reference, refine with credits, confirm, download and prepare a Facebook publication.
+
 ## Scope change of 2026-11-15 (user decision, ADR-105)
 
 The charter below describes the single-shop pilot and is kept as written. The user has since decided to open the tool to several shops **by invitation**, with a prepaid balance of generations, a dashboard for each shop and an administration dashboard. "Multi-shop SaaS" and "subscriptions/billing" in the non-goals below now mean: public sign-up, online payment, subscriptions and automated Facebook publishing stay out; shops invited by the operator and credited by hand are in. The plan, its order and its requirement files are in [ROADMAP.md](ROADMAP.md). **Nothing is deployed until that release is complete.**

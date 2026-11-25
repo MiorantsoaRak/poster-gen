@@ -11,7 +11,7 @@ from sqlalchemy import text
 from affiche import assets
 from affiche.db import utc_now
 from affiche.visuals.gateway import OpenAIProvider, image_dimensions, make_provider, prepare_provider_input, validate_image
-from . import exports, jobs, looks, rendering, seal, store, typography, visuals
+from . import exports, free_creation, jobs, looks, rendering, seal, store, typography, visuals
 from .models import FORMATS, Crop, Document, Scene, canonical
 from .planner import ClaudePlanner
 from .plans import SEAL_DIAMETER, PlanContext, ScenePlan, fixed_plan
@@ -45,6 +45,11 @@ class PosterService:
                           for sha in payload["photo_assets"]]
             elif job["kind"] == "text_patch":
                 typography.selected(Document.model_validate(payload["document"]), payload["format"], payload["layer_id"])
+            if payload.get("base_render_id"):
+                base = exports.render_row(conn, job["shop_id"], payload["base_render_id"])
+                if base["creation_id"] != job["creation_id"]:
+                    raise store.Refused("not_found", 404)
+                photos.insert(0, prepare_provider_input(exports.read_png(self.settings, base)))
             if job["kind"] == "refine":
                 _, base = visuals.read_visual_bytes(conn, self.settings.data_dir, job["shop_id"], payload["base_visual_id"], job["input_id"])
                 photos.insert(0, prepare_provider_input(base))
@@ -97,7 +102,8 @@ class PosterService:
             cost = (response.usage["input_tokens"] * rates["input_micros_per_token"]
                     + response.usage["output_tokens"] * rates["output_micros_per_token"]) if response.usage else None
             return Outcome({"plan": response.plan.model_dump(), "source": "claude"}, response.usage, cost, response.request_id)
-        response = await self.provider.generate(purpose="background" if job["kind"] == "text_texture" else "scene", model=call["model"], quality=payload["quality"],
+        purpose = "free" if "free_words" in payload else "background" if job["kind"] == "text_texture" else "scene"
+        response = await self.provider.generate(purpose=purpose, model=call["model"], quality=payload["quality"],
                                                 prompt=payload["prompt"], images=prepared["images"], size=payload["size"])
         cost = response.cost_micros
         if response.usage:
@@ -122,6 +128,8 @@ class PosterService:
                                        plan=ScenePlan.model_validate(result["plan"]), photo_count=len(payload["photo_assets"]),
                                        source=result["source"], job_id=job["id"])
         image, mime = validate_image(result["image_b64"], size=payload["size"])
+        if "free_words" in payload:
+            return free_creation.finish(conn, self.settings, job, image)
         sha = assets.put(self.settings.data_dir, image, assets.extension(mime))
         width, height = image_dimensions(payload["size"])
         assets.record(conn, sha=sha, kind="background_raw" if job["kind"] == "text_texture" else "scene", mime=mime, width=width, height=height, size=len(image))

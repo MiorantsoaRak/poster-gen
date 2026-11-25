@@ -1,7 +1,7 @@
 import { ref, shallowRef } from 'vue'
 import { api, ApiError } from './api'
 
-export interface LibraryItem { id: string; revision: number; has_current_file?: boolean; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number; created_at: string; thumbnail_url: string | null }
+export interface LibraryItem { id: string; revision: number; has_current_file?: boolean; state: 'draft' | 'to_review' | 'approved' | 'confirmed'; title: string; variant: string; price_ar: number | null; created_at: string; thumbnail_url: string | null }
 export interface Listing { items: LibraryItem[]; total: number; next_cursor: string | null }
 /** The unit after a count of credits, as the shell writes it (App.vue balanceLabel). */
 export const creditWord = (n: number) => 'crédit' + (Math.abs(n) === 1 ? '' : 's')

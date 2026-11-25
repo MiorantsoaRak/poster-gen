@@ -295,6 +295,8 @@ def save_creation(engine, data_dir, shop, key, id, document: Document, revision,
         _revision(old["revision"], revision)
         if old["status"] != "active":
             raise Refused("creation_abandoned", 409)
+        if old["document"].get("kind") == "free":
+            raise Refused("free_creation_only", 409)
         if document.input_id != old["document"]["input_id"]:
             raise Refused("input_immutable")
         _format_change(conn, old["document"], document, formats_enabled)
@@ -315,6 +317,8 @@ def copy_creation(engine, data_dir, shop, key, id, request: CopyCreation, *, for
         current = _owned(conn, "creations", shop, id)["current_revision"]
         if request.reason == "new_campaign" and request.source_revision != current:
             raise Refused("revision_conflict", 409, current_revision=current)
+        if source["document"].get("kind") == "free":
+            raise Refused("free_creation_only", 409)
         document = request.unsaved_document or Document.model_validate(source["document"])
         if document.input_id != source["document"]["input_id"]:
             raise Refused("input_immutable")

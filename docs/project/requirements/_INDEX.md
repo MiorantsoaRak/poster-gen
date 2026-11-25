@@ -4,6 +4,7 @@
 
 | Feature file | Requirements | Status | Design |
 |---|---|---|---|
+| [free-creation.md](free-creation.md) | R-FREE-01–06 | Authorized for delivery 2026-11-25 | [Matching design](../designs/free-creation.md) |
 | [seller-kit.md](seller-kit.md) | R-KIT-001 … 013 | Approved for design 2026-11-23 by the lead in the owner's place (ADR-131), from [the user walk](../reviews/user-walk-2026-11-23.md): slice 1 the walk's fixes, slice 2 the kit | [seller-kit](../designs/seller-kit.md), approved v3 |
 | [saas-journey.md](saas-journey.md) | R-JOURNEY-001 … 007 | Approved for design, 2026-11-22 | [Approved design](../designs/saas-journey.md) |
 | [first-poster-guide.md](first-poster-guide.md) | R-GUIDE-001 … 004 | Approved for design, 2026-11-22 | [Approved design](../designs/first-poster-guide.md) |

@@ -228,6 +228,9 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
 
     # (method, path template, the request built from an id map x: path, body, If-Match revision)
     attempts = [
+        ("POST", "/api/free-creations", lambda x: ("/api/free-creations", {"words": "Bonjour", "photos": [x["original"]]}, None)),
+        ("GET", "/api/free-creations/{id}", lambda x: (f"/api/free-creations/{x['creation']}", None, None)),
+        ("POST", "/api/free-creations/{id}/turns", lambda x: (f"/api/free-creations/{x['creation']}/turns", {"words": "Plus clair"}, 1)),
         # A's objects, read by their address.
         *(reading(template, name) for template, name in (
             ("/api/creations/{id}", "creation"), ("/api/creations/{id}/versions", "creation"),
@@ -489,6 +492,11 @@ def test_shop_b_gets_from_every_route_on_shop_as_objects_what_it_gets_for_nothin
     done += [copied, abandoned, send(a, "POST", f"/api/creations/{copied.json()['id']}/restore", None, abandoned.json()["revision"]),
              send(a, "PUT", f"/api/looks/{look_a}", {"name": "Style A bis"}), send(a, "DELETE", f"/api/looks/{look_a}"),
              a.post("/api/session/password", json={"current_password": PASSWORD, "new_password": secrets.token_hex(8)})]
+    free = post(a, "/api/free-creations", {"words": "Fety sambatra"})
+    wait(a, free.json()["status_url"])
+    thread = "/api/free-creations/" + free.json()["creation_id"]
+    assert b.get(thread).status_code == 404
+    done += [free, a.get(thread), send(a, "POST", thread + "/turns", {"words": "Fond bleu"}, 2)]
     assert all(answer.is_success for answer in done), [(answer.request.url.path, answer.text) for answer in done if not answer.is_success]
     # No dollar figure in any answer to a shop (D-BALANCE-004, R-BALANCE-001): every JSON answer of this test walked to
     # its last key, the service's capabilities and a cancellation stored before 0014 and replayed included. /api/status,

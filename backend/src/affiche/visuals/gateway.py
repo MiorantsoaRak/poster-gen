@@ -26,7 +26,7 @@ from affiche.config import ProviderErrorKind, Settings
 
 log = logging.getLogger(__name__)
 
-Purpose = Literal["scene", "background"]
+Purpose = Literal["scene", "background", "free"]
 OUTPUT_SIZE = (1088, 1920)
 POSTER_SIZES = {"feed": "1088x1360", "square": "1088x1088", "story": "1152x2048"}
 IMAGE_SIZES = {"1088x1920", "1024x1024", *POSTER_SIZES.values()}
@@ -231,7 +231,7 @@ def _check_request(purpose: Purpose, model: str, images: list[bytes]) -> None:
     """Programming and configuration errors, refused before anything is sent or paid."""
     if model not in RATES:
         raise ValueError(f"no token rates for model {model!r}: add them to RATES before using it")
-    if not (purpose == "scene" and images or purpose == "background" and len(images) <= 1):
+    if not (purpose == "free" or purpose == "scene" and images or purpose == "background" and len(images) <= 1):
         raise ValueError(f"{purpose!r} with {len(images)} image(s): a scene needs at least one photo, "
                          "a background takes only the style reference")
 
