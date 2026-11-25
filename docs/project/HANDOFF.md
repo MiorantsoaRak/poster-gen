@@ -2,7 +2,7 @@
 
 ## Création libre · built by Codex, reviewed and rebuilt on the chat's shell by Claude, 2026-11-25 · current track (READ FIRST)
 
-**State in one line:** « Libre » is on `origin/main` (pushed 2026-11-25 on the owner's « push ») and on the live site (seen there: the owner's own test address is a `#libre-…` of https://affiches.miorantsoa.app); his test found that **the product degrades through the corrections**; the fix (T-FREE-006, D-FREE-06) is built and **uncommitted**, its final checks were running when this was written.
+**State in one line:** « Libre » is on `origin/main` (pushed 2026-11-25 on the owner's « push ») and on the live site (seen there: the owner's own test address is a `#libre-…` of https://affiches.miorantsoa.app); his test found that **the product degrades through the corrections**; the fix (T-FREE-006, D-FREE-06) is built, verified, committed and pushed to `origin/main` (2026-11-25, on his « commit and push »): not released.
 
 **The fix in short.** Each correction used to redraw the picture from the previous version only, and the loss added up (nine corrections: grain on the product). Now a correction edits the image model's own file of the previous version, and from the second correction on the first version's file goes with it as a reference for rendering quality. Chosen on a paid trial of his nine requests run three ways (27 Flare images, USD 0.7468, `outputs/degradation-trial/`, table in [the research note](reviews/free-poster-research-2026-11-24.md#correction-chain--2026-11-25)). Files: `backend/src/affiche/posters/free_creation.py` (`FreeDocument.source` and `first`, `prompt(..., anchor)`, `enqueue`, `finish`, `stored`), `backend/src/affiche/posters/service.py` (`prepare`: the base, then the reference last), `backend/tests/test_free_creation.py`. No migration; a creation made before the fix takes its first published PNG as the reference.
 
@@ -17,13 +17,7 @@
 **Verified on the final build (stub providers, no spend):** backend suite `2137 passed, 3 deselected`; Vitest 420; `free_creation_browser.py` (1366 px light, 390 px dark, and a refused image), `chat_browser.py`, `terms_browser.py` passed. `browser_smoke.py` passed too, run alone on the owner's « run it » (its first run had failed at its 360 px bottom-bar check, on the overflow fixed since: the page measures 360 px on `#creer`, `#libre`, `#etapes`). `editor_refinements_browser.py` passed on the build just before that fix (CSS only since). No paid image was made for the rebuild: the prompt of a first image is unchanged; the prompt of a correction lost its reference, untried on Flare.
 
 **Exact resume point.**
-1. Read the end of the two logs below; if the suite and the smoke passed, set T-FREE-006 to `[x]` in TODO, then the owner's « commit », « push » and release (no migration). If one failed, the fix's only files are the three named above.
-
-```bash
-tail -2 /tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/80da9bf7-858d-46c2-9af1-961d2cf1b776/scratchpad/checks/pytest2.log
-# if that folder is gone, from backend/: uv run pytest -q   (about 10 min, alone)
-# then: SMOKE_WEB_PORT=5591 SMOKE_API_PORT=8591 uv run python ../frontend/tests/free_creation_browser.py
-```
+1. The owner's release (his pyinfra; no migration). No file is half-edited and nothing is uncommitted.
 
    After the release, his own conversation is the proof to look at: one more correction on `#libre-52ccfc6f-c6ed-44e3-8a7a-e448825d5df7` should come back with clean headphones (its version 1 is the reference). Not settled by the trial: a correction of something version 1 shows (« Name with bolder font ») was followed in part only; if he reports a correction ignored, the place is the reference's sentence in `prompt` (`free_creation.py`).
 2. On his word only, one Flare image: a poster made with a style model, then a correction, to see that the layout holds without the reference sent again. If it does not, restore the reference on a correction in `free_creation.py` (`prompt`: drop `and not editing`; `enqueue`: `style_reference_asset: document.reference`) and its test line in `backend/tests/test_free_creation.py`.
@@ -42,7 +36,9 @@ uv run pytest tests/test_free_creation.py tests/test_two_shops.py -q
 SMOKE_WEB_PORT=5591 SMOKE_API_PORT=8591 uv run python ../frontend/tests/free_creation_browser.py
 ```
 
-**Uncommitted, this track's (T-FREE-006):** `backend/src/affiche/posters/free_creation.py`, `backend/src/affiche/posters/service.py`, `backend/tests/test_free_creation.py`, `docs/project/{DECISIONS,HANDOFF,TODO}.md`, `docs/project/designs/free-creation.md`, `docs/project/reviews/free-poster-research-2026-11-24.md`. Untracked and not this track's: `.impeccable/`. Everything else is on `origin/main`.
+**Uncommitted, this track's:** nothing. Untracked and not this track's: `.impeccable/`.
+
+**Landmine:** on this laptop `/tmp` is in memory. With other sessions open the whole backend suite can fail by the hundred with `sqlite3.OperationalError: database or disk is full`: look at `free -m`, rerun the files named, alone. It is not a fault of the code.
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; check `git status` before you assume the working tree is clean.
 
