@@ -549,9 +549,9 @@ function toggleIdentity(document: PosterDocument, role: 'logo' | 'shop_name' | '
   // A seal goes back on its disc; it has no place in the footer. A plain logo takes the footer's left.
   if (role === 'logo' && seal) { if (enabled && currentVisual.value?.logo_disc) sealOnDisc(document, currentVisual.value.logo_disc) }
   else if (role === 'logo') placeFooter(document)
-  // Ticking back a name/contact that the current scene already shows must not add a second copy as a layer.
+  // Ticking back a name, a contact or a logo that the current scene already shows must not add a second copy as a layer.
   const layer = document.formats[format.value]!.layers.find(item => item.role === role)
-  if (layer && role !== 'logo' && currentVisual.value?.headline?.[role] !== undefined) layer.visible = false
+  if (layer && currentVisual.value?.headline?.[role] !== undefined) layer.visible = false
 }
 // One outline icon set, 16px, drawn in the text colour (ADR-050). Paths only: no icon dependency.
 const ICONS: Record<string, string> = {
@@ -1204,6 +1204,8 @@ const textChecks = computed(() => {
   if (drawn.price_ar !== undefined) items.push({ key: 'text_price', label: 'Prix', value: `${Number(drawn.price_ar).toLocaleString('fr-FR')}\u00a0AR` })
   if (drawn.shop_name !== undefined || drawn.contact !== undefined) items.push({ key: 'text_signature', label: drawn.shop_name !== undefined ? 'Boutique et contact' : 'Contact', value: [drawn.shop_name, drawn.contact].filter(Boolean).join(' · ') })
   if (drawn.shop_lines?.length) items.push({ key: 'text_lines', label: 'Lignes de la boutique', value: drawn.shop_lines.join(' · ') })
+  // Drawn by the image model from the shop's file (T-KIT-022): compared to it, as the words are reread.
+  if (drawn.logo) items.push({ key: 'logo_drawn', label: 'Logo de la boutique', value: 'Dessiné dans l’image : comparez-le à votre logo, mots compris' })
   return items
 })
 const reviewKeys = computed(() => [...Object.keys(checkNames), ...textChecks.value.map(item => item.key)])
@@ -1716,7 +1718,12 @@ async function generateScene(key?: string, sending?: (request: SceneRequest) => 
   curlTitle()
   await savePlan(owned)
   const path = `/api/creations/${creation.value!.id}/scenes`, revision = saver!.revision
-  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...headlineBody(), ...(keptFrom ? { keep_adjustments_of: keptFrom } : {}), ...(ownerScene ? { adjustment_fr: ownerScene } : {}), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
+  // With a drawn title, the shop's logo is drawn by the image model too (T-KIT-022, T-KIT-024): laid over the image it
+  // covered the end of a long title. In « Pas à pas » the place chosen for the logo is the place told to the model. The
+  // server keeps the round seal on its disc and draws nothing for a poster without its logo.
+  const words: { headline?: Record<string, unknown> } = headlineBody()
+  if (words.headline) words.headline.draw_logo = true
+  const body = { plan_id: plan.value.id, format: format.value, ...(styleReference.value ? { style_reference_asset: styleReference.value } : {}), ...words, ...(keptFrom ? { keep_adjustments_of: keptFrom } : {}), ...(ownerScene ? { adjustment_fr: ownerScene } : {}), acknowledged_warnings: lowResAccepted.value ? ['low_resolution'] : [] }
   // The chat's last word before the paid request leaves (it may stop it, and keeps it as sent); nothing is awaited between.
   sending?.({ path, body, revision })
   let result: any
@@ -2317,6 +2324,9 @@ function chooseVisual(visual: Visual) {
     }
     const box = visual.logo_box ?? (!('logo_disc' in visual) ? visual.logo_footer_box : undefined)
     if (logo?.kind === 'logo' && box) { delete logo.shape; Object.assign(logo, box); logo.visible = document.include.logo }
+    // A logo the image model drew in this version (T-KIT-022) is not laid over it a second time; a version that did not
+    // draw it gets the layer back.
+    if (logo?.kind === 'logo' && logo.shape !== 'circle') logo.visible = document.include.logo && !visual.headline?.logo
   })
   selected.value = null
   if (before !== visual.id && layout.value?.scene.visual_id === visual.id) choosing.value = visual.id
@@ -2423,8 +2433,10 @@ function setWords(words: Words) {
 let copyInput: { signature: string; id: string } | null = null  // kept only for a retry of this copy
 const chat: ChatAdapter = {
   state: proxyRefs({ creation, format, productAssets: computed(() => offerSource.value?.photo_assets), productError: offerSourceError, offer: computed(() => doc.value?.offer), stale: computed(() => staleOf(currentVisual.value?.headline, doc.value?.offer)), visuals, selected: computed(() => currentVisual.value?.id), job, phase: waitPhase, offline, look, paletteLoading, error, notice, intake, photos, styleReference, height: availableHeight,
-    // On an open poster, the logo and the contact are the ones this poster carries (its own ticks): its recap names them.
-    shop: computed(() => ({ logo: creation.value ? include.logo : !!profile.logo_asset, contact: creation.value ? include.contact : !!profile.contact?.trim(), ticked: include.logo || include.contact, lines: profile.lines ?? [] })),
+    // On an open poster, the logo and the contact are the ones this poster carries, read from its own document (the
+    // form's ticks are empty again once the poster is made): its recap names them.
+    shop: computed(() => { const own = creation.value ? doc.value?.include : undefined
+      return { logo: own ? own.logo : !!profile.logo_asset, contact: own ? own.contact : !!profile.contact?.trim(), ticked: own ? own.logo || own.contact : include.logo || include.contact, lines: profile.lines ?? [] } }),
     drawn: computed(() => !creation.value || headline.value.on),  // a new poster starts with its texts drawn (adopt)
     looks: savedLooks, recent: recentLooks, kit: lastKit,
     busy, credit: computed(() => credit(balance.value, 'scene')) }),  // a recap is a scene, a change a scene or a refinement
@@ -2545,7 +2557,7 @@ const chat: ChatAdapter = {
     const shown = copy(copied.document)
     for (const layout of Object.values(shown.formats)) for (const layer of layout!.layers) {
       if (layer.role === 'title' || layer.role === 'price') layer.visible = true
-      else if (layer.role === 'shop_name' || layer.role === 'contact') layer.visible = shown.include[layer.role]
+      else if (layer.role === 'shop_name' || layer.role === 'contact' || layer.role === 'logo') layer.visible = shown.include[layer.role]
     }
     if (JSON.stringify(shown) !== JSON.stringify(copied.document)) {
       try { await mutation<Creation>(`/api/creations/${copied.id}`, shown, copied.revision, undefined, 'PUT', true) } catch { /* edited since, or not saved now: left as it is */ }
@@ -3023,7 +3035,7 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <p class="help lead">Ce qui identifie votre boutique sur l’affiche.</p>
             <div class="checks-row switches"><label v-for="role in IDENTITY" :key="role" class="check switch"><input :checked="doc.include[role]" type="checkbox" :disabled="busy || !!job || !identitySource(role)" @change="event => edit(d => toggleIdentity(d, role, (event.target as HTMLInputElement).checked))" />{{ roleNames[role] }}</label></div>
             <details v-if="IDENTITY.some(role => !identitySource(role))" class="identity-import"><summary>Ajouter les informations manquantes</summary><p class="help">Enregistrez vos détails, puis ajoutez les informations manquantes à cette affiche. Les informations déjà présentes et vos versions précédentes sont conservées.</p><label>Nom de la boutique<input v-model="missingDraft.name" :disabled="busy || !!job" maxlength="160" /></label><label>Contact<textarea v-model="missingDraft.contact" :disabled="busy || !!job" maxlength="500" /></label><label class="file-pick">Logo<input type="file" accept="image/jpeg,image/png,image/webp" :disabled="busy || !!job" @change="event => perform(() => chooseLogo(event, missingDraft))" /><span class="pick-button">{{ missingDraft.logo_asset ? 'Changer le logo' : 'Choisir le logo' }}</span></label><button type="button" :disabled="busy || !!job" @click="perform(importMissingProfile)">Ajouter à cette affiche</button></details>
-            <div v-if="doc.include.logo && logoLayer" class="choice"><span id="logo-position-label">Position du logo de la boutique</span><template v-if="sealLayer && currentVisual"><p class="help">Cette version contient un sceau. Créez une copie pour placer le logo dans un coin, sans modifier cette affiche.</p><button type="button" :disabled="busy || !!job" @click="perform(copyForCorner)">Créer une copie avec le logo en haut</button></template><template v-else><div class="chips" role="group" aria-labelledby="logo-position-label"><button v-for="side in (['left', 'right'] as const)" :key="side" type="button" class="chip" :aria-pressed="logoCorner === side" :disabled="busy || !!job" @click="edit(d => placeLogo(d, side))">{{ side === 'left' ? 'En haut à gauche' : 'En haut à droite' }}</button><button v-if="currentVisual?.logo_footer_box && !currentVisual.logo_box" type="button" class="chip" :aria-pressed="logoInFooter" :disabled="busy || !!job" @click="restoreLogoRegion">En bas, comme cette version</button></div><p class="help">Votre fichier original est placé au-dessus du titre. Une nouvelle version réserve cet espace ; vérifiez le résultat complet avant de télécharger.</p></template></div>
+            <div v-if="doc.include.logo && logoLayer" class="choice"><span id="logo-position-label">Position du logo de la boutique</span><template v-if="sealLayer && currentVisual"><p class="help">Cette version contient un sceau. Créez une copie pour placer le logo dans un coin, sans modifier cette affiche.</p><button type="button" :disabled="busy || !!job" @click="perform(copyForCorner)">Créer une copie avec le logo en haut</button></template><template v-else><div class="chips" role="group" aria-labelledby="logo-position-label"><button v-for="side in (['left', 'right'] as const)" :key="side" type="button" class="chip" :aria-pressed="logoCorner === side" :disabled="busy || !!job" @click="edit(d => placeLogo(d, side))">{{ side === 'left' ? 'En haut à gauche' : 'En haut à droite' }}</button><button v-if="currentVisual?.logo_footer_box && !currentVisual.logo_box" type="button" class="chip" :aria-pressed="logoInFooter" :disabled="busy || !!job" @click="restoreLogoRegion">En bas, comme cette version</button></div><p class="help">{{ currentVisual?.headline?.logo ? 'Le logo est dessiné dans l’image : la position choisie s’applique à la prochaine version.' : headline.on ? 'L’IA dessine votre logo dans l’image à cet endroit, à la prochaine version. Comparez-le à votre fichier avant de télécharger.' : 'Votre fichier original est placé au-dessus du titre. Une nouvelle version réserve cet espace ; vérifiez le résultat complet avant de télécharger.' }}</p></template></div>
             <p v-if="staleLogo" class="why" role="status">{{ restorableLogo ? 'Le logo ou le cadrage ne correspond plus à l’espace réservé. Rétablissez-les gratuitement, ou générez une nouvelle version.' : 'Le logo ou le cadrage ne correspond plus à l’espace réservé. Générez une nouvelle version.' }}<button v-if="restorableLogo" type="button" class="text-button" @click="restoreLogoRegion">{{ currentVisual?.logo_box ? 'Rétablir la position et le cadrage' : 'Remettre le logo en bas' }}</button></p>
             <p v-if="staleSignature" class="why" role="status">{{ currentVisual?.headline?.shop_name !== undefined ? 'Le nom de la boutique ou le contact' : 'Le contact' }} est dessiné dans l’image. Pour le changer ou le retirer, générez une nouvelle version.</p>
             <label v-if="doc.include.contact && contactLayer?.kind === 'text'">Position du contact<select aria-label="Position du contact" :value="sealOn ? 'right' : chosenAlign" :disabled="sealOn" @change="moveContact"><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>

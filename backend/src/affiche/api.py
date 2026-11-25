@@ -62,6 +62,7 @@ MESSAGES = {
         "title_missing": "Le titre dessiné dans l’image ne correspond plus au titre de l’affiche. Générez une nouvelle version, ou remettez le titre d’origine.",
         "price_stale": "Le prix dessiné dans l’image ne correspond plus au prix de l’affiche. Générez une nouvelle version, ou remettez le prix d’origine.",
         "signature_missing": "Le contact dessiné dans l’image ne correspond plus à celui de la boutique. Générez une nouvelle version.",
+        "logo_stale": "Le logo dessiné dans l’image ne correspond plus à celui de l’affiche. Générez une nouvelle version.",
         "creation_abandoned": "Cette affiche a été retirée de la liste : elle ne peut plus être modifiée. Remettez-la dans la liste depuis « Mes affiches », ou dupliquez-la.",
         "base_not_selected": "Choisissez d’abord la version à ajuster.",
         "review_decided": "Cette version a déjà été approuvée ou refusée. Rechargez la page pour voir son état.",

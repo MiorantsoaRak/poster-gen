@@ -231,9 +231,8 @@ class Document(Model):
                 if include and role not in roles:
                     raise ValueError("missing_brand_layer")
             for layer in layout.layers:
-                # An included shop name/contact may be hidden when the scene itself carries it (export checks that).
-                if layer.role in enabled and layer.visible and not enabled[layer.role] or (
-                        layer.role == "logo" and layer.visible != enabled["logo"]):
+                # An included shop name, contact or logo may be hidden when the scene itself carries it (export checks that).
+                if layer.role in enabled and layer.visible and not enabled[layer.role]:
                     raise ValueError("inconsistent_visibility")
                 # Title and price may be hidden: export then requires a scene that drew exactly the current ones.
                 if layer.role == "logo" and layer.asset != self.brand_snapshot.logo_asset:

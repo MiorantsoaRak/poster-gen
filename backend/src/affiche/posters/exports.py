@@ -56,6 +56,12 @@ def effective_snapshot(conn, settings, shop, document, format, build, review_vis
         if role in baked and signature.get(role) != baked[role] or (
                 role in signature and role not in baked and not shown[role]):
             raise store.Refused("signature_missing", 409)
+    # A logo the image model drew is the poster's own, still included, and not laid over a second time; a logo that is
+    # included and hidden must be one the scene drew.
+    drawn_logo = baked.get("logo")
+    if drawn_logo and (not document.include.logo or drawn_logo != document.brand_snapshot.logo_asset or shown.get("logo")) or (
+            document.include.logo and not drawn_logo and not shown.get("logo")):
+        raise store.Refused("logo_stale", 409)
     manifest, sources, layers, fonts = {}, {}, [], {}
     def source(key, sha, data):
         prepared = rendering.canvas_image(data)

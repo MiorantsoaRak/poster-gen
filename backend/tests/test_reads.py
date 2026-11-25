@@ -1666,7 +1666,7 @@ def test_a_warranty_by_message_is_an_offer_not_a_refusal(caplog):
     assert change("ajoute garantie 6 mois", words(DRAWN, lines=["Garantie 6 mois"]), ["Garantie 6 mois"],
                   shop_lines=["garantie 6 mois"]) == SAME
     assert change("ajoute garantie 6 mois", words(DRAWN), ["A", "B", "C"], shop_lines=["Garantie 6 mois"]) == refused(
-        "card_lines_full")
+        "card_lines_full") | {"account": True}  # with the way to « Mon compte »
     assert change("ajoute garantie 6 mois", words(DRAWN, lines=["Garantie 6 mois"]), ["Garantie 6 mois", "B", "C"],
                   shop_lines=["Garantie 6 mois", "B"])["kind"] == "line"  # kept, not drawn by this version yet
     assert change("ajoute la garantie", words(DRAWN), shop_lines=["Garantie 2 ans"]) == refused("card_word_unknown", "2")

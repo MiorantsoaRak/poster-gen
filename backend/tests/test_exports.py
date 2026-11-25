@@ -457,6 +457,66 @@ def test_spooled_render_is_finalised_by_the_running_service(engine, settings, cr
         assert exports.get_render(conn, 1, result)["id"] == result
 
 
+def test_a_plain_logo_is_drawn_by_the_image_model_and_checked(engine, settings, input_id):
+    """T-KIT-022: with drawn words, the shop's logo goes to the image model as one more image and is drawn in the picture
+    (laid over the finished image, it covered the end of a title drawn higher than its area). Its layer is hidden, the
+    review asks to compare it, a correction keeps it, and the export refuses a logo shown twice or no longer the poster's."""
+    logo = store.upload(engine, settings.data_dir, 1, photo(colour="red"), "logo")["asset"]
+    store.save_profile(engine, settings.data_dir, 1, key(), Profile(name="Original Phone Mada", contact="034 93 028 00", logo_asset=logo), 1)
+    poster = draft(engine, settings.data_dir, input_id, {"logo": True, "shop_name": False, "contact": False})
+    plan = fixed(engine, settings, poster)
+    visuals.request_scene(engine, settings, 1, key(), poster["id"], poster["revision"], visuals.SceneRequest(
+        plan_id=plan["id"], acknowledged_warnings=["low_resolution"], headline=Headline(price=True, draw_logo=True)))
+    visual = execute(engine, settings)
+    assert "draw_logo" not in Headline(price=True).model_dump()  # earlier request bodies keep their hash
+    with engine.connect() as conn:
+        seen = visuals.get_visual(conn, 1, visual)
+        prompt, roles = conn.execute(text("SELECT prompt_text, reference_roles_json FROM poster_visuals WHERE id=:id"), {"id": visual}).one()
+        current = store.get_creation(conn, 1, poster["id"])
+    assert seen["headline"]["logo"] == logo and roles == '["original","logo"]'
+    assert "Image 2 is the shop's logo. Draw it once in the picture, whole and exactly as it is" in prompt
+    assert "every word it holds, letter for letter" in prompt and "the shop's logo with any words it holds" in prompt
+    assert "Layout:" not in prompt and "already in image 1" not in prompt  # no area kept for a layer
+    # The place the poster's plan gives the logo (the seller's choice in « Pas à pas ») is said in words; the test logo is
+    # opaque, so nothing is said about transparency.
+    assert "otherwise at the bottom " in prompt and "stands for transparency" not in prompt
+    clear = io.BytesIO()
+    Image.new("RGBA", (40, 40), (200, 0, 0, 0)).save(clear, "PNG")
+    assert visuals.transparent(clear.getvalue()) and not visuals.transparent(photo(colour="red"))
+    document = Document.model_validate(current["document"])
+    layer = next(item for item in document.formats["feed"].layers if item.role == "logo")
+    assert document.include.logo and not layer.visible
+    # The review: the logo is one more thing to compare.
+    with pytest.raises(store.Refused, match="fidelity_incomplete"):
+        visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={
+            check: True for check in visuals.CHECKS | {"text_title", "text_price"}}))
+    visuals.decide(engine, 1, key(), visual, visuals.Decision(action="approve", checks={
+        check: True for check in visuals.CHECKS | {"text_title", "text_price", "logo_drawn"}}))
+    render(engine, settings, current)
+    # A correction is given the logo again and told to keep it.
+    visuals.request_refinement(engine, settings, 1, key(), current["id"], current["revision"], visuals.RefinementRequest(
+        base_visual_id=visual, instruction_fr="Une lumière plus chaude"))
+    refined = execute(engine, settings)
+    with engine.connect() as conn:
+        again, roles = conn.execute(text("SELECT prompt_text, reference_roles_json FROM poster_visuals WHERE id=:id"), {"id": refined}).one()
+        assert visuals.get_visual(conn, 1, refined)["headline"]["logo"] == logo
+    assert roles == '["base","original","logo"]' and "Image 3 is the shop's logo." in again
+    assert "It is already in image 1: keep it as it is and where it is, unless the requested change moves it." in again
+    # Shown as a layer over the logo the image drew, or left off the poster while the image shows it: no file.
+    for change in ("twice", "off"):
+        document = Document.model_validate(current["document"])
+        layer = next(item for item in document.formats["feed"].layers if item.role == "logo")
+        layer.visible = change == "twice"
+        document.include.logo = change == "twice"
+        current = store.save_creation(engine, settings.data_dir, 1, key(), current["id"], document, current["revision"])[1]
+        with pytest.raises(store.Refused, match="logo_stale"):
+            render(engine, settings, current)
+    # And a correction of a poster whose logo was taken off is refused before anything is paid.
+    with pytest.raises(store.Refused, match="headline_stale"):
+        visuals.request_refinement(engine, settings, 1, key(), current["id"], current["revision"], visuals.RefinementRequest(
+            base_visual_id=visual, instruction_fr="Plus sombre"))
+
+
 def seal_poster(engine, settings, input_id, include=None):
     logo = store.upload(engine, settings.data_dir, 1, photo(colour="red"), "logo")["asset"]
     store.save_profile(engine, settings.data_dir, 1, key(), Profile(

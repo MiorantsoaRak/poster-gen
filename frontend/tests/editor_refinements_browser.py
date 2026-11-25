@@ -153,6 +153,14 @@ def run():
                     page.get_by_role('button', name='Reprendre les couleurs de la photo').click()
                     expect(main_swatch).to_have_css('background-color', 'rgb(32, 32, 32)')
                     assert page.evaluate("localStorage.getItem('affiche.shop1.palette.' + location.hash.slice(1))") is None
+                    # The page now asks the image model to draw the logo (T-KIT-024). The rules below, for a logo laid
+                    # over the image (its reserved place, the locked crop, the footer put back), still serve every
+                    # version made before that: these scenes are asked as then, without `draw_logo`.
+                    def as_before(route):
+                        body = route.request.post_data_json
+                        assert body.get('headline', {}).pop('draw_logo', None) is True, body
+                        route.continue_(post_data=json.dumps(body))
+                    page.route('**/api/creations/*/scenes', as_before)
                     page.get_by_role('button', name='Générer l’affiche', exact=True).click()
                     page.get_by_role('button', name='Lancer la génération', exact=True).click()
                     expect(page.get_by_role('heading', name='Vérifier votre affiche')).to_be_visible(timeout=30000)
@@ -278,6 +286,27 @@ def run():
                     expect(page.get_by_text('Enregistré', exact=True)).to_be_visible()
                     saved = page.request.get(endpoint).json()
                     assert next(l for l in saved['document']['formats']['feed']['layers'] if l['role'] == 'logo') == restored
+                    # As the page asks today (T-KIT-024): a third version, whose logo the image model draws. No place is
+                    # kept for a layer and none is laid over the image; « Boutique » says the chosen place is the next
+                    # version's; nothing blocks the final file.
+                    page.unroute('**/api/creations/*/scenes')
+                    page.get_by_role('button', name='Nouvelle version', exact=False).click()
+                    page.get_by_role('button', name='Lancer la génération', exact=True).click()
+                    page.get_by_role('dialog', name='Vérifier la fidélité du produit').get_by_role('button', name='Choisir cette version').click(timeout=30000)
+                    expect(page.get_by_role('heading', name='Vérifier votre affiche')).to_be_visible(timeout=30000)
+                    expect(page.locator('.final-preview')).to_contain_text('Logo de la boutique')
+                    smoke.download_review(page)
+                    page.locator(".final-preview").get_by_role("button", name="Fermer").click()
+                    expect(page.get_by_text('Enregistré', exact=True)).to_be_visible()
+                    saved = page.request.get(endpoint).json()
+                    drawn = page.request.get(smoke.ORIGIN + '/api/visuals/' + saved['document']['formats']['feed']['scene']['visual_id']).json()
+                    assert drawn['headline']['logo'] and 'logo_box' not in drawn and 'logo_footer_box' not in drawn, drawn
+                    assert next(l for l in saved['document']['formats']['feed']['layers'] if l['role'] == 'logo')['visible'] is False
+                    page.get_by_role('tab', name='Boutique', exact=True).click()
+                    expect(page.get_by_text('Le logo est dessiné dans l’image : la position choisie s’applique à la prochaine version.')).to_be_visible()
+                    page.get_by_role('button', name='En haut à droite', exact=True).click()
+                    expect(page.get_by_role('button', name='Vérifier l’aperçu final', exact=True)).to_be_enabled()
+                    page.route('**/api/creations/*/scenes', as_before)
                     # An explicitly missing detected seal disc must not fall back to a guessed footer position.
                     def missing_disc(route):
                         response = route.fetch()
@@ -304,7 +333,7 @@ def run():
                             expect(page.get_by_role('checkbox', name=name, exact=True)).not_to_be_checked()
                         expect(page.get_by_role('textbox', name='Contact', exact=True)).to_have_value('034 00 000 00')
                     assert not errors, errors
-                    assert len(requests) == 2
+                    assert len(requests) == 3  # two as before the drawn logo, one as the page asks today
                     assert page.request.get(smoke.ORIGIN + '/api/status').json()['spend']['recorded_micros'] == 0
                     (out / 'results.json').write_text(json.dumps({'errors': errors, 'scene_calls': len(requests), 'visual': visual, 'viewports': [390, 360, 320, 640]}, indent=2))
                     browser.close()

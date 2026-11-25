@@ -1,6 +1,7 @@
 """Creation-bound planning, integrated scene admission and immutable fidelity decisions."""
 import hashlib
 import json
+import io
 import math
 import re
 from typing import Annotated, Literal
@@ -13,13 +14,15 @@ from affiche import assets
 from affiche.db import utc_now
 from affiche.visuals.gateway import POSTER_SIZES, image_dimensions
 from affiche.visuals.prompts import ReasonCode
+from PIL import Image
+
 from . import jobs, looks, store
 from .models import FORMATS, Colour, Crop, Document, Format, Id, Model, Scene, Sha, canonical
 from .plans import TITLE_STYLES, ArtDirection, Box, Headline, OverlayRegion, PlanContext, SceneDescription, ScenePlan, brand_in_title, compile_scene, screen_adjustment, seal_place, fixed_plan, screen_art, validate_plan
 
 CHECKS = {"colour", "markings", "hardware", "shape", "extras_text", "integration"}
 # Words drawn by the image model cannot be edited afterwards: the owner rereads each kind against what he typed.
-TEXT_CHECKS = {"text_title", "text_price", "text_signature", "text_lines"}
+TEXT_CHECKS = {"text_title", "text_price", "text_signature", "text_lines", "logo_drawn"}
 
 
 def required_checks(baked: dict | None) -> set[str]:
@@ -32,6 +35,8 @@ def required_checks(baked: dict | None) -> set[str]:
             required.add("text_signature")
         if baked.get("shop_lines"):
             required.add("text_lines")
+        if baked.get("logo"):  # drawn by the image model from the shop's file: compared to it, as the words are reread
+            required.add("logo_drawn")
     return required
 
 
@@ -105,7 +110,7 @@ class RefinementRequest(Model):
         return screen_adjustment(value)  # the one screen of this field, for the editor and the chat (ADR-102)
 
 
-FidelityChecks = dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration",
+FidelityChecks = dict[Literal["colour", "markings", "hardware", "shape", "extras_text", "integration", "logo_drawn",
                               "text_title", "text_price", "text_signature", "text_lines"], bool]
 
 
@@ -261,6 +266,13 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             # 2026-11-24). The image model sees it and decides. The job reads the file, and refuses a missing one.
             reference = looks.get_look(conn, shop, request.headline.look_id)["reference_asset"]
         title = document.offer.title if request.headline else None
+        # The shop's logo is drawn by the image model when the request asks it (T-KIT-022, T-KIT-024: the page does, in
+        # Message and in « Pas à pas »), given as one more image: laid over the finished image at a planned place, it
+        # covered the end of a title drawn higher than its area. Never with the round seal, which has its own disc;
+        # nothing to draw when the poster leaves the logo off. A request without the word keeps the logo as a layer.
+        drawn_logo = (document.brand_snapshot.logo_asset if request.headline and request.headline.draw_logo
+                      and not request.headline.logo_seal and document.include.logo else None)
+        see_through = bool(drawn_logo) and transparent(store._asset(conn, settings.data_dir, shop, drawn_logo, "logo"))
         signature = {}
         if request.headline and request.headline.signature:
             # A new scene draws the contact only, as one compact line (ADR-055); the shop name is never drawn.
@@ -294,7 +306,8 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), style_reference=bool(reference),
                                      headline=request.headline, title=title, signature=signature, deduplicate_brand=True,
-                                     adjustments=adjustments, **price, **style, **lines)
+                                     adjustments=adjustments, logo_image=bool(drawn_logo), logo_transparent=see_through,
+                                     **price, **style, **lines)
         except ValueError as refusal:
             # The owner can cause these four by what he typed: each gets its own sentence and its field. The shop's lines
             # cannot fail here: Headline.lines passed today's rule and equals them.
@@ -308,12 +321,18 @@ def request_scene(engine, settings, shop, key, id, revision, request: SceneReque
                    "base_visual_id": None, "low_res_ack": low_res,
                    "style_reference_asset": reference,
                    "reference_roles": ["original"] * len(product["photo_assets"]) + (["style"] if reference else [])}
+        if drawn_logo:
+            payload["reference_roles"].append("logo")
         if reference and not request.style_reference_asset:
             # The model's poster is the server's addition: the page is not told (it would send it again with a correction,
             # whose base image carries the layout already, and say a model image was lost at a change of style).
             payload["style_reference_from_look"] = True
         if request.headline:
             payload["headline"] = request.headline.model_dump(exclude={"lines"}) | {"title": title} | signature | price | lines
+            if drawn_logo:  # the file this version drew, kept as its drawn words are
+                payload["headline"]["logo"] = drawn_logo
+                if see_through:
+                    payload["headline"]["logo_transparent"] = True
             if brand_in_title(request.headline.brand, title):
                 payload["headline"]["brand_in_title"] = True
         if seal:
@@ -346,15 +365,18 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
         signature = {role: baked[role] for role in ("shop_name", "contact") if baked and role in baked}
         if baked and (baked["title"] != document.offer.title or signature != {
                 role: value for role, value in profile_signature(document).items() if role in signature}
-                or baked.get("price_ar", document.offer.price_ar) != document.offer.price_ar):
+                or baked.get("price_ar", document.offer.price_ar) != document.offer.price_ar
+                or baked.get("logo") and (not document.include.logo or baked["logo"] != document.brand_snapshot.logo_asset)):
             raise store.Refused("headline_stale", 409)
+        drawn_logo = bool(baked and baked.get("logo"))
         try:
             compiled = compile_scene(ScenePlan.model_validate_json(plan["plan_json"]), context,
                                      photo_count=len(product["photo_assets"]), refinement=True, refinement_note=request.instruction_fr,
                                      # What was asked before on this chain is said again (paid test of ADR-102: a
                                      # list of features asked in one adjustment was dropped by the next one).
                                      adjustments=checked_adjustments(conn, shop, base["id"]),
-                                     style_reference=bool(request.style_reference_asset),
+                                     style_reference=bool(request.style_reference_asset), logo_image=drawn_logo,
+                                     logo_transparent=bool(baked and baked.get("logo_transparent")),
                                      headline=Headline(**{k: v for k, v in baked.items() if k in Headline.model_fields}) if baked else None,
                                      title=baked["title"] if baked else None, signature=signature,
                                      price_ar=baked.get("price_ar") if baked else None,
@@ -369,7 +391,8 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
                    "base_visual_id": base["id"], "low_res_ack": bool(base["low_res_ack"]),
                    "instruction_fr": request.instruction_fr,  # shown in the chat's list of modifications
                    "style_reference_asset": request.style_reference_asset,
-                   "reference_roles": ["base"] + ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])}
+                   "reference_roles": ["base"] + ["original"] * len(product["photo_assets"]) + (["style"] if request.style_reference_asset else [])
+                                      + (["logo"] if drawn_logo else [])}
         if baked:
             payload["headline"] = baked
             if baked.get("logo_seal"):
@@ -377,6 +400,15 @@ def request_refinement(engine, settings, shop, key, id, revision, request: Refin
                                                   lettering(conn, shop, baked).get("align", "centre"))
         return 202, jobs.enqueue(conn, settings, shop, id, revision, "refine", payload)
     return store.mutate(engine, shop, key, "POST", f"/api/creations/{id}/refinements", request.model_dump(exclude_none=True), apply, revision=revision)
+
+
+def transparent(data: bytes) -> bool:
+    """Whether a logo file lets the backdrop through. The copy sent to the image model is flattened onto white: the
+    prompt then says that this white is no part of the logo."""
+    with Image.open(io.BytesIO(data)) as image:
+        if not image.has_transparency_data:
+            return False
+        return image.convert("RGBA").getchannel("A").getextrema()[0] < 250
 
 
 def lettering(conn, shop, headline: dict | None) -> dict:
@@ -401,6 +433,8 @@ def baked_headline(conn, shop, visual) -> dict | None:
 
 
 def logo_region(conn, shop, visual):
+    if (baked_headline(conn, shop, visual) or {}).get("logo"):
+        return {}  # the image model drew the logo: no place was kept for a layer, none is to be restored
     plan = store._owned(conn, "scene_plans", shop, visual["plan_id"])
     box = next((item["box"] for item in json.loads(plan["plan_json"])["overlay_regions"] if item["field"] == "logo"), None)
     if box is None:

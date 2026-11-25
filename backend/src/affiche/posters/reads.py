@@ -55,7 +55,7 @@ SYSTEM = (
     "plainly asks for a light studio, the product's own colours, or dark and premium; a described background is "
     "instruction_fr, not a style. instruction_fr: the picture the owner wants, copied in his own words and in the "
     "language he wrote (never translated, never completed): background, light, setting, where and how the product "
-    "stands, what is written beside it such as its features with their values as written; the draft's scene kept, "
+    "stands, where the shop's logo goes when he names a place for it, what is written beside it such as its features with their values as written; the draft's scene kept, "
     "completed or replaced as this message says; never the product name, a price, a promotion, a warranty, a "
     "delivery or a payment. identity: true when the owner asks for the shop's logo "
     "or contact on the poster, false when the owner asks to leave them off. shop_lines: " + SHOP_LINES + ". unused: "
@@ -415,7 +415,8 @@ def poster_fields() -> type[Model]:
                         identity=(bool | None, Field(description=(
                             "Not null when the owner asks about the shop's own logo or contact on the poster: true to "
                             "add or change them, false to take them off. Null for a manufacturer's or product brand's "
-                            "logo, which is the picture's matter."))),
+                            "logo, and when the owner only says where the shop's logo should be (« le logo en bas à "
+                            "gauche »): both are the picture's matter, instruction_fr."))),
                         commercial=(bool, Field(description=(
                             "True when the message asks the picture to show or change a price, an amount of money, a "
                             "discount, a promotion, a warranty or a free offer, in any wording or language, or asks to "
@@ -539,7 +540,7 @@ def _change(fields, request: ReadRequest, poster: dict, messages: dict, shop_lin
             return say("same")
         kept = {line.casefold() for line in shop_lines}
         if len(shop_lines) + sum(wish.casefold() not in kept for wish in wanted) > 3:
-            return say("refused", "card_lines_full")
+            return say("refused", "card_lines_full", account=True)  # the card leads to « Mon compte », where a line is replaced
         later = bool(asked or style or signal)
         asked, style, signal = {}, None, False
 

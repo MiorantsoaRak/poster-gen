@@ -142,6 +142,9 @@ class Headline(Model):
     lines: ShopLines | None = Field(None, exclude_if=lambda value: value is None)
     # The title's lettering (D-KIT-012): wins over the look's; its words are TITLE_STYLES'. Omitted when unset.
     title_style: TitleStyle | None = Field(None, exclude_if=lambda value: value is None)
+    # The shop's logo drawn by the image model (T-KIT-022), asked by Message. « Pas à pas » does not ask it: its logo
+    # stays the layer the seller places in a corner or in the footer, the exact file. Omitted when unset.
+    draw_logo: Literal[True] | None = Field(None, exclude_if=lambda value: value is None)
 
     _screen = field_validator("brand", "subtitle", "accent_word")(
         lambda value: value if value is None else screen_headline(value))
@@ -316,6 +319,12 @@ def _area(box: Box) -> str:
     return (f"left {box.x:.0%}, top {box.y:.0%}, width {box.w:.0%}, height {box.h:.0%} of the frame")
 
 
+def _corner(box: Box) -> str:
+    """Where a box sits, in words an image model follows better than figures: « top right », « bottom left »."""
+    centre = box.x + box.w / 2
+    return ("top" if box.y + box.h / 2 < .5 else "bottom") + (" left" if centre < .4 else " right" if centre > .6 else " centre")
+
+
 def _band(box: Box) -> str:
     # The image model keeps a full-width band clear far more reliably than a coordinate box.
     if box.w < .8:
@@ -342,7 +351,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                   signature: dict[str, str] | None = None, price_ar: int | None = None,
                   headline_style: str | None = None, align: Literal["left", "centre"] = "centre",
                   deduplicate_brand: bool = False, adjustments: list[str] | tuple = (),
-                  shop_lines: list[str] | tuple = ()) -> str:
+                  shop_lines: list[str] | tuple = (), logo_image: bool = False,
+                  logo_transparent: bool = False) -> str:
     """Order follows the provider's guidance: use, references, scene, subject, light, layout, constraints.
 
     With `headline`, the image model sets brand, product name and subtitle itself (ADR-042), optionally the
@@ -375,6 +385,8 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
         raise ValueError("invalid_shop_lines")
     for line in shop_lines:  # a refinement draws its base's lines again: the rule may have grown since
         screen_shop_line(line)
+    if logo_image and not headline:
+        raise ValueError("logo_image_requires_headline")
     drawn_signature = "the contact line" if compact else "the shop signature"
     start = 2 if refinement else 1
     identity = ", ".join(str(i) for i in range(start, start + photo_count))
@@ -423,6 +435,24 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                         "the identity references in each, in place of the single floating hero object. Borrow also its ")
                      + "backdrop treatment, how large the product is in the frame, the hero angle, the lighting quality "
                      "and the floor shadow. Ignore its product, every word and number in it, its logos and its price label.")
+    if logo_image:
+        # The owner, 2026-11-24: the logo is given to the image model, which draws it in the composition, where the
+        # owner's words say. Laid over the finished image at a planned place, it covered the end of a title that the
+        # model drew higher than its area, and no wording moved the title (T-KIT-022). Asked whole, words included: with
+        # « no word added » and the constraint on writing left as it was, a logo's own name was left out.
+        lines.append(f"Image {start + photo_count + (1 if style_reference else 0)} is the shop's logo. Draw it once in "
+                     "the picture, whole and exactly as it is: every shape, its background if it has one, its colours "
+                     "and proportions, and every word it holds, letter for letter; flat, not redrawn, not restyled, "
+                     "nothing added and nothing left out. "
+                     + ("The white around it in that image stands for transparency: draw the logo's own shapes "
+                        "straight on the backdrop, with no box or white patch behind them. " if logo_transparent else "")
+                     + "About 14% of the frame width. Place it where the owner's words name a place for the logo; "
+                     # The place chosen in « Pas à pas » (the logo layer's corner or footer) is the plan's logo box.
+                     + (f"otherwise at the {_corner(boxes['logo'])} of the frame, " if "logo" in boxes else
+                        "otherwise in a free corner of the backdrop, ")
+                     + "clear of the headline, the price label, the product and every other writing."
+                     + (" It is already in image 1: keep it as it is and where it is, unless the requested change "
+                        "moves it." if refinement else ""))
     # The owner's own words win over the house style too (D-KIT-003); without them, the wording stays as stored scenes had it.
     # They lead the scene sentence: said only as an exception to a long house style, and beside a pale palette, the
     # first paid image of the second walk (2026-11-24) kept the grey studio and drew none of « un fond rouge avec des
@@ -538,6 +568,7 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "telephone contact, not a price.")
     quiet = "; ".join(f"{field}: {_band(box)}" for field, box in boxes.items()
                       if not (headline and field == "title") and field not in signature
+                      and not (logo_image and field == "logo")
                       and not (price_ar is not None and field == "price"))
     if shop_lines:
         # Placed freely by the image model, away from everything else drawn or placed later (D-KIT-005; the paid check
@@ -594,7 +625,7 @@ def compile_scene(plan: ScenePlan, context: PlanContext, *, photo_count: int,
                      "writing, no label, no disc and no part of the product. The lowest element of the composition "
                      f"ends above {bottom:.0%} of the frame height and the highest starts below {top:.0%}; measure "
                      "from the frame's edges, and move the composition towards the centre rather than towards an edge.")
-    shop = ", the shop lines" if shop_lines else ""
+    shop = (", the shop lines" if shop_lines else "") + (", the shop's logo with any words it holds" if logo_image else "")
     lines.append(("Constraints: the only writing is the headline, the price label"
                   + (f", {drawn_signature}" if signature else "") + shop + " and the markings already printed on the "
                   "product. No other numbers, badges or watermarks. " if price_ar is not None else

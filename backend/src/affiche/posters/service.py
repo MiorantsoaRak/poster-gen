@@ -51,6 +51,9 @@ class PosterService:
             if job["kind"] in {"scene", "refine"} and payload.get("style_reference_asset"):
                 photos.append(prepare_provider_input(store._asset(
                     conn, self.settings.data_dir, job["shop_id"], payload["style_reference_asset"], "style")))
+            logo = (payload.get("headline") or {}).get("logo") if job["kind"] in {"scene", "refine"} else None
+            if logo:  # the shop's logo for the image model to draw, after the style image, as the prompt numbers it
+                photos.append(prepare_provider_input(store._asset(conn, self.settings.data_dir, job["shop_id"], logo, "logo")))
         expected = self.settings.planner_provider if job["kind"] in {"plan", "text_patch"} else self.settings.image_provider
         if call["provider"] != expected:
             raise store.Refused("provider_mode_mismatch")
@@ -170,6 +173,8 @@ class PosterService:
                 if drawn and (layer.role == "title" or layer.role == "price" and "price_ar" in drawn
                               or layer.role in ("shop_name", "contact") and layer.role in drawn):
                     layer.visible = False  # the scene already carries this exact title / price / shop name / contact
+                if layer.role == "logo" and (drawn or {}).get("logo"):
+                    layer.visible = False  # drawn by the image model: not laid over it a second time
             logo = next((layer for layer in layout.layers if layer.role == "logo"), None)
             if payload.get("logo_seal") and logo and disc:
                 # Printed at the size the owner chose, centred on the disc; never smaller than the disc itself.
