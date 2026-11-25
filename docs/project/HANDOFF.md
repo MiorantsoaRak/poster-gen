@@ -2,7 +2,9 @@
 
 ## Création libre · built by Codex, reviewed and rebuilt on the chat's shell by Claude, 2026-11-25 · current track (READ FIRST)
 
-**State in one line:** the free way of creating works end to end, every check passes on the final build, and it is committed on `main` (2026-11-25, on the owner's « commit »); `main` is three commits ahead of `origin/main`, nothing is pushed or released: the next moves are his « push », then a release.
+**State in one line:** « Libre » is on `origin/main` (pushed 2026-11-25 on the owner's « push ») and on the live site (seen there: the owner's own test address is a `#libre-…` of https://affiches.miorantsoa.app); his test found that **the product degrades through the corrections**; the fix (T-FREE-006, D-FREE-06) is built and **uncommitted**, its final checks were running when this was written.
+
+**The fix in short.** Each correction used to redraw the picture from the previous version only, and the loss added up (nine corrections: grain on the product). Now a correction edits the image model's own file of the previous version, and from the second correction on the first version's file goes with it as a reference for rendering quality. Chosen on a paid trial of his nine requests run three ways (27 Flare images, USD 0.7468, `outputs/degradation-trial/`, table in [the research note](reviews/free-poster-research-2026-11-24.md#correction-chain--2026-11-25)). Files: `backend/src/affiche/posters/free_creation.py` (`FreeDocument.source` and `first`, `prompt(..., anchor)`, `enqueue`, `finish`, `stored`), `backend/src/affiche/posters/service.py` (`prepare`: the base, then the reference last), `backend/tests/test_free_creation.py`. No migration; a creation made before the fix takes its first published PNG as the reference.
 
 **What it is.** A third way of creating a new poster, « Libre », beside « Message » and « Pas à pas »: the seller's own words go to the image model as they are, with up to three photos and one style model, and the model draws everything, texts and prices included. One credit per image; a later message corrects the last image. The Publication PNG is confirmed, downloaded, kept in « Mes affiches » and published like any poster. Requirements: [requirements/free-creation.md](requirements/free-creation.md). Design and wire shapes: [designs/free-creation.md](designs/free-creation.md) (D-FREE-01 to 03 as Codex built them; **D-FREE-05 replaces the browser part of D-FREE-04**).
 
@@ -15,7 +17,15 @@
 **Verified on the final build (stub providers, no spend):** backend suite `2137 passed, 3 deselected`; Vitest 420; `free_creation_browser.py` (1366 px light, 390 px dark, and a refused image), `chat_browser.py`, `terms_browser.py` passed. `browser_smoke.py` passed too, run alone on the owner's « run it » (its first run had failed at its 360 px bottom-bar check, on the overflow fixed since: the page measures 360 px on `#creer`, `#libre`, `#etapes`). `editor_refinements_browser.py` passed on the build just before that fix (CSS only since). No paid image was made for the rebuild: the prompt of a first image is unchanged; the prompt of a correction lost its reference, untried on Flare.
 
 **Exact resume point.**
-1. The owner's « push » (`git fetch` and `git log --oneline HEAD..origin/main` first), then his release (`deploy/README.md`, « Each release »; no migration in this track). No file is half-edited. Run the long browser checks one at a time: this laptop runs short of memory with other sessions open, and Claude Code then stops a background run.
+1. Read the end of the two logs below; if the suite and the smoke passed, set T-FREE-006 to `[x]` in TODO, then the owner's « commit », « push » and release (no migration). If one failed, the fix's only files are the three named above.
+
+```bash
+tail -2 /tmp/claude-1001/-home-miorantsoa-Documents-Miorantsoa-Vite-affiche-ia/80da9bf7-858d-46c2-9af1-961d2cf1b776/scratchpad/checks/pytest2.log
+# if that folder is gone, from backend/: uv run pytest -q   (about 10 min, alone)
+# then: SMOKE_WEB_PORT=5591 SMOKE_API_PORT=8591 uv run python ../frontend/tests/free_creation_browser.py
+```
+
+   After the release, his own conversation is the proof to look at: one more correction on `#libre-52ccfc6f-c6ed-44e3-8a7a-e448825d5df7` should come back with clean headphones (its version 1 is the reference). Not settled by the trial: a correction of something version 1 shows (« Name with bolder font ») was followed in part only; if he reports a correction ignored, the place is the reference's sentence in `prompt` (`free_creation.py`).
 2. On his word only, one Flare image: a poster made with a style model, then a correction, to see that the layout holds without the reference sent again. If it does not, restore the reference on a correction in `free_creation.py` (`prompt`: drop `and not editing`; `enqueue`: `style_reference_asset: document.reference`) and its test line in `backend/tests/test_free_creation.py`.
 
 **His to decide (recorded in DECISIONS, 2026-11-25):** the seller's words reach the image model with no screen (an instruction hidden in them, or « -50 % », is sent as written); no automatic reading checks the drawn amounts, the review lists his requests and he reads the image; sharing to another application is not on this page; images are taken with the first request only; the kit (saved models, logo, contact, lines) is not used here.
@@ -32,11 +42,13 @@ uv run pytest tests/test_free_creation.py tests/test_two_shops.py -q
 SMOKE_WEB_PORT=5591 SMOKE_API_PORT=8591 uv run python ../frontend/tests/free_creation_browser.py
 ```
 
-**Uncommitted from this track:** nothing. Untracked and not this track's: `.impeccable/`. Not pushed: this track's commit and the two of the seller's kit track below.
+**Uncommitted, this track's (T-FREE-006):** `backend/src/affiche/posters/free_creation.py`, `backend/src/affiche/posters/service.py`, `backend/tests/test_free_creation.py`, `docs/project/{DECISIONS,HANDOFF,TODO}.md`, `docs/project/designs/free-creation.md`, `docs/project/reviews/free-poster-research-2026-11-24.md`. Untracked and not this track's: `.impeccable/`. Everything else is on `origin/main`.
 
 **Concurrent tracks share this checkout.** Claude owns the chat audit and implementation documented below. Codex completed publishing/SaaS research in this session and retains the older text-first mockup track. Changes from other tracks must be preserved; check `git status` before you assume the working tree is clean.
 
-## The seller's kit: built, walked three times, all committed; two commits not pushed, nothing released · Claude, 2026-11-25
+## The seller's kit: built, walked three times, committed and pushed (2026-11-25) · Claude, 2026-11-25
+
+**Since this section was written:** its two commits were pushed with « Libre »; the lines below that say « not pushed » are of before.
 
 **State in one line:** everything of this track is committed on `main`; `origin/main` holds the kit (`T-KIT-001` to `017`, `020`), T-KIT-021 (a model's layout) and the research note T-FREE-001; **two commits are on `main` and not pushed**: T-KIT-018 (the walk's remaining findings, first trials on Flare) and T-KIT-022 to 024 (the logo drawn by the image model); nothing is deployed (the live site is still build `05a12ee`, which is why the owner's trials on it show none of this). The working tree is clean but for the untracked `.impeccable/` (a local tool's files, not this track's). The next move is the owner's: « push », then a release.
 

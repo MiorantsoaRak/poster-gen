@@ -39,6 +39,11 @@ class FreeDocument(Model):
     reference: Sha | None
     default_style: bool
     render_id: Id | None = None
+    # The image model's own files (1088 x 1360), kept beside the published 1080 x 1350 PNG: `source` is the current
+    # version's and the base of the next correction; `first` is the first version's, the clean reference of every later
+    # one (trial of 2026-11-25: nine corrections chained with nothing else turned the product to grain).
+    source: Sha | None = None
+    first: Sha | None = None
 
 
 def document_of(creation):
@@ -47,7 +52,7 @@ def document_of(creation):
     return FreeDocument.model_validate(creation["document"])
 
 
-def prompt(words, count, reference, default_style, editing):
+def prompt(words, count, reference, default_style, editing, anchor=False):
     lines = [("Edit image 1. Make this change and preserve the rest:" if editing else
               "Create the requested image. The owner asks:"), words]
     start = 2 if editing else 1
@@ -60,6 +65,12 @@ def prompt(words, count, reference, default_style, editing):
         lines.append(f"Image {start + count} is the visual reference. Match its composition, framing, typography, "
                      "spacing and palette. Replace its subjects and wording with the requested content. "
                      "Explicit directions from the owner take priority.")
+    if anchor:
+        lines.append(f"Image {start + count} is an earlier version of this picture, given only as a reference for "
+                     "rendering quality: how clean and smooth the product's surfaces, its materials and the backdrop "
+                     "are. Render them that cleanly, with no grain, noise or blotches. Ignore everything else in it: "
+                     "its texts, lettering, sizes and layout are out of date. Image 1 alone says what the picture "
+                     "contains and where.")
     if default_style and not editing:
         lines.append("Only for visual decisions left open: use a clear focal point, balanced spacing, strong contrast "
                      "and legible lettering. Follow any supplied reference or explicit direction first.")
@@ -71,10 +82,16 @@ def enqueue(conn, settings, shop, creation, document, photos, words):
     if "feed" not in settings.formats_enabled:
         raise store.Refused("format_unavailable")
     editing = bool(document.render_id)
+    # A creation made before `first` was kept: its first published PNG stands in. No reference for the correction of
+    # the first version itself.
+    anchor = document.first or conn.execute(text(
+        "SELECT png_sha256 FROM poster_renders WHERE creation_id=:id ORDER BY source_revision LIMIT 1"), {"id": creation["id"]}).scalar()
+    first_is_base = conn.execute(text("SELECT COUNT(*) FROM poster_renders WHERE creation_id=:id"), {"id": creation["id"]}).scalar_one() < 2
+    anchor = anchor if editing and not first_is_base else None
     payload = {"free_words": words, "photo_assets": photos, "style_reference_asset": None if editing else document.reference,
-               "base_render_id": document.render_id, "size": POSTER_SIZES["feed"],
-               "quality": settings.openai_image_quality or "high",
-               "prompt": prompt(words, len(photos), document.reference, document.default_style, editing)}
+               "base_render_id": document.render_id, "base_asset": document.source, "anchor_asset": anchor,
+               "size": POSTER_SIZES["feed"], "quality": settings.openai_image_quality or "high",
+               "prompt": prompt(words, len(photos), document.reference, document.default_style, editing, bool(anchor))}
     result = jobs.enqueue(conn, settings, shop, creation["id"], creation["revision"], "scene", payload)
     return 202, {**result, "creation_id": creation["id"]}
 
@@ -105,7 +122,7 @@ def turn(engine, settings, shop, key, id, revision, body):
     return store.mutate(engine, shop, key, "POST", f"/api/free-creations/{id}/turns", body.model_dump(), apply, revision=revision)
 
 
-def finish(conn, settings, job, image):
+def finish(conn, settings, job, image, mime="image/png"):
     creation = store.get_creation(conn, job["shop_id"], job["creation_id"])
     store._revision(creation["revision"], job["origin_revision"])
     document = document_of(creation)
@@ -115,6 +132,12 @@ def finish(conn, settings, job, image):
         source.convert("RGB").resize((width, height), Image.Resampling.LANCZOS).save(output, "PNG")
     data = output.getvalue()
     sha = assets.put(settings.data_dir, data, "png")
+    if mime == "image/png":  # what `stored` reads back
+        document.source = assets.put(settings.data_dir, image, "png")
+        # Only the first version is the clean reference: a creation made before this was kept goes on with its first
+        # published PNG (enqueue), never with a later version's file.
+        if not conn.execute(text("SELECT 1 FROM poster_renders WHERE creation_id=:id"), {"id": creation["id"]}).first():
+            document.first = document.source
     document.render_id = str(uuid4())
     revision = creation["revision"] + 1
     store._insert_version(conn, creation["id"], revision, document)
@@ -124,6 +147,14 @@ def finish(conn, settings, job, image):
     conn.execute(text("INSERT INTO poster_renders VALUES (:id,:creation,:revision,:job,'feed',:hash,'free-png-v1',"
                       "'none','{}',:hash,:width,:height,:bytes,'[]',:now)"), params)
     return document.render_id
+
+
+def stored(settings, sha):
+    """A kept image of the image model, or None when its file is not there: the caller has a published PNG to fall back on."""
+    try:
+        return assets.path(settings.data_dir, sha, "png").read_bytes() if sha else None
+    except OSError:
+        return None
 
 
 def transcript(conn, shop, id):

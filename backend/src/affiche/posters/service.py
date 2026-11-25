@@ -49,7 +49,12 @@ class PosterService:
                 base = exports.render_row(conn, job["shop_id"], payload["base_render_id"])
                 if base["creation_id"] != job["creation_id"]:
                     raise store.Refused("not_found", 404)
-                photos.insert(0, prepare_provider_input(exports.read_png(self.settings, base)))
+                # The image model's own file when it was kept, not the published PNG resized from it.
+                photos.insert(0, prepare_provider_input(free_creation.stored(self.settings, payload.get("base_asset"))
+                                                        or exports.read_png(self.settings, base)))
+                anchor = free_creation.stored(self.settings, payload.get("anchor_asset"))
+                if anchor:  # last, as the prompt numbers it: a correction sends no style reference
+                    photos.append(prepare_provider_input(anchor))
             if job["kind"] == "refine":
                 _, base = visuals.read_visual_bytes(conn, self.settings.data_dir, job["shop_id"], payload["base_visual_id"], job["input_id"])
                 photos.insert(0, prepare_provider_input(base))
@@ -129,7 +134,7 @@ class PosterService:
                                        source=result["source"], job_id=job["id"])
         image, mime = validate_image(result["image_b64"], size=payload["size"])
         if "free_words" in payload:
-            return free_creation.finish(conn, self.settings, job, image)
+            return free_creation.finish(conn, self.settings, job, image, mime)
         sha = assets.put(self.settings.data_dir, image, assets.extension(mime))
         width, height = image_dimensions(payload["size"])
         assets.record(conn, sha=sha, kind="background_raw" if job["kind"] == "text_texture" else "scene", mime=mime, width=width, height=height, size=len(image))

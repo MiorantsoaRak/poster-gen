@@ -170,6 +170,22 @@ between drawing and laying over, and between medium and high for this kind.
 - [Google: Photoshoot in Pomelli](https://blog.google/innovation-and-ai/models-and-research/google-labs/pomelli-photoshoot/)
 - [Canva Bulk Create](https://www.canva.com/help/bulk-create/)
 
+## Correction chain · 2026-11-25
+
+The owner's test on the released build: a text-only request (« Une affiche modern pour Soundcore space one, noire 1250000ar ») and eight corrections. The headphones are smooth in version 1 and mottled by version 9; the backdrop takes the same noise.
+
+Trial, the owner's word (« you can run the test »): his nine requests on `gpt-image-2.5-flare` at medium, one first image shared, then three ways of building each correction. Calls went to the provider directly, outside the app's ledger; `outputs/degradation-trial/log.json` holds each prompt and cost. 27 images, USD 0.7468 (announced: about 25 images and 0.50).
+
+| Way | What is sent | Version 9 |
+|---|---|---|
+| Today | the previous version (as published, resized) | degradation reproduced: scaly ear cushions, blotched letters in the title |
+| Clean reference | the previous version (the model's own file), then version 1 as a reference for rendering | product and backdrop clean; layout, texts and price kept |
+| Restart | version 1 and every request so far | clean, but the price became « 125 000 ar » at version 5 and the four features changed between versions |
+
+Sheets: `sheet-full.jpg`, `sheet-crops.jpg`, `sheet-steps.jpg`, `sheet-titles.jpg`, `sheet-anchor2.jpg`.
+
+What the trial does not settle: with the clean reference, « Name with bolder font » made « Space » bolder and left « One » thin, as version 1 has it, where today's way made both bold. A stricter sentence (the reference's texts and layout « are out of date ») gave the same on two more images. One request, one sample each: either the model's reading of a two-weight name, or the reference holding the old lettering. Built with the stricter sentence (D-FREE-06). The part of the model's own file against the resized PNG was not measured apart.
+
 ## Delivery evidence · 2026-11-25
 
 Three real medium-quality Flare generations used the application ledger on the isolated local trial shop. The first poster used three source photos and a grey reference with an underlined red title, heart motifs and a black price capsule. The result reproduced those visual elements, replaced the reference subjects with the supplied products in order, and put 120 000 Ar, 85 000 Ar and 150 000 Ar under the matching subjects. A polish changed the middle price to 95 000 Ar with the other prices and arrangement retained. A separate text-only request produced a greeting card reading « Fety sambatra ». The individual calls cost USD 0.060915, 0.072306 and 0.012290. Local comparison and full-size images are in `outputs/free-creation/`.

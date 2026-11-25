@@ -20,7 +20,17 @@ Authorized delivery 2026-11-25 under the owner's instruction to proceed through 
 - **Review.** « Vérifier » opens one panel with the classes of the product's final panel: the image, the original photos, and every request that made an image up to this version, in the seller's own words, under « Vos demandes, à retrouver dans l'image ». Then « Confirmer et préparer la publication », « Confirmer et télécharger le PNG », « Confirmer pour plus tard », « Corriger l'affiche ». A confirmation needs the image loaded. Confirmed: « Télécharger le PNG » and « Publier sur ma Page » in the thread and in the panel. An older version opens the same panel, read-only.
 - **Not built.** Sharing to another application from the page (the product prepares a file and a caption for it); a photo added after the first request; a question before leaving with unsent photos; the saved models, logo, contact and lines of the kit.
 
+**D-FREE-06 · A correction has a clean reference (2026-11-25, the owner's test on the released build: « the product image seems to degrade throughout the generations »).** The image service redraws the whole picture at each correction; chained from one another, nine corrections turned the product's surfaces to grain. There is no setting against it (`input_fidelity` is not taken by this model family; a mask does not protect the rest).
+
+- The image model's own file of each version (1088 × 1360) is kept beside the published PNG: `source` in the free document. A correction edits that file, not the PNG resized from it.
+- The first version's file is `first` in the document. From the second correction on, it is sent as the last image, « given only as a reference for rendering quality »: surfaces, materials and backdrop as clean as there; its texts, sizes and layout are said to be out of date; image 1 alone says what the picture contains.
+- A creation made before this keeps working: its first published PNG is the reference, the current published PNG the base; a later version never becomes the reference.
+- A missing file falls back on the published PNG. One more input image per correction (about 0.012 USD at Flare medium), the same credit.
+- Not chosen: redrawing each correction from the first version with every request so far. No loss at all, but what the model chose on the way does not hold: in the trial the price became « 125 000 ar » and the features changed between versions.
+- Evidence: `outputs/degradation-trial/` (27 images on Flare medium, USD 0.7468; `log.json` has each prompt and cost) and [the review note](../reviews/free-poster-research-2026-11-24.md#correction-chain--2026-11-25).
+
 ### Shipped wire contract
+
 
 
 - `POST /api/free-creations` takes `words`, ordered `photos` (original asset hashes), optional `reference` (a style asset hash) and `default_style`. `POST /api/free-creations/{id}/turns` takes `words` with `If-Match`. Both return 202 with `creation_id`, `job_id` and `status_url`.
