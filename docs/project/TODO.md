@@ -7,7 +7,7 @@
 
 ### Unified creation — authorized design and implementation, 2026-11-26
 
-- [~] T-UNIFIED-PUSH (chore; owner: “commit and push, then handoff”). Commit and push the verified delivery, then record its exact revision in a fresh handoff and push the documentation. In progress: source and remote inspected; main matches origin/main; prior test evidence retained.
+- [x] T-UNIFIED-PUSH (chore; owner: “commit and push, then handoff”). Delivery committed as `b026b24` and pushed to origin/main; fresh handoff records the exact revision, validation, limitations and next step. Follow-up documentation accompanies this task completion. Verified staged scope, diff whitespace and successful push. Existing `.impeccable/` and ignored paid evidence remain local; no deployment or additional test run.
 
 - [x] T-UNIFIED-01 · D-UNIFIED-01 · Context, identity, references and version bases; tests and browser API iteration. Verified: seven targeted tests and the existing free-creation browser smoke; immutable context, same-creation branch guard and asset admission checks.
 - [x] T-UNIFIED-02 · D-UNIFIED-02 · Shared Libre/Pas à pas UI, routing and removal of Message entry; browser iteration and focused tests. Verified: Libre/Pas à pas draft preservation, attachments, kit, logo removal and version branching at 1366/390 px; original free browser confirmation/download/refusal passed.
