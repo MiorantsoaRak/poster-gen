@@ -1,15 +1,17 @@
 # HANDOFF
 
 **Session date:** 2026-11-26
-**Working on:** T-UNIFIED-04 — complete, uncommitted
+**Working on:** T-UNIFIED-04 and T-UNIFIED-04-PUSH — complete
 
 ## State of the world
 
 Unified creation was committed as `b026b241eb5ec170860376431a38283ed183b674` and pushed to `origin/main`; its handoff followed in `c5194ea`. Libre is the primary flow; Pas à pas prepares the same prompt; Message entry points are removed. Existing saved product posters still open in their legacy editor. Neither that delivery nor this follow-up was deployed here.
 
-The owner's latest screenshot explicitly requests removal of manual movement/framing controls. This follow-up is implemented and verified locally. No supplied shop logo means no invented shop logo; all new poster text and identity go through the image model.
+The owner's latest screenshot explicitly requests removal of manual movement/framing controls. This follow-up is implemented, verified, committed as `b2fa482` and pushed to `origin/main` on the owner’s subsequent “commit and push”. No supplied shop logo means no invented shop logo; all new poster text and identity go through the image model.
 
 ## Done this session
+
+- Committed and pushed the verified follow-up as `b2fa482`. Checked staged scope/whitespace; no application edits or test rerun during the commit/push task. This documentation update records completion.
 
 - Removed movement toggle, zoom/pan sliders and manual layer position/dimension fields from `App.vue`; removed their unused scene helpers. Scene-only selectors disappear when no selectable layers exist.
 - Reused the existing read-only canvas mode to remove drag, transform, keyboard movement and its misleading keyboard instructions. Existing stored crops/layers are unchanged; legacy typography settings and model-based scene correction remain.
@@ -21,8 +23,8 @@ The owner's latest screenshot explicitly requests removal of manual movement/fra
 ## In progress — exact resume point
 
 - **Task:** none unfinished for this request; T-UNIFIED-04 is complete.
-- **Where I stopped:** local changes verified, not committed or pushed. Previous push authorization was fulfilled before this follow-up. No deployment requested.
-- **Next action:** review/commit this follow-up when requested. Release remains the owner's operation through `deploy/README.md`.
+- **Where I stopped:** verified follow-up committed and pushed; this documentation update records delivery. No deployment requested.
+- **Next action:** release only on instruction, through `deploy/README.md`. No pending implementation task for this request.
 - **Context:** `FreeCreation.vue` owns new Libre/guided creation. This change only affects the saved product editor in `App.vue`; it does not destructively convert old documents or change image generation.
 
 ## Landmines / gotchas discovered
@@ -35,22 +37,11 @@ The owner's latest screenshot explicitly requests removal of manual movement/fra
 
 ## Uncommitted / dirty state
 
-- `frontend/src/App.vue`
-- `frontend/tests/unified_creation_browser.py`
-- `frontend/tests/browser_smoke.py`
-- `frontend/tests/editor_refinements_browser.py`
-- `frontend/tests/terms_browser.py`
-- `docs/project/requirements/unified-creation.md`
-- `docs/project/designs/unified-creation.md`
-- `docs/project/TODO.md`
-- `docs/project/DECISIONS.md`
-- `docs/project/HANDOFF.md`
-
-Pre-existing untracked `.impeccable/config.json` and `.impeccable/design.json` remain untouched. Ignored screenshots/output stay local. Browser test servers were stopped by their harness.
+The follow-up is committed and pushed as `b2fa482`; this handoff/TODO completion accompanies it in a documentation commit. No application changes remain uncommitted. Pre-existing untracked `.impeccable/config.json` and `.impeccable/design.json` remain untouched. Ignored screenshots/output stay local. Browser test servers were stopped by their harness.
 
 ## Next session should
 
-1. Review the verified T-UNIFIED-04 diff; commit/push on instruction, excluding unrelated `.impeccable/` and ignored evidence.
+1. No further implementation or commit is pending for T-UNIFIED-04. Keep unrelated `.impeccable/` and ignored evidence local.
 2. On release instruction, follow `deploy/README.md`, then check Libre/Pas à pas and an existing poster on the released build.
 3. For generation issues, consult [the acceptance report](reviews/unified-creation-acceptance-2026-11-26.md) and exact selected base/instruction history before changing prompts.
 
