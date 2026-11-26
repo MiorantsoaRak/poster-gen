@@ -1,52 +1,61 @@
 # HANDOFF
 
 **Session date:** 2026-11-26
-**Working on:** T-UNIFIED-01–03 and T-UNIFIED-PUSH — complete
+**Working on:** T-UNIFIED-04 — complete, uncommitted
 
 ## State of the world
 
-Unified creation is committed as **`b026b241eb5ec170860376431a38283ed183b674`** and pushed to **`origin/main`** on the owner's “commit and push, then handoff”. Libre is the primary flow; Pas à pas prepares the same prompt; new Message entry points are removed. Existing saved product posters still open in their legacy editor. This delivery has **not been deployed**.
+Unified creation was committed as `b026b241eb5ec170860376431a38283ed183b674` and pushed to `origin/main`; its handoff followed in `c5194ea`. Libre is the primary flow; Pas à pas prepares the same prompt; Message entry points are removed. Existing saved product posters still open in their legacy editor. Neither that delivery nor this follow-up was deployed here.
 
-The owner authorized autonomous design/implementation, browser checks and paid generation. No supplied shop logo means no invented shop logo. All new poster text and identity go through the image model.
+The owner's latest screenshot explicitly requests removal of manual movement/framing controls. This follow-up is implemented and verified locally. No supplied shop logo means no invented shop logo; all new poster text and identity go through the image model.
 
 ## Done this session
 
-- Committed and pushed the 22-file verified implementation, requirements/design, tests and reports as `b026b24`.
-- Reconciled TODO and recorded this concise handoff. This documentation update follows the implementation commit.
-- Checked commit scope and whitespace; `.impeccable/`, secrets and ignored outputs were excluded. No application code changed or tests rerun during this commit/push follow-up.
-- Earlier completed validation: backend regression **2,142 passed**, 3 opt-in deselected, then **9 final focused tests passed** after prompt/history/idempotency changes; production build and **420 frontend tests passed**.
-- Browser: `free_creation_browser.py` passed desktop/phone confirmation, PNG download, library, simulated Facebook publishing, no-credit and refusal paths. `unified_creation_browser.py` passed 1366/390 px with a 360 px narrow check, keyboard, reduced motion, attachment replacement, kit/logo removal, version branching, old links, stale tabs without spend and exact retry after reload.
-- Paid: **22 completed outputs inspected**, four initial/intermediate failures retained with successful final repeats. Successful usage **USD 1.001507**; three interrupted calls retain **USD 1.20 estimated**, not confirmed invoice charges. Ledger **USD 2.201507** within $5 cap. Earlier research's USD 0.374239 is separate.
+- Removed movement toggle, zoom/pan sliders and manual layer position/dimension fields from `App.vue`; removed their unused scene helpers. Scene-only selectors disappear when no selectable layers exist.
+- Reused the existing read-only canvas mode to remove drag, transform, keyboard movement and its misleading keyboard instructions. Existing stored crops/layers are unchanged; legacy typography settings and model-based scene correction remain.
+- Extended `unified_creation_browser.py` to open an old Message link, generate a stub scene, check removed controls/read-only preview, open and cancel the model correction dialog, and assert the saved document remains unchanged.
+- Updated affected expectations in three older browser scripts; they still encode retired creation routes and were not run in full.
+- Verified production build, **420 frontend tests**, unified browser at **1366/390 px** (includes a **360 px** narrow check and refused-image recovery), Python parsing of all four changed browser scripts, and `git diff --check`. Inspected desktop light and phone dark screenshots: `outputs/unified-creation/legacy-adjustment-{1366,390}.png`.
+- Updated requirements, design, TODO and decisions. No backend code, migration, dependency or paid image call.
 
 ## In progress — exact resume point
 
-- **Task:** none unfinished for unified creation. T-UNIFIED-01–03 and T-UNIFIED-PUSH are done.
-- **Where I stopped:** implementation pushed; this handoff is the documentation follow-up. No pending source edit. Next operational step is the owner's release using `deploy/README.md`; do not deploy without that instruction.
-- **Mental context:** a quality-reference image can restore old prices. `backend/src/affiche/posters/free_creation.py:prompt` now reiterates accepted instructions as final content constraints. `enqueue`/`finish` retain version context/history; `turn` branches by same-creation render or retries the exact failed server payload. Original brief plus twelve latest instructions are retained; legacy documents recover their chosen base's last instruction.
-- `frontend/src/FreeCreation.vue` owns both Libre and guided preparation. `App.vue` redirects new/old Message addresses appropriately and carries kit references/directions into Libre. No migration or new dependency.
+- **Task:** none unfinished for this request; T-UNIFIED-04 is complete.
+- **Where I stopped:** local changes verified, not committed or pushed. Previous push authorization was fulfilled before this follow-up. No deployment requested.
+- **Next action:** review/commit this follow-up when requested. Release remains the owner's operation through `deploy/README.md`.
+- **Context:** `FreeCreation.vue` owns new Libre/guided creation. This change only affects the saved product editor in `App.vue`; it does not destructively convert old documents or change image generation.
 
 ## Landmines / gotchas discovered
 
-- Model output still needs human checking of prices, text, contact, product details and logo fidelity. The model redraws supplied images; inspected examples do not guarantee every future output. No automatic OCR assurance or model fine-tuning was introduced.
-- Paid failures: extra contextual restaurant name (02), copied card count (04), restored old price (08 and 19). Final repeats 16/17 and 20–22 passed. Case 19 branched from version 2; verified actual chain is case 18 → 20 → 21, with case 22 repeating 19 from the same base.
-- Missing quality-anchor bytes fail before provider dispatch. Omitted correction fields retain context; explicit null can remove it, and idempotency hashing distinguishes these. Exact retry keeps its original identity even if the shop kit changed.
-- Existing all-in-one wizard/chat browser scripts encode retired new-creation routes. Use the free/unified scripts for this delivery; old document access was explicitly tested.
-- Paid scripts and PNGs are **git-ignored local evidence** under `outputs/unified-creation/`. Do not run paid generation merely to reopen results. Three process interruptions were recorded and inspected before fresh attempts.
-- `/tmp` is memory-backed; full regressions used a workspace TMPDIR and smaller groups after an interrupted full run. No physical-device performance profiling, real Facebook post, cross-model benchmark or deployment was performed for this delivery.
-- Other tracks' existing TODO entries (including T-FB-006 and T-HOST-009) retain their own pending-proof notes. Their production status was not revalidated here.
+- Legacy canvas geometry remains part of stored documents and rendering. Removing the controls must never reset that data. The shared `PosterCanvas.vue` retains its capabilities for other callers; only the editor opts into read-only preview.
+- Old wizard/chat smoke scripts target retired entry routes. Their affected assertions were updated, but only the current unified browser was executed for this follow-up. No backend suite or paid image tests rerun for a frontend-only removal.
+- Prior delivery validation/evidence: backend **2,142 passed**, 3 opt-in deselected, then 9 focused tests; build/420 frontend checks; free/unified browser scenarios; **22 paid outputs** inspected. Successful usage USD 1.001507 plus USD 1.20 estimated for 3 interrupted calls gives ledger USD 2.201507. Details and residual model limits: [acceptance report](reviews/unified-creation-acceptance-2026-11-26.md).
+- Model output still needs human review of prices, text, product details and logo fidelity. Paid evidence remains ignored under `outputs/unified-creation/`; do not regenerate merely to inspect it.
+- No physical-device check, live Facebook post or production change. Other tracks' pending-proof notes in TODO remain unchanged.
 
 ## Uncommitted / dirty state
 
-The implementation and follow-up handoff are committed on `main`. The only expected untracked state is pre-existing **`.impeccable/config.json` and `.impeccable/design.json`**, intentionally untouched. Ignored output evidence remains local. No service was started by this commit/push follow-up.
+- `frontend/src/App.vue`
+- `frontend/tests/unified_creation_browser.py`
+- `frontend/tests/browser_smoke.py`
+- `frontend/tests/editor_refinements_browser.py`
+- `frontend/tests/terms_browser.py`
+- `docs/project/requirements/unified-creation.md`
+- `docs/project/designs/unified-creation.md`
+- `docs/project/TODO.md`
+- `docs/project/DECISIONS.md`
+- `docs/project/HANDOFF.md`
+
+Pre-existing untracked `.impeccable/config.json` and `.impeccable/design.json` remain untouched. Ignored screenshots/output stay local. Browser test servers were stopped by their harness.
 
 ## Next session should
 
-1. Read [the acceptance report](reviews/unified-creation-acceptance-2026-11-26.md), [requirements](requirements/unified-creation.md) and [design](designs/unified-creation.md). No new implementation task is pending approval here.
-2. On the owner's release instruction, follow `deploy/README.md` for the pushed revision, then check Libre/Pas à pas and a saved legacy poster in the released build. Release remains the owner's operation.
-3. For a reported generation regression, inspect the exact selected base and accepted history before changing prompts. Compare [the local gallery](../../outputs/unified-creation/gallery.html); paid inputs, outputs and ledger are in that directory.
+1. Review the verified T-UNIFIED-04 diff; commit/push on instruction, excluding unrelated `.impeccable/` and ignored evidence.
+2. On release instruction, follow `deploy/README.md`, then check Libre/Pas à pas and an existing poster on the released build.
+3. For generation issues, consult [the acceptance report](reviews/unified-creation-acceptance-2026-11-26.md) and exact selected base/instruction history before changing prompts.
 
 ## Decisions made this session
 
-- Explicit owner authorization covers committing and pushing the verified delivery and its handoff; it does not request deployment.
-- Keep unrelated local `.impeccable/` files and ignored paid evidence out of the commits.
-- The full preceding multi-session handoff is preserved [at implementation commit b026b24](https://github.com/MiorantsoaRak/poster-gen/blob/b026b241eb5ec170860376431a38283ed183b674/docs/project/HANDOFF.md), also accessible with `git show b026b24:docs/project/HANDOFF.md`. Do not re-derive those historical tracks from source. Details of this delivery remain in [DECISIONS](DECISIONS.md) and the acceptance report.
+- Apply the screenshot removal to legacy posters as well as the already simplified new flow. Use read-only preview rather than leave hidden movement shortcuts.
+- Preserve saved geometry and model correction; no data migration or paid regeneration is needed.
+- The full historical multi-session handoff remains in `b026b24:docs/project/HANDOFF.md`. This handoff covers the current follow-up.

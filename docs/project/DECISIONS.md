@@ -1317,3 +1317,5 @@ Owner explicitly requests design then implementation without further questions, 
 - 2026-11-26 delivery verified: 22 paid browser outputs, four failed iterations retained as evidence, exact-copy/card-count and final accepted-text precedence repeats passed. No model fine-tuning or automatic OCR assurance claimed. User reviews each raster result; no logo supplied means no shop mark requested. No deployment.
 
 - 2026-11-26: On “commit and push, then handoff”, committed the verified unified creation delivery as b026b24 and pushed main. Keep pre-existing .impeccable/ and ignored paid evidence local. Rewrite the active HANDOFF to its concise template; preserve the full previous handoff in immutable commit b026b241eb5ec170860376431a38283ed183b674. Deployment remains the owner’s operation.
+
+- 2026-11-26: Owner requests removal of the screenshot’s movement/crop controls. The legacy editor uses its existing read-only canvas mode, removes numeric geometry inputs and redundant scene-only selectors, but preserves stored crops/layers and model-based scene correction. No migration or image-model call is needed for this UI change.

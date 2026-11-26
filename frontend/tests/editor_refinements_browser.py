@@ -184,11 +184,10 @@ def run():
                     expect(page.get_by_role('tab', name='Boutique', exact=True)).to_have_attribute('aria-selected', 'true')
                     page.get_by_role('button', name='Rétablir la position et le cadrage').click()
                     expect(page.get_by_role('button', name='Vérifier l’aperçu final', exact=True)).to_be_enabled()
-                    # A corner logo locks the crop: any other crop would block the export.
+                    # Manual crop controls are no longer exposed, including with a corner logo.
                     page.get_by_role('tab', name='Réglages', exact=True).click()
                     for name in ('Zoom', 'Position horizontale', 'Position verticale'):
-                        expect(page.get_by_label(name, exact=True)).to_be_disabled()
-                    expect(page.get_by_text('Le cadrage est verrouillé', exact=False)).to_be_visible()
+                        expect(page.get_by_label(name, exact=True)).to_have_count(0)
                     # « Ajuster la scène » warns before its paid button, the chat's words (D-TERMS-005); closed, nothing is sent.
                     # A scene's words alone do not warn (ADR-125).
                     page.get_by_label('Ajustement de la scène', exact=True).fill('Podium plus petit')

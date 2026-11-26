@@ -2693,16 +2693,8 @@ def walk_credits(browser, errors, data, app):
     looks("the editor at zero", "zero")
     dialog.get_by_role("button", name="Fermer").tap()
     assert len(sent) == before, sent
-    # Editing is free at zero: the scene's zoom, saved.
-    revision = page.request.get(f"{ORIGIN}/api/creations/{poster}").json()["revision"]
-    page.get_by_label("Zoom").evaluate("e => { e.value = '1.3'; e.dispatchEvent(new Event('input', { bubbles: true })) }")
-    for _ in range(50):
-        if page.request.get(f"{ORIGIN}/api/creations/{poster}").json()["revision"] > revision:
-            break
-        page.wait_for_timeout(200)
-    else:
-        raise AssertionError("the edit at zero was not saved")
-    # And so is downloading.
+    # Manual framing is gone; downloading remains available at zero credits.
+    expect(page.get_by_label("Zoom", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Vérifier l’aperçu final", exact=True).tap()
     expect(page.get_by_role("heading", name="Vérifier votre affiche")).to_be_visible(timeout=40000)
     page.get_by_role("button", name="Confirmer et télécharger le PNG", exact=True).tap()
@@ -3137,11 +3129,8 @@ def run():
                         assert logo["x"] == 896.4 and beside["x"] == 54 and beside["width"] == 972, (logo, beside)
                         assert logo["y"] == 67.5 and logo["y"] + logo["height"] < beside["y"], (logo, beside)
                         expect(page.get_by_role("button", name="Vérifier l’aperçu final", exact=True)).to_be_disabled()
-                        # « Retirer de l’affiche » (R-POSTER-EDITOR-005): the logo is selected on the poster itself and
-                        # taken off; its box in « Boutique » follows, and « Annuler » brings it back.
-                        canvas = page.locator(".poster-canvas canvas").first.bounding_box()
-                        ratio = canvas["width"] / 1080
-                        page.mouse.click(canvas["x"] + (logo["x"] + logo["width"] / 2) * ratio, canvas["y"] + (logo["y"] + logo["height"] / 2) * ratio)
+                        # Legacy layers are selected from the list; the poster itself is a read-only preview.
+                        page.get_by_role("group", name="Éléments de l’affiche", exact=True).get_by_role("button", name="Logo", exact=True).click()
                         remove = page.get_by_role("button", name="Retirer de l’affiche", exact=True)
                         expect(remove).to_be_visible()
                         shot(page, "retirer.png")
@@ -3187,11 +3176,10 @@ def run():
                         expect(page.get_by_text("Choisie pour l’export", exact=True)).to_be_visible()
                         expect(page.get_by_role("button", name="Nouvelle version")).to_be_enabled()
                         assert page.request.get(f"{ORIGIN}/api/status").json()["spend"]["recorded_micros"] == 0
-                        page.locator(".poster-canvas").focus()
-                        page.keyboard.press("ArrowRight")
-                        expect(page.get_by_text("Enregistré", exact=True)).to_be_visible(timeout=10000)
-                        moved = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
-                        assert moved["document"]["formats"]["feed"]["layers"][0]["x"] == saved["document"]["formats"]["feed"]["layers"][0]["x"] + 1
+                        expect(page.locator(".poster-canvas")).to_have_attribute("role", "img")
+                        page.locator(".poster-canvas").dispatch_event("keydown", {"key": "ArrowRight", "bubbles": True})
+                        unchanged = page.request.get(f"{ORIGIN}/api/creations/{page.url.split('#')[1]}").json()
+                        assert unchanged["document"] == saved["document"]
                         page.evaluate("scrollTo(0, 0)")
                         page.screenshot(path=str(OUTPUT / "desktop.png"), full_page=True)
                         # On a wide screen the version's badge is not over the poster: it would hide its corner from the pointer.
@@ -3329,7 +3317,7 @@ def run():
                         size = page.get_by_label("Taille", exact=True)
                         assert advanced.evaluate("e => !e.open")
                         for hidden in (size, page.get_by_label("Graisse", exact=True), page.get_by_role("checkbox", name="Contour", exact=True),
-                                       page.get_by_role("checkbox", name="Ombre", exact=True), page.get_by_label("Position X", exact=True), page.get_by_label("Hauteur", exact=True)):
+                                       page.get_by_role("checkbox", name="Ombre", exact=True)):
                             expect(hidden).to_be_hidden()
                         price_size = lambda: footer("price")["font_size"]
                         kept_size = next(layer for layer in expected_styled["formats"]["feed"]["layers"] if layer["role"] == "price")["font_size"]

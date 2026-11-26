@@ -7,6 +7,10 @@
 
 ### Unified creation — authorized design and implementation, 2026-11-26
 
+- [~] T-UNIFIED-04-PUSH (chore). Owner requested commit/push of the verified screenshot follow-up. In progress: verify staged scope, commit, push main and reconcile handoff; exclude unrelated local files.
+
+- [x] T-UNIFIED-04 · D-UNIFIED-02 · Owner screenshot follow-up: removed movement/crop controls, numeric geometry inputs and redundant scene-only selectors; preview is read-only and model correction remains. Verified production build, 420 frontend tests and unified browser at desktop/phone widths (1366 and 390 with 360 narrow viewport), including unchanged saved document, correction confirmation/cancellation and refused-image recovery. Updated old browser expectations; those retired-route suites were not rerun. Screenshots: outputs/unified-creation/legacy-adjustment-{1366,390}.png. Follow-up remains uncommitted; no paid call or deployment.
+
 - [x] T-UNIFIED-PUSH (chore; owner: “commit and push, then handoff”). Delivery committed as `b026b24` and pushed to origin/main; fresh handoff records the exact revision, validation, limitations and next step. Follow-up documentation accompanies this task completion. Verified staged scope, diff whitespace and successful push. Existing `.impeccable/` and ignored paid evidence remain local; no deployment or additional test run.
 
 - [x] T-UNIFIED-01 · D-UNIFIED-01 · Context, identity, references and version bases; tests and browser API iteration. Verified: seven targeted tests and the existing free-creation browser smoke; immutable context, same-creation branch guard and asset admission checks.

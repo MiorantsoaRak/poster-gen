@@ -465,7 +465,7 @@ const previewDoc = computed(() => {
   return proposal.value?.status === 'pending' ? proposal.value.after as PosterDocument : doc.value
 })
 const review = ref<Visual | null>(null), rejection = ref(''), rejecting = ref(false), zoomed = ref(false)
-const issues = ref<LayoutIssue[]>([]), canvasReady = ref(false), dragEnabled = ref(false)
+const issues = ref<LayoutIssue[]>([]), canvasReady = ref(false)
 const canvasHost = ref<HTMLElement>(), canvasWidth = ref(540), viewportHeight = ref(window.innerHeight), viewportWidth = ref(window.innerWidth), savingTick = ref(0)
 let saver: DraftSaver | null = null, history = new History(), pollTimer: ReturnType<typeof setTimeout> | undefined, observer: ResizeObserver | undefined
 const format = computed(() => doc.value?.primary_format ?? 'feed')
@@ -477,8 +477,6 @@ const logoCorner = computed(() => logoLayer.value && logoLayer.value.y < FORMATS
 // A scene made for a footer logo has no corner space: the logo goes back to the footer box, free, and the crop stays
 // (the server checks the crop only for a corner logo).
 const restorableLogo = computed(() => currentVisual.value?.logo_box ?? (!sealLayer.value ? currentVisual.value?.logo_footer_box : undefined))
-// Any crop blocks the export while a corner logo is shown (check_logo_placement): the crop sliders are locked then.
-const cropLocked = computed(() => !!currentVisual.value?.logo_box && !!logoShown.value)
 const logoInFooter = computed(() => { const box = currentVisual.value?.logo_footer_box, logo = logoLayer.value; return !!box && !!logo && (['x', 'y', 'width', 'height'] as const).every(key => Math.abs(logo[key] - box[key]) <= 2) })
 function restoreLogoRegion() {
   const box = restorableLogo.value, corner = !!currentVisual.value?.logo_box
@@ -2620,27 +2618,6 @@ const chat: ChatAdapter = {
   download: () => { void perform(async () => { await flush(); await openFinal(creation.value!.id, saver!.revision, 'render') }) },
   conditions: () => { void readTerms() },
 }
-function zoomScene(event: Event) {
-  if (!currentVisual.value) return
-  const zoom = Number((event.target as HTMLInputElement).value), [w, h] = currentVisual.value.size.split('x').map(Number)
-  const base = fitCrop(w, h, format.value)
-  edit(document => { const crop = document.formats[format.value]!.scene.crop!; const cx = crop.x + crop.w/2, cy = crop.y + crop.h/2; crop.w = base.w/zoom; crop.h = base.h/zoom; crop.x = Math.max(0, Math.min(w-crop.w, cx-crop.w/2)); crop.y = Math.max(0, Math.min(h-crop.h, cy-crop.h/2)) }, 'zoom')
-}
-const sceneZoom = computed(() => {
-  if (!currentVisual.value || !layout.value?.scene.crop) return 1
-  const [w, h] = currentVisual.value.size.split('x').map(Number)
-  return fitCrop(w, h, format.value).w / layout.value.scene.crop.w
-})
-const scenePan = computed(() => {
-  if (!currentVisual.value || !layout.value?.scene.crop) return { x: .5, y: .5 }
-  const [w, h] = currentVisual.value.size.split('x').map(Number), crop = layout.value.scene.crop
-  return { x: w === crop.w ? .5 : crop.x / (w - crop.w), y: h === crop.h ? .5 : crop.y / (h - crop.h) }
-})
-function panScene(axis: 'x' | 'y', event: Event) {
-  if (!currentVisual.value) return
-  const [w, h] = currentVisual.value.size.split('x').map(Number), fraction = Number((event.target as HTMLInputElement).value)
-  edit(document => { const crop = document.formats[format.value]!.scene.crop!; crop[axis] = fraction * (axis === 'x' ? w - crop.w : h - crop.h) }, 'pan')
-}
 // At most one rescale per frame; on one column a height change under 100 px is the address bar showing or hiding,
 // not a new screen.
 let resizeFrame = 0
@@ -3105,15 +3082,13 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <details v-if="caps?.planner_available" class="new-look"><summary>Créer un style depuis une affiche</summary><p class="help">Choisissez une affiche que vous aimez : son style est décrit (fond, lumière, couleurs, typographie), jamais son produit ni ses textes. Le style est enregistré à côté des autres et réutilisable.</p><label class="file-pick">Affiche modèle<input :disabled="busy || !!job" type="file" accept="image/jpeg,image/png,image/webp" @change="event => perform(() => chooseLookReference(event))" /><span class="pick-button"><Icon n="plus" />{{ lookReference ? 'Changer d’affiche' : 'Choisir une affiche' }}</span></label><div v-if="lookReference" class="photo-strip"><img :src="preparedUrl(`/api/assets/${lookReference}`)" width="76" height="76" alt="Affiche modèle pour le nouveau style" /></div><div v-if="formatQuestion?.where === 'model'" class="format-ask"><p role="status">{{ formatQuestionText }}</p><div v-if="!formatFixed" class="row"><button type="button" :disabled="formatHeld" @click="chooseFormat(formatQuestion.format)">Utiliser {{ FORMAT_NAMES[formatQuestion.format][0] }}</button><button type="button" :disabled="formatHeld" @click="keepPosterFormat">Garder {{ FORMAT_NAMES[format][0] }}</button></div><button v-else type="button" class="text-button" @click="formatAsk = null">Fermer</button></div><label>Nom du style (facultatif)<input v-model="lookName" name="look" autocomplete="off" maxlength="40" placeholder="Vagues bleues…" :disabled="busy || !!job" /></label><button class="secondary" :disabled="busy || !!job || !lookReference" @click="askLook"><Icon n="plus" />Enregistrer ce style</button><p v-if="whyNoLook" class="why" role="status">{{ whyNoLook }}</p></details>
             </template>
             <template v-else>
-            <p class="help lead">Choisissez l’élément à régler, ici ou sous l’affiche.</p>
-            <div class="layer-list" role="group" aria-label="Élément à régler"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}</button></div>
-            <div class="checks-row switches"><label class="check switch"><input v-model="dragEnabled" type="checkbox" />Déplacer les éléments</label></div>
+            <p v-if="listed.length" class="help lead">Choisissez l’élément à régler, ici ou sous l’affiche.</p>
+            <div v-if="listed.length" class="layer-list" role="group" aria-label="Élément à régler"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}</button></div>
             <div v-if="chosen" class="layer-properties">
               <template v-if="chosen.kind === 'text'"><p class="sub">Typographie</p><label>Police<select aria-label="Police" :value="chosen.font_id" @change="changeFont"><option value="noto-sans">Noto Sans</option><option value="noto-serif">Noto Serif</option><option value="montserrat-black-italic">Montserrat Black Italic</option></select></label><div class="form-row"><label>Couleur<input type="color" :value="chosen.fill" @input="event => patchLayer(selected!, { fill: (event.target as HTMLInputElement).value }, 'colour')" /></label><label>Alignement<select :value="chosen.align" @change="event => patchLayer(selected!, { align: (event.target as HTMLSelectElement).value as any })"><option value="left">Gauche</option><option value="center">Centré</option><option value="right">Droite</option></select></label></div><template v-if="chosen.role === 'price'"><label>Présentation du prix<select aria-label="Présentation du prix" :value="chosen.price_badge ? 'capsule' : 'simple'" @change="event => patchLayer(selected!, { price_badge: (event.target as HTMLSelectElement).value === 'capsule' ? { fill: capsuleFill(), border_start: '#009FE3', border_end: '#1853BD' } : null })"><option value="simple">Texte simple — Ar</option><option value="capsule">Capsule — AR plus petit</option></select></label><div v-if="chosen.price_badge" class="form-row"><label v-for="field in (['fill', 'border_start', 'border_end'] as const)" :key="field">{{ { fill: 'Fond du prix', border_start: 'Contour début', border_end: 'Contour fin' }[field] }}<input type="color" :value="chosen.price_badge[field]" @input="event => badgeColour(field, event)" /></label></div></template><button v-if="chosen.texture_effect_id" class="quiet" @click="patchLayer(chosen.id, { texture_effect_id: null })">Retirer la matière du texte</button></template>
-              <!-- The choices few sellers need, closed (D-KIT-012): nothing is removed, all stay usable once opened. -->
-              <details><summary>Réglages avancés</summary>
+              <!-- Existing text layers keep their typography controls. -->
+              <details v-if="chosen.kind === 'text'"><summary>Réglages avancés</summary>
                 <template v-if="chosen.kind === 'text'"><div class="form-row"><label>Taille<input type="number" min="24" max="240" :value="chosen.font_size" @change="numeric('font_size', $event)" /></label><label>Graisse<select :value="chosen.weight" @change="event => patchLayer(selected!, { weight: Number((event.target as HTMLSelectElement).value) as 400 | 700 | 900 })"><template v-if="chosen.font_id !== 'montserrat-black-italic'"><option :value="400">Normal</option><option :value="700">Gras</option></template><option v-else :value="900">Très gras italique</option></select></label></div><div class="checks-row switches"><label class="check switch"><input type="checkbox" :checked="!!chosen.outline" @change="event => patchLayer(selected!, { outline: (event.target as HTMLInputElement).checked ? { colour: '#17324D', width: 2 } : null })" />Contour</label><label class="check switch"><input type="checkbox" :checked="!!chosen.shadow" @change="event => patchLayer(selected!, { shadow: (event.target as HTMLInputElement).checked ? { colour: '#000000', blur: 6, offset_x: 0, offset_y: 4, opacity: .5 } : null })" />Ombre</label></div></template>
-                <p class="sub">Position et dimensions</p><div class="form-row" v-for="pair in ([['x','y'],['width','height']] as const)" :key="pair[0]"><label v-for="field in pair" :key="field">{{ { x:'Position X', y:'Position Y', width:'Largeur', height:'Hauteur' }[field] }}<input type="number" :value="Math.round(chosen[field])" @change="numeric(field, $event)" /></label></div>
               </details>
               <template v-if="chosen.kind === 'text' && ['title','price'].includes(chosen.role)"><p class="sub">Ajuster ce texte avec une consigne</p><p class="help">Seul le {{ chosen.role === 'price' ? 'prix' : 'titre' }} sélectionné sera ajusté. La scène reste intacte.</p><label>Votre consigne<textarea v-model="polish" name="polish" autocomplete="off" maxlength="500" rows="3" placeholder="Ex. Un titre doré avec une ombre légère…" /></label><button :disabled="busy || !!job || !polish.trim() || !caps?.planner_available" @click="askText">Proposer un ajustement</button><small v-if="caps?.planner_available">Sans crédit.</small><p v-else class="help">Les consignes ne sont pas encore disponibles. Les réglages manuels restent disponibles.</p>
               <p v-if="caps?.planner_available && whyNoText" class="why" role="status">{{ whyNoText }}</p>
@@ -3121,8 +3096,8 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
               <div v-if="effect?.status === 'proposed' && effect.layer_id === selected" class="plan"><p>Vérifiez la matière dans l’aperçu. Les lettres et le montant restent exacts.</p><button :disabled="busy" @click="perform(() => decideEffect('apply'))">Appliquer la matière</button><button class="quiet" :disabled="busy" @click="perform(() => decideEffect('reject'))">Refuser la matière</button></div>
               </template>
             </div>
-            <div v-else-if="currentVisual"><p class="sub">Cadrage de l’image complète</p><p v-if="cropLocked" class="help">Le cadrage est verrouillé : le logo en haut utilise l’espace réservé de cette version, et un autre cadrage bloquerait le téléchargement.</p><p class="help">Le produit fait partie de la scène. Ajustez son cadrage ou demandez une nouvelle version.</p><label>Zoom<input type="range" min="1" max="2" step="0.01" :value="sceneZoom" :disabled="cropLocked" @input="zoomScene" /></label><label>Position horizontale<input type="range" min="0" max="1" step="0.01" :value="scenePan.x" :disabled="cropLocked" @input="panScene('x', $event)" /></label><label>Position verticale<input type="range" min="0" max="1" step="0.01" :value="scenePan.y" :disabled="cropLocked" @input="panScene('y', $event)" /></label><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !!whyNoRefine" @click="askRefine">Ajuster la scène</button><small>{{ credit(balance, 'scene').text }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
-            <p v-else class="help">Choisissez un élément sous l’affiche pour le régler.</p>
+            <div v-else-if="currentVisual"><p class="help">Décrivez les changements souhaités pour générer une nouvelle version de l’affiche.</p><label>Ajustement de la scène<textarea v-model="refinement" name="refinement" autocomplete="off" rows="3" maxlength="500" placeholder="Ex. Une lumière plus chaude, en conservant la composition…" /></label><button :disabled="busy || !!job || !!whyNoRefine" @click="askRefine">Ajuster la scène</button><small>{{ credit(balance, 'scene').text }}</small><p v-if="whyNoRefine" class="why" role="status">{{ whyNoRefine }}</p></div>
+            <p v-else class="help">Générez une première version pour pouvoir demander un ajustement.</p>
             <!-- On a phone the editor's bar has no room for it: the application's theme is switched here. -->
             <button type="button" class="secondary panel-theme" @click="toggleTheme"><Icon :n="theme === 'clair' ? 'moon' : 'sun'" />{{ theme === 'clair' ? 'Passer au thème sombre' : 'Passer au thème clair' }}</button>
             </template>
@@ -3143,10 +3118,10 @@ onBeforeUnmount(() => { lightDevice.removeEventListener?.('change', followDevice
             <div v-if="!stepping && !peeking" class="preview-tools"><button v-if="shortViewport" type="button" @click="setPeek(true)">Aperçu plein écran</button><button v-else type="button" :aria-expanded="previewVisible" aria-controls="poster-proof" @click="previewVisible = !previewVisible">{{ previewVisible ? 'Masquer l’aperçu' : 'Afficher l’aperçu' }}</button><button type="button" :aria-expanded="versionsOpen" aria-controls="poster-versions" @click="versionsOpen = !versionsOpen">Versions ({{ visuals.length }})</button></div>
             <div id="poster-proof" class="proof">
               <figure v-if="currentVisual?.original_urls?.length" class="photo"><img :src="currentVisual.original_urls[0]" width="120" height="120" alt="Photo d’origine du produit" /><figcaption>Votre photo</figcaption></figure>
-              <p v-if="canvasRetry" class="why" role="alert">L’affiche n’a pas pu s’afficher. <button type="button" @click="canvasRetry(); canvasRetry = null">Réessayer</button></p><div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="previewPolish" :format="format" :sources="sources" :selected="selected" :scale="scale" :drag-enabled="dragEnabled" @select="pick" @change="patchLayer" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event; choosing = null" />
+              <p v-if="canvasRetry" class="why" role="alert">L’affiche n’a pas pu s’afficher. <button type="button" @click="canvasRetry(); canvasRetry = null">Réessayer</button></p><div ref="canvasHost" class="canvas-host" :class="{ generating: !!waitJob }"><div class="frame" :aria-busy="!!waitJob || undefined" @click="tapToOpen && setPeek(true)"><PosterCanvas :document="previewDoc!" :readonly="true" :format="format" :sources="sources" :scale="scale" @issues="issues = $event" @ready="canvasDrawn" @error="error = $event; choosing = null" />
                 <span v-if="stepping" class="badge">Aperçu</span><span v-else-if="currentVisual" class="badge state" :class="currentVisual.status"><template v-if="waitJob"><span v-if="viewportWidth <= 720" aria-hidden="true">Version {{ versionNumber }}</span><span :class="{ 'visually-hidden': viewportWidth <= 720 }">Version précédente conservée</span></template><template v-else>Version {{ versionNumber }} · {{ versionStates[currentVisual.status] }}</template></span><span v-if="pillWord" class="gen-pill" aria-hidden="true"><i />{{ pillWord }}</span><span v-if="tapToOpen" class="tap-open" /></div></div>
             </div>
-            <div class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
+            <div v-if="listed.length" class="layer-list" role="group" aria-label="Éléments de l’affiche"><button type="button" :aria-pressed="selected === null" @click="pick(null)">Scène</button><button v-for="layer in listed" :key="layer.id" type="button" :aria-pressed="selected === layer.id" @click="pick(layer.id)">{{ roleNames[layer.role] }}<template v-if="!layer.visible"> ({{ layer.role === 'logo' ? 'retiré' : 'dans l’image' }})</template></button></div>
           </div>
           <button type="button" class="text-button see-big" @click="setPeek(true)">Voir l’affiche en grand</button>
           <div v-if="removal" class="selection">

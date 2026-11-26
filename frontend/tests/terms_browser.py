@@ -185,17 +185,14 @@ def walk_journey(browser, engine, errors, product, model):
     page.locator(".final-preview").get_by_role("button", name="Fermer").click()
 
     # Not accepted again, on the session that lasts: the dialog at the opening. After « Plus tard », free work goes on:
-    # an edit saved, the finished poster reviewed and the exact file downloaded. No terms acceptance is sent.
+    # the finished poster reviewed and the exact file downloaded. No terms acceptance is sent.
     set_terms(engine, None)
     page.reload()
     shows_conditions(page)
     later(page)
     page.locator(".final-preview").get_by_role("button", name="Corriger l’affiche").click()
     page.get_by_role("tab", name="Réglages", exact=True).click()
-    with page.expect_response(lambda r: r.request.method == "PUT" and f"/api/creations/{first}" in r.url) as saved:
-        page.get_by_label("Zoom", exact=True).press("ArrowRight")
-    assert saved.value.ok, saved.value.text()
-    expect(page.get_by_text("Enregistré", exact=True)).to_be_visible()
+    expect(page.get_by_label("Zoom", exact=True)).to_have_count(0)
     # Closing the review while its free render is read must leave the seller in settings.
     held_file = []
     page.route("**/api/renders/*", lambda route: held_file.append((route, route.fetch())))

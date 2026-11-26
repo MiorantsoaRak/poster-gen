@@ -111,6 +111,31 @@ def walk(browser, width, data):
         page.goto(free.smoke.ORIGIN + '/#message-' + legacy['id'])
         page.wait_for_url('**/#' + legacy['id'])
         expect(page.locator('.poster-title')).to_have_text('Ancienne affiche')
+        page.get_by_role('tab', name='Style', exact=True).click()
+        page.get_by_role('button', name='Générer l’affiche', exact=True).click()
+        page.get_by_role('button', name='Lancer la génération', exact=True).click()
+        expect(page.get_by_role('heading', name='Vérifier votre affiche')).to_be_visible(timeout=30000)
+        page.locator('.final-preview').get_by_role('button', name='Corriger l’affiche').click()
+        page.get_by_role('tab', name='Réglages', exact=True).click()
+        layer_picker = page.get_by_role('group', name='Élément à régler', exact=True)
+        if layer_picker.count():
+            layer_picker.get_by_role('button', name='Scène', exact=True).click()
+        for name in ('Zoom', 'Position horizontale', 'Position verticale', 'Déplacer les éléments', 'Position X', 'Position Y', 'Largeur', 'Hauteur'):
+            expect(page.get_by_label(name, exact=True)).to_have_count(0)
+        expect(page.get_by_text('Cadrage de l’image complète', exact=True)).to_have_count(0)
+        canvas = page.locator('.stage .poster-canvas')
+        expect(canvas).to_have_attribute('role', 'img')
+        expect(canvas).not_to_have_attribute('tabindex', '0')
+        endpoint = free.smoke.ORIGIN + '/api/creations/' + legacy['id']
+        before_controls = page.request.get(endpoint).json()
+        canvas.dispatch_event('keydown', {'key': 'ArrowRight', 'bubbles': True})
+        page.get_by_label('Ajustement de la scène', exact=True).fill('Une lumière plus chaude')
+        page.screenshot(path=str(OUT / f'legacy-adjustment-{width}.png'))
+        page.get_by_role('button', name='Ajuster la scène', exact=True).click()
+        adjustment = page.get_by_role('dialog', name='Ajuster la scène ?')
+        expect(adjustment).to_be_visible()
+        adjustment.get_by_role('button', name='Annuler', exact=True).click()
+        assert page.request.get(endpoint).json()['document'] == before_controls['document']
         # A kit card actually seeds the new free composer, instead of changing an obsolete editor default.
         page.goto(free.smoke.ORIGIN + '/#styles')
         page.locator('.look-card').first.click()
