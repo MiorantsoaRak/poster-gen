@@ -91,3 +91,10 @@ All errors use `{error:{code,message_fr,retryable,field?,current_revision?},requ
 References checked during implementation: [FastAPI password hashing](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/) and [file uploads](https://fastapi.tiangolo.com/tutorial/request-files/). Installed FastAPI 0.162.2, Starlette 1.10.0, pwdlib 0.3.1 and Uvicorn 0.54.0 signatures were checked; the uv lockfile pins dependencies. Cookie sessions intentionally follow the approved local contract rather than the tutorial's JWT example.
 
 Editor refinements (ADR-085): corner plans reserve the uploaded original logo above the title. Optional internal `PlanContext.logo_corner` is omitted when absent, preserving legacy canonical bytes. Render/export and refinement reject moved corner logos or changed framing with 409 `logo_placement_stale`; the legacy `logo_disc_uncovered` guard also runs before refinement. Preparation and local photo-palette sampling do not call the image provider.
+
+
+### Unified free creation (2026-11-26)
+
+`POST /api/free-creations` accepts `words`, up to three `photos`, optional `reference`, `reference_mode` (`layout`/`style`), `logo`, `use_shop`, and `default_style`. `POST /api/free-creations/{id}/turns` accepts words plus optional replacements; omitted fields retain the selected base, explicit `null` clears reference/logo, and `photos: []` removes photos. `use_shop` snapshots or clears shop identity. All assets require ownership and the correct original/style/logo role.
+
+`base_render_id` chooses an immutable version of this creation. Alternatively, `retry_job_id` plus unchanged words replays a failed/interrupted/cancelled job at the same origin revision with its exact server-owned payload; context overrides are refused. Both operations require the current If-Match and idempotency key. Successful output alone commits context. Transcript returns each job ID, input context and base render. Legacy free documents remain readable without migration. The browser's Libre and Pas à pas both use these routes; old Message routes are retained internally for existing records.

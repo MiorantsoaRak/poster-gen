@@ -1,4 +1,44 @@
-# HANDOFF
+## Unified creation — implemented and verified, 2026-11-26 (READ FIRST)
+
+Owner authorized design then implementation autonomously, paid trials and browser iteration. T-UNIFIED-01–03 are complete. Requirements/design: `unified-creation.md`, under that explicit authority. Owner subsequently requested “commit and push, then handoff”; that delivery step is underway. No deployment requested or performed.
+
+**Delivered:** Libre is primary, Message removed from new-creation UI; Pas à pas is a three-field prompt assistant using the same generator. Optional kit, independent supplied logo, three photos, custom/saved reference with layout/style choice. Later attachment changes, explicit branch from an earlier version, immutable context/history, exact failed-job retry after reload. No supplied shop logo → no invented shop logo in instructions. Existing saved product posters retain the legacy editor. Kit style actions feed Libre. Guide/README/API docs updated. Motion uses transforms, brief result reveal and static reduced-motion waiting; reading position is preserved.
+
+**Evidence:** [acceptance report](reviews/unified-creation-acceptance-2026-11-26.md), [local visual gallery](../../outputs/unified-creation/gallery.html). Full backend suite passed in disjoint groups: 893 + 557 + 692 = 2,142 tests, 3 opt-in deselected; final 9 focused tests passed after history, exact replay hashing and missing-anchor checks. Build and all 420 frontend tests passed. Original free browser passed 1366/390 px (confirm/download/library/stub publishing/no credit/refusal). Unified browser passed desktop and phone, narrowing phone to 360 px: mode/draft preservation, attachments/kit/logo removal, branch, legacy links, kit seeding, keyboard, reduced motion, stale tab without spend, exact retry after reload.
+
+**Paid:** 22 inspected completed Flare medium generations, isolated browser/API/data, no publication. Four initial/intermediate failures: extra contextual name, reference card count, two old-price restorations. Exact-copy/card-count prompt fixes and final accepted-instruction precedence passed targeted repeats; database verified the genuine correction chain and same-base repeat. Successful usage USD 1.001507; 3 process-interrupted requests retain USD 1.20 conservative estimates; ledger total USD 2.201507 within $5 cap. Research's earlier USD 0.374239 is separate. Script and JSON/PNG/browser evidence: `outputs/unified-creation/`. Paid scripts refuse unintended repeat spend; resume skips completed images.
+
+**Exact next step:** owner reviews the local changes/report. Release remains the owner's operation. No unfinished implementation task from this session. Do not re-run paid experiments merely to reopen the evidence.
+
+**Limits / landmines:** generative output still needs checking of prices, contact, product detail and logo fidelity; inspected examples are not universal guarantees. History keeps the original brief plus twelve latest accepted requests; legacy documents recover the chosen base's last instruction. No migration or dependency. Old all-in-one wizard/chat smokes encode retired creation routes; use the two free/unified scripts for this flow. No physical-device profiling, real Facebook post or cross-model benchmark. Three long paid-process interruptions were recorded, never silently assumed free or automatically replayed. `/tmp` is memory-backed; full tests used workspace TMPDIR. Dev `.env` use explicitly authorized; secrets not displayed.
+
+**Uncommitted:** `README.md`; `backend/api/README.md`; `backend/src/affiche/posters/free_creation.py`, `service.py`; `backend/tests/test_free_creation.py`; `frontend/src/App.vue`, `FirstPosterGuide.vue`, `FreeCreation.vue`, `style.css`; `frontend/tests/free_creation_browser.py`, new `unified_creation_browser.py`; `docs/project/DECISIONS.md`, `HANDOFF.md`, `TODO.md`, `guide-premiere-affiche.md`, `designs/_INDEX.md`, new `designs/unified-creation.md`, `requirements/_INDEX.md`, `requirements/free-creation.md`, new `requirements/unified-creation.md`, new `reviews/ui-ux-generation-research-2026-11-26.md`, new `reviews/unified-creation-acceptance-2026-11-26.md`. Pre-existing `.impeccable/` untouched. Evidence under outputs is git-ignored.
+
+## Owner accepts UX direction; logo constraint recorded — 2026-11-26 (latest)
+
+The owner accepts the research recommendation and explicitly requires: **no provided shop logo → no invented shop logo**. Recorded as approved **R-FREE-07** in `requirements/free-creation.md`, not implemented. Requested shop name may be plain text; a style reference is not a source of shop identity. The report’s previous “unless explicitly requested” exception is superseded.
+
+**Done:** updated requirements/index, research note, DECISIONS and TODO. Documentation consistency and diff whitespace checked; no code, paid calls or app tests this follow-up.
+
+**Exact next step:** formalize the remaining accepted UX direction into per-feature requirements for review, then matching designs and approval before implementation tasks. The logo constraint itself needs no further approval; general direction acceptance is not technical design approval. Earlier research evidence and release work remain below.
+
+**Uncommitted:** `docs/project/HANDOFF.md`, `TODO.md`, `DECISIONS.md`, `requirements/free-creation.md`, `requirements/_INDEX.md`, new `reviews/ui-ux-generation-research-2026-11-26.md` (all beneath `docs/project/`). Pre-existing `.impeccable/` untouched. No in-progress task from this follow-up.
+
+## UI / UX / animation and generation diversity — research completed, 2026-11-26 (READ FIRST)
+
+**Owner’s instruction:** research and proposals only; no application code edits. Paid prompts authorized; owner explicitly allowed development `.env` use during this session. Configuration loaded without displaying secrets.
+
+**Deliverable:** [research report](reviews/ui-ux-generation-research-2026-11-26.md), T-UX-RESEARCH-20261126 done. Recommendation: Libre primary; keep simplified Pas à pas as optional input assistance; retire Message for new creation after kit/reference/recovery parity, preserving old posters. Model draws identity, while exact facts remain editable in the kit. This recommendation is **not an approved design**.
+
+**Evidence:** reviewed source and current client captures, official provider/Adobe/W3C and NN/g sources. Build and isolated `free_creation_browser.py` passed. `design_capture.py ux-research-2026-11-26` generated the relevant client pages at 360/768/1440 in both themes, then exited 143 after admin sign-in: not a complete suite pass. Seven real `gpt-image-2.5-flare` medium images through the actual local API, two isolated research ledgers, USD 0.374239 total recorded; all previews 1080×1350. No confirmation/publication. Inputs, scripts, reports and PNGs in `outputs/ux-research-2026-11-26/`; captures in `outputs/design-capture/ux-research-2026-11-26/`.
+
+**Findings:** reference composition, individual price correction and second anchored correction worked. A conflicting request retained unwanted cards; a clean override removed them. Without a supplied logo the model invented shop symbols. Supplied identity was recognizable but re-rendered, and separate logo/name instructions duplicated the branding. Libre lacks kit integration, later attachments and restore-from-version; its review lists superseded instructions. Guided repetition comes from three presets AND a strong studio/hero default prompt. Motion: switch animates layout properties; simplify it before motion-polish sign-off.
+
+**Exact next step:** owner reviews recommendations. On a request to proceed, draft/update per-feature requirements for the selected changes and obtain approval before design; then design approval, tasks, implementation. Do not start implementation from this report. Preserve earlier release work below; this session neither deployed nor verified its production status.
+
+**Known limits:** no physical phone/frame profiling, full regression suite, cross-provider comparison, multi-sector validation or long correction-chain replay this session. Price/text successes are examples, not accuracy guarantees; costs use stored rate cards. `outputs/` is git-ignored and evidence stays local. Experiment scripts deliberately refuse reusing their existing ledgers to prevent accidental repeat spend.
+
+**Uncommitted files:** `docs/project/TODO.md`, `docs/project/HANDOFF.md`, `docs/project/DECISIONS.md`, new `docs/project/reviews/ui-ux-generation-research-2026-11-26.md`. Pre-existing untracked `.impeccable/` preserved. No task left in progress by this session.
 
 ## Création libre · built by Codex, reviewed and rebuilt on the chat's shell by Claude, 2026-11-25 · current track (READ FIRST)
 

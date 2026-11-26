@@ -39,7 +39,7 @@ class PosterService:
                 photos = [prepare_provider_input(store._asset(conn, self.settings.data_dir, job["shop_id"],
                                                               payload["look"]["reference_asset"], "style"))]
             elif job["kind"] in {"plan", "scene", "refine"}:
-                if payload["photo_assets"] != product["photo_assets"]:
+                if "free_words" not in payload and payload["photo_assets"] != product["photo_assets"]:
                     raise store.Refused("input_changed")
                 photos = [prepare_provider_input(store._asset(conn, self.settings.data_dir, job["shop_id"], sha, "original"))
                           for sha in payload["photo_assets"]]
@@ -53,6 +53,8 @@ class PosterService:
                 photos.insert(0, prepare_provider_input(free_creation.stored(self.settings, payload.get("base_asset"))
                                                         or exports.read_png(self.settings, base)))
                 anchor = free_creation.stored(self.settings, payload.get("anchor_asset"))
+                if payload.get("anchor_asset") and not anchor:
+                    raise store.Refused("asset_missing", 404)
                 if anchor:  # last, as the prompt numbers it: a correction sends no style reference
                     photos.append(prepare_provider_input(anchor))
             if job["kind"] == "refine":
@@ -61,7 +63,7 @@ class PosterService:
             if job["kind"] in {"scene", "refine"} and payload.get("style_reference_asset"):
                 photos.append(prepare_provider_input(store._asset(
                     conn, self.settings.data_dir, job["shop_id"], payload["style_reference_asset"], "style")))
-            logo = (payload.get("headline") or {}).get("logo") if job["kind"] in {"scene", "refine"} else None
+            logo = (payload.get("free_logo") or (payload.get("headline") or {}).get("logo")) if job["kind"] in {"scene", "refine"} else None
             if logo:  # the shop's logo for the image model to draw, after the style image, as the prompt numbers it
                 photos.append(prepare_provider_input(store._asset(conn, self.settings.data_dir, job["shop_id"], logo, "logo")))
         expected = self.settings.planner_provider if job["kind"] in {"plan", "text_patch"} else self.settings.image_provider

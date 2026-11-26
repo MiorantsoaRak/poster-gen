@@ -24,19 +24,19 @@ watch(() => props.step, focusStep, { flush: 'post' })
       <h2 ref="heading" tabindex="-1"><span>Étape {{ step + 1 }} sur {{ titles.length }}.&nbsp;</span>{{ titles[step] }}</h2>
       <div class="guide-copy">
         <template v-if="step === 0">
-          <p>Dans « Message », ajoutez une photo nette du produit à vendre. Écrivez son nom, sa variante et son prix exact en ariary, puis touchez « Envoyer ».</p>
-          <p>Vous préférez un formulaire ? Dans « Pas à pas », renseignez les caractéristiques que vous avez vérifiées, puis choisissez « Préparer mon affiche ».</p>
+          <p>Dans « Libre », décrivez votre affiche avec vos mots. Ajoutez des photos et une affiche modèle si vous en avez. « Pas à pas » vous aide à préparer la demande.</p>
+          <p>Vous préférez un formulaire ? Dans « Pas à pas », renseignez les caractéristiques que vous avez vérifiées, puis choisissez « Préparer ma demande ».</p>
         </template>
         <template v-else-if="step === 1">
-          <p>Relisez le produit, le prix et le style. Une nouvelle affiche commence au format <strong>Publication</strong>, qui convient à Facebook et au téléchargement. Dans « Pas à pas », vous pouvez choisir Carré ou Story avant de générer.</p>
-          <p>La lecture d’un message coûte <strong>0 crédit</strong>, dans la limite quotidienne. Une nouvelle image coûte <strong>1 crédit</strong>. Vérifiez le solde indiqué avant de toucher « Créer l’affiche » dans « Message » ou « Générer l’affiche » dans « Pas à pas ».</p>
+          <p>Relisez le produit, le prix et le style. Une nouvelle affiche commence au format <strong>Publication</strong>, qui convient à Facebook et au téléchargement.</p>
+          <p>Préparer votre demande ne coûte aucun crédit. Une nouvelle image ou une correction coûte <strong>1 crédit</strong>. Le coût est confirmé avant chaque génération.</p>
         </template>
         <template v-else-if="step === 2">
           <p>Comparez l’affiche terminée à la photo du produit. Vérifiez la forme, la couleur et les accessoires, puis relisez le prix en ariary et vos coordonnées. Ouvrez le PNG en grand pour lire les petits caractères.</p>
           <p>Une erreur ? Choisissez « Corriger l’affiche ». Quand tout est juste, choisissez « Confirmer pour plus tard » pour retrouver le fichier dans « Mes affiches », ou confirmez-le directement en le téléchargeant ou en préparant sa publication.</p>
         </template>
         <template v-else>
-          <p><strong>Garder l’image.</strong> Choisissez « Confirmer et télécharger le PNG ». Pour un fichier déjà confirmé, choisissez « Télécharger le PNG ». Sur un téléphone compatible, « Partager dans une autre application » vous permet aussi de préparer la légende et de partager l’image.</p>
+          <p><strong>Garder l’image.</strong> Choisissez « Confirmer et télécharger le PNG ». Pour un fichier déjà confirmé, choisissez « Télécharger le PNG ». Vous pouvez ensuite partager le fichier téléchargé depuis votre téléphone.</p>
           <p><strong>Publier sur Facebook.</strong> Pour une affiche au format Publication, choisissez « Confirmer et préparer la publication ». Si le PNG est déjà validé, choisissez « Publier sur ma Page ». Pour plusieurs images, ouvrez « Publier ». Ajoutez une description si vous le souhaitez, puis choisissez les affiches confirmées dans l’ordre voulu.</p>
           <p>Vérifiez la description, touchez « Publier… », relisez le nom de la Page et l’ordre des images, puis confirmez avec « Publier ».</p>
         </template>
@@ -44,10 +44,10 @@ watch(() => props.step, focusStep, { flush: 'post' })
       <details>
         <summary>Si vous êtes bloqué</summary>
         <template v-if="step === 0">
-          <p>Une photo jointe est une photo du produit. Pour une affiche dont vous aimez le style, touchez son étiquette : elle devient « Modèle de style ». Pour remplacer la photo sur une affiche existante, « Copier avec cette photo » conserve l’original.</p>
+          <p>Une photo jointe est une photo du produit. Pour une affiche dont vous aimez le style, touchez son étiquette : elle devient « Modèle de style ». Pour une correction dans Libre, ouvrez « Photos, modèle et identité » : vos anciennes versions restent conservées.</p>
         </template>
         <template v-else-if="step === 1">
-          <p>Dans « Pas à pas », ouvrez « Textes » ou « Boutique » pour corriger l’offre. Un prix dessiné dans l’image demande une nouvelle génération pour le modifier. Si les conditions sont en attente, ouvrez « Lire les conditions » dans l’atelier.</p>
+          <p>Dans Libre, écrivez exactement la correction souhaitée. « Pas à pas » aide à préparer une nouvelle demande. Un prix dessiné dans l’image demande une nouvelle génération pour le modifier. Si les conditions sont en attente, ouvrez « Lire les conditions » dans l’atelier.</p>
         </template>
         <template v-else-if="step === 2">
           <p>Si le produit lui-même est incorrect, signalez le problème et indiquez ce qui doit changer. Si vous modifiez le prix ou la composition, ouvrez le nouvel aperçu pour vérifier le résultat. Le PNG déjà téléchargé conserve son contenu.</p>

@@ -5,6 +5,25 @@
 
 ## Now (current focus — max 3 items)
 
+### Unified creation — authorized design and implementation, 2026-11-26
+
+- [~] T-UNIFIED-PUSH (chore; owner: “commit and push, then handoff”). Commit and push the verified delivery, then record its exact revision in a fresh handoff and push the documentation. In progress: source and remote inspected; main matches origin/main; prior test evidence retained.
+
+- [x] T-UNIFIED-01 · D-UNIFIED-01 · Context, identity, references and version bases; tests and browser API iteration. Verified: seven targeted tests and the existing free-creation browser smoke; immutable context, same-creation branch guard and asset admission checks.
+- [x] T-UNIFIED-02 · D-UNIFIED-02 · Shared Libre/Pas à pas UI, routing and removal of Message entry; browser iteration and focused tests. Verified: Libre/Pas à pas draft preservation, attachments, kit, logo removal and version branching at 1366/390 px; original free browser confirmation/download/refusal passed.
+- [x] T-UNIFIED-03 · D-UNIFIED-03–04 · Motion/resilience, paid scenario matrix, full regressions and final browser verification; report and handoff. Verified: production build; 420 frontend tests; full backend regression in three groups (2,142 tests, 3 opt-in deselected), then final 9 focused tests. Desktop 1366 px and phone 390/360 px browser checks, keyboard/reduced motion, exact retry after reload, stale tabs without spend, legacy links, review/download and simulated publishing passed. 22 paid outputs inspected; final repeats resolve four observed failures. Ledger USD 2.201507 includes USD 1.20 estimated for 3 interrupted calls. [Acceptance report](reviews/unified-creation-acceptance-2026-11-26.md). No deployment.
+
+
+### UI / UX / animation research · 2026-11-26
+
+- [x] T-UX-LOGO-REQUIREMENT (chore). Record the owner’s acceptance of the research direction and the explicit rule: no supplied shop logo means no invented shop logo. Documentation only; verify requirement, research note and handoff agree.
+  - done: approved R-FREE-07, requirements index, report, DECISIONS and handoff updated consistently; diff whitespace checked. No code or paid calls. Broader UX requirements/design still precede implementation.
+
+- [x] T-UX-RESEARCH-20261126 (chore; research only, paid trials authorized). Compare the three creation routes, reference-led diversity, poster quality and motion. No application code changes.
+  - verify: source inspection, current browser captures, primary sources and evidence-labelled report in reviews/ui-ux-generation-research-2026-11-26.md.
+  - done: [report](reviews/ui-ux-generation-research-2026-11-26.md), primary-source research, source/motion review, current client captures and seven real Flare images via isolated application API (USD 0.374239 recorded). Build and free-creation browser smoke passed. Broad capture run exited 143 after client screens/admin sign-in; no full capture-suite pass claimed. No app source or production changes. Findings/proposals require the normal requirements/design approvals before implementation.
+
+
 ### Création libre · 2026-11-25
 
 - [x] T-FREE-002 · D-FREE-01–03 · implement direct image jobs, free documents and exact confirmation. Direct contract tests passed (replay, revision, balance, PNG identity and polish beyond the product limit). Full backend suite passed (2,137 tests, 3 opt-in tests deselected).

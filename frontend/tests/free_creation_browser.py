@@ -84,7 +84,7 @@ def walk(browser, width, data):
     if width > 600:  # the images of the request, in its bubble, each decoded
         expect(thread.locator(".bubble.me .pic")).to_have_count(4)
         page.wait_for_function("Array.from(document.querySelectorAll('.bubble.me .pic img')).every(img => img.complete && img.naturalWidth > 0)")
-    expect(page.get_by_role("button", name="Ajouter des photos")).to_have_count(0)  # the images belong to the first request
+    expect(page.get_by_role("button", name="Ajouter des photos")).to_have_count(1)  # a correction may carry new attachments
     say(page, "Change seulement le fond en vert.").get_by_role("button", name="Lancer la génération").click()
     expect(thread.get_by_text("Version 2 prête.")).to_be_visible()
     expect(thread.locator(".chat-poster")).to_have_count(2)
@@ -92,6 +92,7 @@ def walk(browser, width, data):
     # One review: the image, the requests in the seller's words, then the file. The download is the reviewed PNG.
     thread.get_by_role("button", name="Vérifier", exact=True).click()
     panel = page.get_by_role("dialog", name="Vérifier votre affiche")
+    panel.get_by_text("Historique des demandes", exact=True).click()
     expect(panel.locator(".points li")).to_have_text([label, "Change seulement le fond en vert."])
     src = panel.locator(".shot img").get_attribute("src")
     expected = hashlib.sha256(page.request.get(smoke.ORIGIN + src).body()).digest()
@@ -139,7 +140,7 @@ def walk(browser, width, data):
         page.get_by_role("group", name="Façon de créer").get_by_role("button", name="Pas à pas").tap()
         page.wait_for_url("**/#etapes")
         page.goto(smoke.ORIGIN + "/#creer")
-        page.wait_for_url("**/#etapes")
+        page.wait_for_url("**/#libre")
     assert not errors, errors
     ctx.close()
 
@@ -154,15 +155,22 @@ def walk_failed(browser):
     expect(answer).to_contain_text("Votre crédit vous a été rendu.")
     expect(answer).not_to_contain_text("code")
     assert page.request.get(smoke.ORIGIN + "/api/balance").json()["available"] == before
+    page.reload()
+    expect(answer).to_contain_text("Votre crédit vous a été rendu.")
     answer.get_by_role("button", name="Réessayer").click()
     expect(page.get_by_role("dialog")).to_contain_text("1 crédit")
-    page.get_by_role("dialog").get_by_role("button", name="Annuler").click()
+    page.get_by_role("dialog").get_by_role("button", name="Lancer la génération").click()
+    expect(page.get_by_role("log").locator(".bubble.me")).to_have_count(2)
+    expect(answer).to_contain_text("Votre crédit vous a été rendu.")
+    state = page.request.get(smoke.ORIGIN + '/api/free-creations/' + page.url.split('#libre-')[1]).json()
+    assert len(state['turns']) == 2 and state['turns'][0]['context'] == state['turns'][1]['context']
+    assert page.request.get(smoke.ORIGIN + "/api/balance").json()["available"] == before
     page.screenshot(path=str(OUT / "failed-390.png"))
     assert not errors, errors
     ctx.close()
 
 
-def run():
+def run(widths=(1366, 390)):
     OUT.mkdir(parents=True, exist_ok=True)
     with (OUT / "browser.log").open("w") as log:
         vite = subprocess.Popen(["node", "node_modules/vite/bin/vite.js", "preview", "--host", "127.0.0.1",
@@ -173,7 +181,8 @@ def run():
                 with tempfile.TemporaryDirectory() as data:
                     server = smoke.serve(data, facebook_provider="stub")
                     try:
-                        for width in (1366, 390):
+                        for width in widths:
+                            print(f'Browser walk: {width}px', flush=True)
                             walk(browser, width, data)
                     finally:
                         smoke.stop(*server)
@@ -187,7 +196,7 @@ def run():
         finally:
             vite.terminate()
             vite.wait(timeout=10)
-    print("Free creation passed on desktop and phone, and a refused image")
+    print(f"Free creation passed at {widths}, including a refused image")
 
 
 if __name__ == "__main__":

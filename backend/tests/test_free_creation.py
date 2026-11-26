@@ -22,7 +22,7 @@ def test_direct_conversation_replay_polish_confirm_and_stale(client, monkeypatch
     state = client.get(thread).json()
     assert state["document"]["offer"]["price_ar"] is None
     assert state["turns"][0]["words"] == words["words"]
-    assert state["turns"][0] | {"render_id": None, "png_sha256": None} == {
+    assert {k: v for k, v in state["turns"][0].items() if k not in ("context", "base_render_id", "job_id")} | {"render_id": None, "png_sha256": None} == {
         "status": "succeeded", "error_code": None, "words": words["words"], "render_id": None, "png_sha256": None, "credit": "spent"}
     def confirm(render, revision):
         artifact = client.get(f"/api/renders/{render}").json()
@@ -43,7 +43,7 @@ def test_direct_conversation_replay_polish_confirm_and_stale(client, monkeypatch
     assert client.get("/api/balance").json()["available"] == 98
 
 
-def test_a_correction_edits_the_models_own_file_with_the_first_version_as_clean_reference(client):
+def test_a_correction_edits_the_models_own_file_with_the_first_version_as_clean_reference(client, monkeypatch):
     """Nine corrections chained from one another turned the product to grain (the owner's trial, 2026-11-25)."""
     import json
     login(client)
@@ -71,12 +71,26 @@ def test_a_correction_edits_the_models_own_file_with_the_first_version_as_clean_
     with client.app.state.engine.connect() as conn:  # and its later versions never become the reference
         assert json.loads(conn.exec_driver_sql("SELECT document_json FROM creation_versions ORDER BY revision DESC LIMIT 1").scalar())["first"] is None
     assert client.get(f"/api/free-creations/{id}").json()["turns"][-1]["status"] == "succeeded"
+    # Missing anchor bytes must not shift the numbered reference/logo images in the provider request.
+    import time
+    from affiche.posters import free_creation
+    before = client.get('/api/balance').json()['available']
+    monkeypatch.setattr(free_creation, 'stored', lambda *args: None)
+    failed = send(client, 'POST', f'/api/free-creations/{id}/turns', {'words': 'Fond vert'}, 5)
+    assert failed.status_code == 202
+    for _ in range(100):
+        job = client.get(failed.json()['status_url']).json()
+        if job['status'] == 'failed': break
+        time.sleep(.05)
+    assert job['status'] == 'failed' and job['error_code'] == 'preflight_failed'
+    assert client.get('/api/balance').json()['available'] == before
+
 
 
 def test_attachment_numbers_and_style_precedence():
     result = prompt("Trois cartes et trois prix", 3, True, True, True)
     # A correction: the base, then the photos; the reference is not sent again (the base carries its layout).
-    assert result.startswith("Edit image 1") and "2, 3, 4" in result and "visual reference" not in result
+    assert result.startswith("Edit image 1") and "2, 3, 4" in result and "is the visual reference" not in result
     assert "clear focal point" not in result
     assert "1, 2, 3" in (first := prompt("Trois cartes", 3, True, True, False)) and "Image 4 is the visual reference" in first
     # The clean reference of a correction comes last, after the photos.
@@ -98,3 +112,126 @@ def test_unfunded_request_rolls_back_creation_and_reservation(client):
     with engine.connect() as conn:
         for table in ("creations", "product_inputs", "poster_jobs", "poster_calls"):
             assert conn.exec_driver_sql(f"SELECT count(*) FROM {table}").scalar_one() == 0
+
+
+def test_identity_reference_and_anchor_roles():
+    from affiche.posters.free_creation import Identity
+    result = prompt("Une affiche", 3, True, True, True, True,
+                    identity=Identity(name="Boutique", contact="034 00 000 00", logo="a" * 64),
+                    reference_mode="style", new_reference=True)
+    assert "Image 5 is an earlier version" in result
+    assert "Image 6 is the visual reference" in result
+    assert "Image 7 is the supplied shop logo" in result
+    assert "do not copy its cards" in result and "034 00 000 00" in result
+    absent = prompt("Boutique Tana", 0, True, True, False)
+    assert "Do not invent any shop logo" in absent and "shop logos" in absent
+    assert "plain readable text only" in absent
+    assert "print ONLY that list" in absent
+    removed = prompt("Fond bleu", 0, None, True, True, removed_text=["Boutique Tana"])
+    assert "now deselected" in removed and "Boutique Tana" in removed
+    edited = prompt("Fond bleu", 1, None, True, True, True, history=["Prix 85 000 Ar", "Prix 95 000 Ar"])
+    assert "NEVER restore superseded amounts" in edited and "Prix 95 000 Ar" in edited
+
+
+def test_context_changes_commit_only_after_success_and_branch_uses_own_sources(client):
+    import json
+    from test_api import photo
+    login(client)
+    def upload(role):
+        response = client.post("/api/assets", files={"file": ("p.png", photo(), "image/png")}, data={"role": role})
+        assert response.status_code == 201
+        return response.json()["asset"]
+    original, logo, reference = upload("original"), upload("logo"), upload("style")
+    first = send(client, "POST", "/api/free-creations", {"words": "Produit 10 000 Ar", "photos": [original], "logo": logo})
+    id = first.json()["creation_id"]
+    base = wait(client, first.json()["status_url"])
+    route = f"/api/free-creations/{id}"
+    state = client.get(route).json()
+    assert state["document"]["identity"]["logo"] == logo
+    second = send(client, "POST", route + "/turns", {"words": "Sans photo ni logo, nouveau style", "photos": [],
+                  "logo": None, "reference": reference, "reference_mode": "style"}, state["revision"])
+    wait(client, second.json()["status_url"])
+    state = client.get(route).json()
+    assert state["photos"] == [] and state["document"]["identity"]["logo"] is None
+    branch = send(client, "POST", route + "/turns", {"words": "Fond bleu", "base_render_id": base}, state["revision"])
+    wait(client, branch.json()["status_url"])
+    state = client.get(route).json()
+    assert state["photos"] == [original] and state["document"]["identity"]["logo"] == logo
+    assert state["document"]["reference"] is None
+    with client.app.state.engine.connect() as conn:
+        payload = json.loads(conn.exec_driver_sql("SELECT input_json FROM poster_jobs ORDER BY rowid DESC LIMIT 1").scalar_one())
+    assert payload["base_render_id"] == base
+    assert state["document"]["history"] == ["Produit 10 000 Ar", "Fond bleu"]
+    assert "Sans photo ni logo" not in payload["prompt"]
+    # An unrelated render cannot be used as the base, even by the same shop.
+    other = send(client, "POST", "/api/free-creations", {"words": "Autre affiche"})
+    other_base = wait(client, other.json()["status_url"])
+    before = client.get("/api/balance").json()["available"]
+    assert send(client, "POST", route + "/turns", {"words": "Copier", "base_render_id": other_base}, state["revision"]).status_code == 404
+    assert client.get("/api/balance").json()["available"] == before
+    assert client.get(route).json()["revision"] == state["revision"]
+
+
+def test_profile_snapshot_and_asset_role_validated_before_spend(client):
+    from affiche.db import write_tx
+    from sqlalchemy import text
+    login(client)
+    with write_tx(client.app.state.engine) as conn:
+        conn.execute(text("UPDATE shop_profile SET name='Boutique Tana',contact='034 00 000 00',lines_json='[\"Bienvenue\"]' WHERE id=1"))
+    first = send(client, "POST", "/api/free-creations", {"words": "Ouverture", "use_shop": True})
+    wait(client, first.json()["status_url"])
+    state = client.get('/api/free-creations/' + first.json()['creation_id']).json()
+    assert state['document']['identity'] == {'name': 'Boutique Tana', 'contact': '034 00 000 00', 'lines': ['Bienvenue'], 'logo': None}
+    before = client.get('/api/balance').json()['available']
+    response = send(client, 'POST', '/api/free-creations', {'words': 'Affiche', 'logo': 'a' * 64})
+    assert response.status_code == 422
+    assert client.get('/api/balance').json()['available'] == before
+
+
+def test_failed_context_retry_keeps_snapshot_and_successful_state(client):
+    import time
+    from affiche.db import write_tx
+    from affiche.visuals.gateway import StubProvider
+    login(client)
+    first = send(client, 'POST', '/api/free-creations', {'words': 'Première affiche'})
+    wait(client, first.json()['status_url'])
+    route = '/api/free-creations/' + first.json()['creation_id']
+    original = client.get(route).json()
+    with write_tx(client.app.state.engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET name='Boutique Tana' WHERE id=1")
+    client.app.state.poster_service.provider = StubProvider(['refused'], delay=0)
+    failed = send(client, 'POST', route + '/turns', {'words': 'Ajoute ma boutique', 'use_shop': True}, original['revision'])
+    assert failed.status_code == 202
+    for _ in range(100):
+        state = client.get(route).json()
+        if state['turns'][-1]['status'] == 'failed':
+            break
+        time.sleep(.05)
+    assert state['turns'][-1]['status'] == 'failed'
+    assert state['document'] == original['document'] and state['revision'] == original['revision']
+    with write_tx(client.app.state.engine) as conn:
+        conn.exec_driver_sql("UPDATE shop_profile SET name='Autre boutique' WHERE id=1")
+    retry = send(client, 'POST', route + '/turns', {'words': 'Ajoute ma boutique', 'retry_job_id': state['turns'][-1]['job_id']}, state['revision'])
+    wait(client, retry.json()['status_url'])
+    final = client.get(route).json()
+    assert final['document']['identity']['name'] == 'Boutique Tana'
+    before = client.get('/api/balance').json()['available']
+    for job in (str(uuid4()), final['turns'][-1]['job_id']):
+        assert send(client, 'POST', route + '/turns', {'words': 'Retry', 'retry_job_id': job}, final['revision']).status_code == 404
+    assert client.get('/api/balance').json()['available'] == before
+
+
+def test_retry_key_distinguishes_omitted_reference_from_explicit_removal(client):
+    login(client)
+    first = send(client, 'POST', '/api/free-creations', {'words': 'Une affiche'})
+    wait(client, first.json()['status_url'])
+    route = '/api/free-creations/' + first.json()['creation_id'] + '/turns'
+    headers = {'Idempotency-Key': str(uuid4()), 'If-Match': '"2"'}
+    body = {'words': 'Fond vert'}
+    edit = client.post(route, json=body, headers=headers)
+    assert edit.status_code == 202
+    assert client.post(route, json=body, headers=headers).json() == edit.json()
+    different = client.post(route, json=body | {'reference': None}, headers=headers)
+    assert different.status_code == 409
+    wait(client, edit.json()['status_url'])
+    assert client.get('/api/balance').json()['available'] == 98
